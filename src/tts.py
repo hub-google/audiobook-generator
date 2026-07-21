@@ -173,6 +173,7 @@ def run_tts():
         shutil.copy2(ref_audio_original, ref_audio)
 
         generated_parts = []
+        valid_lines = []
 
         for part_idx, line in enumerate(lines):
             text = line.strip()
@@ -186,6 +187,7 @@ def run_tts():
             if os.path.exists(audio_path):
                 logging.info(f"[TTS] Resuming existing part: {audio_filename}")
                 generated_parts.append(audio_path)
+                valid_lines.append(text)
                 continue
 
             max_retries = 3
@@ -204,6 +206,7 @@ def run_tts():
                         f.write(response.content)
                     logging.info(f"[TTS] ✓ Saved part: {audio_filename}")
                     generated_parts.append(audio_path)
+                    valid_lines.append(text)
                     break
                 except Exception as e:
                     err_msg = ""
@@ -217,6 +220,17 @@ def run_tts():
 
         # 所有 part 產生完後，合併成單一 chapter WAV
         if generated_parts:
+            # 產生 SRT
+            try:
+                from subtitle_gen import generate_chapter_srt
+                subtitles_dir = os.path.join(workspace_dir, "Subtitles")
+                if not os.path.exists(subtitles_dir):
+                    os.makedirs(subtitles_dir)
+                srt_path = os.path.join(subtitles_dir, f"{book_title}_chapter_{chap_num}.srt")
+                generate_chapter_srt(generated_parts, valid_lines, srt_path)
+            except Exception as e:
+                logging.error(f"[TTS] Failed to generate SRT for chapter {chap_num}: {e}")
+
             merge_parts_to_chapter(generated_parts, chapter_wav_path)
         else:
             logging.warning(f"[TTS] No parts generated for chapter {chap_num}, skipping merge.")

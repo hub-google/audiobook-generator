@@ -55,9 +55,9 @@ def run_tts_ms():
     for filename in filenames:
         clean_path = os.path.join(clean_text_dir, filename)
         with open(clean_path, "r", encoding="utf-8") as f:
-            text = f.read().strip()
+            lines = f.readlines()
         
-        if not text:
+        if not lines:
             continue
 
         # 解析章節號碼
@@ -76,35 +76,97 @@ def run_tts_ms():
             logging.info(f"[TTS_MS] Skipping existing: {wav_filename}")
             continue
 
-        # 暫存 MP3（edge_tts 直接輸出 mp3）
-        mp3_filename = f"{book_title}_chapter_{chap_num}_tmp.mp3"
-        mp3_path = os.path.join(audio_dir, mp3_filename)
-
-        logging.info(f"[TTS_MS] Generating MS TTS for {filename} -> {wav_filename} ...")
+        logging.info(f"[TTS_MS] Processing {filename} ({len(lines)} segments)...")
         
-        try:
-            # 產生 MP3
-            asyncio.run(generate_chapter_audio(text, mp3_path))
-            
-            # 使用 ffmpeg 轉成 WAV
-            logging.info(f"[TTS_MS] Converting MP3 to WAV...")
-            subprocess.run(
-                [ffmpeg_path, "-y", "-i", mp3_path, wav_path],
-                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            
-            # 刪除暫存 MP3
-            os.remove(mp3_path)
-            
-            logging.info(f"[TTS_MS] ✓ Saved: {wav_filename}")
-        except Exception as e:
-            logging.error(f"[TTS_MS] ✗ Failed to generate {wav_filename}: {e}")
-            # 清除殘留暫存檔
-            if os.path.exists(mp3_path):
-                try:
+        generated_parts = []
+        valid_lines = []
+
+        for part_idx, line in enumerate(lines):
+            text = line.strip()
+            if not text:
+                continue
+
+            audio_filename = f"{book_title}_chapter_{chap_num}_tmp_part_{part_idx+1:03d}.wav"
+            audio_path = os.path.join(audio_dir, audio_filename)
+            mp3_path = audio_path.replace('.wav', '.mp3')
+
+            if os.path.exists(audio_path):
+                logging.info(f"[TTS_MS] Resuming existing part: {audio_filename}")
+                generated_parts.append(audio_path)
+                valid_lines.append(text)
+                continue
+
+            try:
+                logging.info(f"[TTS_MS] Generating [{part_idx+1}/{len(lines)}] {audio_filename} ...")
+                # 產生 MP3
+                asyncio.run(generate_chapter_audio(text, mp3_path))
+                
+                # 使用 ffmpeg 轉成 WAV
+                subprocess.run(
+                    [ffmpeg_path, "-y", "-i", mp3_path, audio_path],
+                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                
+                # 刪除暫存 MP3
+                if os.path.exists(mp3_path):
                     os.remove(mp3_path)
-                except Exception:
-                    pass
+                    
+                generated_parts.append(audio_path)
+                valid_lines.append(text)
+            except Exception as e:
+                logging.error(f"[TTS_MS] ✗ Failed to generate {audio_filename}: {e}")
+                if os.path.exists(mp3_path):
+                    try:
+                        os.remove(mp3_path)
+                    except Exception:
+                        pass
+        
+        # 所有 part 產生完後，合併成單一 chapter WAV
+        if generated_parts:
+            # 產生 SRT
+            try:
+                from subtitle_gen import generate_chapter_srt
+                subtitles_dir = os.path.join(workspace_dir, "Subtitles")
+                if not os.path.exists(subtitles_dir):
+                    os.makedirs(subtitles_dir)
+                srt_path = os.path.join(subtitles_dir, f"{book_title}_chapter_{chap_num}.srt")
+                generate_chapter_srt(generated_parts, valid_lines, srt_path)
+            except Exception as e:
+                logging.error(f"[TTS_MS] Failed to generate SRT for chapter {chap_num}: {e}")
+
+            # 合併 WAV
+            if len(generated_parts) == 1:
+                import shutil
+                shutil.move(generated_parts[0], wav_path)
+                logging.info(f"[TTS_MS] ✓ Renamed single part to: {wav_filename}")
+            else:
+                concat_list_path = wav_path + "_concat.txt"
+                with open(concat_list_path, "w", encoding="utf-8") as f:
+                    for p in generated_parts:
+                        safe_path = p.replace("\\", "/")
+                        f.write(f"file '{safe_path}'\n")
+                try:
+                    subprocess.run(
+                        [ffmpeg_path, "-y", "-f", "concat", "-safe", "0", "-i", concat_list_path, "-c", "copy", wav_path],
+                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    )
+                    logging.info(f"[TTS_MS] ✓ Merged {len(generated_parts)} parts -> {wav_filename}")
+                    # 刪除 part 檔
+                    for p in generated_parts:
+                        try:
+                            os.remove(p)
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logging.error(f"[TTS_MS] ✗ Merge failed for {wav_filename}: {e}")
+                finally:
+                    if os.path.exists(concat_list_path):
+                        try:
+                            os.remove(concat_list_path)
+                        except Exception:
+                            pass
+        else:
+            logging.warning(f"[TTS_MS] No parts generated for chapter {chap_num}, skipping merge.")
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

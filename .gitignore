@@ -1,6 +1,6 @@
 # Environment and Credentials
 .env
-gui_config.json
+*.json
 *.pem
 gui_app.py
 

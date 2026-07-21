@@ -120,7 +120,8 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
         },
         "paths": {
             "workspace_base": "Workspace"
-        }
+        },
+        "gdrive_folder_id": os.environ.get("GDRIVE_FOLDER_ID", "")
     }
 
     with open(output_path, "w", encoding="utf-8") as f:

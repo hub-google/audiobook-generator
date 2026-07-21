@@ -271,6 +271,8 @@ def run_video_gen():
 
     chapter_mp4s      = []
     chapter_durations = {}
+    chapter_srt_paths = []
+    chapter_duration_list = []
     total_duration    = 0.0
 
     for wav_path in wav_files:
@@ -282,6 +284,9 @@ def run_video_gen():
         chap_num = parse_chapter_num(os.path.basename(wav_path))
         chapter_title = get_chapter_title(workspace_dir, book_title, chap_num)
         chapter_durations[chapter_title] = dur
+        chapter_duration_list.append(dur)
+        srt_path = os.path.join(workspace_dir, "Subtitles", f"{book_title}_chapter_{chap_num}.srt")
+        chapter_srt_paths.append(srt_path)
         total_duration += dur
 
     logging.info(f"[VideoGen] Total audio duration: {total_duration:.2f}s ({total_duration/3600:.2f}h)")
@@ -298,6 +303,14 @@ def run_video_gen():
         f.write("\n\n---\n")
         f.write("⚠️ 本內容採用 AI 輔助製作，配音與視覺皆經二次原創優化處理。\n")
     logging.info(f"[VideoGen] YouTube Metadata -> {metadata_path}")
+
+    # ── 合併 SRT 字幕檔 ──
+    try:
+        from subtitle_gen import merge_srts
+        full_srt_path = os.path.join(output_dir, f"{book_title}_full.srt")
+        merge_srts(chapter_srt_paths, chapter_duration_list, full_srt_path)
+    except Exception as e:
+        logging.error(f"[VideoGen] ✗ Full SRT merge failed: {e}")
 
     # ── 合併所有 chapter MP4 成完整的 full.mp4（stream copy，不重新編碼）──
     if not chapter_mp4s:

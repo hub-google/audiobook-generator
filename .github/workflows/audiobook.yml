@@ -27,6 +27,9 @@ on:
 permissions:
   contents: write
 
+env:
+  GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+
 # ─────────────────────────────────────────────────────────────
 # Stage 0: setup — 解析章節目錄，生成 config.yaml + matrix JSON
 # ─────────────────────────────────────────────────────────────
@@ -52,6 +55,8 @@ jobs:
           pip install -r requirements.txt
 
       - name: Parse Catalog & Generate config.yaml + matrix.json
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           python src/catalog_parser.py \
             --url "${{ github.event.inputs.catalog_url }}" \
@@ -97,6 +102,9 @@ jobs:
         with:
           name: shared-config
 
+      - name: Download state from Google Drive
+        run: python src/gdrive_sync.py --download
+
       - name: Crawl assigned chapters
         run: |
           python src/worker_pipeline.py \
@@ -105,6 +113,9 @@ jobs:
             --start-global-idx ${{ matrix.start_global_idx }} \
             --chapters-json '${{ matrix.chapters_json }}' \
             --exact-indices '${{ matrix.exact_indices }}'
+
+      - name: Upload state to Google Drive
+        run: python src/gdrive_sync.py --upload
 
       - name: Upload raw text artifact
         uses: actions/upload-artifact@v4
@@ -144,6 +155,9 @@ jobs:
           name: raw-worker-${{ matrix.worker_id }}
           path: Workspace/
 
+      - name: Download state from Google Drive
+        run: python src/gdrive_sync.py --download
+
       - name: Clean text
         run: |
           python src/worker_pipeline.py \
@@ -152,6 +166,9 @@ jobs:
             --start-global-idx ${{ matrix.start_global_idx }} \
             --chapters-json '${{ matrix.chapters_json }}' \
             --exact-indices '${{ matrix.exact_indices }}'
+
+      - name: Upload state to Google Drive
+        run: python src/gdrive_sync.py --upload
 
       - name: Upload clean text artifact
         uses: actions/upload-artifact@v4
@@ -196,6 +213,9 @@ jobs:
           name: clean-worker-${{ matrix.worker_id }}
           path: Workspace/
 
+      - name: Download state from Google Drive
+        run: python src/gdrive_sync.py --download
+
       - name: Generate audio (Edge TTS)
         run: |
           python src/worker_pipeline.py \
@@ -204,6 +224,9 @@ jobs:
             --start-global-idx ${{ matrix.start_global_idx }} \
             --chapters-json '${{ matrix.chapters_json }}' \
             --exact-indices '${{ matrix.exact_indices }}'
+
+      - name: Upload state to Google Drive
+        run: python src/gdrive_sync.py --upload
 
       - name: Upload audio artifact
         uses: actions/upload-artifact@v4
@@ -248,6 +271,9 @@ jobs:
           name: audio-worker-${{ matrix.worker_id }}
           path: Workspace/
 
+      - name: Download state from Google Drive
+        run: python src/gdrive_sync.py --download
+
       - name: Generate title cards
         run: |
           python src/worker_pipeline.py \
@@ -256,6 +282,9 @@ jobs:
             --start-global-idx ${{ matrix.start_global_idx }} \
             --chapters-json '${{ matrix.chapters_json }}' \
             --exact-indices '${{ matrix.exact_indices }}'
+
+      - name: Upload state to Google Drive
+        run: python src/gdrive_sync.py --upload
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
@@ -306,6 +335,9 @@ jobs:
           name: image-worker-${{ matrix.worker_id }}
           path: Workspace/
 
+      - name: Download state from Google Drive
+        run: python src/gdrive_sync.py --download
+
       - name: Generate video (FFmpeg)
         run: |
           python src/worker_pipeline.py \
@@ -313,6 +345,9 @@ jobs:
             --worker-id ${{ matrix.worker_id }} \
             --start-global-idx ${{ matrix.start_global_idx }} \
             --chapters-json '${{ matrix.chapters_json }}'
+
+      - name: Upload state to Google Drive
+        run: python src/gdrive_sync.py --upload
 
       - name: Upload video artifact
         uses: actions/upload-artifact@v4
@@ -341,12 +376,21 @@ jobs:
           name: shared-config
           path: .
 
+      - name: Install Python Dependencies for GDrive Sync
+        run: pip install -r requirements.txt
+
       - name: Download ALL worker artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: '*-worker-*'
           path: final_workspace/Workspace/
           merge-multiple: true
+
+      - name: Sync ALL from Google Drive
+        run: |
+          python src/gdrive_sync.py --download
+          mkdir -p final_workspace/Workspace
+          cp -r Workspace/* final_workspace/Workspace/ || true
 
       - name: Merge MP4 and Create ZIP
         run: |
