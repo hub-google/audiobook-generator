@@ -311,125 +311,225 @@ def main():
     playlist_desc = f"《{book_title}》完整版有聲書全集 (第 {start_chap} 至 {end_chap} 章)，高音質連續播映版。\n歡迎訂閱開啟小鈴鐺！"
     playlist_id = get_or_create_playlist(youtube, playlist_name, playlist_desc)
 
-    files_to_upload = []
+    from part_builder import parse_chapter_num, get_media_duration, merge_part_videos
 
-    if args.input_dir and os.path.exists(args.input_dir):
-        mp4s = glob.glob(os.path.join(args.input_dir, "**", "*.mp4"), recursive=True)
-        files_to_upload.extend(mp4s)
-    elif args.run_id:
-        logging.info(f"📥 從 GitHub Run ID #{args.run_id} 下載影片產物...")
+    temp_parts_dir = os.path.abspath("temp_parts_output")
+    os.makedirs(temp_parts_dir, exist_ok=True)
+    temp_dl_dir = os.path.abspath("temp_api_upload_workspace")
+    os.makedirs(temp_dl_dir, exist_ok=True)
+
+    part_counter = 1
+    total_uploaded = 0
+
+    if args.run_id:
+        logging.info(f"📥 啟動【即時下載 ➔ 流水線打包 (10~11小時) ➔ 暴速上傳 ➔ 精準硬碟清理】模式...")
+        logging.info(f"Target Run ID #{args.run_id}")
+
         artifact_names = get_run_artifact_names(args.run_id, args.repo)
-        temp_dl_dir = os.path.abspath("temp_api_upload_workspace")
-        os.makedirs(temp_dl_dir, exist_ok=True)
-        
-        for a_name in artifact_names:
+        if not artifact_names:
+            logging.error(f"❌ 未在 Run #{args.run_id} 中找到任何影片 Artifacts！")
+            sys.exit(1)
+
+        logging.info(f"共有 {len(artifact_names)} 個 Worker Artifacts 待處理。")
+
+        chapter_pool = []
+        min_seconds = 10.0 * 3600.0
+        max_seconds = 11.0 * 3600.0
+
+        for a_idx, a_name in enumerate(artifact_names):
             art_dir = os.path.join(temp_dl_dir, a_name)
-            logging.info(f"   下載 Artifact: {a_name}...")
+            logging.info(f"\n📦 [{a_idx+1}/{len(artifact_names)}] 下載 Artifact: {a_name}...")
             if download_artifact_task(args.run_id, args.repo, a_name, art_dir):
                 m_files = glob.glob(os.path.join(art_dir, "**", "*.mp4"), recursive=True)
-                files_to_upload.extend(m_files)
+                for f_path in m_files:
+                    if not any(x["path"] == f_path for x in chapter_pool):
+                        c_num = parse_chapter_num(os.path.basename(f_path))
+                        dur = get_media_duration(f_path)
+                        chapter_pool.append({
+                            "path": f_path,
+                            "chap_num": c_num,
+                            "dur": dur
+                        })
 
-    if not files_to_upload:
-        logging.error("❌ 未找到任何可供上傳的 MP4 影片檔案！")
-        sys.exit(1)
+                chapter_pool.sort(key=lambda x: x["chap_num"])
+                is_last_artifact = (a_idx == len(artifact_names) - 1)
 
-    files_to_upload.sort(key=lambda p: parse_chapter_info(os.path.basename(p)))
+                while True:
+                    if not chapter_pool:
+                        break
 
-    # ── 自動檢查是否為單章 MP4 檔案，若是則先執行 10~11 小時無縫分部 (Part) 打包 ──
-    is_part_files = any("_Part_" in os.path.basename(p) for p in files_to_upload)
-    parts_to_upload = []
+                    pool_dur = sum(x["dur"] for x in chapter_pool)
 
-    if not is_part_files:
-        logging.info("📦 檢測到為單章影片產物，正在自動合成為 10~11 小時無縫分部 (Part) 大影片...")
-        from part_builder import partition_chapters, merge_part_videos
-        partitioned_parts = partition_chapters(files_to_upload, min_hours=10.0, max_hours=11.0)
-        
-        temp_parts_dir = os.path.abspath("temp_parts_output")
-        os.makedirs(temp_parts_dir, exist_ok=True)
-        
-        for p in partitioned_parts:
-            part_num = p["part_num"]
-            s_c = p["start_chap"]
-            e_c = p["end_chap"]
-            out_name = f"{book_title}_Part_{part_num:02d}_Ch{s_c:04d}_to_Ch{e_c:04d}.mp4"
-            out_path = os.path.join(temp_parts_dir, out_name)
-            
-            if merge_part_videos(p, out_path):
-                # 為該 Part 生成專屬 Metadata (包含【第 X 部】2K 封面)
+                    if pool_dur < min_seconds and not is_last_artifact:
+                        logging.info(f"   目前累計 {len(chapter_pool)} 章 (約 {pool_dur/3600:.2f} 小時)，尚未滿 10 小時，繼續下載下一包...")
+                        break
+
+                    sliced_items = []
+                    sliced_dur = 0.0
+
+                    for item in chapter_pool:
+                        if sliced_items and (sliced_dur + item["dur"] > max_seconds):
+                            break
+                        sliced_items.append(item)
+                        sliced_dur += item["dur"]
+                        if sliced_dur >= max_seconds:
+                            break
+
+                    if not sliced_items:
+                        break
+
+                    s_c = sliced_items[0]["chap_num"]
+                    e_c = sliced_items[-1]["chap_num"]
+                    out_name = f"{book_title}_Part_{part_counter:02d}_Ch{s_c:04d}_to_Ch{e_c:04d}.mp4"
+                    out_path = os.path.join(temp_parts_dir, out_name)
+
+                    part_info = {
+                        "part_num": part_counter,
+                        "start_chap": s_c,
+                        "end_chap": e_c,
+                        "files": [x["path"] for x in sliced_items],
+                        "duration": sliced_dur
+                    }
+
+                    logging.info(f"\n🚀 【第 {part_counter} 部】準備無縫合成: 第 {s_c}~{e_c} 章 ({len(sliced_items)} 章，總長 {sliced_dur/3600:.2f} 小時)")
+
+                    if merge_part_videos(part_info, out_path):
+                        p_meta = save_book_metadata(
+                            book_title=book_title,
+                            start_chap=s_c,
+                            end_chap=e_c,
+                            is_completed=True,
+                            part_num=part_counter
+                        )
+                        full_desc = (
+                            f"{p_meta['description']}\n\n"
+                            f"播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
+                        )
+
+                        logging.info(f"[API_UPLOAD_MARKER] START | Part {part_counter} | Ch {s_c}~{e_c} | {out_name}")
+                        sys.stdout.flush()
+
+                        v_id = upload_video_file(
+                            youtube,
+                            video_path=out_path,
+                            title=p_meta["title"],
+                            description=full_desc,
+                            privacy_status=args.privacy,
+                            cover_path=p_meta["cover_file"]
+                        )
+
+                        if v_id:
+                            total_uploaded += 1
+                            if playlist_id:
+                                add_video_to_playlist(youtube, playlist_id, v_id)
+
+                            logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_counter} | VideoID {v_id} | total {total_uploaded}")
+                            logging.info(f"✅ 【第 {part_counter} 部】成功上傳並加入播放清單: {p_meta['title']}\n")
+                            sys.stdout.flush()
+
+                        # 精準刪除已上傳完畢的單章與 Part
+                        logging.info(f"🧹 釋放硬碟空間：清理【第 {part_counter} 部】已上傳完畢的 {len(sliced_items)} 個單章原始檔與 Part 大影片...")
+                        for item in sliced_items:
+                            try:
+                                if os.path.exists(item["path"]):
+                                    os.remove(item["path"])
+                            except Exception as e:
+                                logging.warning(f"刪除暫存檔 {item['path']} 失敗: {e}")
+
+                        if os.path.exists(out_path):
+                            try:
+                                os.remove(out_path)
+                            except Exception as e:
+                                logging.warning(f"刪除 Part 檔 {out_path} 失敗: {e}")
+
+                    # 從緩衝池中移除已處理的章節
+                    sliced_paths = set(x["path"] for x in sliced_items)
+                    chapter_pool = [x for x in chapter_pool if x["path"] not in sliced_paths]
+
+                    part_counter += 1
+
+                    remaining_dur = sum(x["dur"] for x in chapter_pool)
+                    if remaining_dur < min_seconds and not is_last_artifact:
+                        logging.info(f"   第一包剩餘 {len(chapter_pool)} 章 (約 {remaining_dur/3600:.2f} 小時)，保留至下一包繼續累加時長...")
+                        break
+
+    elif args.input_dir and os.path.exists(args.input_dir):
+        files_to_upload = sorted(glob.glob(os.path.join(args.input_dir, "**", "*.mp4"), recursive=True), key=lambda p: parse_chapter_info(os.path.basename(p)))
+        if not files_to_upload:
+            logging.error("❌ 未找到任何可供上傳的 MP4 影片檔案！")
+            sys.exit(1)
+
+        is_part_files = any("_Part_" in os.path.basename(p) for p in files_to_upload)
+        parts_to_upload = []
+
+        if not is_part_files:
+            from part_builder import partition_chapters
+            partitioned_parts = partition_chapters(files_to_upload, min_hours=10.0, max_hours=11.0)
+            for p in partitioned_parts:
+                part_num = p["part_num"]
+                s_c = p["start_chap"]
+                e_c = p["end_chap"]
+                out_name = f"{book_title}_Part_{part_num:02d}_Ch{s_c:04d}_to_Ch{e_c:04d}.mp4"
+                out_path = os.path.join(temp_parts_dir, out_name)
+                if merge_part_videos(p, out_path):
+                    p_meta = save_book_metadata(
+                        book_title=book_title,
+                        start_chap=s_c,
+                        end_chap=e_c,
+                        is_completed=True,
+                        part_num=part_num
+                    )
+                    parts_to_upload.append({
+                        "video_path": out_path,
+                        "title": p_meta["title"],
+                        "description": p_meta["description"],
+                        "cover_path": p_meta["cover_file"],
+                        "part_num": part_num,
+                        "start_chap": s_c,
+                        "end_chap": e_c
+                    })
+        else:
+            for idx, vp in enumerate(files_to_upload, 1):
+                c_start, c_end = parse_chapter_info(os.path.basename(vp))
                 p_meta = save_book_metadata(
                     book_title=book_title,
-                    start_chap=s_c,
-                    end_chap=e_c,
+                    start_chap=c_start,
+                    end_chap=c_end,
                     is_completed=True,
-                    part_num=part_num
+                    part_num=idx
                 )
                 parts_to_upload.append({
-                    "video_path": out_path,
+                    "video_path": vp,
                     "title": p_meta["title"],
                     "description": p_meta["description"],
                     "cover_path": p_meta["cover_file"],
-                    "part_num": part_num,
-                    "start_chap": s_c,
-                    "end_chap": e_c
+                    "part_num": idx,
+                    "start_chap": c_start,
+                    "end_chap": c_end
                 })
-    else:
-        for idx, vp in enumerate(files_to_upload, 1):
-            c_start, c_end = parse_chapter_info(os.path.basename(vp))
-            p_meta = save_book_metadata(
-                book_title=book_title,
-                start_chap=c_start,
-                end_chap=c_end,
-                is_completed=True,
-                part_num=idx
+
+        for idx, item in enumerate(parts_to_upload, 1):
+            v_path = item["video_path"]
+            v_title = item["title"]
+            v_desc = item["description"]
+            v_cover = item["cover_path"]
+            part_n = item["part_num"]
+
+            full_desc = f"{v_desc}\n\n播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
+            logging.info(f"[API_UPLOAD_MARKER] START | Part {part_n}/{len(parts_to_upload)} | Ch {item['start_chap']}~{item['end_chap']} | {os.path.basename(v_path)}")
+            v_id = upload_video_file(
+                youtube,
+                video_path=v_path,
+                title=v_title,
+                description=full_desc,
+                privacy_status=args.privacy,
+                cover_path=v_cover
             )
-            parts_to_upload.append({
-                "video_path": vp,
-                "title": p_meta["title"],
-                "description": p_meta["description"],
-                "cover_path": p_meta["cover_file"],
-                "part_num": idx,
-                "start_chap": c_start,
-                "end_chap": c_end
-            })
-
-    logging.info(f"\n==================================================")
-    logging.info(f"🚀 開始按分部正序【極速上傳】共 {len(parts_to_upload)} 部 10~11 小時大影片！")
-    logging.info(f"==================================================\n")
-
-    total_uploaded = 0
-    for idx, item in enumerate(parts_to_upload, 1):
-        v_path = item["video_path"]
-        v_title = item["title"]
-        v_desc = item["description"]
-        v_cover = item["cover_path"]
-        part_n = item["part_num"]
-
-        full_desc = (
-            f"{v_desc}\n\n"
-            f"播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
-        )
-
-        logging.info(f"[API_UPLOAD_MARKER] START | Part {part_n}/{len(parts_to_upload)} | Ch {item['start_chap']}~{item['end_chap']} | {os.path.basename(v_path)}")
-        logging.info(f"▶️ [{idx}/{len(parts_to_upload)}] 正在上傳: {v_title}...")
-        sys.stdout.flush()
-
-        v_id = upload_video_file(
-            youtube,
-            video_path=v_path,
-            title=v_title,
-            description=full_desc,
-            privacy_status=args.privacy,
-            cover_path=v_cover
-        )
-
-        if v_id:
-            total_uploaded += 1
-            if playlist_id:
-                add_video_to_playlist(youtube, playlist_id, v_id)
-
-            logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_n}/{len(parts_to_upload)} | VideoID {v_id} | total {total_uploaded}")
-            logging.info(f"✅ [{idx}/{len(parts_to_upload)}] 完成上傳並加進播放清單: {v_title}\n")
-            sys.stdout.flush()
+            if v_id:
+                total_uploaded += 1
+                if playlist_id:
+                    add_video_to_playlist(youtube, playlist_id, v_id)
+                logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_n}/{len(parts_to_upload)} | VideoID {v_id} | total {total_uploaded}")
 
     logging.info("="*60)
     logging.info(f"🎉 全部影片極速上傳完畢！共上傳 {total_uploaded} 部分部影片至 YouTube 播放清單！")
