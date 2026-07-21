@@ -18,6 +18,13 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, HttpError
 
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [YouTube-API] %(levelname)s %(message)s",
