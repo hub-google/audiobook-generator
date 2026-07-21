@@ -17,7 +17,7 @@ def get_drive_service():
     creds_json = os.environ.get("GCP_CREDENTIALS")
     if not creds_json:
         # Fallback to local file for testing if env not set
-        local_key = "audiobook-uploader-503104-18226d210f54.json"
+        local_key = "service_account.json"
         if os.path.exists(local_key):
             with open(local_key, "r", encoding="utf-8") as f:
                 creds_json = f.read()
