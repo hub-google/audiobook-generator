@@ -101,7 +101,11 @@ def main():
 
     chapters = json.loads(args.chapters_json)
     exact_indices = json.loads(args.exact_indices) if args.exact_indices else None
-    logging.info(f"Assigned chapters: {len(chapters)} 章  (global idx {args.start_global_idx} ~ {args.start_global_idx + len(chapters) - 1})")
+    if exact_indices:
+        idx_display = f"global idx: {exact_indices}"
+    else:
+        idx_display = f"global idx {args.start_global_idx} ~ {args.start_global_idx + len(chapters) - 1}"
+    logging.info(f"Assigned chapters: {len(chapters)} 章  ({idx_display})")
 
     stage = args.stage
 

@@ -87,23 +87,33 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
         raise ValueError("無法解析章節或章節清單為空！")
 
     total = res["total_chapters"]
-    start_idx = max(1, start_chap) - 1
-    end_idx = min(total, end_chap)
+    start_chap = max(1, start_chap)
+    end_chap   = min(total, end_chap)
+
+    if start_chap > total:
+        raise ValueError(f"開始章節({start_chap})超出全書總章節數({total})！")
+    if start_chap > end_chap:
+        raise ValueError(f"開始章節({start_chap})大於結束章節({end_chap})！")
+
+    start_idx = start_chap - 1  # 轉為 0-based
 
     # 包含標題與 URL，並過濾排除的章節
     selected_chapters = []
-    for i in range(start_idx, end_idx):
+    selected_indices  = []  # 記錄真實的 1-based 章節編號
+    for i in range(start_idx, end_chap):
         if (i + 1) not in exclude_chapters:
             selected_chapters.append(res["chapters"][i])
+            selected_indices.append(i + 1)
 
     config_data = {
         "book_title": res["book_title"],
         "base_url": res["base_url"],
         "catalog_url": catalog_url,
         "start_chapter": start_chap,
-        "end_chapter": min(total, end_chap),
+        "end_chapter": end_chap,
         "total_available_chapters": total,
         "chapters": selected_chapters,
+        "selected_indices": selected_indices,  # 新增：明確記錄實際處理的章節編號
         "tts": {
             "engine": "edge-tts",
             "edge_voice": "zh-CN-YunxiNeural"
@@ -116,7 +126,7 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
     with open(output_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(config_data, f, allow_unicode=True, sort_keys=False)
 
-    print(f"[CatalogParser] 成功生成 {output_path}：書名【{res['book_title']}】，選取範圍 {start_chap} 至 {min(total, end_chap)} 章（實際處理 {len(selected_chapters)} 章，全書 {total} 章）")
+    print(f"[CatalogParser] 成功生成 {output_path}：書名【{res['book_title']}】，選取範圍 {start_chap} 至 {end_chap} 章（實際處理 {len(selected_chapters)} 章，全書 {total} 章）")
     return config_data
 
 
@@ -135,19 +145,24 @@ def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=
         raise ValueError("無法解析章節或章節清單為空！")
 
     total = res["total_chapters"]
-    start_idx = max(1, start_chap) - 1          # 轉為 0-based
-    end_idx   = min(total, end_chap)             # 0-based exclusive
-    
-    # 建立過濾後的章節列表，保留真實的 1-based index (因為 worker 處理時可能需要)
-    # 不過原本設計 `chapters_json` 只傳 chunk，所以只過濾即可
-    selected = []
-    # 為了能正確計算 start_global_idx，我們需要連同真實的 global_idx 一起記錄
-    # 但是 worker_pipeline.py 是怎麼利用 start_global_idx 的？
-    # 它用來命名輸出檔案！所以每一章的真實 global_idx 很重要。
+    start_chap = max(1, start_chap)
+    end_chap   = min(total, end_chap)
+
+    if start_chap > total:
+        raise ValueError(f"開始章節({start_chap})超出全書總章節數({total})！")
+    if start_chap > end_chap:
+        raise ValueError(f"開始章節({start_chap})大於結束章節({end_chap})！")
+
+    start_idx = start_chap - 1  # 轉為 0-based
+
+    # 建立過濾後的章節列表，保留真實的 1-based global_idx
     selected_with_idx = []
-    for i in range(start_idx, end_idx):
+    for i in range(start_idx, end_chap):
         if (i + 1) not in exclude_chapters:
             selected_with_idx.append({"url": res["chapters"][i], "global_idx": i + 1})
+
+    if not selected_with_idx:
+        raise ValueError(f"設定範圍內沒有任何可處理的章節（可能全部被排除）！")
 
     # 自動調整 chapters_per_worker 避免超過 GitHub Actions 的 Matrix 256 上限
     MAX_WORKERS = 250
@@ -161,23 +176,17 @@ def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=
     includes = []
     for i in range(0, len(selected_with_idx), chapters_per_worker):
         chunk_items = selected_with_idx[i : i + chapters_per_worker]
-        # 只取出 url 作為 chunk
-        chunk_urls = [item["url"] for item in chunk_items]
-        # worker 會用 start_global_idx 當作第一章的編號，所以如果是非連續的，worker_pipeline.py 會把章節編號算錯！
-        # 必須注意：如果 worker_pipeline 假設章節是連續的 (idx = start_global_idx + i)，那麼排除章節後就會對不起來！
-        # 但既然原本的架構是以 URL 為主，若這裡改變可能會動到 worker_pipeline.py，我們等等要確認。
+        chunk_urls  = [item["url"]        for item in chunk_items]
+        chunk_idxs  = [item["global_idx"] for item in chunk_items]
         includes.append({
-            "worker_id":       len(includes),
-            # 我們將第一個項目的 global_idx 傳過去，但由於可能不連續，這在 worker 端可能會有問題... 
-            # 這裡先保留原本介面，後面需修正 worker_pipeline.py。
-            "start_global_idx": chunk_items[0]["global_idx"],   
-            "chapters_json":   json.dumps(chunk_urls, ensure_ascii=False),
-            # 我們新增傳遞 exact_indices 來提供精準的章節編號
-            "exact_indices": json.dumps([item["global_idx"] for item in chunk_items])
+            "worker_id":        len(includes),
+            "start_global_idx": chunk_items[0]["global_idx"],
+            "chapters_json":    json.dumps(chunk_urls, ensure_ascii=False),
+            "exact_indices":    json.dumps(chunk_idxs),
         })
 
     matrix = {"include": includes}
-    print(f"[CatalogParser] Matrix: {len(includes)} workers，每台最多 {chapters_per_worker} 章")
+    print(f"[CatalogParser] Matrix: {len(includes)} workers，每台最多 {chapters_per_worker} 章，共 {total_selected} 章待處理")
     return matrix, res["book_title"]
 
 
