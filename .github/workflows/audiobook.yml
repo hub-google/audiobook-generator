@@ -106,11 +106,17 @@ jobs:
         with:
           name: shared-config
 
+      - name: Download state from Google Drive
+        run: python src/gdrive_sync.py --download
+
       - name: Crawl assigned chapters
         run: |
           python src/worker_pipeline.py \
             --stage crawl \
             --worker-id ${{ matrix.worker_id }}
+
+      - name: Upload state to Google Drive
+        run: python src/gdrive_sync.py --upload
 
       - name: Upload raw text artifact
         uses: actions/upload-artifact@v4
@@ -150,11 +156,17 @@ jobs:
           name: raw-worker-${{ matrix.worker_id }}
           path: Workspace/
 
+      - name: Download state from Google Drive
+        run: python src/gdrive_sync.py --download
+
       - name: Clean text
         run: |
           python src/worker_pipeline.py \
             --stage clean \
             --worker-id ${{ matrix.worker_id }}
+
+      - name: Upload state to Google Drive
+        run: python src/gdrive_sync.py --upload
 
       - name: Upload clean text artifact
         uses: actions/upload-artifact@v4
@@ -199,11 +211,17 @@ jobs:
           name: clean-worker-${{ matrix.worker_id }}
           path: Workspace/
 
+      - name: Download state from Google Drive
+        run: python src/gdrive_sync.py --download
+
       - name: Generate audio (Edge TTS)
         run: |
           python src/worker_pipeline.py \
             --stage tts \
             --worker-id ${{ matrix.worker_id }}
+
+      - name: Upload state to Google Drive
+        run: python src/gdrive_sync.py --upload
 
       - name: Upload audio artifact
         uses: actions/upload-artifact@v4
@@ -248,11 +266,17 @@ jobs:
           name: audio-worker-${{ matrix.worker_id }}
           path: Workspace/
 
+      - name: Download state from Google Drive
+        run: python src/gdrive_sync.py --download
+
       - name: Generate title cards
         run: |
           python src/worker_pipeline.py \
             --stage image_gen \
             --worker-id ${{ matrix.worker_id }}
+
+      - name: Upload state to Google Drive
+        run: python src/gdrive_sync.py --upload
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
@@ -303,11 +327,17 @@ jobs:
           name: image-worker-${{ matrix.worker_id }}
           path: Workspace/
 
+      - name: Download state from Google Drive
+        run: python src/gdrive_sync.py --download
+
       - name: Generate video (FFmpeg)
         run: |
           python src/worker_pipeline.py \
             --stage video_gen \
             --worker-id ${{ matrix.worker_id }}
+
+      - name: Upload state to Google Drive
+        run: python src/gdrive_sync.py --upload
 
       - name: Upload video artifact
         uses: actions/upload-artifact@v4
@@ -353,6 +383,12 @@ jobs:
           pattern: '*-worker-*'
           path: final_workspace/Workspace/
           merge-multiple: true
+
+      - name: Sync ALL from Google Drive
+        run: |
+          python src/gdrive_sync.py --download
+          mkdir -p final_workspace/Workspace
+          cp -r Workspace/* final_workspace/Workspace/ || true
 
       - name: Merge MP4 and Create ZIP
         run: |
