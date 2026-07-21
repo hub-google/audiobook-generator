@@ -125,6 +125,15 @@ def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=
     start_idx = max(1, start_chap) - 1          # 轉為 0-based
     end_idx   = min(total, end_chap)             # 0-based exclusive
     selected  = res["chapters"][start_idx:end_idx]
+    
+    # 自動調整 chapters_per_worker 避免超過 GitHub Actions 的 Matrix 256 上限
+    MAX_WORKERS = 250
+    total_selected = len(selected)
+    if total_selected > 0:
+        required_workers = math.ceil(total_selected / chapters_per_worker)
+        if required_workers > MAX_WORKERS:
+            chapters_per_worker = math.ceil(total_selected / MAX_WORKERS)
+            print(f"[CatalogParser] 警告：超過 GitHub Actions matrix 上限(256)，自動調整每台機器處理章節數為 {chapters_per_worker}")
 
     includes = []
     for i in range(0, len(selected), chapters_per_worker):
