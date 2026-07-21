@@ -20,9 +20,9 @@ on:
         required: false
         default: ''
       chapters_per_worker:
-        description: '每台工作機負責的章節數 (預設 5，最多 20 台並行)'
+        description: '每台工作機負責的章節數 (預設 10，最多 20 台並行)'
         required: true
-        default: '5'
+        default: '10'
       zip_password:
         description: 'ZIP 解密密碼 (可選，從 GUI 或 Secrets 傳入)'
         required: false
@@ -86,6 +86,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      max-parallel: 20
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
 
     steps:

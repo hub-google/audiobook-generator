@@ -171,14 +171,14 @@ def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=
     if not selected_with_idx:
         raise ValueError(f"設定範圍內沒有任何可處理的章節（可能全部被排除）！")
 
-    # 自動調整 chapters_per_worker 避免超過 GitHub Actions 的 Matrix 256 上限
-    MAX_WORKERS = 250
+    # 自動調整 chapters_per_worker 避免超過 GitHub Actions 的 20 台並行上限 (避免排隊與重裝開銷)
+    MAX_WORKERS = 20
     total_selected = len(selected_with_idx)
     if total_selected > 0:
         required_workers = math.ceil(total_selected / chapters_per_worker)
         if required_workers > MAX_WORKERS:
             chapters_per_worker = math.ceil(total_selected / MAX_WORKERS)
-            print(f"[CatalogParser] 警告：超過 GitHub Actions matrix 上限(256)，自動調整每台機器處理章節數為 {chapters_per_worker}")
+            print(f"[CatalogParser] 提示：章節數較多，自動調整每台機器處理章節數為 {chapters_per_worker} 章 (保持最多 20 台同時併行，0 排隊)")
 
     includes = []
     for i in range(0, len(selected_with_idx), chapters_per_worker):
@@ -217,7 +217,7 @@ if __name__ == "__main__":
         except ValueError:
             pass
 
-    chapters_per_worker_input = args.workers if args.workers > 0 else 5
+    chapters_per_worker_input = args.workers if args.workers > 0 else 10
 
     # ── 只爬取一次目錄，共用於 config 與 matrix ──
     print(f"[CatalogParser] 正在解析目錄：{args.url}")
