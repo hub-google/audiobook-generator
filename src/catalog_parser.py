@@ -45,6 +45,7 @@ def parse_catalog(catalog_url):
 
     # 2. 解析章節連結
     chapter_urls = []
+    chapter_titles = []
     seen = set()
 
     for a in soup.find_all('a', href=True):
@@ -63,19 +64,24 @@ def parse_catalog(catalog_url):
             if full_href not in seen:
                 seen.add(full_href)
                 chapter_urls.append(full_href)
+                chapter_titles.append(a.text.strip() or f"第 {len(chapter_urls)} 章")
 
     return {
         "success": True,
         "book_title": book_title,
         "base_url": base_url,
         "chapters": chapter_urls,
+        "chapter_titles": chapter_titles,
         "total_chapters": len(chapter_urls)
     }
 
-def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="config.yaml"):
+def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="config.yaml", exclude_chapters=None):
     """
     根據解析結果生成 config.yaml 檔案
     """
+    if exclude_chapters is None:
+        exclude_chapters = []
+
     res = parse_catalog(catalog_url)
     if not res["success"] or res["total_chapters"] == 0:
         raise ValueError("無法解析章節或章節清單為空！")
@@ -84,7 +90,11 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
     start_idx = max(1, start_chap) - 1
     end_idx = min(total, end_chap)
 
-    selected_chapters = res["chapters"][start_idx:end_idx]
+    # 包含標題與 URL，並過濾排除的章節
+    selected_chapters = []
+    for i in range(start_idx, end_idx):
+        if (i + 1) not in exclude_chapters:
+            selected_chapters.append(res["chapters"][i])
 
     config_data = {
         "book_title": res["book_title"],
@@ -106,17 +116,20 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
     with open(output_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(config_data, f, allow_unicode=True, sort_keys=False)
 
-    print(f"[CatalogParser] 成功生成 {output_path}：書名【{res['book_title']}】，選取第 {start_chap} 至 {min(total, end_chap)} 章（共 {len(selected_chapters)} 章，全書 {total} 章）")
+    print(f"[CatalogParser] 成功生成 {output_path}：書名【{res['book_title']}】，選取範圍 {start_chap} 至 {min(total, end_chap)} 章（實際處理 {len(selected_chapters)} 章，全書 {total} 章）")
     return config_data
 
 
-def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=5):
+def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=5, exclude_chapters=None):
     """
     解析目錄並計算每台 GitHub Actions worker 負責的章節子集。
     回傳符合 GitHub Actions matrix 格式的 dict：
       { "include": [ {"worker_id": 0, "start_global_idx": 1, "chapters_json": "[...]"}, ... ] }
     同時也回傳 total_workers。
     """
+    if exclude_chapters is None:
+        exclude_chapters = []
+
     res = parse_catalog(catalog_url)
     if not res["success"] or res["total_chapters"] == 0:
         raise ValueError("無法解析章節或章節清單為空！")
@@ -124,11 +137,21 @@ def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=
     total = res["total_chapters"]
     start_idx = max(1, start_chap) - 1          # 轉為 0-based
     end_idx   = min(total, end_chap)             # 0-based exclusive
-    selected  = res["chapters"][start_idx:end_idx]
     
+    # 建立過濾後的章節列表，保留真實的 1-based index (因為 worker 處理時可能需要)
+    # 不過原本設計 `chapters_json` 只傳 chunk，所以只過濾即可
+    selected = []
+    # 為了能正確計算 start_global_idx，我們需要連同真實的 global_idx 一起記錄
+    # 但是 worker_pipeline.py 是怎麼利用 start_global_idx 的？
+    # 它用來命名輸出檔案！所以每一章的真實 global_idx 很重要。
+    selected_with_idx = []
+    for i in range(start_idx, end_idx):
+        if (i + 1) not in exclude_chapters:
+            selected_with_idx.append({"url": res["chapters"][i], "global_idx": i + 1})
+
     # 自動調整 chapters_per_worker 避免超過 GitHub Actions 的 Matrix 256 上限
     MAX_WORKERS = 250
-    total_selected = len(selected)
+    total_selected = len(selected_with_idx)
     if total_selected > 0:
         required_workers = math.ceil(total_selected / chapters_per_worker)
         if required_workers > MAX_WORKERS:
@@ -136,12 +159,21 @@ def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=
             print(f"[CatalogParser] 警告：超過 GitHub Actions matrix 上限(256)，自動調整每台機器處理章節數為 {chapters_per_worker}")
 
     includes = []
-    for i in range(0, len(selected), chapters_per_worker):
-        chunk = selected[i : i + chapters_per_worker]
+    for i in range(0, len(selected_with_idx), chapters_per_worker):
+        chunk_items = selected_with_idx[i : i + chapters_per_worker]
+        # 只取出 url 作為 chunk
+        chunk_urls = [item["url"] for item in chunk_items]
+        # worker 會用 start_global_idx 當作第一章的編號，所以如果是非連續的，worker_pipeline.py 會把章節編號算錯！
+        # 必須注意：如果 worker_pipeline 假設章節是連續的 (idx = start_global_idx + i)，那麼排除章節後就會對不起來！
+        # 但既然原本的架構是以 URL 為主，若這裡改變可能會動到 worker_pipeline.py，我們等等要確認。
         includes.append({
             "worker_id":       len(includes),
-            "start_global_idx": start_idx + i + 1,   # 1-based 全域索引
-            "chapters_json":   json.dumps(chunk, ensure_ascii=False)
+            # 我們將第一個項目的 global_idx 傳過去，但由於可能不連續，這在 worker 端可能會有問題... 
+            # 這裡先保留原本介面，後面需修正 worker_pipeline.py。
+            "start_global_idx": chunk_items[0]["global_idx"],   
+            "chapters_json":   json.dumps(chunk_urls, ensure_ascii=False),
+            # 我們新增傳遞 exact_indices 來提供精準的章節編號
+            "exact_indices": json.dumps([item["global_idx"] for item in chunk_items])
         })
 
     matrix = {"include": includes}
@@ -158,12 +190,20 @@ if __name__ == "__main__":
     parser.add_argument("--output",         type=str, default="config.yaml", help="Output YAML config path")
     parser.add_argument("--workers",        type=int, default=0,  help="Chapters per worker (0 = single job mode)")
     parser.add_argument("--matrix-output",  type=str, default="", help="Path to write matrix JSON (for GitHub Actions)")
+    parser.add_argument("--exclude-chapters", type=str, default="", help="Comma separated 1-based indices to exclude")
     args = parser.parse_args()
 
-    generate_config_yaml(args.url, args.start, args.end, args.output)
+    exclude_list = []
+    if args.exclude_chapters:
+        try:
+            exclude_list = [int(x.strip()) for x in args.exclude_chapters.split(",") if x.strip()]
+        except ValueError:
+            pass
+
+    generate_config_yaml(args.url, args.start, args.end, args.output, exclude_chapters=exclude_list)
 
     if args.workers > 0 and args.matrix_output:
-        matrix, _ = generate_matrix(args.url, args.start, args.end, args.workers)
+        matrix, _ = generate_matrix(args.url, args.start, args.end, args.workers, exclude_chapters=exclude_list)
         with open(args.matrix_output, "w", encoding="utf-8") as f:
             json.dump(matrix, f, ensure_ascii=False)
         print(f"[CatalogParser] Matrix JSON 已寫入 {args.matrix_output} ({len(matrix['include'])} workers)")

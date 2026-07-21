@@ -15,6 +15,10 @@ on:
         description: '結束章節 (End Chapter, 1-based)'
         required: true
         default: '10'
+      exclude_chapters:
+        description: '排除章節的編號 (逗號分隔，如 12,105,106)'
+        required: false
+        default: ''
       chapters_per_worker:
         description: '每台工作機負責的章節數 (預設 5，最多 20 台並行)'
         required: true
@@ -55,7 +59,8 @@ jobs:
             --end   ${{ github.event.inputs.end_chap }} \
             --output config.yaml \
             --workers ${{ github.event.inputs.chapters_per_worker }} \
-            --matrix-output matrix.json
+            --matrix-output matrix.json \
+            --exclude-chapters "${{ github.event.inputs.exclude_chapters }}"
 
       - name: Export matrix to GitHub Actions output
         id: gen_matrix
@@ -98,7 +103,8 @@ jobs:
             --stage crawl \
             --worker-id ${{ matrix.worker_id }} \
             --start-global-idx ${{ matrix.start_global_idx }} \
-            --chapters-json '${{ matrix.chapters_json }}'
+            --chapters-json '${{ matrix.chapters_json }}' \
+            --exact-indices '${{ matrix.exact_indices }}'
 
       - name: Upload raw text artifact
         uses: actions/upload-artifact@v4
@@ -144,7 +150,8 @@ jobs:
             --stage clean \
             --worker-id ${{ matrix.worker_id }} \
             --start-global-idx ${{ matrix.start_global_idx }} \
-            --chapters-json '${{ matrix.chapters_json }}'
+            --chapters-json '${{ matrix.chapters_json }}' \
+            --exact-indices '${{ matrix.exact_indices }}'
 
       - name: Upload clean text artifact
         uses: actions/upload-artifact@v4
@@ -195,7 +202,8 @@ jobs:
             --stage tts \
             --worker-id ${{ matrix.worker_id }} \
             --start-global-idx ${{ matrix.start_global_idx }} \
-            --chapters-json '${{ matrix.chapters_json }}'
+            --chapters-json '${{ matrix.chapters_json }}' \
+            --exact-indices '${{ matrix.exact_indices }}'
 
       - name: Upload audio artifact
         uses: actions/upload-artifact@v4
@@ -246,7 +254,8 @@ jobs:
             --stage image_gen \
             --worker-id ${{ matrix.worker_id }} \
             --start-global-idx ${{ matrix.start_global_idx }} \
-            --chapters-json '${{ matrix.chapters_json }}'
+            --chapters-json '${{ matrix.chapters_json }}' \
+            --exact-indices '${{ matrix.exact_indices }}'
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v4

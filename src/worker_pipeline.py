@@ -87,6 +87,8 @@ def main():
                         help="1-based global chapter index for the first chapter in this worker's batch")
     parser.add_argument("--chapters-json",    type=str, default="[]",
                         help="JSON list of chapter URL paths (e.g. [\"/Book/Read/1644,409280\", ...])")
+    parser.add_argument("--exact-indices",    type=str, default="",
+                        help="JSON list of exact global indices for the chapters (e.g. [1, 2, 4, 5])")
     parser.add_argument("--config",           type=str, default="",
                         help="Path to config.yaml (defaults to ../config.yaml relative to src/)")
     args = parser.parse_args()
@@ -98,12 +100,13 @@ def main():
     config = load_config(config_path)
 
     chapters = json.loads(args.chapters_json)
+    exact_indices = json.loads(args.exact_indices) if args.exact_indices else None
     logging.info(f"Assigned chapters: {len(chapters)} 章  (global idx {args.start_global_idx} ~ {args.start_global_idx + len(chapters) - 1})")
 
     stage = args.stage
 
     if stage == "crawl":
-        stage_crawl(config, chapters, args.start_global_idx)
+        stage_crawl(config, chapters, args.start_global_idx, exact_indices)
 
     elif stage == "clean":
         stage_clean(config)

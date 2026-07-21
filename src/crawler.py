@@ -94,7 +94,7 @@ if __name__ == "__main__":
     run_crawler()
 
 
-def run_crawler_worker(config, chapters, start_global_idx=1):
+def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None):
     """
     Matrix worker 專用版本：接收明確的章節 URL 列表與全域起始索引。
     檔名格式: {book_title}_chapter_{global_idx}_raw.txt
@@ -122,7 +122,10 @@ def run_crawler_worker(config, chapters, start_global_idx=1):
     ]
 
     for local_i, chap_url in enumerate(chapters):
-        global_idx = start_global_idx + local_i   # 全域章節索引（1-based）
+        if exact_indices and local_i < len(exact_indices):
+            global_idx = exact_indices[local_i]
+        else:
+            global_idx = start_global_idx + local_i   # 退回原本的推算方式
 
         if chap_url in scraped_chapters:
             logging.info(f"[Crawler Worker] Skipping already scraped chapter {global_idx}: {chap_url}")
