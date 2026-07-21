@@ -160,6 +160,8 @@ jobs:
       - name: Direct Stream to YouTube Live
         env:
           YOUTUBE_STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+          YOUTUBE_STREAM_KEY_2: ${{ secrets.YOUTUBE_STREAM_KEY_2 }}
+          YOUTUBE_STREAM_KEY_3: ${{ secrets.YOUTUBE_STREAM_KEY_3 }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python src/stream_to_youtube.py --run-id "${{ github.run_id }}" --repo "${{ github.repository }}"
