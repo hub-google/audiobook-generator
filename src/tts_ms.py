@@ -31,16 +31,50 @@ def get_ffmpeg_path():
     return "ffmpeg"
 
 
-async def _generate_one_segment(semaphore, text, mp3_path, part_label, voice, max_retries=3):
+import re
+
+def sanitize_text(text):
+    if not text:
+        return ""
+    # 移除不可見與控制字元 (Unicode zero-width spaces, BOM, control characters)
+    text = re.sub(r'[\u200b\u200c\u200d\u200e\u200f\ufeff\x00-\x1f\x7f]', '', text)
+    # 將可能干擾 SSML / XML 的符號替換為全形符號
+    text = text.replace('<', '＜').replace('>', '＞').replace('&', '＆')
+    return text.strip()
+
+
+def create_silent_wav(wav_path, ffmpeg_path="ffmpeg", duration=1.5):
+    """當某段落連跑 3 次均因微軟敏感詞審查失敗時，自動生成 1.5s 靜音 WAV 墊檔。"""
+    try:
+        cmd = [
+            ffmpeg_path, "-y",
+            "-f", "lavfi",
+            "-i", "anullsrc=r=24000:cl=mono",
+            "-t", str(duration),
+            wav_path
+        ]
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return os.path.exists(wav_path) and os.path.getsize(wav_path) > 100
+    except Exception as e:
+        logging.error(f"[TTS_MS] 生成靜音 WAV 墊檔失敗: {e}")
+        return False
+
+
+async def _generate_one_segment(semaphore, text, mp3_path, wav_path, part_label, voice, ffmpeg_path="ffmpeg", max_retries=3):
     """
     非同步生成單一段落的 Edge-TTS MP3。
     使用 Semaphore 限制最大並行數，失敗時最多重試 max_retries 次。
-    回傳 True 表示成功，False 表示最終失敗。
+    若全部失敗（如觸發微軟敏感詞過濾），自動改用 1.5s 靜音 WAV 墊檔容錯。
     """
+    clean_t = sanitize_text(text)
+    if not clean_t:
+        create_silent_wav(wav_path, ffmpeg_path, duration=1.0)
+        return True
+
     async with semaphore:
         for attempt in range(max_retries):
             try:
-                communicate = edge_tts.Communicate(text, voice)
+                communicate = edge_tts.Communicate(clean_t, voice)
                 await communicate.save(mp3_path)
                 # 確認產出的 MP3 不是空檔
                 if os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 100:
@@ -59,7 +93,13 @@ async def _generate_one_segment(semaphore, text, mp3_path, part_label, voice, ma
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2.0)  # 重試前稍等，避免過度轟炸服務
 
-        logging.error(f"[TTS_MS] ✗ {part_label} 全部 {max_retries} 次嘗試均失敗")
+        # ── 靜音墊檔容錯 (Silent Audio Fallback) ──
+        logging.warning(f"[TTS_MS] ⚠️ {part_label} 觸發微軟敏感詞過濾或格式錯誤，自動生成 1.5s 靜音墊檔容錯...")
+        if create_silent_wav(wav_path, ffmpeg_path, duration=1.5):
+            logging.info(f"[TTS_MS] ✓ {part_label} 靜音墊檔生成成功")
+            return True
+
+        logging.error(f"[TTS_MS] ✗ {part_label} 全部 {max_retries} 次嘗試與靜音容錯均失敗")
         return False
 
 
@@ -102,75 +142,46 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice,
             # 清除殘留的不完整 WAV
             if os.path.exists(wav_path):
                 os.remove(wav_path)
-            coros.append(_generate_one_segment(semaphore, text, mp3_path, part_label, voice, max_retries))
+            coros.append(_generate_one_segment(semaphore, text, mp3_path, wav_path, part_label, voice, ffmpeg_path, max_retries))
             skip_flags.append(False)
 
     # 並行執行所有 TTS 請求
     pending_coros = [(i, c) for i, (c, skip) in enumerate(zip(coros, skip_flags)) if not skip]
     if pending_coros:
         logging.info(f"[TTS_MS] 第 {chap_num} 章：並行生成 {len(pending_coros)} 段語音 (並行={max_concurrency})")
-        results = await asyncio.gather(*[c for _, c in pending_coros])
-        # 將結果對應回 coros 陣列
-        result_map = {idx: res for (idx, _), res in zip(pending_coros, results)}
-        # 檢查是否有任何段落失敗
-        failed_count = sum(1 for res in results if not res)
-        if failed_count > 0:
-            logging.error(
-                f"[TTS_MS] ✗ 第 {chap_num} 章有 {failed_count} 個段落 TTS 失敗，"
-                f"放棄本章，避免拼接不完整音訊！"
-            )
-            # 清除所有已生成的暫存檔
-            for _, mp3_path, wav_path, _ in task_metas:
-                for p in [mp3_path, wav_path]:
-                    if os.path.exists(p):
-                        try:
-                            os.remove(p)
-                        except Exception:
-                            pass
-            return [], []
-    else:
-        result_map = {}
+        await asyncio.gather(*[c for _, c in pending_coros])
 
-    # 所有 TTS 成功，將 MP3 轉換為 WAV
-    generated_parts = []
-    valid_lines = []
+    # 將本輪成功的 MP3 轉為 WAV，並保留已成功的段落 WAV 快取
     for i, (text, mp3_path, wav_path, part_label) in enumerate(task_metas):
-        if skip_flags[i]:
-            # 已有完整 WAV，直接加入
-            generated_parts.append(wav_path)
-            valid_lines.append(text)
-        else:
-            # 需要將 MP3 轉成 WAV
-            if not os.path.exists(mp3_path):
-                logging.error(f"[TTS_MS] ✗ {part_label} MP3 不存在，整章放棄")
-                # 清除已轉換的
-                for p in generated_parts:
-                    if os.path.exists(p):
-                        try:
-                            os.remove(p)
-                        except Exception:
-                            pass
-                return [], []
+        if not skip_flags[i] and os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 100:
             try:
                 subprocess.run(
                     [ffmpeg_path, "-y", "-i", mp3_path, wav_path],
                     check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
-                # 確認轉換後 WAV 不是空的
-                if not os.path.exists(wav_path) or os.path.getsize(wav_path) < 100:
-                    raise ValueError("轉換後的 WAV 是空檔")
-                os.remove(mp3_path)
-                generated_parts.append(wav_path)
-                valid_lines.append(text)
+                if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
+                    os.remove(mp3_path)
             except Exception as e:
-                logging.error(f"[TTS_MS] ✗ {part_label} MP3→WAV 轉換失敗: {e}，整章放棄")
-                for p in [mp3_path] + generated_parts:
-                    if os.path.exists(p):
-                        try:
-                            os.remove(p)
-                        except Exception:
-                            pass
-                return [], []
+                logging.error(f"[TTS_MS] ✗ {part_label} MP3→WAV 轉換失敗: {e}")
+
+    # 檢查是否所有段落的 WAV 均已備齊
+    generated_parts = []
+    valid_lines = []
+    missing_count = 0
+
+    for text, mp3_path, wav_path, part_label in task_metas:
+        if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
+            generated_parts.append(wav_path)
+            valid_lines.append(text)
+        else:
+            missing_count += 1
+
+    if missing_count > 0:
+        logging.warning(
+            f"[TTS_MS] ⚠️ 第 {chap_num} 章有 {missing_count} 個段落未完成 TTS。"
+            f"已成功的 {len(generated_parts)} 段已保留 WAV 快取，下一次重試將僅重派失敗段落。"
+        )
+        return [], []
 
     return generated_parts, valid_lines
 
@@ -239,18 +250,8 @@ def run_tts_ms():
         for chapter_attempt in range(1, CHAPTER_MAX_ATTEMPTS + 1):
             if chapter_attempt > 1:
                 logging.warning(
-                    f"[TTS_MS] ↻ 第 {chap_num} 章 第 {chapter_attempt}/{CHAPTER_MAX_ATTEMPTS} 次整章重試..."
+                    f"[TTS_MS] ↻ 第 {chap_num} 章 第 {chapter_attempt}/{CHAPTER_MAX_ATTEMPTS} 次增量重試..."
                 )
-                # 清除上一次嘗試殘留的暫存 part 檔，確保從乾淨狀態開始
-                import glob as _glob
-                stale_parts = _glob.glob(os.path.join(
-                    audio_dir, f"{book_title}_chapter_{chap_num}_tmp_part_*"
-                ))
-                for sp in stale_parts:
-                    try:
-                        os.remove(sp)
-                    except Exception:
-                        pass
 
             logging.info(
                 f"[TTS_MS] ▶ 第 {chap_num} 章 嘗試 {chapter_attempt}/{CHAPTER_MAX_ATTEMPTS} "
@@ -365,6 +366,16 @@ def run_tts_ms():
             logging.error(
                 f"[TTS_MS] ❌ 第 {chap_num} 章經過 {CHAPTER_MAX_ATTEMPTS} 次完整嘗試仍失敗，放棄！"
             )
+            # 清理該章所有殘留的暫存 part 檔
+            import glob as _glob
+            stale_parts = _glob.glob(os.path.join(
+                audio_dir, f"{book_title}_chapter_{chap_num}_tmp_part_*"
+            ))
+            for sp in stale_parts:
+                try:
+                    os.remove(sp)
+                except Exception:
+                    pass
             failed_chapters.add(int(chap_num))
 
     return succeeded_chapters, failed_chapters

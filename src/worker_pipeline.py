@@ -258,6 +258,7 @@ def main():
 
             if all_mp4_exist:
                 logging.info(f"=== [Worker-{args.worker_id}] ⚡ 第 {sub_indices[0]}~{sub_indices[-1]} 章 MP4 影片已全數生成過，自動跳過此批次！ ===")
+                logging.info(f"[PROGRESS_MARKER] Worker-{args.worker_id} | Ch {sub_indices[0]}~{sub_indices[-1]} done ({i + len(sub_indices)}/{total_in_worker})")
                 continue
 
             logging.info(f"=== [Worker-{args.worker_id}] ▶️ 開始執行批次：第 {sub_indices[0]}~{sub_indices[-1]} 章 ({len(sub_indices)} 章) 一條龍合成 ===")
@@ -269,6 +270,7 @@ def main():
             stage_image_gen(config)
             stage_video_gen(config)
             logging.info(f"=== [Worker-{args.worker_id}] ✅ 批次完成：第 {sub_indices[0]}~{sub_indices[-1]} 章 MP4 影片已實打實寫入 Workspace/！ ===")
+            logging.info(f"[PROGRESS_MARKER] Worker-{args.worker_id} | Ch {sub_indices[0]}~{sub_indices[-1]} done ({i + len(sub_indices)}/{total_in_worker})")
 
         # 最終完成度驗收
         logging.info(f"=== [Worker-{args.worker_id}] 執行最終完成度驗收 ===")
