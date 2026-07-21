@@ -27,8 +27,8 @@ on:
 permissions:
   contents: write
 
-env:
-  # GCP_CREDENTIALS removed
+# env:
+#   # GCP_CREDENTIALS removed
 
 # ─────────────────────────────────────────────────────────────
 # Stage 0: setup — 解析章節目錄，生成 config.yaml + matrix JSON
