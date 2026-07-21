@@ -1,6 +1,8 @@
 import os
 import sys
 import re
+import urllib.parse
+import requests
 import logging
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
@@ -28,18 +30,63 @@ def get_font(size):
                 continue
     return ImageFont.load_default()
 
+def clean_pure_plot_summary(text):
+    if not text:
+        return ""
+    sentences = re.split(r'[。！!？?\n]', text)
+    meta_keywords = ["連載", "出版", "出版社", "字數", "改編", "動畫", "影視", "起點", "年", "月", "日", "英譯", "Wuxiaworld", "作者", "繁體", "簡體"]
+    clean_sentences = []
+    for s in sentences:
+        s = s.strip()
+        if len(s) < 5:
+            continue
+        if not any(k in s for k in meta_keywords):
+            clean_sentences.append(s)
+    if clean_sentences:
+        return "。".join(clean_sentences) + "。"
+    return text
+
+def fetch_book_summary_online(book_title):
+    """依照 test_ai_cover.py 邏輯，從網路搜尋該小說的「整體完整劇情大綱」"""
+    logging.info(f"正在搜尋《{book_title}》的整體小說劇情大綱與簡介...")
+    raw_summary = ""
+    
+    # 嘗試 1: 中文維基百科 REST API
+    try:
+        url = f"https://zh.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(book_title)}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        res = requests.get(url, headers=headers, timeout=8)
+        if res.status_code == 200:
+            extract = res.json().get("extract", "")
+            if extract:
+                raw_summary = extract
+    except Exception as e:
+        logging.debug(f"[維基百科略過]: {e}")
+
+    # 嘗試 2: DuckDuckGo 搜尋
+    if not raw_summary:
+        try:
+            ddg_url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(book_title + ' 小說 劇情簡介')}&format=json&no_html=1"
+            res = requests.get(ddg_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+            if res.status_code == 200:
+                extract = res.json().get("AbstractText", "")
+                if extract:
+                    raw_summary = extract
+        except Exception:
+            pass
+
+    pure_plot = clean_pure_plot_summary(raw_summary)
+    if not pure_plot:
+        pure_plot = f"講述《{book_title}》主角踏上充滿考驗與驚險的冒險旅程，精彩劇情高潮疊起、扣人心弦。"
+    
+    return pure_plot
+
 def generate_video_title(book_title, start_chap=1, end_chap=2400):
     return f"《{book_title}》| 已完結 | 第 {start_chap}~{end_chap} 章 (超長有聲小說全集)"
 
-def generate_video_description(book_title, start_chap=1, end_chap=2400, sample_text=""):
-    plot_summary = ""
-    if sample_text:
-        sentences = [s.strip() for s in re.split(r'[。！!？?\n]', sample_text) if len(s.strip()) > 10]
-        if sentences:
-            plot_summary = "。".join(sentences[:3]) + "。"
-
-    if not plot_summary:
-        plot_summary = f"《{book_title}》講述了一段波瀾壯闊的傳奇故事，精彩章節連播不間斷，帶您沉浸式體驗有聲小說的無限魅力。"
+def generate_video_description(book_title, start_chap=1, end_chap=2400):
+    # 使用 test_ai_cover.py 的整體小說劇情簡介獲取邏輯
+    pure_plot = fetch_book_summary_online(book_title)
 
     desc = f"""【超長有聲小說大合集】《{book_title}》全集收聽
 
@@ -47,8 +94,8 @@ def generate_video_description(book_title, start_chap=1, end_chap=2400, sample_t
 📌 包含章節：第 {start_chap} 章 至 第 {end_chap} 章 (全集完結)
 🎧 播放長度：完整連續播放無中斷
 
-【故事簡介與劇情大綱】：
-{plot_summary}
+【故事整體大綱簡介】：
+{pure_plot}
 
 💡 提示：本影片由全自動 AI 有聲書系統自動生成與排版，歡迎訂閱、點讚與分享！
 """
@@ -56,31 +103,24 @@ def generate_video_description(book_title, start_chap=1, end_chap=2400, sample_t
 
 def generate_youtube_cover(book_title, start_chap=1, end_chap=2400, output_path="youtube_cover.jpg"):
     width, height = 1280, 720
-    # Create dark gradient background
     img = Image.new("RGB", (width, height), color=(18, 24, 38))
     draw = ImageDraw.Draw(img)
 
-    # Decorative borders & inner glow box
     draw.rectangle([30, 30, width - 30, height - 30], outline=(212, 175, 55), width=4)
     draw.rectangle([45, 45, width - 45, height - 45], outline=(100, 120, 160), width=2)
 
-    # Title font
     title_font = get_font(72)
     sub_font = get_font(42)
     tag_font = get_font(32)
 
-    # Main Book Title
     draw.text((width // 2, 220), f"《{book_title}》", font=title_font, fill=(255, 235, 170), anchor="mm")
 
-    # Status Tag Box
     tag_text = "【 已完結 ‧ 超長有聲書全集 】"
     draw.text((width // 2, 340), tag_text, font=sub_font, fill=(212, 175, 55), anchor="mm")
 
-    # Chapter range text
     chap_text = f"收錄範圍：第 {start_chap} 章 ～ 第 {end_chap} 章"
     draw.text((width // 2, 450), chap_text, font=sub_font, fill=(220, 230, 245), anchor="mm")
 
-    # Footer note
     draw.text((width // 2, 600), "高清音質 ‧ 無縫連播 ‧ 免費收聽", font=tag_font, fill=(160, 180, 200), anchor="mm")
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
@@ -89,7 +129,6 @@ def generate_youtube_cover(book_title, start_chap=1, end_chap=2400, output_path=
     return output_path
 
 def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=None):
-    """將標題、簡介與封面圖完整儲存在 Workspace/{book_title}/ 目錄下"""
     if not workspace_dir:
         SRC_DIR = os.path.dirname(os.path.abspath(__file__))
         workspace_dir = os.path.abspath(os.path.join(SRC_DIR, "..", "Workspace", book_title))
@@ -126,4 +165,3 @@ def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=No
 
 if __name__ == "__main__":
     save_book_metadata("凡人修仙傳", 1, 2442)
-
