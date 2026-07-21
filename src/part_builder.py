@@ -74,6 +74,18 @@ def get_media_duration(file_path):
             return float(res.stdout.strip())
     except Exception as e:
         logging.warning(f"ffprobe 無法讀取時長 {file_path}: {e}")
+
+    # fallback 2: ffmpeg -i 解析 Duration
+    try:
+        cmd_ffmpeg = [FFMPEG_PATH, "-i", file_path]
+        res_ff = subprocess.run(cmd_ffmpeg, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        m = re.search(r'Duration:\s*(\d+):(\d+):(\d+\.\d+)', res_ff.stderr)
+        if m:
+            h, m_m, s = float(m.group(1)), float(m.group(2)), float(m.group(3))
+            return h * 3600.0 + m_m * 60.0 + s
+    except Exception:
+        pass
+
     return 0.0
 
 def format_timestamp(seconds):
