@@ -181,13 +181,16 @@ def main():
         logging.error("Must specify --download or --upload")
         return
 
-    # Read config to get book title
+    # Read config to get book title and gdrive_folder_id
     book_title = "Unknown_Book"
+    gdrive_folder_id = None
     if os.path.exists(args.config):
         with open(args.config, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
             if cfg and "book_title" in cfg:
                 book_title = cfg["book_title"]
+            if cfg and "gdrive_folder_id" in cfg and cfg["gdrive_folder_id"]:
+                gdrive_folder_id = cfg["gdrive_folder_id"]
     
     local_workspace = os.path.join("Workspace", book_title)
     
@@ -197,8 +200,11 @@ def main():
 
     service = get_drive_service()
     
-    # 1. Find or create 'Audiobook_Cache'
-    cache_root_id = find_or_create_folder(service, "Audiobook_Cache")
+    # 1. Use user-provided folder ID or fallback to creating at root
+    if gdrive_folder_id:
+        cache_root_id = gdrive_folder_id
+    else:
+        cache_root_id = find_or_create_folder(service, "Audiobook_Cache")
     
     # 2. Find or create book folder inside cache
     book_folder_id = find_or_create_folder(service, book_title, parent_id=cache_root_id)
