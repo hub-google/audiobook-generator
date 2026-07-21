@@ -436,20 +436,24 @@ jobs:
       - name: Merge MP4 and Create ZIP
         run: |
           # Read book_title from config.yaml
-          BOOK_TITLE=$(grep -oP '(?<=^book_title: ).*' config.yaml | tr -d '\r')
-          echo "Book title is: $BOOK_TITLE"
-          echo "BOOK_TITLE=${BOOK_TITLE}" >> $GITHUB_ENV
+          RAW_BOOK_TITLE=$(grep -oP '(?<=^book_title: ).*' config.yaml | tr -d '\r' | tr -d '"' | tr -d "'")
+          echo "Raw Book title is: $RAW_BOOK_TITLE"
+          
+          # URL encode book title for GitHub Release asset compatibility
+          ENCODED_TITLE=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$RAW_BOOK_TITLE'''))")
+          echo "Encoded title is: $ENCODED_TITLE"
+          echo "BOOK_TITLE=${ENCODED_TITLE}" >> $GITHUB_ENV
           
           # Go to Video directory inside the specific book's workspace
-          cd "final_workspace/Workspace/$BOOK_TITLE/Video/"
+          cd "final_workspace/Workspace/$RAW_BOOK_TITLE/Video/"
           
           echo "=== Generating concat list ==="
           find . -name "*.mp4" | sort -V > files.txt
           cat files.txt | while read file; do echo "file '$file'" >> concat.txt; done
           
           echo "=== Running FFmpeg concat ==="
-          mkdir -p "../../../Output/$BOOK_TITLE"
-          ffmpeg -y -f concat -safe 0 -i concat.txt -c copy "../../../Output/$BOOK_TITLE/${BOOK_TITLE}_full.mp4"
+          mkdir -p "../../../Output/$RAW_BOOK_TITLE"
+          ffmpeg -y -f concat -safe 0 -i concat.txt -c copy "../../../Output/$RAW_BOOK_TITLE/${RAW_BOOK_TITLE}_full.mp4"
           
           ZIP_PASS="${{ secrets.ZIP_PASSWORD }}"
           if [ -z "$ZIP_PASS" ]; then
@@ -460,10 +464,10 @@ jobs:
           cd ../../../
           if [ -n "$ZIP_PASS" ]; then
             echo "Applying password protection..."
-            zip -P "$ZIP_PASS" -s 1900m "../${BOOK_TITLE}.zip" -r Workspace/ Output/
+            zip -P "$ZIP_PASS" -s 1900m "../${ENCODED_TITLE}.zip" -r Workspace/ Output/
           else
             echo "Creating unencrypted ZIP..."
-            zip -s 1900m "../${BOOK_TITLE}.zip" -r Workspace/ Output/
+            zip -s 1900m "../${ENCODED_TITLE}.zip" -r Workspace/ Output/
           fi
 
       - name: Create Release and Upload Asset
