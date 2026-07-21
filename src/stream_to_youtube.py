@@ -25,9 +25,14 @@ def stream_single_file_to_rtmp(video_path, rtmp_url):
     
     cmd = [
         "ffmpeg", "-y",
-        "-re",  # 保障直播穩定
+        "-re",  # 保障直播 1 倍速穩定推流
         "-i", video_path,
-        "-c:v", "copy",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-tune", "zerolatency",
+        "-r", "30",
+        "-g", "60",
+        "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
         "-ar", "44100",
