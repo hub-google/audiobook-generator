@@ -175,6 +175,7 @@ def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=
             chapters_per_worker = math.ceil(total_selected / MAX_WORKERS)
             print(f"[CatalogParser] 警告：超過 GitHub Actions matrix 上限(256)，自動調整每台機器處理章節數為 {chapters_per_worker}")
 
+    includes = []
     for i in range(0, len(selected_with_idx), chapters_per_worker):
         includes.append({
             "worker_id": len(includes)
