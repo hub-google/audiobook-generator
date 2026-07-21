@@ -98,9 +98,13 @@ def main():
 
     chapters = all_chapters[start_idx:end_idx]
     exact_indices = all_indices[start_idx:end_idx]
-    start_global_idx = exact_indices[0] if exact_indices else 1
 
     setup_logging(args.worker_id)
+    if not exact_indices:
+        logging.info(f"=== Worker {args.worker_id} has 0 chapters assigned. Exiting gracefully. ===")
+        sys.exit(0)
+
+    start_global_idx = exact_indices[0]
     logging.info(f"=== Worker {args.worker_id} | Stage: {args.stage} | Start global idx: {start_global_idx} ===")
 
     if exact_indices:

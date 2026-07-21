@@ -75,14 +75,17 @@ def parse_catalog(catalog_url):
         "total_chapters": len(chapter_urls)
     }
 
-def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="config.yaml", exclude_chapters=None, chapters_per_worker=5):
+def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="config.yaml",
+                          exclude_chapters=None, chapters_per_worker=5,
+                          parsed_result=None):
     """
-    根據解析結果生成 config.yaml 檔案
+    根據解析結果生成 config.yaml 檔案。
+    parsed_result: 可傳入已爬取的 parse_catalog() 結果，避免重複爬取。
     """
     if exclude_chapters is None:
         exclude_chapters = []
 
-    res = parse_catalog(catalog_url)
+    res = parsed_result if parsed_result is not None else parse_catalog(catalog_url)
     if not res["success"] or res["total_chapters"] == 0:
         raise ValueError("無法解析章節或章節清單為空！")
 
@@ -132,17 +135,19 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
     return config_data
 
 
-def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=5, exclude_chapters=None):
+def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=5,
+                    exclude_chapters=None, parsed_result=None):
     """
     解析目錄並計算每台 GitHub Actions worker 負責的章節子集。
     回傳符合 GitHub Actions matrix 格式的 dict：
-      { "include": [ {"worker_id": 0, "start_global_idx": 1, "chapters_json": "[...]"}, ... ] }
-    同時也回傳 total_workers。
+      { "include": [ {"worker_id": 0}, ... ] }
+    同時也回傳 (matrix, book_title, effective_chapters_per_worker)。
+    parsed_result: 可傳入已爬取的 parse_catalog() 結果，避免重複爬取。
     """
     if exclude_chapters is None:
         exclude_chapters = []
 
-    res = parse_catalog(catalog_url)
+    res = parsed_result if parsed_result is not None else parse_catalog(catalog_url)
     if not res["success"] or res["total_chapters"] == 0:
         raise ValueError("無法解析章節或章節清單為空！")
 
@@ -183,7 +188,8 @@ def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=
 
     matrix = {"include": includes}
     print(f"[CatalogParser] Matrix: {len(includes)} workers，每台最多 {chapters_per_worker} 章，共 {total_selected} 章待處理")
-    return matrix, res["book_title"]
+    # 回傳 effective chapters_per_worker 以便呼叫端同步更新 config.yaml
+    return matrix, res["book_title"], chapters_per_worker
 
 
 if __name__ == "__main__":
@@ -205,10 +211,29 @@ if __name__ == "__main__":
         except ValueError:
             pass
 
-    generate_config_yaml(args.url, args.start, args.end, args.output, exclude_chapters=exclude_list, chapters_per_worker=args.workers if args.workers > 0 else 5)
+    chapters_per_worker_input = args.workers if args.workers > 0 else 5
 
+    # ── 只爬取一次目錄，共用於 config 與 matrix ──
+    print(f"[CatalogParser] 正在解析目錄：{args.url}")
+    parsed = parse_catalog(args.url)
+
+    # ── 若需要 matrix，先計算以取得可能自動調整後的 chapters_per_worker ──
+    effective_cpw = chapters_per_worker_input
     if args.workers > 0 and args.matrix_output:
-        matrix, _ = generate_matrix(args.url, args.start, args.end, args.workers, exclude_chapters=exclude_list)
+        matrix, _, effective_cpw = generate_matrix(
+            args.url, args.start, args.end,
+            chapters_per_worker_input,
+            exclude_chapters=exclude_list,
+            parsed_result=parsed
+        )
         with open(args.matrix_output, "w", encoding="utf-8") as f:
             json.dump(matrix, f, ensure_ascii=False)
         print(f"[CatalogParser] Matrix JSON 已寫入 {args.matrix_output} ({len(matrix['include'])} workers)")
+
+    # ── 生成 config.yaml，使用調整後的 effective_cpw 確保兩者一致 ──
+    generate_config_yaml(
+        args.url, args.start, args.end, args.output,
+        exclude_chapters=exclude_list,
+        chapters_per_worker=effective_cpw,
+        parsed_result=parsed
+    )

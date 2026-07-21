@@ -22,7 +22,8 @@ def get_drive_service():
             with open(local_key, "r", encoding="utf-8") as f:
                 creds_json = f.read()
         else:
-            raise ValueError("GCP_CREDENTIALS environment variable not set.")
+            logging.error("GCP_CREDENTIALS environment variable not set and no local fallback found.")
+            exit(1)
     
     creds_dict = json.loads(creds_json)
     creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
