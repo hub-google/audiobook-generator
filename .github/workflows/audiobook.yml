@@ -353,7 +353,12 @@ jobs:
           # Read book_title from config.yaml
           BOOK_TITLE=$(grep -oP '(?<=^book_title: ).*' config.yaml | tr -d '\r')
           echo "Book title is: $BOOK_TITLE"
+          
+          # URL encode book_title for browser download compatibility (fixes GitHub Release default.zip download issue with UTF-8 filenames)
+          ENCODED_TITLE=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$BOOK_TITLE")
+          
           echo "ZIP_NAME=${BOOK_TITLE}.zip" >> $GITHUB_ENV
+          echo "ENCODED_ZIP_NAME=${ENCODED_TITLE}.zip" >> $GITHUB_ENV
           
           # Go to Video directory inside the specific book's workspace
           cd "final_workspace/Workspace/$BOOK_TITLE/Video/"
@@ -370,13 +375,22 @@ jobs:
           cd ../../../
           # Now in final_workspace/, we zip both Workspace/ and Output/ to preserve local structure
           zip -r "../${BOOK_TITLE}.zip" Workspace/ Output/
+          if [ "${BOOK_TITLE}.zip" != "${ENCODED_TITLE}.zip" ]; then
+            cp "../${BOOK_TITLE}.zip" "../${ENCODED_TITLE}.zip"
+          fi
 
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
         with:
           tag_name: run-${{ github.run_id }}
           name: "Audiobook Output - Run ${{ github.run_id }}"
-          body: "Auto-generated audiobook files for this run. Download the ZIP file below which contains the merged MP4 and all Workspace folders."
-          files: ${{ env.ZIP_NAME }}
+          body: |
+            Auto-generated audiobook files for this run.
+            
+            💡 下載說明 / Download Note:
+            點擊 URL 編碼檔名（`%E5...zip`）下載時，瀏覽器會自動還原並儲存為中文檔名 `凡人修仙傳.zip`！
+          files: |
+            ${{ env.ZIP_NAME }}
+            ${{ env.ENCODED_ZIP_NAME }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
