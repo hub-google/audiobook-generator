@@ -31,12 +31,6 @@ on:
 permissions:
   contents: write
 
-# env:
-#   # GCP_CREDENTIALS removed
-
-# ─────────────────────────────────────────────────────────────
-# Stage 0: setup — 解析章節目錄，生成 config.yaml + matrix JSON
-# ─────────────────────────────────────────────────────────────
 jobs:
   setup:
     name: "🔍 Setup — Parse Catalog & Build Matrix"
@@ -84,258 +78,11 @@ jobs:
           path: config.yaml
 
 # ─────────────────────────────────────────────────────────────
-# Stage 1: crawl — 並行爬取各章節原始文字
+# Worker Pipeline: 並行獨立處理各 Worker 的章節 (一條龍 End-to-End)
 # ─────────────────────────────────────────────────────────────
-  crawl:
-    name: "🕷️ Crawl — Worker ${{ matrix.worker_id }}"
+  process_chapters:
+    name: "⚡ Worker ${{ matrix.worker_id }} (Ch ${{ matrix.start_chap }}~${{ matrix.end_chap }})"
     needs: setup
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install Python Dependencies
-        run: pip install -r requirements.txt
-
-      - name: Download shared config
-        uses: actions/download-artifact@v4
-        with:
-          name: shared-config
-
-      - name: Cache Worker Workspace
-        uses: actions/cache@v4
-        with:
-          path: Workspace/
-          key: ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-crawl-${{ hashFiles('config.yaml') }}
-          restore-keys: |
-            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-crawl-
-
-      - name: Log Cache Location
-        run: |
-          echo "=================================================="
-          echo "📂 斷點續傳快取路徑 (Cache Location):"
-          echo "   • 虛擬機工作目錄: Workspace/"
-          echo "   • 雲端快取管理頁: https://github.com/${{ github.repository }}/actions/caches"
-          echo "=================================================="
-
-      - name: Crawl assigned chapters
-        run: |
-          python src/worker_pipeline.py \
-            --stage crawl \
-            --worker-id ${{ matrix.worker_id }}
-
-      - name: Upload raw text artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: raw-worker-${{ matrix.worker_id }}
-          path: Workspace/
-          if-no-files-found: warn
-
-# ─────────────────────────────────────────────────────────────
-# Stage 2: clean — 並行清洗文字
-# ─────────────────────────────────────────────────────────────
-  clean:
-    name: "🧹 Clean — Worker ${{ matrix.worker_id }}"
-    needs: [setup, crawl]
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install Python Dependencies
-        run: pip install -r requirements.txt
-
-      - name: Download shared config
-        uses: actions/download-artifact@v4
-        with:
-          name: shared-config
-
-      - name: Download raw text from crawl
-        uses: actions/download-artifact@v4
-        with:
-          name: raw-worker-${{ matrix.worker_id }}
-          path: Workspace/
-
-      - name: Cache Worker Workspace
-        uses: actions/cache@v4
-        with:
-          path: Workspace/
-          key: ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-clean-${{ hashFiles('config.yaml') }}
-          restore-keys: |
-            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-clean-
-            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-crawl-
-
-      - name: Log Cache Location
-        run: |
-          echo "=================================================="
-          echo "📂 斷點續傳快取路徑 (Cache Location):"
-          echo "   • 虛擬機工作目錄: Workspace/"
-          echo "   • 雲端快取管理頁: https://github.com/${{ github.repository }}/actions/caches"
-          echo "=================================================="
-
-      - name: Clean text
-        run: |
-          python src/worker_pipeline.py \
-            --stage clean \
-            --worker-id ${{ matrix.worker_id }}
-
-      - name: Upload clean text artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: clean-worker-${{ matrix.worker_id }}
-          path: Workspace/
-          if-no-files-found: warn
-
-# ─────────────────────────────────────────────────────────────
-# Stage 3: tts — 並行 Edge TTS 語音合成
-# ─────────────────────────────────────────────────────────────
-  tts:
-    name: "🔊 TTS — Worker ${{ matrix.worker_id }}"
-    needs: [setup, clean]
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install System Deps (FFmpeg)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg
-
-      - name: Install Python Dependencies
-        run: pip install -r requirements.txt
-
-      - name: Download shared config
-        uses: actions/download-artifact@v4
-        with:
-          name: shared-config
-
-      - name: Download clean text
-        uses: actions/download-artifact@v4
-        with:
-          name: clean-worker-${{ matrix.worker_id }}
-          path: Workspace/
-
-      - name: Cache Worker Workspace
-        uses: actions/cache@v4
-        with:
-          path: Workspace/
-          key: ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-tts-${{ hashFiles('config.yaml') }}
-          restore-keys: |
-            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-tts-
-            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-clean-
-
-      - name: Log Cache Location
-        run: |
-          echo "=================================================="
-          echo "📂 斷點續傳快取路徑 (Cache Location):"
-          echo "   • 虛擬機工作目錄: Workspace/"
-          echo "   • 雲端快取管理頁: https://github.com/${{ github.repository }}/actions/caches"
-          echo "=================================================="
-
-      - name: Generate audio (Edge TTS)
-        run: |
-          python src/worker_pipeline.py \
-            --stage tts \
-            --worker-id ${{ matrix.worker_id }}
-
-      - name: Upload audio artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: audio-worker-${{ matrix.worker_id }}
-          path: Workspace/
-          if-no-files-found: warn
-
-# ─────────────────────────────────────────────────────────────
-# Stage 4: image_gen — 並行產生章節標題卡
-# ─────────────────────────────────────────────────────────────
-  image_gen:
-    name: "🖼️ Image — Worker ${{ matrix.worker_id }}"
-    needs: [setup, tts]
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install System Deps (CJK Fonts)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y fonts-noto-cjk fonts-wqy-zenhei
-
-      - name: Install Python Dependencies
-        run: pip install -r requirements.txt
-
-      - name: Download shared config
-        uses: actions/download-artifact@v4
-        with:
-          name: shared-config
-
-      - name: Download audio (for chapter discovery)
-        uses: actions/download-artifact@v4
-        with:
-          name: audio-worker-${{ matrix.worker_id }}
-          path: Workspace/
-
-      - name: Cache Worker Workspace
-        uses: actions/cache@v4
-        with:
-          path: Workspace/
-          key: ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-image-${{ hashFiles('config.yaml') }}
-          restore-keys: |
-            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-image-
-            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-tts-
-
-      - name: Log Cache Location
-        run: |
-          echo "=================================================="
-          echo "📂 斷點續傳快取路徑 (Cache Location):"
-          echo "   • 虛擬機工作目錄: Workspace/"
-          echo "   • 雲端快取管理頁: https://github.com/${{ github.repository }}/actions/caches"
-          echo "=================================================="
-
-      - name: Generate title cards
-        run: |
-          python src/worker_pipeline.py \
-            --stage image_gen \
-            --worker-id ${{ matrix.worker_id }}
-
-      - name: Upload image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: image-worker-${{ matrix.worker_id }}
-          path: Workspace/
-          if-no-files-found: warn
-
-# ─────────────────────────────────────────────────────────────
-# Stage 5: video_gen — 並行 FFmpeg 合成影片
-# ─────────────────────────────────────────────────────────────
-  video_gen:
-    name: "🎬 Video — Worker ${{ matrix.worker_id }}"
-    needs: [setup, image_gen]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -360,26 +107,13 @@ jobs:
         with:
           name: shared-config
 
-      - name: Download audio
-        uses: actions/download-artifact@v4
-        with:
-          name: audio-worker-${{ matrix.worker_id }}
-          path: Workspace/
-
-      - name: Download images
-        uses: actions/download-artifact@v4
-        with:
-          name: image-worker-${{ matrix.worker_id }}
-          path: Workspace/
-
       - name: Cache Worker Workspace
         uses: actions/cache@v4
         with:
           path: Workspace/
-          key: ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-video-${{ hashFiles('config.yaml') }}
+          key: ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-${{ hashFiles('config.yaml') }}
           restore-keys: |
-            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-video-
-            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-image-
+            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-
 
       - name: Log Cache Location
         run: |
@@ -389,13 +123,27 @@ jobs:
           echo "   • 雲端快取管理頁: https://github.com/${{ github.repository }}/actions/caches"
           echo "=================================================="
 
-      - name: Generate video (FFmpeg)
+      - name: Stage 1 - Crawl text
         run: |
-          python src/worker_pipeline.py \
-            --stage video_gen \
-            --worker-id ${{ matrix.worker_id }}
+          python src/worker_pipeline.py --stage crawl --worker-id ${{ matrix.worker_id }}
 
-      - name: Upload video artifact
+      - name: Stage 2 - Clean text
+        run: |
+          python src/worker_pipeline.py --stage clean --worker-id ${{ matrix.worker_id }}
+
+      - name: Stage 3 - Edge TTS Audio
+        run: |
+          python src/worker_pipeline.py --stage tts --worker-id ${{ matrix.worker_id }}
+
+      - name: Stage 4 - Title Cards
+        run: |
+          python src/worker_pipeline.py --stage image_gen --worker-id ${{ matrix.worker_id }}
+
+      - name: Stage 5 - FFmpeg Video
+        run: |
+          python src/worker_pipeline.py --stage video_gen --worker-id ${{ matrix.worker_id }}
+
+      - name: Upload worker finished artifact
         uses: actions/upload-artifact@v4
         with:
           name: video-worker-${{ matrix.worker_id }}
@@ -407,7 +155,7 @@ jobs:
 # ─────────────────────────────────────────────────────────────
   merge:
     name: "📦 Merge — Collect All Videos"
-    needs: video_gen
+    needs: process_chapters
     runs-on: ubuntu-latest
 
     steps:
@@ -433,7 +181,7 @@ jobs:
       - name: Download ALL worker artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: '*-worker-*'
+          pattern: 'video-worker-*'
           path: final_workspace/Workspace/
           merge-multiple: true
 
@@ -490,4 +238,3 @@ jobs:
             ${{ env.BOOK_TITLE }}.z*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
