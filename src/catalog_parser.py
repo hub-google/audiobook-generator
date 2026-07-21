@@ -182,8 +182,14 @@ def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=
 
     includes = []
     for i in range(0, len(selected_with_idx), chapters_per_worker):
+        chunk = selected_with_idx[i:i + chapters_per_worker]
+        start_c = chunk[0]["global_idx"]
+        end_c = chunk[-1]["global_idx"]
         includes.append({
-            "worker_id": len(includes)
+            "worker_id": len(includes),
+            "book_title": res["book_title"],
+            "start_chap": start_c,
+            "end_chap": end_c
         })
 
     matrix = {"include": includes}
