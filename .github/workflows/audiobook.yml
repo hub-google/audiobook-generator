@@ -133,6 +133,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: raw-worker-${{ matrix.worker_id }}
+          path: Workspace/
 
       - name: Clean text
         run: |
@@ -183,6 +184,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: clean-worker-${{ matrix.worker_id }}
+          path: Workspace/
 
       - name: Generate audio (Edge TTS)
         run: |
@@ -233,6 +235,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: audio-worker-${{ matrix.worker_id }}
+          path: Workspace/
 
       - name: Generate title cards
         run: |
@@ -283,11 +286,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: audio-worker-${{ matrix.worker_id }}
+          path: Workspace/
 
       - name: Download images
         uses: actions/download-artifact@v4
         with:
           name: image-worker-${{ matrix.worker_id }}
+          path: Workspace/
 
       - name: Generate video (FFmpeg)
         run: |
