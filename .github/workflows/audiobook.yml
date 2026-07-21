@@ -109,10 +109,7 @@ jobs:
         run: |
           python src/worker_pipeline.py \
             --stage crawl \
-            --worker-id ${{ matrix.worker_id }} \
-            --start-global-idx ${{ matrix.start_global_idx }} \
-            --chapters-json '${{ matrix.chapters_json }}' \
-            --exact-indices '${{ matrix.exact_indices }}'
+            --worker-id ${{ matrix.worker_id }}
 
       - name: Upload state to Google Drive
         run: python src/gdrive_sync.py --upload
@@ -162,10 +159,7 @@ jobs:
         run: |
           python src/worker_pipeline.py \
             --stage clean \
-            --worker-id ${{ matrix.worker_id }} \
-            --start-global-idx ${{ matrix.start_global_idx }} \
-            --chapters-json '${{ matrix.chapters_json }}' \
-            --exact-indices '${{ matrix.exact_indices }}'
+            --worker-id ${{ matrix.worker_id }}
 
       - name: Upload state to Google Drive
         run: python src/gdrive_sync.py --upload
@@ -220,10 +214,7 @@ jobs:
         run: |
           python src/worker_pipeline.py \
             --stage tts \
-            --worker-id ${{ matrix.worker_id }} \
-            --start-global-idx ${{ matrix.start_global_idx }} \
-            --chapters-json '${{ matrix.chapters_json }}' \
-            --exact-indices '${{ matrix.exact_indices }}'
+            --worker-id ${{ matrix.worker_id }}
 
       - name: Upload state to Google Drive
         run: python src/gdrive_sync.py --upload
@@ -278,10 +269,7 @@ jobs:
         run: |
           python src/worker_pipeline.py \
             --stage image_gen \
-            --worker-id ${{ matrix.worker_id }} \
-            --start-global-idx ${{ matrix.start_global_idx }} \
-            --chapters-json '${{ matrix.chapters_json }}' \
-            --exact-indices '${{ matrix.exact_indices }}'
+            --worker-id ${{ matrix.worker_id }}
 
       - name: Upload state to Google Drive
         run: python src/gdrive_sync.py --upload
@@ -342,9 +330,7 @@ jobs:
         run: |
           python src/worker_pipeline.py \
             --stage video_gen \
-            --worker-id ${{ matrix.worker_id }} \
-            --start-global-idx ${{ matrix.start_global_idx }} \
-            --chapters-json '${{ matrix.chapters_json }}'
+            --worker-id ${{ matrix.worker_id }}
 
       - name: Upload state to Google Drive
         run: python src/gdrive_sync.py --upload

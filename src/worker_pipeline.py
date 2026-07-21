@@ -4,9 +4,7 @@ worker_pipeline.py — GitHub Actions Matrix Worker 統一入口
 用法（由 audiobook.yml 的各 matrix job 呼叫）：
   python src/worker_pipeline.py \\
     --stage crawl \\
-    --worker-id 0 \\
-    --start-global-idx 1 \\
-    --chapters-json '["/Book/Read/1644,409280", "/Book/Read/1644,409281"]'
+    --worker-id 0
 
 各階段（stage）說明：
   crawl      — 爬取本 worker 負責的章節，輸出 RawText/
@@ -83,34 +81,38 @@ def main():
                         help="Pipeline stage to execute")
     parser.add_argument("--worker-id",        type=int, required=True,
                         help="Worker index (0-based)")
-    parser.add_argument("--start-global-idx", type=int, default=1,
-                        help="1-based global chapter index for the first chapter in this worker's batch")
-    parser.add_argument("--chapters-json",    type=str, default="[]",
-                        help="JSON list of chapter URL paths (e.g. [\"/Book/Read/1644,409280\", ...])")
-    parser.add_argument("--exact-indices",    type=str, default="",
-                        help="JSON list of exact global indices for the chapters (e.g. [1, 2, 4, 5])")
     parser.add_argument("--config",           type=str, default="",
                         help="Path to config.yaml (defaults to ../config.yaml relative to src/)")
     args = parser.parse_args()
 
-    setup_logging(args.worker_id)
-    logging.info(f"=== Worker {args.worker_id} | Stage: {args.stage} | Start global idx: {args.start_global_idx} ===")
-
     config_path = args.config if args.config else None
     config = load_config(config_path)
 
-    chapters = json.loads(args.chapters_json)
-    exact_indices = json.loads(args.exact_indices) if args.exact_indices else None
+    # dynamically slice chapters from config
+    chapters_per_worker = config.get("chapters_per_worker", 5)
+    all_chapters = config.get("chapters", [])
+    all_indices = config.get("selected_indices", [])
+
+    start_idx = args.worker_id * chapters_per_worker
+    end_idx = start_idx + chapters_per_worker
+
+    chapters = all_chapters[start_idx:end_idx]
+    exact_indices = all_indices[start_idx:end_idx]
+    start_global_idx = exact_indices[0] if exact_indices else 1
+
+    setup_logging(args.worker_id)
+    logging.info(f"=== Worker {args.worker_id} | Stage: {args.stage} | Start global idx: {start_global_idx} ===")
+
     if exact_indices:
         idx_display = f"global idx: {exact_indices}"
     else:
-        idx_display = f"global idx {args.start_global_idx} ~ {args.start_global_idx + len(chapters) - 1}"
+        idx_display = f"global idx {start_global_idx} ~ {start_global_idx + len(chapters) - 1}"
     logging.info(f"Assigned chapters: {len(chapters)} 章  ({idx_display})")
 
     stage = args.stage
 
     if stage == "crawl":
-        stage_crawl(config, chapters, args.start_global_idx, exact_indices)
+        stage_crawl(config, chapters, start_global_idx, exact_indices)
 
     elif stage == "clean":
         stage_clean(config)

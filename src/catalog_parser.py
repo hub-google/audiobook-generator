@@ -75,7 +75,7 @@ def parse_catalog(catalog_url):
         "total_chapters": len(chapter_urls)
     }
 
-def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="config.yaml", exclude_chapters=None):
+def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="config.yaml", exclude_chapters=None, chapters_per_worker=5):
     """
     根據解析結果生成 config.yaml 檔案
     """
@@ -114,6 +114,7 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
         "total_available_chapters": total,
         "chapters": selected_chapters,
         "selected_indices": selected_indices,  # 新增：明確記錄實際處理的章節編號
+        "chapters_per_worker": chapters_per_worker,  # 新增：讓 Worker 知道每台機器的額度
         "tts": {
             "engine": "edge-tts",
             "edge_voice": "zh-CN-YunxiNeural"
@@ -174,16 +175,9 @@ def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=
             chapters_per_worker = math.ceil(total_selected / MAX_WORKERS)
             print(f"[CatalogParser] 警告：超過 GitHub Actions matrix 上限(256)，自動調整每台機器處理章節數為 {chapters_per_worker}")
 
-    includes = []
     for i in range(0, len(selected_with_idx), chapters_per_worker):
-        chunk_items = selected_with_idx[i : i + chapters_per_worker]
-        chunk_urls  = [item["url"]        for item in chunk_items]
-        chunk_idxs  = [item["global_idx"] for item in chunk_items]
         includes.append({
-            "worker_id":        len(includes),
-            "start_global_idx": chunk_items[0]["global_idx"],
-            "chapters_json":    json.dumps(chunk_urls, ensure_ascii=False),
-            "exact_indices":    json.dumps(chunk_idxs),
+            "worker_id": len(includes)
         })
 
     matrix = {"include": includes}
@@ -210,7 +204,7 @@ if __name__ == "__main__":
         except ValueError:
             pass
 
-    generate_config_yaml(args.url, args.start, args.end, args.output, exclude_chapters=exclude_list)
+    generate_config_yaml(args.url, args.start, args.end, args.output, exclude_chapters=exclude_list, chapters_per_worker=args.workers if args.workers > 0 else 5)
 
     if args.workers > 0 and args.matrix_output:
         matrix, _ = generate_matrix(args.url, args.start, args.end, args.workers, exclude_chapters=exclude_list)
