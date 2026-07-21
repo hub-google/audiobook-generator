@@ -249,11 +249,13 @@ def main():
 
             for c_idx, mp4 in enumerate(mp4_files, 1):
                 chap_name = os.path.basename(mp4)
+                logging.info(f"[STREAM_MARKER] START | Worker-{idx+1}/{len(artifact_names)} | Ch {c_idx}/{len(mp4_files)} | {chap_name}")
                 logging.info(f"▶️ [Worker {idx+1}/{len(artifact_names)}] [{c_idx}/{len(mp4_files)}] 開始推流: {chap_name}")
                 sys.stdout.flush()
 
                 if stream_single_file_to_rtmp(mp4, rtmp_url):
                     total_streamed += 1
+                    logging.info(f"[STREAM_MARKER] DONE | Worker-{idx+1}/{len(artifact_names)} | Ch {c_idx}/{len(mp4_files)} | {chap_name} | total {total_streamed}")
                     logging.info(f"✅ [Worker {idx+1}/{len(artifact_names)}] [{c_idx}/{len(mp4_files)}] 完成推流: {chap_name} (累計已推流 {total_streamed} 章)")
                     sys.stdout.flush()
                 else:
