@@ -1,0 +1,23 @@
+book_title: "凡人修仙傳"
+base_url: "https://tw.hjwzw.com"
+chapters:
+  - "/Book/Read/1644,409280"
+  - "/Book/Read/1644,409281"
+  - "/Book/Read/1644,409282"
+  - "/Book/Read/1644,409283"
+  - "/Book/Read/1644,409284"
+  - "/Book/Read/1644,409285"
+  - "/Book/Read/1644,409286"
+  - "/Book/Read/1644,409287"
+  - "/Book/Read/1644,409288"
+  - "/Book/Read/1644,409289"
+tts:
+  engine: "gpt-sovits"
+  api_url: "http://127.0.0.1:9880"
+  ref_audio_path: "ReferenceAudio/reference_audio_male.wav"
+  prompt_text: "修仙之路，本就是逆天而行。若不能在生死之間突破極限，又怎能窺探那無上的大道？"
+  prompt_lang: "zh"
+  text_lang: "zh"
+  edge_voice: "zh-CN-YunxiNeural"
+paths:
+  workspace_base: "Workspace"

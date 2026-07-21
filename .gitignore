@@ -1,0 +1,28 @@
+# Environment and Credentials
+.env
+gui_config.json
+*.pem
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+venv/
+.venv/
+
+# Project Workspaces and Outputs
+Workspace/
+Output/
+*.mp4
+*.wav
+*.mp3
+*.jpg
+*.png
+
+# IDE & System
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
