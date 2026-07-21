@@ -307,7 +307,7 @@ def main():
     meta_info = save_book_metadata(book_title, start_chap, end_chap)
     cover_path = meta_info["cover_file"]
 
-    playlist_name = f"《{book_title}》有聲小說全集 (第 {start_chap} ~ {end_chap} 章)"
+    playlist_name = f"《{book_title}》有聲小說全集"
     playlist_desc = f"《{book_title}》完整版有聲書全集 (第 {start_chap} 至 {end_chap} 章)，高音質連續播映版。\n歡迎訂閱開啟小鈴鐺！"
     playlist_id = get_or_create_playlist(youtube, playlist_name, playlist_desc)
 
