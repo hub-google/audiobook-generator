@@ -136,10 +136,10 @@ jobs:
           if-no-files-found: warn
 
 # ─────────────────────────────────────────────────────────────
-# Stage 6: merge — 彙整所有 Worker 的 MP4 輸出
+# Stage 6: merge — 自動全速推流上傳至 YouTube 生成單一超長大影片
 # ─────────────────────────────────────────────────────────────
   merge:
-    name: "📦 Merge — Collect All Videos"
+    name: "📦 Merge & Direct Stream to YouTube"
     needs: process_chapters
     runs-on: ubuntu-latest
 
@@ -157,69 +157,10 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg
 
-      - name: Download shared config
-        uses: actions/download-artifact@v4
-        with:
-          name: shared-config
-          path: .
-
-      - name: Download ALL worker artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: 'video-worker-*'
-          path: final_workspace/Workspace/
-          merge-multiple: true
-
-      - name: Merge MP4 and Create ZIP
-        run: |
-          # Read book_title from config.yaml
-          RAW_BOOK_TITLE=$(grep -oP '(?<=^book_title: ).*' config.yaml | tr -d '\r' | tr -d '"' | tr -d "'")
-          echo "Raw Book title is: $RAW_BOOK_TITLE"
-          echo "BOOK_TITLE=${RAW_BOOK_TITLE}" >> $GITHUB_ENV
-          
-          # Go to Video directory inside the specific book's workspace
-          cd "final_workspace/Workspace/$RAW_BOOK_TITLE/Video/"
-          
-          echo "=== Generating concat list ==="
-          find . -name "*.mp4" | sort -V > files.txt
-          cat files.txt | while read file; do echo "file '$file'" >> concat.txt; done
-          
-          echo "=== Running FFmpeg concat ==="
-          mkdir -p "../../../Output/$RAW_BOOK_TITLE"
-          ffmpeg -y -f concat -safe 0 -i concat.txt -c copy "../../../Output/$RAW_BOOK_TITLE/${RAW_BOOK_TITLE}_full.mp4"
-          
-          ZIP_PASS="${{ secrets.ZIP_PASSWORD }}"
-          if [ -z "$ZIP_PASS" ]; then
-            ZIP_PASS="${{ inputs.zip_password }}"
-          fi
-
-          echo "=== Creating final ZIP ==="
-          cd ../../../
-          if [ -n "$ZIP_PASS" ]; then
-            echo "Applying password protection..."
-            zip -P "$ZIP_PASS" -s 1900m "../${RAW_BOOK_TITLE}.zip" -r Workspace/ Output/
-          else
-            echo "Creating unencrypted ZIP..."
-            zip -s 1900m "../${RAW_BOOK_TITLE}.zip" -r Workspace/ Output/
-          fi
-
-      - name: Create Release and Upload Asset
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: run-${{ github.run_id }}
-          name: "Audiobook Output - Run ${{ github.run_id }}"
-          body: |
-            Auto-generated audiobook files for this run.
-            
-            🔒 隱私安全保護 / Security Note:
-            本壓縮檔已施加解密密碼保護，未授權人員無法讀取內容。
-            
-            💡 下載說明 / Download Note:
-            因為檔案可能超過 2GB，已經自動為您切割成多個壓縮檔。
-            請把所有下載連結（`.zip`, `.z01`, `.z02`）全部下載到同一個資料夾。
-            解壓縮第一個 `.zip` 檔時，輸入您的專屬密碼，即可還原完整的超長影片！
-          files: |
-            ${{ env.BOOK_TITLE }}.zip
-            ${{ env.BOOK_TITLE }}.z*
+      - name: Direct Stream to YouTube Live
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          YOUTUBE_STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python src/stream_to_youtube.py --run-id "${{ github.run_id }}" --repo "${{ github.repository }}"
+

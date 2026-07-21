@@ -39,7 +39,6 @@ def stream_single_file(video_path, rtmp_url):
     
     cmd = [
         "ffmpeg",
-        "-re",
         "-i", video_path,
         "-c:v", "copy",
         "-c:a", "aac",
