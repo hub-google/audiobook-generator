@@ -23,16 +23,12 @@ on:
         description: '每台工作機負責的章節數 (預設 5，最多 20 台並行)'
         required: true
         default: '5'
-      gdrive_folder_id:
-        description: 'Google Drive 資料夾 ID (供 GUI 帶入)'
-        required: false
-        default: ''
 
 permissions:
   contents: write
 
 env:
-  GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+  # GCP_CREDENTIALS removed
 
 # ─────────────────────────────────────────────────────────────
 # Stage 0: setup — 解析章節目錄，生成 config.yaml + matrix JSON
@@ -59,8 +55,6 @@ jobs:
           pip install -r requirements.txt
 
       - name: Parse Catalog & Generate config.yaml + matrix.json
-        env:
-          GDRIVE_FOLDER_ID: ${{ github.event.inputs.gdrive_folder_id || secrets.GDRIVE_FOLDER_ID }}
         run: |
           python src/catalog_parser.py \
             --url "${{ github.event.inputs.catalog_url }}" \
@@ -110,17 +104,11 @@ jobs:
         with:
           name: shared-config
 
-      - name: Download state from Google Drive
-        run: python src/gdrive_sync.py --download
-
       - name: Crawl assigned chapters
         run: |
           python src/worker_pipeline.py \
             --stage crawl \
             --worker-id ${{ matrix.worker_id }}
-
-      - name: Upload state to Google Drive
-        run: python src/gdrive_sync.py --upload
 
       - name: Upload raw text artifact
         uses: actions/upload-artifact@v4
@@ -160,17 +148,11 @@ jobs:
           name: raw-worker-${{ matrix.worker_id }}
           path: Workspace/
 
-      - name: Download state from Google Drive
-        run: python src/gdrive_sync.py --download
-
       - name: Clean text
         run: |
           python src/worker_pipeline.py \
             --stage clean \
             --worker-id ${{ matrix.worker_id }}
-
-      - name: Upload state to Google Drive
-        run: python src/gdrive_sync.py --upload
 
       - name: Upload clean text artifact
         uses: actions/upload-artifact@v4
@@ -215,17 +197,11 @@ jobs:
           name: clean-worker-${{ matrix.worker_id }}
           path: Workspace/
 
-      - name: Download state from Google Drive
-        run: python src/gdrive_sync.py --download
-
       - name: Generate audio (Edge TTS)
         run: |
           python src/worker_pipeline.py \
             --stage tts \
             --worker-id ${{ matrix.worker_id }}
-
-      - name: Upload state to Google Drive
-        run: python src/gdrive_sync.py --upload
 
       - name: Upload audio artifact
         uses: actions/upload-artifact@v4
@@ -270,17 +246,11 @@ jobs:
           name: audio-worker-${{ matrix.worker_id }}
           path: Workspace/
 
-      - name: Download state from Google Drive
-        run: python src/gdrive_sync.py --download
-
       - name: Generate title cards
         run: |
           python src/worker_pipeline.py \
             --stage image_gen \
             --worker-id ${{ matrix.worker_id }}
-
-      - name: Upload state to Google Drive
-        run: python src/gdrive_sync.py --upload
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
@@ -331,17 +301,11 @@ jobs:
           name: image-worker-${{ matrix.worker_id }}
           path: Workspace/
 
-      - name: Download state from Google Drive
-        run: python src/gdrive_sync.py --download
-
       - name: Generate video (FFmpeg)
         run: |
           python src/worker_pipeline.py \
             --stage video_gen \
             --worker-id ${{ matrix.worker_id }}
-
-      - name: Upload state to Google Drive
-        run: python src/gdrive_sync.py --upload
 
       - name: Upload video artifact
         uses: actions/upload-artifact@v4
@@ -378,9 +342,6 @@ jobs:
           name: shared-config
           path: .
 
-      - name: Install Python Dependencies for GDrive Sync
-        run: pip install -r requirements.txt
-
       - name: Download ALL worker artifacts
         uses: actions/download-artifact@v4
         with:
@@ -388,23 +349,16 @@ jobs:
           path: final_workspace/Workspace/
           merge-multiple: true
 
-      - name: Sync ALL from Google Drive
-        run: |
-          python src/gdrive_sync.py --download
-          mkdir -p final_workspace/Workspace
-          cp -r Workspace/* final_workspace/Workspace/ || true
-
       - name: Merge MP4 and Create ZIP
         run: |
           # Read book_title from config.yaml
           BOOK_TITLE=$(grep -oP '(?<=^book_title: ).*' config.yaml | tr -d '\r')
           echo "Book title is: $BOOK_TITLE"
           
-          # URL encode book_title for browser download compatibility (fixes GitHub Release default.zip download issue with UTF-8 filenames)
+          # URL encode book_title for browser download compatibility
           ENCODED_TITLE=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$BOOK_TITLE")
           
-          echo "ZIP_NAME=${BOOK_TITLE}.zip" >> $GITHUB_ENV
-          echo "ENCODED_ZIP_NAME=${ENCODED_TITLE}.zip" >> $GITHUB_ENV
+          echo "ENCODED_TITLE=${ENCODED_TITLE}" >> $GITHUB_ENV
           
           # Go to Video directory inside the specific book's workspace
           cd "final_workspace/Workspace/$BOOK_TITLE/Video/"
@@ -419,11 +373,8 @@ jobs:
           
           echo "=== Creating final ZIP ==="
           cd ../../../
-          # Now in final_workspace/, we zip both Workspace/ and Output/ to preserve local structure
-          zip -r "../${BOOK_TITLE}.zip" Workspace/ Output/
-          if [ "${BOOK_TITLE}.zip" != "${ENCODED_TITLE}.zip" ]; then
-            cp "../${BOOK_TITLE}.zip" "../${ENCODED_TITLE}.zip"
-          fi
+          # Use -s 1900m to split ZIP into 1.9GB chunks to bypass GitHub Release 2GB limit
+          zip -s 1900m "../${ENCODED_TITLE}.zip" -r Workspace/ Output/
 
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
@@ -434,9 +385,11 @@ jobs:
             Auto-generated audiobook files for this run.
             
             💡 下載說明 / Download Note:
-            點擊 URL 編碼檔名（`%E5...zip`）下載時，瀏覽器會自動還原並儲存為中文檔名 `凡人修仙傳.zip`！
+            因為檔案可能超過 2GB，已經自動為您切割成多個壓縮檔。
+            請把所有下載連結（`%E5...zip`, `%E5...z01`, `%E5...z02`）全部下載到同一個資料夾。
+            下載後，只需解壓縮第一個 `.zip` 檔，就會自動把那部完整的超長影片還原出來囉！
           files: |
-            ${{ env.ZIP_NAME }}
-            ${{ env.ENCODED_ZIP_NAME }}
+            ${{ env.ENCODED_TITLE }}.zip
+            ${{ env.ENCODED_TITLE }}.z*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
