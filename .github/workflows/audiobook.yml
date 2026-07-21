@@ -124,25 +124,9 @@ jobs:
           echo "   • 雲端快取管理頁: https://github.com/${{ github.repository }}/actions/caches"
           echo "=================================================="
 
-      - name: Stage 1 - Crawl text
+      - name: Run Per-Chapter End-to-End Pipeline (Real-Time Saving)
         run: |
-          python src/worker_pipeline.py --stage crawl --worker-id ${{ matrix.worker_id }}
-
-      - name: Stage 2 - Clean text
-        run: |
-          python src/worker_pipeline.py --stage clean --worker-id ${{ matrix.worker_id }}
-
-      - name: Stage 3 - Edge TTS Audio
-        run: |
-          python src/worker_pipeline.py --stage tts --worker-id ${{ matrix.worker_id }}
-
-      - name: Stage 4 - Title Cards
-        run: |
-          python src/worker_pipeline.py --stage image_gen --worker-id ${{ matrix.worker_id }}
-
-      - name: Stage 5 - FFmpeg Video
-        run: |
-          python src/worker_pipeline.py --stage video_gen --worker-id ${{ matrix.worker_id }}
+          python src/worker_pipeline.py --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1
 
       - name: Upload worker finished artifact
         uses: actions/upload-artifact@v4

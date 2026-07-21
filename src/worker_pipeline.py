@@ -197,10 +197,12 @@ def stage_video_gen(config):
 def main():
     parser = argparse.ArgumentParser(description="Audiobook Matrix Worker Pipeline")
     parser.add_argument("--stage",            required=True,
-                        choices=["crawl", "clean", "tts", "image_gen", "video_gen", "validate"],
+                        choices=["crawl", "clean", "tts", "image_gen", "video_gen", "validate", "pipeline"],
                         help="Pipeline stage to execute")
     parser.add_argument("--worker-id",        type=int, required=True,
                         help="Worker index (0-based)")
+    parser.add_argument("--batch-size",       type=int, default=1,
+                        help="Mini-batch size for end-to-end processing (default: 1 for per-chapter saving)")
     parser.add_argument("--config",           type=str, default="",
                         help="Path to config.yaml (defaults to ../config.yaml relative to src/)")
     args = parser.parse_args()
@@ -231,7 +233,51 @@ def main():
     stage = args.stage
     tts_failed_chapters = set()
 
-    if stage == "crawl":
+    if stage == "pipeline":
+        batch_size = args.batch_size if args.batch_size > 0 else 1
+        total_in_worker = len(exact_indices)
+        book_title = config['book_title']
+        workspace_dir = os.path.abspath(os.path.join(
+            SRC_DIR, "..", config['paths']['workspace_base'], book_title
+        ))
+        video_dir = os.path.join(workspace_dir, "Video")
+
+        logging.info(f"=== Worker {args.worker_id} 啟動逐章一條龍即時合成與存檔模式 (共 {total_in_worker} 章) ===")
+
+        for i in range(0, total_in_worker, batch_size):
+            sub_chapters = chapters[i:i + batch_size]
+            sub_indices = exact_indices[i:i + batch_size]
+
+            # 檢查這 10 章的 MP4 影片是否都已經存在
+            all_mp4_exist = True
+            for c_idx in sub_indices:
+                mp4_file = os.path.join(video_dir, f"{book_title}_chapter_{c_idx}.mp4")
+                if not (os.path.exists(mp4_file) and os.path.getsize(mp4_file) > 1000):
+                    all_mp4_exist = False
+                    break
+
+            if all_mp4_exist:
+                logging.info(f"=== [Worker-{args.worker_id}] ⚡ 第 {sub_indices[0]}~{sub_indices[-1]} 章 MP4 影片已全數生成過，自動跳過此批次！ ===")
+                continue
+
+            logging.info(f"=== [Worker-{args.worker_id}] ▶️ 開始執行批次：第 {sub_indices[0]}~{sub_indices[-1]} 章 ({len(sub_indices)} 章) 一條龍合成 ===")
+            stage_crawl(config, sub_chapters, sub_indices[0], sub_indices)
+            stage_clean(config)
+            _, failed_in_batch = stage_tts(config)
+            if failed_in_batch:
+                tts_failed_chapters.update(failed_in_batch)
+            stage_image_gen(config)
+            stage_video_gen(config)
+            logging.info(f"=== [Worker-{args.worker_id}] ✅ 批次完成：第 {sub_indices[0]}~{sub_indices[-1]} 章 MP4 影片已實打實寫入 Workspace/！ ===")
+
+        # 最終完成度驗收
+        logging.info(f"=== [Worker-{args.worker_id}] 執行最終完成度驗收 ===")
+        complete_chapters, final_failed = validate_chapter_completeness(
+            config, exact_indices, tts_failed_chapters
+        )
+        print_final_report(complete_chapters, final_failed, args.worker_id)
+
+    elif stage == "crawl":
         stage_crawl(config, chapters, start_global_idx, exact_indices)
 
     elif stage == "clean":
@@ -252,14 +298,6 @@ def main():
             config, exact_indices, tts_failed_chapters
         )
         print_final_report(complete_chapters, final_failed, args.worker_id)
-
-        # 若有失敗章節，以非零 exit code 通知 GitHub Actions
-        if final_failed:
-            logging.warning(
-                f"[Worker-{args.worker_id}] 有 {len(final_failed)} 章失敗，"
-                f"但不影響其他章節的繼續輸出（fail-fast=false）"
-            )
-            # 不 sys.exit(1)：讓 GitHub Actions 繼續跑 merge，但日誌中有清楚警告
 
     logging.info(f"=== Worker {args.worker_id} | Stage: {stage} DONE ===")
 
