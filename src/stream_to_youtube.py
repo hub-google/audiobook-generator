@@ -11,7 +11,7 @@ import threading
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler()]
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 
 def parse_chapter_number(filepath):
@@ -20,12 +20,11 @@ def parse_chapter_number(filepath):
         return int(m.group(1))
     return 999999
 
-def stream_merged_file_to_rtmp(video_path, rtmp_url):
+def stream_single_file_to_rtmp(video_path, rtmp_url):
     filename = os.path.basename(video_path)
-    logging.info(f"▶️ [極速大頻寬推流] 傳送至 YouTube Live: {filename}")
     
     cmd = [
-        "ffmpeg",
+        "ffmpeg", "-y",
         "-re",  # 保障直播穩定
         "-i", video_path,
         "-c:v", "copy",
@@ -40,8 +39,8 @@ def stream_merged_file_to_rtmp(video_path, rtmp_url):
     process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if process.returncode != 0:
         logging.error(f"❌ 傳送失敗 [{filename}]: {process.stderr[-500:]}")
+        sys.stdout.flush()
         return False
-    logging.info(f"✅ 完成推流: {filename}")
     return True
 
 def concat_mp4_files(mp4_files, output_merged_path):
@@ -245,18 +244,24 @@ def main():
         mp4_files.sort(key=parse_chapter_number)
 
         if mp4_files:
-            logging.info(f"在 {artifact_name} 中找到 {len(mp4_files)} 個章節影片，進行秒級 concat 合併為單一串流...")
-            merged_worker_mp4 = os.path.join(curr_dir, f"{artifact_name}_merged.mp4")
-            if concat_mp4_files(mp4_files, merged_worker_mp4):
-                if stream_merged_file_to_rtmp(merged_worker_mp4, rtmp_url):
-                    total_streamed += len(mp4_files)
-            else:
-                logging.warning("⚠️ Concat 合併失敗，降階為單檔個別推流模式...")
-                for mp4 in mp4_files:
-                    if stream_merged_file_to_rtmp(mp4, rtmp_url):
-                        total_streamed += 1
+            logging.info(f"在 {artifact_name} 中找到 {len(mp4_files)} 個章節影片，開始逐章進行 RTMP 順暢推流...")
+            sys.stdout.flush()
+
+            for c_idx, mp4 in enumerate(mp4_files, 1):
+                chap_name = os.path.basename(mp4)
+                logging.info(f"▶️ [Worker {idx+1}/{len(artifact_names)}] [{c_idx}/{len(mp4_files)}] 開始推流: {chap_name}")
+                sys.stdout.flush()
+
+                if stream_single_file_to_rtmp(mp4, rtmp_url):
+                    total_streamed += 1
+                    logging.info(f"✅ [Worker {idx+1}/{len(artifact_names)}] [{c_idx}/{len(mp4_files)}] 完成推流: {chap_name} (累計已推流 {total_streamed} 章)")
+                    sys.stdout.flush()
+                else:
+                    logging.error(f"❌ [Worker {idx+1}/{len(artifact_names)}] [{c_idx}/{len(mp4_files)}] 傳送中斷: {chap_name}")
+                    sys.stdout.flush()
         else:
             logging.warning(f"⚠️ {artifact_name} 中未找到任何 .mp4 檔案")
+            sys.stdout.flush()
 
         # 串流結束後，清理目前資料夾並交換雙緩衝區
         shutil.rmtree(curr_dir, ignore_errors=True)
