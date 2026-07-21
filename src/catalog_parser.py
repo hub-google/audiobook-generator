@@ -1,5 +1,6 @@
 import os
 import re
+import math
 import yaml
 import json
 import argparse
@@ -23,11 +24,9 @@ def parse_catalog(catalog_url):
     response = requests.get(catalog_url, headers=headers, timeout=15)
     response.raise_for_status()
 
-    # 自動處理編碼
-    if response.encoding and response.encoding.lower() == 'iso-8859-1':
-        response.encoding = response.apparent_encoding or 'utf-8'
-
-    soup = BeautifulSoup(response.text, 'html.parser')
+    # 使用 response.content (bytes) 配合 from_encoding 讓 BeautifulSoup 自行處理編碼
+    # 避免 requests 自動偵測編碼錯誤導致中文亂碼
+    soup = BeautifulSoup(response.content, 'html.parser', from_encoding='utf-8')
 
     # 1. 解析書名
     book_title = "未知小說"
@@ -50,12 +49,14 @@ def parse_catalog(catalog_url):
 
     for a in soup.find_all('a', href=True):
         href = a['href'].strip()
-        # 通用匹配 /Book/Read/ 或包含 chapter/read 之連結
-        if '/Book/Read/' in href or '/read/' in href.lower() or 'chapter' in href.lower():
-            if href.startswith('/'):
+        # 匹配 hjwzw.com 的 /Book/Read/ 格式，或其他通用格式
+        if '/Book/Read/' in href or '/read/' in href.lower():
+            if href.startswith('http'):
+                # 絕對網址：取出路徑部分
+                from urllib.parse import urlparse as _up
+                full_href = _up(href).path
+            elif href.startswith('/'):
                 full_href = href
-            elif href.startswith('http'):
-                full_href = href.replace(base_url, '')
             else:
                 full_href = '/' + href.lstrip('/')
 
@@ -108,12 +109,52 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
     print(f"[CatalogParser] 成功生成 {output_path}：書名【{res['book_title']}】，選取第 {start_chap} 至 {min(total, end_chap)} 章（共 {len(selected_chapters)} 章，全書 {total} 章）")
     return config_data
 
+
+def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=5):
+    """
+    解析目錄並計算每台 GitHub Actions worker 負責的章節子集。
+    回傳符合 GitHub Actions matrix 格式的 dict：
+      { "include": [ {"worker_id": 0, "start_global_idx": 1, "chapters_json": "[...]"}, ... ] }
+    同時也回傳 total_workers。
+    """
+    res = parse_catalog(catalog_url)
+    if not res["success"] or res["total_chapters"] == 0:
+        raise ValueError("無法解析章節或章節清單為空！")
+
+    total = res["total_chapters"]
+    start_idx = max(1, start_chap) - 1          # 轉為 0-based
+    end_idx   = min(total, end_chap)             # 0-based exclusive
+    selected  = res["chapters"][start_idx:end_idx]
+
+    includes = []
+    for i in range(0, len(selected), chapters_per_worker):
+        chunk = selected[i : i + chapters_per_worker]
+        includes.append({
+            "worker_id":       len(includes),
+            "start_global_idx": start_idx + i + 1,   # 1-based 全域索引
+            "chapters_json":   json.dumps(chunk, ensure_ascii=False)
+        })
+
+    matrix = {"include": includes}
+    print(f"[CatalogParser] Matrix: {len(includes)} workers，每台最多 {chapters_per_worker} 章")
+    return matrix, res["book_title"]
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Parse novel catalog and generate config.yaml")
-    parser.add_argument("--url", type=str, required=True, help="Catalog URL")
-    parser.add_argument("--start", type=int, default=1, help="Start chapter index (1-based)")
-    parser.add_argument("--end", type=int, default=10, help="End chapter index (1-based)")
-    parser.add_argument("--output", type=str, default="config.yaml", help="Output YAML config path")
+    # 範例網址格式: https://tw.hjwzw.com/Book/Chapter/1644
+    parser = argparse.ArgumentParser(description="Parse novel catalog and generate config.yaml + matrix.json")
+    parser.add_argument("--url",            type=str, required=True, help="Catalog URL (e.g. https://tw.hjwzw.com/Book/Chapter/1644)")
+    parser.add_argument("--start",          type=int, default=1,  help="Start chapter index (1-based)")
+    parser.add_argument("--end",            type=int, default=10, help="End chapter index (1-based)")
+    parser.add_argument("--output",         type=str, default="config.yaml", help="Output YAML config path")
+    parser.add_argument("--workers",        type=int, default=0,  help="Chapters per worker (0 = single job mode)")
+    parser.add_argument("--matrix-output",  type=str, default="", help="Path to write matrix JSON (for GitHub Actions)")
     args = parser.parse_args()
 
     generate_config_yaml(args.url, args.start, args.end, args.output)
+
+    if args.workers > 0 and args.matrix_output:
+        matrix, _ = generate_matrix(args.url, args.start, args.end, args.workers)
+        with open(args.matrix_output, "w", encoding="utf-8") as f:
+            json.dump(matrix, f, ensure_ascii=False)
+        print(f"[CatalogParser] Matrix JSON 已寫入 {args.matrix_output} ({len(matrix['include'])} workers)")

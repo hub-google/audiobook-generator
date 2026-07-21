@@ -1,24 +1,34 @@
-name: Audiobook Automation Pipeline
+name: Audiobook Automation Pipeline (Parallel)
 
 on:
   workflow_dispatch:
     inputs:
       catalog_url:
-        description: '小說目錄網址 (Catalog URL)'
+        description: '小說目錄網址 (e.g. https://tw.hjwzw.com/Book/Chapter/1644)'
         required: true
-        default: 'https://tw.hjwzw.com/Book/1644'
+        default: 'https://tw.hjwzw.com/Book/Chapter/1644'
       start_chap:
-        description: '開始章節 (Start Chapter Index)'
+        description: '開始章節 (Start Chapter, 1-based)'
         required: true
         default: '1'
       end_chap:
-        description: '結束章節 (End Chapter Index)'
+        description: '結束章節 (End Chapter, 1-based)'
         required: true
         default: '10'
+      chapters_per_worker:
+        description: '每台工作機負責的章節數 (預設 5，最多 20 台並行)'
+        required: true
+        default: '5'
 
+# ─────────────────────────────────────────────────────────────
+# Stage 0: setup — 解析章節目錄，生成 config.yaml + matrix JSON
+# ─────────────────────────────────────────────────────────────
 jobs:
-  build:
+  setup:
+    name: "🔍 Setup — Parse Catalog & Build Matrix"
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen_matrix.outputs.matrix }}
 
     steps:
       - name: Checkout Code
@@ -29,31 +39,295 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install System Dependencies (FFmpeg & CJK Fonts)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-noto-cjk fonts-wqy-zenhei
-
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Generate Config from Catalog URL
+      - name: Parse Catalog & Generate config.yaml + matrix.json
         run: |
           python src/catalog_parser.py \
             --url "${{ github.event.inputs.catalog_url }}" \
             --start ${{ github.event.inputs.start_chap }} \
-            --end ${{ github.event.inputs.end_chap }} \
-            --output config.yaml
+            --end   ${{ github.event.inputs.end_chap }} \
+            --output config.yaml \
+            --workers ${{ github.event.inputs.chapters_per_worker }} \
+            --matrix-output matrix.json
 
-      - name: Run Audiobook Main Pipeline
-        run: |
-          python src/main_pipeline.py
+      - name: Export matrix to GitHub Actions output
+        id: gen_matrix
+        run: echo "matrix=$(cat matrix.json)" >> $GITHUB_OUTPUT
 
-      - name: Upload Output Artifacts
+      - name: Upload config.yaml as shared artifact
         uses: actions/upload-artifact@v4
         with:
-          name: audiobook-output
+          name: shared-config
+          path: config.yaml
+
+# ─────────────────────────────────────────────────────────────
+# Stage 1: crawl — 並行爬取各章節原始文字
+# ─────────────────────────────────────────────────────────────
+  crawl:
+    name: "🕷️ Crawl — Worker ${{ matrix.worker_id }}"
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Python Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download shared config
+        uses: actions/download-artifact@v4
+        with:
+          name: shared-config
+
+      - name: Crawl assigned chapters
+        run: |
+          python src/worker_pipeline.py \
+            --stage crawl \
+            --worker-id ${{ matrix.worker_id }} \
+            --start-global-idx ${{ matrix.start_global_idx }} \
+            --chapters-json '${{ matrix.chapters_json }}'
+
+      - name: Upload raw text artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-worker-${{ matrix.worker_id }}
+          path: Workspace/
+          if-no-files-found: warn
+
+# ─────────────────────────────────────────────────────────────
+# Stage 2: clean — 並行清洗文字
+# ─────────────────────────────────────────────────────────────
+  clean:
+    name: "🧹 Clean — Worker ${{ matrix.worker_id }}"
+    needs: [setup, crawl]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Python Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download shared config
+        uses: actions/download-artifact@v4
+        with:
+          name: shared-config
+
+      - name: Download raw text from crawl
+        uses: actions/download-artifact@v4
+        with:
+          name: raw-worker-${{ matrix.worker_id }}
+
+      - name: Clean text
+        run: |
+          python src/worker_pipeline.py \
+            --stage clean \
+            --worker-id ${{ matrix.worker_id }} \
+            --start-global-idx ${{ matrix.start_global_idx }} \
+            --chapters-json '${{ matrix.chapters_json }}'
+
+      - name: Upload clean text artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clean-worker-${{ matrix.worker_id }}
+          path: Workspace/
+          if-no-files-found: warn
+
+# ─────────────────────────────────────────────────────────────
+# Stage 3: tts — 並行 Edge TTS 語音合成
+# ─────────────────────────────────────────────────────────────
+  tts:
+    name: "🔊 TTS — Worker ${{ matrix.worker_id }}"
+    needs: [setup, clean]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install System Deps (FFmpeg)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download shared config
+        uses: actions/download-artifact@v4
+        with:
+          name: shared-config
+
+      - name: Download clean text
+        uses: actions/download-artifact@v4
+        with:
+          name: clean-worker-${{ matrix.worker_id }}
+
+      - name: Generate audio (Edge TTS)
+        run: |
+          python src/worker_pipeline.py \
+            --stage tts \
+            --worker-id ${{ matrix.worker_id }} \
+            --start-global-idx ${{ matrix.start_global_idx }} \
+            --chapters-json '${{ matrix.chapters_json }}'
+
+      - name: Upload audio artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: audio-worker-${{ matrix.worker_id }}
+          path: Workspace/
+          if-no-files-found: warn
+
+# ─────────────────────────────────────────────────────────────
+# Stage 4: image_gen — 並行產生章節標題卡
+# ─────────────────────────────────────────────────────────────
+  image_gen:
+    name: "🖼️ Image — Worker ${{ matrix.worker_id }}"
+    needs: [setup, tts]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install System Deps (CJK Fonts)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk fonts-wqy-zenhei
+
+      - name: Install Python Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download shared config
+        uses: actions/download-artifact@v4
+        with:
+          name: shared-config
+
+      - name: Download audio (for chapter discovery)
+        uses: actions/download-artifact@v4
+        with:
+          name: audio-worker-${{ matrix.worker_id }}
+
+      - name: Generate title cards
+        run: |
+          python src/worker_pipeline.py \
+            --stage image_gen \
+            --worker-id ${{ matrix.worker_id }} \
+            --start-global-idx ${{ matrix.start_global_idx }} \
+            --chapters-json '${{ matrix.chapters_json }}'
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-worker-${{ matrix.worker_id }}
+          path: Workspace/
+          if-no-files-found: warn
+
+# ─────────────────────────────────────────────────────────────
+# Stage 5: video_gen — 並行 FFmpeg 合成影片
+# ─────────────────────────────────────────────────────────────
+  video_gen:
+    name: "🎬 Video — Worker ${{ matrix.worker_id }}"
+    needs: [setup, image_gen]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install System Deps (FFmpeg + CJK Fonts)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg fonts-noto-cjk fonts-wqy-zenhei
+
+      - name: Install Python Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download shared config
+        uses: actions/download-artifact@v4
+        with:
+          name: shared-config
+
+      - name: Download audio
+        uses: actions/download-artifact@v4
+        with:
+          name: audio-worker-${{ matrix.worker_id }}
+
+      - name: Download images
+        uses: actions/download-artifact@v4
+        with:
+          name: image-worker-${{ matrix.worker_id }}
+
+      - name: Generate video (FFmpeg)
+        run: |
+          python src/worker_pipeline.py \
+            --stage video_gen \
+            --worker-id ${{ matrix.worker_id }} \
+            --start-global-idx ${{ matrix.start_global_idx }} \
+            --chapters-json '${{ matrix.chapters_json }}'
+
+      - name: Upload video artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-worker-${{ matrix.worker_id }}
           path: Output/
+          if-no-files-found: warn
+
+# ─────────────────────────────────────────────────────────────
+# Stage 6: merge — 彙整所有 Worker 的 MP4 輸出
+# ─────────────────────────────────────────────────────────────
+  merge:
+    name: "📦 Merge — Collect All Videos"
+    needs: video_gen
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all video artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: video-worker-*
+          path: all_videos/
+          merge-multiple: true
+
+      - name: List final output
+        run: |
+          echo "=== Final MP4 files ==="
+          find all_videos/ -name "*.mp4" | sort
+
+      - name: Upload final merged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: audiobook-final
+          path: all_videos/
           if-no-files-found: warn
