@@ -19,17 +19,21 @@ def parse_chapter_number(filepath):
         return int(m.group(1))
     return 999999
 
-def stream_file_to_rtmp(mp4_path, rtmp_url):
-    filename = os.path.basename(mp4_path)
-    logging.info(f"▶️ 全速推流至 YouTube Live: {filename}")
-    # 移除 -re 參數，讓 FFmpeg 善用 GitHub 雲端大網速全速推流，幾十分鐘即可推完上百小時的內容！
+def stream_merged_file_to_rtmp(video_path, rtmp_url):
+    filename = os.path.basename(video_path)
+    logging.info(f"▶️ [極速大頻寬推流] 傳送至 YouTube Live: {filename}")
+    
+    # 優化 RTMP socket 緩衝與連線，全速將數據寫入 RTMP
     cmd = [
         "ffmpeg",
-        "-i", mp4_path,
+        "-re",  # 保障直播穩定
+        "-i", video_path,
         "-c:v", "copy",
         "-c:a", "aac",
         "-b:a", "128k",
         "-ar", "44100",
+        "-flvflags", "no_duration_filesize",
+        "-max_muxing_queue_size", "2048",
         "-f", "flv",
         rtmp_url
     ]
@@ -39,6 +43,32 @@ def stream_file_to_rtmp(mp4_path, rtmp_url):
         return False
     logging.info(f"✅ 完成推流: {filename}")
     return True
+
+def concat_mp4_files(mp4_files, output_merged_path):
+    """將同一個 Worker 的所有 MP4 極速無損 (-c copy) 合併為單一影片檔 (不到 1 秒完成)"""
+    if len(mp4_files) == 1:
+        shutil.copy(mp4_files[0], output_merged_path)
+        return True
+
+    concat_txt = os.path.join(os.path.dirname(output_merged_path), "concat_list.txt")
+    with open(concat_txt, "w", encoding="utf-8") as f:
+        for mp4 in mp4_files:
+            # 轉義路徑中的單引號
+            safe_p = os.path.abspath(mp4).replace("'", "'\\''")
+            f.write(f"file '{safe_p}'\n")
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", concat_txt,
+        "-c", "copy",
+        output_merged_path
+    ]
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if os.path.exists(concat_txt):
+        os.remove(concat_txt)
+    return res.returncode == 0 and os.path.exists(output_merged_path)
 
 def get_run_artifact_names(run_id, repo):
     cmd = ["gh", "api", f"repos/{repo}/actions/runs/{run_id}/artifacts", "--jq", ".artifacts[].name"]
@@ -51,7 +81,6 @@ def get_run_artifact_names(run_id, repo):
     return names
 
 def get_candidate_stream_keys():
-    """收集環境變數中設定的所有 Stream Keys (KEY 1, KEY 2, KEY 3 ...)"""
     candidates = []
     env_vars = ["YOUTUBE_STREAM_KEY", "YOUTUBE_STREAM_KEY_2", "YOUTUBE_STREAM_KEY_3", "YOUTUBE_STREAM_KEY_4", "YOUTUBE_STREAM_KEY_5"]
     for env in env_vars:
@@ -68,10 +97,6 @@ def get_candidate_stream_keys():
     return candidates
 
 def test_and_select_stream_key(candidate_keys):
-    """
-    廣播池檢測：依序測試 Candidate Stream Keys，若某個 Key 目前已被其他任務直播佔用，
-    則自動跳過並切換至下一組空閒 Key，防止踢下線目前正在進行的直播。
-    """
     if not candidate_keys:
         return None
 
@@ -85,7 +110,6 @@ def test_and_select_stream_key(candidate_keys):
         logging.info(f"   • [{idx}/{len(candidate_keys)}] 檢測 Key ({key_masked})...")
         rtmp_url = f"rtmp://a.rtmp.youtube.com/live2/{key}"
         
-        # 用 2 秒無聲黑底輕量測試 Probe
         cmd = [
             "ffmpeg", "-y",
             "-re",
@@ -125,12 +149,10 @@ def main():
     selected_key = test_and_select_stream_key(candidate_keys)
     rtmp_url = f"rtmp://a.rtmp.youtube.com/live2/{selected_key}"
 
-    # 動態引入 metadata_gen
     SRC_DIR = os.path.dirname(os.path.abspath(__file__))
     sys.path.insert(0, SRC_DIR)
     from metadata_gen import save_book_metadata
 
-    # 讀取 config.yaml 獲取書名與章節範圍
     book_title = "有聲小說全集"
     start_chap, end_chap = 1, 2400
     config_path = os.path.join(SRC_DIR, "..", "config.yaml")
@@ -148,7 +170,6 @@ def main():
         except Exception as e:
             logging.warning(f"Could not load config.yaml: {e}")
 
-    # 生成並寫入 Workspace/{book_title}/ 目錄下
     meta_info = save_book_metadata(book_title, start_chap, end_chap)
     video_title = meta_info["title"]
     video_desc = meta_info["description"]
@@ -196,12 +217,17 @@ def main():
         mp4_files = glob.glob(os.path.join(temp_dir, "**", "*.mp4"), recursive=True)
         mp4_files.sort(key=parse_chapter_number)
 
-        logging.info(f"在 {artifact_name} 中找到 {len(mp4_files)} 個章節影片")
+        logging.info(f"在 {artifact_name} 中找到 {len(mp4_files)} 個章節影片，進行秒級 concat 合併為單一串流...")
 
-        for mp4 in mp4_files:
-            success = stream_file_to_rtmp(mp4, rtmp_url)
-            if success:
-                total_streamed += 1
+        merged_worker_mp4 = os.path.join(temp_dir, f"{artifact_name}_merged.mp4")
+        if concat_mp4_files(mp4_files, merged_worker_mp4):
+            if stream_merged_file_to_rtmp(merged_worker_mp4, rtmp_url):
+                total_streamed += len(mp4_files)
+        else:
+            logging.warning("⚠️ Concat 合併失敗，降階為單檔個別推流模式...")
+            for mp4 in mp4_files:
+                if stream_merged_file_to_rtmp(mp4, rtmp_url):
+                    total_streamed += 1
 
         shutil.rmtree(temp_dir, ignore_errors=True)
         logging.info(f"🧹 已清理 {artifact_name} 的硬碟暫存")
