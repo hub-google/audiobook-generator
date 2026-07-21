@@ -363,137 +363,162 @@ def main():
         min_seconds = 10.0 * 3600.0
         max_seconds = 11.0 * 3600.0
 
+        import threading
+
+        # 預先下載第 1 個 Artifact
+        art_dir_first = os.path.join(temp_dl_dir, artifact_names[0])
+        logging.info(f"📦 [1/{len(artifact_names)}] 下載 Artifact: {artifact_names[0]}...")
+        download_artifact_task(args.run_id, args.repo, artifact_names[0], art_dir_first)
+
+        prefetch_thread = None
+
         for a_idx, a_name in enumerate(artifact_names):
             art_dir = os.path.join(temp_dl_dir, a_name)
-            logging.info(f"\n📦 [{a_idx+1}/{len(artifact_names)}] 下載 Artifact: {a_name}...")
-            if download_artifact_task(args.run_id, args.repo, a_name, art_dir):
-                m_files = glob.glob(os.path.join(art_dir, "**", "*.mp4"), recursive=True)
-                for f_path in m_files:
-                    if not any(x["path"] == f_path for x in chapter_pool):
-                        c_num = parse_chapter_num(os.path.basename(f_path))
-                        dur = get_media_duration(f_path)
-                        chapter_pool.append({
-                            "path": f_path,
-                            "chap_num": c_num,
-                            "dur": dur
-                        })
 
-                chapter_pool.sort(key=lambda x: x["chap_num"])
-                is_last_artifact = (a_idx == len(artifact_names) - 1)
+            # 🚀 立即發起【下一個 Artifact】的背景預下載線程 (雙線程流水線)
+            if a_idx + 1 < len(artifact_names):
+                next_name = artifact_names[a_idx + 1]
+                next_dir = os.path.join(temp_dl_dir, next_name)
+                logging.info(f"⚡ 【異步背景預載】發動背景線程預先下載下一個包 [{a_idx+2}/{len(artifact_names)}]: {next_name}...")
+                prefetch_thread = threading.Thread(
+                    target=download_artifact_task,
+                    args=(args.run_id, args.repo, next_name, next_dir)
+                )
+                prefetch_thread.start()
+            else:
+                prefetch_thread = None
 
-                while True:
-                    if not chapter_pool:
+            m_files = glob.glob(os.path.join(art_dir, "**", "*.mp4"), recursive=True)
+            for f_path in m_files:
+                if not any(x["path"] == f_path for x in chapter_pool):
+                    c_num = parse_chapter_num(os.path.basename(f_path))
+                    dur = get_media_duration(f_path)
+                    chapter_pool.append({
+                        "path": f_path,
+                        "chap_num": c_num,
+                        "dur": dur
+                    })
+
+            chapter_pool.sort(key=lambda x: x["chap_num"])
+            is_last_artifact = (a_idx == len(artifact_names) - 1)
+
+            while True:
+                if not chapter_pool:
+                    break
+
+                pool_dur = sum(x["dur"] for x in chapter_pool)
+
+                if pool_dur < min_seconds and not is_last_artifact:
+                    logging.info(f"   目前累計 {len(chapter_pool)} 章 (約 {pool_dur/3600:.2f} 小時)，尚未滿 10 小時，繼續下載下一包...")
+                    break
+
+                sliced_items = []
+                sliced_dur = 0.0
+
+                for item in chapter_pool:
+                    if sliced_items and (sliced_dur + item["dur"] > max_seconds):
+                        break
+                    sliced_items.append(item)
+                    sliced_dur += item["dur"]
+                    if sliced_dur >= max_seconds:
                         break
 
-                    pool_dur = sum(x["dur"] for x in chapter_pool)
+                if not sliced_items:
+                    break
 
-                    if pool_dur < min_seconds and not is_last_artifact:
-                        logging.info(f"   目前累計 {len(chapter_pool)} 章 (約 {pool_dur/3600:.2f} 小時)，尚未滿 10 小時，繼續下載下一包...")
-                        break
+                s_c = sliced_items[0]["chap_num"]
+                e_c = sliced_items[-1]["chap_num"]
+                expected_title = generate_video_title(book_title, start_chap=s_c, end_chap=e_c, part_num=part_counter)
 
-                    sliced_items = []
-                    sliced_dur = 0.0
-
-                    for item in chapter_pool:
-                        if sliced_items and (sliced_dur + item["dur"] > max_seconds):
-                            break
-                        sliced_items.append(item)
-                        sliced_dur += item["dur"]
-                        if sliced_dur >= max_seconds:
-                            break
-
-                    if not sliced_items:
-                        break
-
-                    s_c = sliced_items[0]["chap_num"]
-                    e_c = sliced_items[-1]["chap_num"]
-                    expected_title = generate_video_title(book_title, start_chap=s_c, end_chap=e_c, part_num=part_counter)
-
-                    if expected_title in existing_titles:
-                        logging.info(f"⏭️ 【第 {part_counter} 部】(第 {s_c}~{e_c} 章) 已存在於 YouTube 播放清單，觸發【智能斷點續傳】秒跳過！")
-                        for item in sliced_items:
-                            try:
-                                if os.path.exists(item["path"]):
-                                    os.remove(item["path"])
-                            except Exception:
-                                pass
-                        sliced_paths = set(x["path"] for x in sliced_items)
-                        chapter_pool = [x for x in chapter_pool if x["path"] not in sliced_paths]
-                        part_counter += 1
-                        continue
-
-                    out_name = f"{book_title}_Part_{part_counter:02d}_Ch{s_c:04d}_to_Ch{e_c:04d}.mp4"
-                    out_path = os.path.join(temp_parts_dir, out_name)
-
-                    part_info = {
-                        "part_num": part_counter,
-                        "start_chap": s_c,
-                        "end_chap": e_c,
-                        "files": [x["path"] for x in sliced_items],
-                        "duration": sliced_dur
-                    }
-
-                    logging.info(f"\n🚀 【第 {part_counter} 部】準備無縫合成: 第 {s_c}~{e_c} 章 ({len(sliced_items)} 章，總長 {sliced_dur/3600:.2f} 小時)")
-
-                    if merge_part_videos(part_info, out_path):
-                        p_meta = save_book_metadata(
-                            book_title=book_title,
-                            start_chap=s_c,
-                            end_chap=e_c,
-                            is_completed=True,
-                            part_num=part_counter
-                        )
-                        full_desc = (
-                            f"{p_meta['description']}\n\n"
-                            f"播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
-                        )
-
-                        logging.info(f"[API_UPLOAD_MARKER] START | Part {part_counter} | Ch {s_c}~{e_c} | {out_name}")
-                        sys.stdout.flush()
-
-                        v_id = upload_video_file(
-                            youtube,
-                            video_path=out_path,
-                            title=p_meta["title"],
-                            description=full_desc,
-                            privacy_status=args.privacy,
-                            cover_path=p_meta["cover_file"]
-                        )
-
-                        if v_id:
-                            total_uploaded += 1
-                            if playlist_id:
-                                add_video_to_playlist(youtube, playlist_id, v_id)
-
-                            logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_counter} | VideoID {v_id} | total {total_uploaded}")
-                            logging.info(f"✅ 【第 {part_counter} 部】成功上傳並加入播放清單: {p_meta['title']}\n")
-                            sys.stdout.flush()
-
-                        # 精準刪除已上傳完畢的單章與 Part
-                        logging.info(f"🧹 釋放硬碟空間：清理【第 {part_counter} 部】已上傳完畢的 {len(sliced_items)} 個單章原始檔與 Part 大影片...")
-                        for item in sliced_items:
-                            try:
-                                if os.path.exists(item["path"]):
-                                    os.remove(item["path"])
-                            except Exception as e:
-                                logging.warning(f"刪除暫存檔 {item['path']} 失敗: {e}")
-
-                        if os.path.exists(out_path):
-                            try:
-                                os.remove(out_path)
-                            except Exception as e:
-                                logging.warning(f"刪除 Part 檔 {out_path} 失敗: {e}")
-
-                    # 從緩衝池中移除已處理的章節
+                if expected_title in existing_titles:
+                    logging.info(f"⏭️ 【第 {part_counter} 部】(第 {s_c}~{e_c} 章) 已存在於 YouTube 播放清單，觸發【智能斷點續傳】秒跳過！")
+                    for item in sliced_items:
+                        try:
+                            if os.path.exists(item["path"]):
+                                os.remove(item["path"])
+                        except Exception:
+                            pass
                     sliced_paths = set(x["path"] for x in sliced_items)
                     chapter_pool = [x for x in chapter_pool if x["path"] not in sliced_paths]
-
                     part_counter += 1
+                    continue
 
-                    remaining_dur = sum(x["dur"] for x in chapter_pool)
-                    if remaining_dur < min_seconds and not is_last_artifact:
-                        logging.info(f"   第一包剩餘 {len(chapter_pool)} 章 (約 {remaining_dur/3600:.2f} 小時)，保留至下一包繼續累加時長...")
-                        break
+                out_name = f"{book_title}_Part_{part_counter:02d}_Ch{s_c:04d}_to_Ch{e_c:04d}.mp4"
+                out_path = os.path.join(temp_parts_dir, out_name)
+
+                part_info = {
+                    "part_num": part_counter,
+                    "start_chap": s_c,
+                    "end_chap": e_c,
+                    "files": [x["path"] for x in sliced_items],
+                    "duration": sliced_dur
+                }
+
+                logging.info(f"\n🚀 【第 {part_counter} 部】準備無縫合成: 第 {s_c}~{e_c} 章 ({len(sliced_items)} 章，總長 {sliced_dur/3600:.2f} 小時)")
+
+                if merge_part_videos(part_info, out_path):
+                    p_meta = save_book_metadata(
+                        book_title=book_title,
+                        start_chap=s_c,
+                        end_chap=e_c,
+                        is_completed=True,
+                        part_num=part_counter
+                    )
+                    full_desc = (
+                        f"{p_meta['description']}\n\n"
+                        f"播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
+                    )
+
+                    logging.info(f"[API_UPLOAD_MARKER] START | Part {part_counter} | Ch {s_c}~{e_c} | {out_name}")
+                    sys.stdout.flush()
+
+                    v_id = upload_video_file(
+                        youtube,
+                        video_path=out_path,
+                        title=p_meta["title"],
+                        description=full_desc,
+                        privacy_status=args.privacy,
+                        cover_path=p_meta["cover_file"]
+                    )
+
+                    if v_id:
+                        total_uploaded += 1
+                        if playlist_id:
+                            add_video_to_playlist(youtube, playlist_id, v_id)
+
+                        logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_counter} | VideoID {v_id} | total {total_uploaded}")
+                        logging.info(f"✅ 【第 {part_counter} 部】成功上傳並加入播放清單: {p_meta['title']}\n")
+                        sys.stdout.flush()
+
+                    # 精準刪除已上傳完畢的單章與 Part
+                    logging.info(f"🧹 釋放硬碟空間：清理【第 {part_counter} 部】已上傳完畢的 {len(sliced_items)} 個單章原始檔與 Part 大影片...")
+                    for item in sliced_items:
+                        try:
+                            if os.path.exists(item["path"]):
+                                os.remove(item["path"])
+                        except Exception as e:
+                            logging.warning(f"刪除暫存檔 {item['path']} 失敗: {e}")
+
+                    if os.path.exists(out_path):
+                        try:
+                            os.remove(out_path)
+                        except Exception as e:
+                            logging.warning(f"刪除 Part 檔 {out_path} 失敗: {e}")
+
+                # 從緩衝池中移除已處理的章節
+                sliced_paths = set(x["path"] for x in sliced_items)
+                chapter_pool = [x for x in chapter_pool if x["path"] not in sliced_paths]
+
+                part_counter += 1
+
+                remaining_dur = sum(x["dur"] for x in chapter_pool)
+                if remaining_dur < min_seconds and not is_last_artifact:
+                    logging.info(f"   第一包剩餘 {len(chapter_pool)} 章 (約 {remaining_dur/3600:.2f} 小時)，保留至下一包繼續累加時長...")
+                    break
+
+            # 等待背景預載線程完成
+            if prefetch_thread:
+                prefetch_thread.join()
 
     elif args.input_dir and os.path.exists(args.input_dir):
         files_to_upload = sorted(glob.glob(os.path.join(args.input_dir, "**", "*.mp4"), recursive=True), key=lambda p: parse_chapter_info(os.path.basename(p)))
