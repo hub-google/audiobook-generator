@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import argparse
 import logging
+import threading
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,7 +24,6 @@ def stream_merged_file_to_rtmp(video_path, rtmp_url):
     filename = os.path.basename(video_path)
     logging.info(f"▶️ [極速大頻寬推流] 傳送至 YouTube Live: {filename}")
     
-    # 優化 RTMP socket 緩衝與連線，全速將數據寫入 RTMP
     cmd = [
         "ffmpeg",
         "-re",  # 保障直播穩定
@@ -53,7 +53,6 @@ def concat_mp4_files(mp4_files, output_merged_path):
     concat_txt = os.path.join(os.path.dirname(output_merged_path), "concat_list.txt")
     with open(concat_txt, "w", encoding="utf-8") as f:
         for mp4 in mp4_files:
-            # 轉義路徑中的單引號
             safe_p = os.path.abspath(mp4).replace("'", "'\\''")
             f.write(f"file '{safe_p}'\n")
 
@@ -135,8 +134,23 @@ def test_and_select_stream_key(candidate_keys):
     logging.warning("⚠️ 備選池中所有 Key 均回應忙碌，預設使用第一組 Key 執行。")
     return candidate_keys[0]
 
+def download_artifact_task(run_id, repo, artifact_name, dest_dir):
+    """背景執行下載任務"""
+    if os.path.exists(dest_dir):
+        shutil.rmtree(dest_dir, ignore_errors=True)
+    os.makedirs(dest_dir, exist_ok=True)
+    
+    dl_cmd = [
+        "gh", "run", "download", str(run_id),
+        "--repo", repo,
+        "--name", artifact_name,
+        "--dir", dest_dir
+    ]
+    res = subprocess.run(dl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return res.returncode == 0
+
 def main():
-    parser = argparse.ArgumentParser(description="Accelerated YouTube Live Streamer with Multi-Key Failover")
+    parser = argparse.ArgumentParser(description="Accelerated YouTube Live Streamer with Multi-Key Failover & Async Prefetch")
     parser.add_argument("--run-id", required=True, help="GitHub Actions Run ID (e.g. 29821206020)")
     parser.add_argument("--repo", default="hub-google/audiobook-generator", help="GitHub Repository")
     args = parser.parse_args()
@@ -181,56 +195,72 @@ def main():
     logging.info(f"📝 [自動生成影片簡介]:\n{video_desc}")
     logging.info("="*60 + "\n")
 
-    logging.info(f"🚀 啟動加速推流模式，Target Run ID: {args.run_id}")
+    logging.info(f"🚀 啟動異步預下載 (Async Prefetch) 與加速推流模式，Target Run ID: {args.run_id}")
 
     artifact_names = get_run_artifact_names(args.run_id, args.repo)
     if not artifact_names:
         logging.error(f"No video-worker-* artifacts found for run {args.run_id}")
         sys.exit(1)
 
-    logging.info(f"找到 {len(artifact_names)} 個 Worker Artifacts 待推流")
+    logging.info(f"找到 {len(artifact_names)} 個 Worker Artifacts，開啟背景雙線程流水線...")
 
-    temp_dir = os.path.abspath("temp_stream_workspace")
+    base_temp = os.path.abspath("temp_stream_workspace")
+    dir_a = os.path.join(base_temp, "dir_a")
+    dir_b = os.path.join(base_temp, "dir_b")
 
     total_streamed = 0
 
+    # 啟動第一個 Artifact 的背景下載
+    curr_dir = dir_a
+    next_dir = dir_b
+
+    logging.info(f"📦 [1/{len(artifact_names)}] 開始下載 Artifact: {artifact_names[0]}...")
+    next_thread = threading.Thread(
+        target=download_artifact_task, 
+        args=(args.run_id, args.repo, artifact_names[0], curr_dir)
+    )
+    next_thread.start()
+
     for idx, artifact_name in enumerate(artifact_names):
+        # 等待目前的 Artifact 下載完成
+        next_thread.join()
+
+        # 立即發起【下一個 Artifact】的背景預下載線程 (若還有下一個)
+        if idx + 1 < len(artifact_names):
+            next_artifact = artifact_names[idx + 1]
+            logging.info(f"⚡ 啟動背景線程【預先下載】下一個 Artifact [{idx+2}/{len(artifact_names)}]: {next_artifact}")
+            next_thread = threading.Thread(
+                target=download_artifact_task,
+                args=(args.run_id, args.repo, next_artifact, next_dir)
+            )
+            next_thread.start()
+        else:
+            next_thread = None
+
         logging.info(f"\n==================================================")
-        logging.info(f"📦 [{idx+1}/{len(artifact_names)}] 下載 Artifact: {artifact_name}")
+        logging.info(f"🎥 [{idx+1}/{len(artifact_names)}] 正式推流處理: {artifact_name}")
         logging.info(f"==================================================")
 
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        os.makedirs(temp_dir, exist_ok=True)
-
-        dl_cmd = [
-            "gh", "run", "download", str(args.run_id),
-            "--repo", args.repo,
-            "--name", artifact_name,
-            "--dir", temp_dir
-        ]
-        dl_res = subprocess.run(dl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if dl_res.returncode != 0:
-            logging.error(f"Failed to download artifact {artifact_name}: {dl_res.stderr}")
-            continue
-
-        mp4_files = glob.glob(os.path.join(temp_dir, "**", "*.mp4"), recursive=True)
+        mp4_files = glob.glob(os.path.join(curr_dir, "**", "*.mp4"), recursive=True)
         mp4_files.sort(key=parse_chapter_number)
 
-        logging.info(f"在 {artifact_name} 中找到 {len(mp4_files)} 個章節影片，進行秒級 concat 合併為單一串流...")
-
-        merged_worker_mp4 = os.path.join(temp_dir, f"{artifact_name}_merged.mp4")
-        if concat_mp4_files(mp4_files, merged_worker_mp4):
-            if stream_merged_file_to_rtmp(merged_worker_mp4, rtmp_url):
-                total_streamed += len(mp4_files)
+        if mp4_files:
+            logging.info(f"在 {artifact_name} 中找到 {len(mp4_files)} 個章節影片，進行秒級 concat 合併為單一串流...")
+            merged_worker_mp4 = os.path.join(curr_dir, f"{artifact_name}_merged.mp4")
+            if concat_mp4_files(mp4_files, merged_worker_mp4):
+                if stream_merged_file_to_rtmp(merged_worker_mp4, rtmp_url):
+                    total_streamed += len(mp4_files)
+            else:
+                logging.warning("⚠️ Concat 合併失敗，降階為單檔個別推流模式...")
+                for mp4 in mp4_files:
+                    if stream_merged_file_to_rtmp(mp4, rtmp_url):
+                        total_streamed += 1
         else:
-            logging.warning("⚠️ Concat 合併失敗，降階為單檔個別推流模式...")
-            for mp4 in mp4_files:
-                if stream_merged_file_to_rtmp(mp4, rtmp_url):
-                    total_streamed += 1
+            logging.warning(f"⚠️ {artifact_name} 中未找到任何 .mp4 檔案")
 
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        logging.info(f"🧹 已清理 {artifact_name} 的硬碟暫存")
+        # 串流結束後，清理目前資料夾並交換雙緩衝區
+        shutil.rmtree(curr_dir, ignore_errors=True)
+        curr_dir, next_dir = next_dir, curr_dir
 
     logging.info(f"\n🎉 全數推流完畢！共傳送 {total_streamed} 章影片至 YouTube Live！")
 
