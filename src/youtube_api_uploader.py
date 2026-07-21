@@ -215,7 +215,10 @@ def get_existing_playlist_video_titles(youtube, playlist_id):
                 break
         logging.info(f"📋 成功獲取播放清單已有 {len(titles)} 部影片，開啟【智能斷點續傳】跳過機制！")
     except Exception as e:
-        logging.warning(f"無法獲取播放清單既有影片清單: {e}")
+        if "playlistNotFound" in str(e):
+            logging.info("📋 播放清單全新建立完成，目前為空狀態。")
+        else:
+            logging.warning(f"無法獲取播放清單既有影片清單: {e}")
     return titles
 
 def upload_video_file(youtube, video_path, title, description, category_id="22", privacy_status="public", cover_path=None):
