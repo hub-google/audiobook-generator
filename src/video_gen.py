@@ -8,6 +8,7 @@ import contextlib
 import logging
 
 import shutil
+import time
 
 def get_ffmpeg_path():
     cmd = shutil.which("ffmpeg")
@@ -196,7 +197,10 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
     title_card_path = os.path.join(workspace_dir, "Images", f"{book_title}_chapter_{chap_num}.jpg")
     os.makedirs(os.path.dirname(title_card_path), exist_ok=True)
 
-    card_ok = generate_chapter_title_image(book_title, chap_num, chapter_title, title_card_path)
+    if os.path.exists(title_card_path) and os.path.getsize(title_card_path) > 100:
+        card_ok = True
+    else:
+        card_ok = generate_chapter_title_image(book_title, chap_num, chapter_title, title_card_path)
 
     # 若 Pillow 產圖失敗，fallback 到原有背景圖
     if card_ok and os.path.exists(title_card_path):
@@ -229,8 +233,10 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
         "-shortest",
         output_video
     ]
+    t0 = time.time()
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    logging.info(f"[VideoGen] ✓ Chapter {chap_num} -> {os.path.basename(output_video)}")
+    elapsed = time.time() - t0
+    logging.info(f"[VideoGen] 🎉 Chapter {chap_num} MP4 generated successfully -> {os.path.basename(output_video)} (took {elapsed:.1f}s)")
     return output_video, duration
 
 
