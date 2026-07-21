@@ -1,7 +1,6 @@
 # Environment and Credentials
 .env
 *.json
-audiobook-uploader-503104-18226d210f54.json
 *.pem
 
 # Python

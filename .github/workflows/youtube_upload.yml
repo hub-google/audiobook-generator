@@ -1,0 +1,43 @@
+name: Fast Upload Audiobooks & Build YouTube Playlist
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'GitHub Actions Run ID containing video worker artifacts (e.g. 29821206020)'
+        required: true
+        default: '29821206020'
+      privacy:
+        description: 'Video privacy status (public, unlisted, private)'
+        required: true
+        default: 'public'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  fast_api_upload:
+    name: "📤 Fast Upload & Build Playlist"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Python Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Fast Upload & Playlist Builder
+        env:
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python src/youtube_api_uploader.py --run-id "${{ github.event.inputs.run_id }}" --repo "${{ github.repository }}" --privacy "${{ github.event.inputs.privacy }}"
