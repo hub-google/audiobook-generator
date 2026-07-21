@@ -69,7 +69,10 @@ jobs:
 
       - name: Export matrix to GitHub Actions output
         id: gen_matrix
-        run: echo "matrix=$(cat matrix.json)" >> $GITHUB_OUTPUT
+        run: |
+          echo 'matrix<<EOF' >> $GITHUB_OUTPUT
+          cat matrix.json >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
 
       - name: Upload config.yaml as shared artifact
         uses: actions/upload-artifact@v4
