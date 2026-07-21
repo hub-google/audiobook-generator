@@ -244,8 +244,14 @@ def create_youtube_cover(
     )
     
     os.makedirs(os.path.dirname(os.path.abspath(output_filename)), exist_ok=True)
-    img.save(output_filename, quality=100, subsampling=0)
-    logging.info(f"✅ 2K 超高畫質封面已合成完成: {output_filename}")
+    q = 95
+    img.save(output_filename, quality=q, optimize=True)
+    while os.path.getsize(output_filename) >= 2000000 and q > 50:
+        q -= 5
+        img.save(output_filename, quality=q, optimize=True)
+
+    size_mb = os.path.getsize(output_filename) / (1024 * 1024)
+    logging.info(f"✅ 2K 超高畫質封面已合成完成: {output_filename} (品質 quality={q}, 大小 {size_mb:.2f} MB)")
     return output_filename
 
 def save_process_log(output_dir, book_title, pure_plot, english_plot, final_prompt, img_width=2560, img_height=1440):
