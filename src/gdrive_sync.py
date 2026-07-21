@@ -26,7 +26,15 @@ def get_drive_service():
             exit(1)
     
     creds_dict = json.loads(creds_json)
-    creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+    
+    # Check if it's a service account or an authorized user token
+    if 'type' in creds_dict and creds_dict['type'] == 'service_account':
+        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+    else:
+        # User OAuth token (token.json)
+        from google.oauth2.credentials import Credentials
+        creds = Credentials.from_authorized_user_info(creds_dict, SCOPES)
+        
     service = build('drive', 'v3', credentials=creds, cache_discovery=False)
     return service
 
