@@ -193,6 +193,31 @@ def add_video_to_playlist(youtube, playlist_id, video_id):
         logging.warning(f"⚠️ 將影片 [Video ID: {video_id}] 加入播放清單失敗: {e}")
         return False
 
+def get_existing_playlist_video_titles(youtube, playlist_id):
+    """獲取播放清單中已存在的影片標題集合，實現斷點續傳與自動跳過"""
+    if not playlist_id:
+        return set()
+    titles = set()
+    try:
+        next_page_token = None
+        while True:
+            res = youtube.playlistItems().list(
+                part="snippet",
+                playlistId=playlist_id,
+                maxResults=50,
+                pageToken=next_page_token
+            ).execute()
+            for item in res.get("items", []):
+                t = item["snippet"]["title"].strip()
+                titles.add(t)
+            next_page_token = res.get("nextPageToken")
+            if not next_page_token:
+                break
+        logging.info(f"📋 成功獲取播放清單已有 {len(titles)} 部影片，開啟【智能斷點續傳】跳過機制！")
+    except Exception as e:
+        logging.warning(f"無法獲取播放清單既有影片清單: {e}")
+    return titles
+
 def upload_video_file(youtube, video_path, title, description, category_id="22", privacy_status="public", cover_path=None):
     """使用 Resumable 上傳 MP4 到 YouTube"""
     file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
@@ -310,8 +335,10 @@ def main():
     playlist_name = f"《{book_title}》有聲小說全集"
     playlist_desc = f"《{book_title}》完整版有聲書全集 (第 {start_chap} 至 {end_chap} 章)，高音質連續播映版。\n歡迎訂閱開啟小鈴鐺！"
     playlist_id = get_or_create_playlist(youtube, playlist_name, playlist_desc)
+    existing_titles = get_existing_playlist_video_titles(youtube, playlist_id)
 
     from part_builder import parse_chapter_num, get_media_duration, merge_part_videos
+    from metadata_gen import generate_video_title
 
     temp_parts_dir = os.path.abspath("temp_parts_output")
     os.makedirs(temp_parts_dir, exist_ok=True)
@@ -322,7 +349,7 @@ def main():
     total_uploaded = 0
 
     if args.run_id:
-        logging.info(f"📥 啟動【即時下載 ➔ 流水線打包 (10~11小時) ➔ 暴速上傳 ➔ 精準硬碟清理】模式...")
+        logging.info(f"📥 啟動【即時下載 ➔ 流水線打包 (10~11小時) ➔ 暴速上傳 ➔ 精準硬碟清理 ➔ 智能斷點續傳】模式...")
         logging.info(f"Target Run ID #{args.run_id}")
 
         artifact_names = get_run_artifact_names(args.run_id, args.repo)
@@ -380,6 +407,21 @@ def main():
 
                     s_c = sliced_items[0]["chap_num"]
                     e_c = sliced_items[-1]["chap_num"]
+                    expected_title = generate_video_title(book_title, start_chap=s_c, end_chap=e_c, part_num=part_counter)
+
+                    if expected_title in existing_titles:
+                        logging.info(f"⏭️ 【第 {part_counter} 部】(第 {s_c}~{e_c} 章) 已存在於 YouTube 播放清單，觸發【智能斷點續傳】秒跳過！")
+                        for item in sliced_items:
+                            try:
+                                if os.path.exists(item["path"]):
+                                    os.remove(item["path"])
+                            except Exception:
+                                pass
+                        sliced_paths = set(x["path"] for x in sliced_items)
+                        chapter_pool = [x for x in chapter_pool if x["path"] not in sliced_paths]
+                        part_counter += 1
+                        continue
+
                     out_name = f"{book_title}_Part_{part_counter:02d}_Ch{s_c:04d}_to_Ch{e_c:04d}.mp4"
                     out_path = os.path.join(temp_parts_dir, out_name)
 
