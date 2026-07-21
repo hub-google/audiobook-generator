@@ -72,6 +72,7 @@ jobs:
         run: |
           echo 'matrix<<EOF' >> $GITHUB_OUTPUT
           cat matrix.json >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
           echo 'EOF' >> $GITHUB_OUTPUT
 
       - name: Upload config.yaml as shared artifact
