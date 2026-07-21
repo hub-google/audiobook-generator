@@ -150,7 +150,7 @@ def sync_upload(service, root_folder_id, local_workspace):
                 'name': file,
                 'parents': [parent_id]
             }
-            media = MediaFileUpload(local_path, mimetype=get_mime_type(local_path), resumable=True)
+            media = MediaFileUpload(local_path, mimetype=get_mime_type(local_path), resumable=False)
             
             if rel_path in remote_files:
                 remote_f = remote_files[rel_path]
