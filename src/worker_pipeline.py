@@ -47,9 +47,9 @@ def setup_logging(worker_id):
 
 # ── 各 Stage 處理函式 ──────────────────────────────────────
 
-def stage_crawl(config, chapters, start_global_idx):
+def stage_crawl(config, chapters, start_global_idx, exact_indices=None):
     from crawler import run_crawler_worker
-    run_crawler_worker(config, chapters, start_global_idx)
+    run_crawler_worker(config, chapters, start_global_idx, exact_indices)
 
 
 def stage_clean(config):
