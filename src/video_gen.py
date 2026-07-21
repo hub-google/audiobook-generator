@@ -324,40 +324,14 @@ def run_video_gen():
     except Exception as e:
         logging.error(f"[VideoGen] ✗ Full SRT merge failed: {e}")
 
-    # ── 合併所有 chapter MP4 成完整的 full.mp4（stream copy，不重新編碼）──
-    if not chapter_mp4s:
-        logging.warning("[VideoGen] No chapter MP4s to merge.")
-        return
-
-    full_video_path = os.path.join(output_dir, f"{book_title}_full.mp4")
-    if len(chapter_mp4s) == 1:
-        logging.info(f"[VideoGen] Single chapter, full video = {chapter_mp4s[0]}")
-        return
-
-    logging.info(f"[VideoGen] Merging {len(chapter_mp4s)} chapters into full video (stream copy) ...")
-    concat_list = os.path.join(workspace_dir, "mp4_concat.txt")
-    with open(concat_list, "w", encoding="utf-8") as f:
-        for mp4 in chapter_mp4s:
-            safe = mp4.replace("\\", "/")
-            f.write(f"file '{safe}'\n")
+    # ── 自動進行 10~11 小時無縫分部 (Part) 影片與 Metadata 切分打包 ──
     try:
-        subprocess.run(
-            [FFMPEG_PATH, "-y",
-             "-f", "concat", "-safe", "0",
-             "-i", concat_list,
-             "-c", "copy",
-             full_video_path],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        logging.info(f"[VideoGen] ✓ Full video -> {full_video_path}")
+        from part_builder import build_all_parts
+        logging.info("[VideoGen] 正在執行 10~11 小時影片自動無縫分部 (Part) 打包...")
+        built_parts = build_all_parts(book_title, workspace_dir=workspace_dir, output_dir=output_dir, min_hours=10.0, max_hours=11.0)
+        logging.info(f"[VideoGen] 🎉 成功生成 {len(built_parts)} 部 10~11 小時分部影片！")
     except Exception as e:
-        logging.error(f"[VideoGen] ✗ Full merge failed: {e}")
-    finally:
-        if os.path.exists(concat_list):
-            os.remove(concat_list)
-
+        logging.error(f"[VideoGen] ✗ 分部打包失敗: {e}")
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

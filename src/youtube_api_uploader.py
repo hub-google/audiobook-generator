@@ -52,23 +52,40 @@ def get_authenticated_service():
             logging.warning(f"無法讀取 token.json: {e}")
 
     # 2. 嘗試從環境變數 (YOUTUBE_REFRESH_TOKEN, YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET) 讀取
-    if not creds or not creds.valid:
-        ref_token = os.environ.get("YOUTUBE_REFRESH_TOKEN", "").strip()
-        client_id = os.environ.get("YOUTUBE_CLIENT_ID", "").strip()
-        client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET", "").strip()
+    ref_token = os.environ.get("YOUTUBE_REFRESH_TOKEN", "").strip()
+    client_id = os.environ.get("YOUTUBE_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET", "").strip()
 
-        if ref_token and client_id and client_secret:
-            creds = Credentials(
-                token=None,
-                refresh_token=ref_token,
-                token_uri="https://oauth2.googleapis.com/token",
-                client_id=client_id,
-                client_secret=client_secret,
-                scopes=SCOPES
-            )
+    if (not creds or not creds.valid) and ref_token and client_id and client_secret:
+        creds = Credentials(
+            token=None,
+            refresh_token=ref_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=SCOPES
+        )
 
-    # 3. 重新整理 Token
-    if creds and creds.expired and creds.refresh_token:
+    # 3. 嘗試動態合成 client_secret.json (如果 CI/CD 或環境中不存在)
+    if not os.path.exists(client_secret_path) and client_id and client_secret:
+        try:
+            import json
+            cs_data = {
+                "installed": {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token"
+                }
+            }
+            with open(client_secret_path, "w", encoding="utf-8") as f:
+                json.dump(cs_data, f)
+            logging.info(f"✅ 已由環境變數動態生成 {client_secret_path}")
+        except Exception as e:
+            logging.warning(f"無法寫入 client_secret.json: {e}")
+
+    # 4. 重新整理 Token
+    if creds and creds.refresh_token:
         try:
             creds.refresh(Request())
             with open(token_path, "w", encoding="utf-8") as token_file:
@@ -77,19 +94,23 @@ def get_authenticated_service():
             logging.warning(f"重新整理 Refresh Token 失敗: {e}")
             creds = None
 
-    # 4. 如果是本地執行且沒有有效憑證，開瀏覽器一鍵登入授權
+    # 5. 如果是本地執行且沒有有效憑證，開瀏覽器一鍵登入授權
     if not creds or not creds.valid:
         if not os.path.exists(client_secret_path):
-            logging.error(f"❌ 找不到 client_secret.json！請將 credentials 下載存為 {client_secret_path}")
+            logging.error(f"❌ 找不到 client_secret.json 且未設定 YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET！請在 GitHub Secrets 設定憑證。")
             sys.exit(1)
 
-        logging.info("🔑 正在開啟瀏覽器進行 YouTube OAuth2 登入授權...")
-        flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
-        creds = flow.run_local_server(port=0)
+        try:
+            logging.info("🔑 正在開啟瀏覽器進行 YouTube OAuth2 登入授權...")
+            flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
+            creds = flow.run_local_server(port=0)
 
-        with open(token_path, "w", encoding="utf-8") as token_file:
-            token_file.write(creds.to_json())
-        logging.info(f"✅ 授權成功！憑證已儲存至 {token_path}")
+            with open(token_path, "w", encoding="utf-8") as token_file:
+                token_file.write(creds.to_json())
+            logging.info(f"✅ 授權成功！憑證已儲存至 {token_path}")
+        except Exception as e:
+            logging.error(f"❌ 無法完成 YouTube API 授權: {e}")
+            sys.exit(1)
 
     return build("youtube", "v3", credentials=creds)
 
@@ -314,38 +335,91 @@ def main():
 
     files_to_upload.sort(key=lambda p: parse_chapter_info(os.path.basename(p)))
 
+    # ── 自動檢查是否為單章 MP4 檔案，若是則先執行 10~11 小時無縫分部 (Part) 打包 ──
+    is_part_files = any("_Part_" in os.path.basename(p) for p in files_to_upload)
+    parts_to_upload = []
+
+    if not is_part_files:
+        logging.info("📦 檢測到為單章影片產物，正在自動合成為 10~11 小時無縫分部 (Part) 大影片...")
+        from part_builder import partition_chapters, merge_part_videos
+        partitioned_parts = partition_chapters(files_to_upload, min_hours=10.0, max_hours=11.0)
+        
+        temp_parts_dir = os.path.abspath("temp_parts_output")
+        os.makedirs(temp_parts_dir, exist_ok=True)
+        
+        for p in partitioned_parts:
+            part_num = p["part_num"]
+            s_c = p["start_chap"]
+            e_c = p["end_chap"]
+            out_name = f"{book_title}_Part_{part_num:02d}_Ch{s_c:04d}_to_Ch{e_c:04d}.mp4"
+            out_path = os.path.join(temp_parts_dir, out_name)
+            
+            if merge_part_videos(p, out_path):
+                # 為該 Part 生成專屬 Metadata (包含【第 X 部】2K 封面)
+                p_meta = save_book_metadata(
+                    book_title=book_title,
+                    start_chap=s_c,
+                    end_chap=e_c,
+                    is_completed=True,
+                    part_num=part_num
+                )
+                parts_to_upload.append({
+                    "video_path": out_path,
+                    "title": p_meta["title"],
+                    "description": p_meta["description"],
+                    "cover_path": p_meta["cover_file"],
+                    "part_num": part_num,
+                    "start_chap": s_c,
+                    "end_chap": e_c
+                })
+    else:
+        for idx, vp in enumerate(files_to_upload, 1):
+            c_start, c_end = parse_chapter_info(os.path.basename(vp))
+            p_meta = save_book_metadata(
+                book_title=book_title,
+                start_chap=c_start,
+                end_chap=c_end,
+                is_completed=True,
+                part_num=idx
+            )
+            parts_to_upload.append({
+                "video_path": vp,
+                "title": p_meta["title"],
+                "description": p_meta["description"],
+                "cover_path": p_meta["cover_file"],
+                "part_num": idx,
+                "start_chap": c_start,
+                "end_chap": c_end
+            })
+
     logging.info(f"\n==================================================")
-    logging.info(f"🚀 開始按章節自然數【正序上傳】共 {len(files_to_upload)} 部影片檔案！")
+    logging.info(f"🚀 開始按分部正序【極速上傳】共 {len(parts_to_upload)} 部 10~11 小時大影片！")
     logging.info(f"==================================================\n")
 
     total_uploaded = 0
-    for idx, video_path in enumerate(files_to_upload, 1):
-        filename = os.path.basename(video_path)
-        c_start, c_end = parse_chapter_info(filename)
+    for idx, item in enumerate(parts_to_upload, 1):
+        v_path = item["video_path"]
+        v_title = item["title"]
+        v_desc = item["description"]
+        v_cover = item["cover_path"]
+        part_n = item["part_num"]
 
-        if c_start == c_end:
-            chap_title_str = f"第 {c_start:04d} 章"
-        else:
-            chap_title_str = f"第 {c_start:04d} ~ {c_end:04d} 章"
-
-        v_title = f"《{book_title}》{chap_title_str}【全集連播】"
-        v_desc = (
-            f"📌 本集收錄：《{book_title}》{chap_title_str}\n\n"
-            f"📖 故事簡介：\n{meta_info['description']}\n\n"
+        full_desc = (
+            f"{v_desc}\n\n"
             f"播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
         )
 
-        logging.info(f"[API_UPLOAD_MARKER] START | Item {idx}/{len(files_to_upload)} | {chap_title_str} | {filename}")
-        logging.info(f"▶️ [{idx}/{len(files_to_upload)}] 正在上傳: {v_title}...")
+        logging.info(f"[API_UPLOAD_MARKER] START | Part {part_n}/{len(parts_to_upload)} | Ch {item['start_chap']}~{item['end_chap']} | {os.path.basename(v_path)}")
+        logging.info(f"▶️ [{idx}/{len(parts_to_upload)}] 正在上傳: {v_title}...")
         sys.stdout.flush()
 
         v_id = upload_video_file(
             youtube,
-            video_path=video_path,
+            video_path=v_path,
             title=v_title,
-            description=v_desc,
+            description=full_desc,
             privacy_status=args.privacy,
-            cover_path=cover_path
+            cover_path=v_cover
         )
 
         if v_id:
@@ -353,12 +427,12 @@ def main():
             if playlist_id:
                 add_video_to_playlist(youtube, playlist_id, v_id)
 
-            logging.info(f"[API_UPLOAD_MARKER] DONE | Item {idx}/{len(files_to_upload)} | {chap_title_str} | VideoID {v_id} | total {total_uploaded}")
-            logging.info(f"✅ [{idx}/{len(files_to_upload)}] 完成上傳並加進播放清單: {v_title}\n")
+            logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_n}/{len(parts_to_upload)} | VideoID {v_id} | total {total_uploaded}")
+            logging.info(f"✅ [{idx}/{len(parts_to_upload)}] 完成上傳並加進播放清單: {v_title}\n")
             sys.stdout.flush()
 
     logging.info("="*60)
-    logging.info(f"🎉 全部影片極速上傳完畢！共上傳 {total_uploaded} 部影片至 YouTube 播放清單！")
+    logging.info(f"🎉 全部影片極速上傳完畢！共上傳 {total_uploaded} 部分部影片至 YouTube 播放清單！")
     if playlist_id:
         logging.info(f"👉 播放清單網址: https://www.youtube.com/playlist?list={playlist_id}")
     logging.info("="*60)

@@ -144,7 +144,8 @@ def create_youtube_cover(
     start_chap, 
     end_chap, 
     is_completed=True, 
-    output_filename="youtube_cover.jpg"
+    output_filename="youtube_cover.jpg",
+    part_num=None
 ):
     logging.info("正在合成 2K 超高解析度封面（自動排版遮罩、字型與徽章）...")
     
@@ -203,9 +204,13 @@ def create_youtube_cover(
     )
     draw.text((badge1_x + int(30 * scale), badge1_y + int(12 * scale)), chap_text, font=font_badge, fill=(255, 235, 59))
     
-    # (B) 右上角：完結狀態徽章
-    status_text = "【已完結】" if is_completed else "【連載中】"
-    status_bg = (16, 185, 129) if is_completed else (245, 158, 11)
+    # (B) 右上角：完結狀態或分部徽章
+    if part_num:
+        status_text = f"【第 {part_num} 部】"
+        status_bg = (37, 99, 235)  # 藍色徽章
+    else:
+        status_text = "【已完結】" if is_completed else "【連載中】"
+        status_bg = (16, 185, 129) if is_completed else (245, 158, 11)
     
     font_status = get_font(int(48 * scale))
     s_bbox = draw.textbbox((0, 0), status_text, font=font_status)
@@ -277,18 +282,21 @@ AI 封面全自動生成過程記錄 Log
     logging.info(f"📄 已導出生成過程 TXT 記錄檔: {log_filename}")
     return log_filename
 
-def generate_video_title(book_title, start_chap=1, end_chap=2400):
+def generate_video_title(book_title, start_chap=1, end_chap=2400, part_num=None):
+    if part_num:
+        return f"《{book_title}》第 {start_chap:04d}~{end_chap:04d} 章【第 {part_num} 部】"
     return f"《{book_title}》| 已完結 | 第 {start_chap}~{end_chap} 章 (超長有聲小說全集)"
 
-def generate_video_description(book_title, start_chap=1, end_chap=2400, pure_plot=None):
+def generate_video_description(book_title, start_chap=1, end_chap=2400, pure_plot=None, part_num=None):
     if not pure_plot:
         pure_plot = fetch_book_summary_online(book_title)
 
-    desc = f"""【超長有聲小說大合集】《{book_title}》全集收聽
+    part_str = f"【第 {part_num} 部】" if part_num else ""
+    desc = f"""【超長有聲小說大合集】《{book_title}》{part_str}收聽
 
 📖 小說名稱：《{book_title}》
-📌 包含章節：第 {start_chap} 章 至 第 {end_chap} 章 (全集完結)
-🎧 播放長度：完整連續播放無中斷
+📌 包含章節：第 {start_chap} 章 至 第 {end_chap} 章 {part_str}
+🎧 播放長度：完整連續播放無中斷 (約 10~11 小時)
 
 【故事整體大綱簡介】：
 {pure_plot}
@@ -297,7 +305,7 @@ def generate_video_description(book_title, start_chap=1, end_chap=2400, pure_plo
 """
     return desc.strip()
 
-def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=None, is_completed=True):
+def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=None, is_completed=True, part_num=None):
     if not workspace_dir:
         SRC_DIR = os.path.dirname(os.path.abspath(__file__))
         workspace_dir = os.path.abspath(os.path.join(SRC_DIR, "..", "Workspace", book_title))
@@ -306,8 +314,8 @@ def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=No
 
     pure_plot, english_plot, final_prompt = auto_generate_prompt_from_summary(book_title)
 
-    title = generate_video_title(book_title, start_chap, end_chap)
-    desc = generate_video_description(book_title, start_chap, end_chap, pure_plot=pure_plot)
+    title = generate_video_title(book_title, start_chap, end_chap, part_num=part_num)
+    desc = generate_video_description(book_title, start_chap, end_chap, pure_plot=pure_plot, part_num=part_num)
 
     title_file = os.path.join(workspace_dir, "youtube_title.txt")
     desc_file = os.path.join(workspace_dir, "youtube_description.txt")
@@ -321,7 +329,7 @@ def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=No
 
     # 下載 AI 高畫質底圖並合成封面
     bg_img = download_ai_image(final_prompt, width=2560, height=1440)
-    create_youtube_cover(bg_img, book_title, start_chap, end_chap, is_completed=is_completed, output_filename=cover_file)
+    create_youtube_cover(bg_img, book_title, start_chap, end_chap, is_completed=is_completed, output_filename=cover_file, part_num=part_num)
 
     # 記錄 log
     log_file = save_process_log(workspace_dir, book_title, pure_plot, english_plot, final_prompt)
