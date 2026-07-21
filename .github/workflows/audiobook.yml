@@ -438,11 +438,7 @@ jobs:
           # Read book_title from config.yaml
           RAW_BOOK_TITLE=$(grep -oP '(?<=^book_title: ).*' config.yaml | tr -d '\r' | tr -d '"' | tr -d "'")
           echo "Raw Book title is: $RAW_BOOK_TITLE"
-          
-          # URL encode book title for GitHub Release asset compatibility
-          ENCODED_TITLE=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$RAW_BOOK_TITLE'''))")
-          echo "Encoded title is: $ENCODED_TITLE"
-          echo "BOOK_TITLE=${ENCODED_TITLE}" >> $GITHUB_ENV
+          echo "BOOK_TITLE=${RAW_BOOK_TITLE}" >> $GITHUB_ENV
           
           # Go to Video directory inside the specific book's workspace
           cd "final_workspace/Workspace/$RAW_BOOK_TITLE/Video/"
@@ -464,10 +460,10 @@ jobs:
           cd ../../../
           if [ -n "$ZIP_PASS" ]; then
             echo "Applying password protection..."
-            zip -P "$ZIP_PASS" -s 1900m "../${ENCODED_TITLE}.zip" -r Workspace/ Output/
+            zip -P "$ZIP_PASS" -s 1900m "../${RAW_BOOK_TITLE}.zip" -r Workspace/ Output/
           else
             echo "Creating unencrypted ZIP..."
-            zip -s 1900m "../${ENCODED_TITLE}.zip" -r Workspace/ Output/
+            zip -s 1900m "../${RAW_BOOK_TITLE}.zip" -r Workspace/ Output/
           fi
 
       - name: Create Release and Upload Asset
