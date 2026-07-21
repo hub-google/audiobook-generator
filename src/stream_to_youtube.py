@@ -65,7 +65,7 @@ def main():
     # 動態引入 metadata_gen
     SRC_DIR = os.path.dirname(os.path.abspath(__file__))
     sys.path.insert(0, SRC_DIR)
-    from metadata_gen import generate_video_title, generate_video_description, generate_youtube_cover
+    from metadata_gen import save_book_metadata
 
     # 讀取 config.yaml 獲取書名與章節範圍
     book_title = "有聲小說全集"
@@ -85,14 +85,15 @@ def main():
         except Exception as e:
             logging.warning(f"Could not load config.yaml: {e}")
 
-    # 生成標題、AI簡介與封面圖
-    video_title = generate_video_title(book_title, start_chap, end_chap)
-    video_desc = generate_video_description(book_title, start_chap, end_chap)
-    cover_path = generate_youtube_cover(book_title, start_chap, end_chap, "youtube_cover.jpg")
+    # 生成並寫入 Workspace/{book_title}/ 目錄下
+    meta_info = save_book_metadata(book_title, start_chap, end_chap)
+    video_title = meta_info["title"]
+    video_desc = meta_info["description"]
+    cover_path = meta_info["cover_file"]
 
     logging.info("\n" + "="*60)
     logging.info(f"📌 [自動生成影片標題]: {video_title}")
-    logging.info(f"🖼️ [自動生成影片封面]: {os.path.abspath(cover_path)}")
+    logging.info(f"🖼️ [自動生成影片封面]: {cover_path}")
     logging.info(f"📝 [自動生成影片簡介]:\n{video_desc}")
     logging.info("="*60 + "\n")
 

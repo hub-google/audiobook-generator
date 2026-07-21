@@ -88,10 +88,42 @@ def generate_youtube_cover(book_title, start_chap=1, end_chap=2400, output_path=
     logging.info(f"✅ 已成功生成 YouTube 高清封面: {output_path}")
     return output_path
 
+def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=None):
+    """將標題、簡介與封面圖完整儲存在 Workspace/{book_title}/ 目錄下"""
+    if not workspace_dir:
+        SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+        workspace_dir = os.path.abspath(os.path.join(SRC_DIR, "..", "Workspace", book_title))
+
+    os.makedirs(workspace_dir, exist_ok=True)
+
+    title = generate_video_title(book_title, start_chap, end_chap)
+    desc = generate_video_description(book_title, start_chap, end_chap)
+
+    title_file = os.path.join(workspace_dir, "youtube_title.txt")
+    desc_file = os.path.join(workspace_dir, "youtube_description.txt")
+    cover_file = os.path.join(workspace_dir, "youtube_cover.jpg")
+
+    with open(title_file, "w", encoding="utf-8") as f:
+        f.write(title)
+
+    with open(desc_file, "w", encoding="utf-8") as f:
+        f.write(desc)
+
+    generate_youtube_cover(book_title, start_chap, end_chap, cover_file)
+
+    logging.info(f"📁 本地 Metadata 檔案已全數存入: {workspace_dir}")
+    logging.info(f"   • 標題: {title_file}")
+    logging.info(f"   • 簡介: {desc_file}")
+    logging.info(f"   • 封面: {cover_file}")
+
+    return {
+        "title": title,
+        "description": desc,
+        "title_file": title_file,
+        "desc_file": desc_file,
+        "cover_file": cover_file
+    }
+
 if __name__ == "__main__":
-    t = generate_video_title("凡人修仙傳", 1, 2442)
-    d = generate_video_description("凡人修仙傳", 1, 2442)
-    c = generate_youtube_cover("凡人修仙傳", 1, 2442, "test_cover.jpg")
-    print("Title:", t)
-    print("Description:\n", d)
-    print("Cover generated at:", c)
+    save_book_metadata("凡人修仙傳", 1, 2442)
+
