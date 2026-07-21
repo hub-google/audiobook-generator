@@ -19,7 +19,12 @@ FONT_PATHS = [
     r"C:\Windows\Fonts\msyhbd.ttc",   # 微軟雅黑 粗體
     r"C:\Windows\Fonts\msyh.ttc",     # 微軟雅黑
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/arphic/uming.ttc",
 ]
 
 def get_font(size):
@@ -28,7 +33,31 @@ def get_font(size):
             try:
                 return ImageFont.truetype(font_path, size)
             except Exception:
-                continue
+                try:
+                    return ImageFont.truetype(font_path, size, index=0)
+                except Exception:
+                    continue
+
+    # 自動備用：如果 Linux 系統無字型，自動下載 NotoSansTC 粗體字型
+    fallback_font = os.path.abspath("temp_fallback_font.ttf")
+    if not os.path.exists(fallback_font):
+        try:
+            logging.info("📥 正在下載 Linux CJK 中文字型檔 (NotoSansTC)...")
+            url = "https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC-Bold.ttf"
+            res = requests.get(url, timeout=15)
+            if res.status_code == 200:
+                with open(fallback_font, "wb") as f:
+                    f.write(res.content)
+                logging.info("✅ 成功下載 NotoSansTC 中文字型檔！")
+        except Exception as e:
+            logging.warning(f"無法下載備用中文字型: {e}")
+
+    if os.path.exists(fallback_font):
+        try:
+            return ImageFont.truetype(fallback_font, size)
+        except Exception:
+            pass
+
     return ImageFont.load_default()
 
 def clean_pure_plot_summary(text):

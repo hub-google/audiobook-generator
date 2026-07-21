@@ -33,10 +33,10 @@ jobs:
       - name: Install Python Dependencies
         run: pip install -r requirements.txt
 
-      - name: Install FFmpeg
+      - name: Install FFmpeg & CJK Fonts
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg fonts-noto-cjk fonts-wqy-zenhei
 
       - name: Run Fast Upload & Playlist Builder
         env:
