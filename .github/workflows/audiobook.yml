@@ -112,9 +112,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: Workspace/
-          key: worker-cache-${{ matrix.worker_id }}-${{ hashFiles('config.yaml') }}
+          key: worker-cache-${{ matrix.worker_id }}-crawl-${{ hashFiles('config.yaml') }}
           restore-keys: |
-            worker-cache-${{ matrix.worker_id }}-
+            worker-cache-${{ matrix.worker_id }}-crawl-
 
       - name: Log Cache Location
         run: |
@@ -172,9 +172,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: Workspace/
-          key: worker-cache-${{ matrix.worker_id }}-${{ hashFiles('config.yaml') }}
+          key: worker-cache-${{ matrix.worker_id }}-clean-${{ hashFiles('config.yaml') }}
           restore-keys: |
-            worker-cache-${{ matrix.worker_id }}-
+            worker-cache-${{ matrix.worker_id }}-clean-
+            worker-cache-${{ matrix.worker_id }}-crawl-
 
       - name: Log Cache Location
         run: |
@@ -237,9 +238,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: Workspace/
-          key: worker-cache-${{ matrix.worker_id }}-${{ hashFiles('config.yaml') }}
+          key: worker-cache-${{ matrix.worker_id }}-tts-${{ hashFiles('config.yaml') }}
           restore-keys: |
-            worker-cache-${{ matrix.worker_id }}-
+            worker-cache-${{ matrix.worker_id }}-tts-
+            worker-cache-${{ matrix.worker_id }}-clean-
 
       - name: Log Cache Location
         run: |
@@ -302,9 +304,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: Workspace/
-          key: worker-cache-${{ matrix.worker_id }}-${{ hashFiles('config.yaml') }}
+          key: worker-cache-${{ matrix.worker_id }}-image-${{ hashFiles('config.yaml') }}
           restore-keys: |
-            worker-cache-${{ matrix.worker_id }}-
+            worker-cache-${{ matrix.worker_id }}-image-
+            worker-cache-${{ matrix.worker_id }}-tts-
 
       - name: Log Cache Location
         run: |
@@ -373,9 +376,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: Workspace/
-          key: worker-cache-${{ matrix.worker_id }}-${{ hashFiles('config.yaml') }}
+          key: worker-cache-${{ matrix.worker_id }}-video-${{ hashFiles('config.yaml') }}
           restore-keys: |
-            worker-cache-${{ matrix.worker_id }}-
+            worker-cache-${{ matrix.worker_id }}-video-
+            worker-cache-${{ matrix.worker_id }}-image-
 
       - name: Log Cache Location
         run: |
