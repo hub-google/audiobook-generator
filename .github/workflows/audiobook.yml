@@ -104,6 +104,22 @@ jobs:
         with:
           name: shared-config
 
+      - name: Cache Worker Workspace
+        uses: actions/cache@v4
+        with:
+          path: Workspace/
+          key: worker-cache-${{ matrix.worker_id }}-${{ hashFiles('config.yaml') }}
+          restore-keys: |
+            worker-cache-${{ matrix.worker_id }}-
+
+      - name: Log Cache Location
+        run: |
+          echo "=================================================="
+          echo "📂 斷點續傳快取路徑 (Cache Location):"
+          echo "   • 虛擬機工作目錄: Workspace/"
+          echo "   • 雲端快取管理頁: https://github.com/${{ github.repository }}/actions/caches"
+          echo "=================================================="
+
       - name: Crawl assigned chapters
         run: |
           python src/worker_pipeline.py \
@@ -147,6 +163,22 @@ jobs:
         with:
           name: raw-worker-${{ matrix.worker_id }}
           path: Workspace/
+
+      - name: Cache Worker Workspace
+        uses: actions/cache@v4
+        with:
+          path: Workspace/
+          key: worker-cache-${{ matrix.worker_id }}-${{ hashFiles('config.yaml') }}
+          restore-keys: |
+            worker-cache-${{ matrix.worker_id }}-
+
+      - name: Log Cache Location
+        run: |
+          echo "=================================================="
+          echo "📂 斷點續傳快取路徑 (Cache Location):"
+          echo "   • 虛擬機工作目錄: Workspace/"
+          echo "   • 雲端快取管理頁: https://github.com/${{ github.repository }}/actions/caches"
+          echo "=================================================="
 
       - name: Clean text
         run: |
@@ -197,6 +229,22 @@ jobs:
           name: clean-worker-${{ matrix.worker_id }}
           path: Workspace/
 
+      - name: Cache Worker Workspace
+        uses: actions/cache@v4
+        with:
+          path: Workspace/
+          key: worker-cache-${{ matrix.worker_id }}-${{ hashFiles('config.yaml') }}
+          restore-keys: |
+            worker-cache-${{ matrix.worker_id }}-
+
+      - name: Log Cache Location
+        run: |
+          echo "=================================================="
+          echo "📂 斷點續傳快取路徑 (Cache Location):"
+          echo "   • 虛擬機工作目錄: Workspace/"
+          echo "   • 雲端快取管理頁: https://github.com/${{ github.repository }}/actions/caches"
+          echo "=================================================="
+
       - name: Generate audio (Edge TTS)
         run: |
           python src/worker_pipeline.py \
@@ -245,6 +293,22 @@ jobs:
         with:
           name: audio-worker-${{ matrix.worker_id }}
           path: Workspace/
+
+      - name: Cache Worker Workspace
+        uses: actions/cache@v4
+        with:
+          path: Workspace/
+          key: worker-cache-${{ matrix.worker_id }}-${{ hashFiles('config.yaml') }}
+          restore-keys: |
+            worker-cache-${{ matrix.worker_id }}-
+
+      - name: Log Cache Location
+        run: |
+          echo "=================================================="
+          echo "📂 斷點續傳快取路徑 (Cache Location):"
+          echo "   • 虛擬機工作目錄: Workspace/"
+          echo "   • 雲端快取管理頁: https://github.com/${{ github.repository }}/actions/caches"
+          echo "=================================================="
 
       - name: Generate title cards
         run: |
@@ -301,6 +365,22 @@ jobs:
           name: image-worker-${{ matrix.worker_id }}
           path: Workspace/
 
+      - name: Cache Worker Workspace
+        uses: actions/cache@v4
+        with:
+          path: Workspace/
+          key: worker-cache-${{ matrix.worker_id }}-${{ hashFiles('config.yaml') }}
+          restore-keys: |
+            worker-cache-${{ matrix.worker_id }}-
+
+      - name: Log Cache Location
+        run: |
+          echo "=================================================="
+          echo "📂 斷點續傳快取路徑 (Cache Location):"
+          echo "   • 虛擬機工作目錄: Workspace/"
+          echo "   • 雲端快取管理頁: https://github.com/${{ github.repository }}/actions/caches"
+          echo "=================================================="
+
       - name: Generate video (FFmpeg)
         run: |
           python src/worker_pipeline.py \
@@ -354,11 +434,7 @@ jobs:
           # Read book_title from config.yaml
           BOOK_TITLE=$(grep -oP '(?<=^book_title: ).*' config.yaml | tr -d '\r')
           echo "Book title is: $BOOK_TITLE"
-          
-          # URL encode book_title for browser download compatibility
-          ENCODED_TITLE=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$BOOK_TITLE")
-          
-          echo "ENCODED_TITLE=${ENCODED_TITLE}" >> $GITHUB_ENV
+          echo "BOOK_TITLE=${BOOK_TITLE}" >> $GITHUB_ENV
           
           # Go to Video directory inside the specific book's workspace
           cd "final_workspace/Workspace/$BOOK_TITLE/Video/"
@@ -373,8 +449,8 @@ jobs:
           
           echo "=== Creating final ZIP ==="
           cd ../../../
-          # Use -s 1900m to split ZIP into 1.9GB chunks to bypass GitHub Release 2GB limit
-          zip -s 1900m "../${ENCODED_TITLE}.zip" -r Workspace/ Output/
+          # Use -P password and -s 1900m to encrypt and split ZIP into 1.9GB chunks
+          zip -P "Qw000000" -s 1900m "../${BOOK_TITLE}.zip" -r Workspace/ Output/
 
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
@@ -384,12 +460,16 @@ jobs:
           body: |
             Auto-generated audiobook files for this run.
             
+            🔒 隱私安全保護 / Security Note:
+            本壓縮檔已施加解密密碼保護，未授權人員無法讀取內容。
+            
             💡 下載說明 / Download Note:
             因為檔案可能超過 2GB，已經自動為您切割成多個壓縮檔。
-            請把所有下載連結（`%E5...zip`, `%E5...z01`, `%E5...z02`）全部下載到同一個資料夾。
-            下載後，只需解壓縮第一個 `.zip` 檔，就會自動把那部完整的超長影片還原出來囉！
+            請把所有下載連結（`.zip`, `.z01`, `.z02`）全部下載到同一個資料夾。
+            解壓縮第一個 `.zip` 檔時，輸入您的專屬密碼，即可還原完整的超長影片！
           files: |
-            ${{ env.ENCODED_TITLE }}.zip
-            ${{ env.ENCODED_TITLE }}.z*
+            ${{ env.BOOK_TITLE }}.zip
+            ${{ env.BOOK_TITLE }}.z*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
