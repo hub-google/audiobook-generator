@@ -2,6 +2,7 @@
 .env
 gui_config.json
 *.pem
+gui_app.py
 
 # Python
 __pycache__/
