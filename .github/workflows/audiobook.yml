@@ -23,6 +23,10 @@ on:
         description: '每台工作機負責的章節數 (預設 5，最多 20 台並行)'
         required: true
         default: '5'
+      gdrive_folder_id:
+        description: 'Google Drive 資料夾 ID (供 GUI 帶入)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -56,7 +60,7 @@ jobs:
 
       - name: Parse Catalog & Generate config.yaml + matrix.json
         env:
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GDRIVE_FOLDER_ID: ${{ github.event.inputs.gdrive_folder_id || secrets.GDRIVE_FOLDER_ID }}
         run: |
           python src/catalog_parser.py \
             --url "${{ github.event.inputs.catalog_url }}" \
