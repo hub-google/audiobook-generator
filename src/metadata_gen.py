@@ -268,7 +268,7 @@ def create_youtube_cover(
     def draw_thick_text(draw_obj, x, y, text, font, fill_color, stroke_color=(15, 10, 5), stroke_width=12):
         draw_obj.text((x, y), text, font=font, fill=fill_color, stroke_width=stroke_width, stroke_fill=stroke_color)
 
-    # ── 1. 左上角：精緻章節與部數琉璃徽章 ──
+    # ── 1. 左上角：精緻章節與部數琉璃徽章 (加大高寬與呼吸感) ──
     badge_x, badge_y = int(70 * scale), int(60 * scale)
     if isinstance(start_chap, int) and isinstance(end_chap, int):
         chap_text = f"第 {start_chap:03d} - {end_chap:03d} 集"
@@ -278,22 +278,26 @@ def create_youtube_cover(
     if part_num:
         chap_text = f"【第 {part_num} 部】 " + chap_text
         
-    font_badge = get_font(int(50 * scale))
+    font_badge = get_font(int(48 * scale))
     try:
         bbox = draw.textbbox((0, 0), chap_text, font=font_badge)
         bw, bh = bbox[2] - bbox[0], bbox[3] - bbox[1]
     except Exception:
-        bw, bh = 300, 40
+        bw, bh = 300, 48
 
-    badge_w, badge_h = bw + int(60 * scale), bh + int(32 * scale)
+    pad_x1 = int(45 * scale)
+    pad_y1 = int(22 * scale)
+    badge_w = bw + pad_x1 * 2
+    badge_h = bh + pad_y1 * 2
+
     draw.rounded_rectangle(
         [badge_x, badge_y, badge_x + badge_w, badge_y + badge_h], 
-        radius=int(20 * scale), 
+        radius=int(22 * scale), 
         fill=(210, 25, 25),
         outline=(255, 215, 0),
         width=int(4 * scale)
     )
-    draw.text((badge_x + int(30 * scale), badge_y + int(12 * scale)), chap_text, font=font_badge, fill=(255, 255, 255))
+    draw.text((badge_x + pad_x1, badge_y + pad_y1 - int(4 * scale)), chap_text, font=font_badge, fill=(255, 255, 255))
 
     # ── 2. 右側自適應書名排版引擎 (右邊距 120px 右對齊) ──
     clean_title = book_title.replace("《", "").replace("》", "").strip()
@@ -378,7 +382,7 @@ def create_youtube_cover(
             draw_thick_text(draw, lx, start_y, line, font_title, fill_color=(255, 220, 60), stroke_width=stroke_w)
             start_y += lh + int(25 * scale)
 
-    # ── 3. 右下角醒目【已完結】/【連載中】標籤 (避開 YouTube 進度條) ──
+    # ── 3. 右下角醒目【已完結】/【連載中】標籤 (加大高寬防壓字，距離底部 140px 避開進度條) ──
     if is_completed:
         status_text = "【 已完結 】"
         status_fill = (16, 185, 129)   # 翡翠綠 (極致醒目)
@@ -386,15 +390,17 @@ def create_youtube_cover(
         status_text = "【 連載中 】"
         status_fill = (245, 158, 11)   # 琥珀金
         
-    font_status = get_font(int(52 * scale))
+    font_status = get_font(int(48 * scale))
     try:
         bbox = draw.textbbox((0, 0), status_text, font=font_status)
         sw, sh = bbox[2] - bbox[0], bbox[3] - bbox[1]
     except Exception:
-        sw, sh = 260, 50
+        sw, sh = 260, 48
 
-    status_w = sw + int(50 * scale)
-    status_h = sh + int(28 * scale)
+    pad_x2 = int(45 * scale)
+    pad_y2 = int(22 * scale)
+    status_w = sw + pad_x2 * 2
+    status_h = sh + pad_y2 * 2
     
     # 放置於右下角 (距離底部 140px，避開播放進度條)
     status_x = right_margin_x - status_w
@@ -402,12 +408,12 @@ def create_youtube_cover(
     
     draw.rounded_rectangle(
         [status_x, status_y, status_x + status_w, status_y + status_h], 
-        radius=int(18 * scale), 
+        radius=int(22 * scale), 
         fill=status_fill, 
         outline=(255, 255, 255), 
         width=int(4 * scale)
     )
-    draw.text((status_x + int(25 * scale), status_y + int(10 * scale)), status_text, font=font_status, fill=(255, 255, 255))
+    draw.text((status_x + pad_x2, status_y + pad_y2 - int(4 * scale)), status_text, font=font_status, fill=(255, 255, 255))
 
     # 存檔
     os.makedirs(os.path.dirname(os.path.abspath(output_filename)), exist_ok=True)
