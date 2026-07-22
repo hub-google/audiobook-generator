@@ -128,44 +128,21 @@ jobs:
         run: |
           python src/worker_pipeline.py --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1
 
-      - name: Upload worker finished artifact
+      - name: Upload MP4 Videos & Subtitles Only (Lightweight Artifact for YouTube Upload)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mp4-worker-${{ matrix.worker_id }}
+          path: |
+            Workspace/*/*/Video/
+            Workspace/*/*/Subtitles/
+            Upload_Subtitles/
+          if-no-files-found: warn
+
+      - name: Upload full worker workspace artifact (Heavyweight for Inspection)
         uses: actions/upload-artifact@v4
         with:
           name: video-worker-${{ matrix.worker_id }}
           path: Workspace/
           if-no-files-found: warn
 
-# ─────────────────────────────────────────────────────────────
-# Stage 6: merge — 自動全速推流上傳至 YouTube 生成單一超長大影片
-# ─────────────────────────────────────────────────────────────
-  merge:
-    name: "📦 Merge & Direct Stream to YouTube"
-    needs: process_chapters
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install Python Dependencies
-        run: pip install -r requirements.txt
-
-      - name: Install FFmpeg
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg
-
-      - name: Direct Stream to YouTube Live
-        env:
-          YOUTUBE_STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
-          YOUTUBE_STREAM_KEY_2: ${{ secrets.YOUTUBE_STREAM_KEY_2 }}
-          YOUTUBE_STREAM_KEY_3: ${{ secrets.YOUTUBE_STREAM_KEY_3 }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          python src/stream_to_youtube.py --run-id "${{ github.run_id }}" --repo "${{ github.repository }}"
 

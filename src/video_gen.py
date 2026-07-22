@@ -96,83 +96,18 @@ def get_font(size):
         return None
 
 
-def generate_chapter_title_image(book_title, chap_num, chapter_title, output_path):
+def generate_chapter_title_image(book_title, chap_num, chapter_title, output_path, workspace_dir=""):
     """
-    用 Pillow 產生 1280×720 的章節標題卡圖片。
-    版面：
-      - 深色漸層背景
-      - 頂部：書名（金色小字）
-      - 中央：章節標題（白色大字）
-      - 裝飾橫線
+    呼叫 image_gen 生成含 50 字 AI 劇情摘要與避開 CC 字幕區域的標題卡圖片
     """
-    try:
-        from PIL import Image, ImageDraw
-    except ImportError:
-        logging.error("[VideoGen] Pillow 未安裝！請執行: pip install Pillow")
-        return False
-
-    W, H = 1280, 720
-
-    # ── 背景：從深靛藍到近黑的漸層 ──
-    img = Image.new("RGB", (W, H))
-    draw = ImageDraw.Draw(img)
-    for y in range(H):
-        t = y / H
-        r = int(5  + t * 10)
-        g = int(8  + t * 12)
-        b = int(30 + t * 20)
-        draw.line([(0, y), (W, y)], fill=(r, g, b))
-
-    # ── 裝飾用橫線 ──
-    gold = (212, 175, 55)
-    line_y_top    = H // 4
-    line_y_bottom = H * 3 // 4
-    draw.line([(120, line_y_top),    (W - 120, line_y_top)],    fill=gold, width=1)
-    draw.line([(120, line_y_bottom), (W - 120, line_y_bottom)], fill=gold, width=1)
-
-    # ── 書名（金色，上方 1/3 處）──
-    font_title = get_font(52)
-    title_text = book_title
-    if font_title:
-        try:
-            bbox = draw.textbbox((0, 0), title_text, font=font_title)
-            tw = bbox[2] - bbox[0]
-        except AttributeError:
-            tw, _ = draw.textsize(title_text, font=font_title)
-        draw.text(((W - tw) // 2, line_y_top + 28), title_text, font=font_title, fill=gold)
-    else:
-        draw.text((W // 2, line_y_top + 28), title_text, fill=gold)
-
-    # ── 章節標題（白色，中央）──
-    font_chap = get_font(80)
-    chap_text = chapter_title
-    if font_chap:
-        try:
-            bbox = draw.textbbox((0, 0), chap_text, font=font_chap)
-            cw = bbox[2] - bbox[0]
-            ch = bbox[3] - bbox[1]
-        except AttributeError:
-            cw, ch = draw.textsize(chap_text, font=font_chap)
-        # 若章節標題過長，縮小字體
-        if cw > W - 200:
-            font_chap = get_font(52)
-            try:
-                bbox = draw.textbbox((0, 0), chap_text, font=font_chap)
-                cw = bbox[2] - bbox[0]
-                ch = bbox[3] - bbox[1]
-            except AttributeError:
-                cw, ch = draw.textsize(chap_text, font=font_chap)
-        cx = (W - cw) // 2
-        cy = (H - ch) // 2 + 20
-        # 文字陰影（增加可讀性）
-        draw.text((cx + 3, cy + 3), chap_text, font=font_chap, fill=(0, 0, 0, 180))
-        draw.text((cx, cy), chap_text, font=font_chap, fill=(255, 255, 255))
-    else:
-        draw.text((W // 2, H // 2), chap_text, fill=(255, 255, 255))
-
-    img.save(output_path, "JPEG", quality=92)
-    logging.info(f"[VideoGen] ✓ Generated title card: {os.path.basename(output_path)}")
-    return True
+    from image_gen import generate_title_card
+    from summary_gen import get_or_generate_chapter_summary
+    
+    summary_text = ""
+    if workspace_dir:
+        summary_text = get_or_generate_chapter_summary(workspace_dir, book_title, chap_num)
+        
+    return generate_title_card(book_title, chap_num, chapter_title, output_path, summary_text=summary_text)
 
 
 def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fallback_images):
@@ -200,7 +135,7 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
     if os.path.exists(title_card_path) and os.path.getsize(title_card_path) > 100:
         card_ok = True
     else:
-        card_ok = generate_chapter_title_image(book_title, chap_num, chapter_title, title_card_path)
+        card_ok = generate_chapter_title_image(book_title, chap_num, chapter_title, title_card_path, workspace_dir=workspace_dir)
 
     # 若 Pillow 產圖失敗，fallback 到原有背景圖
     if card_ok and os.path.exists(title_card_path):

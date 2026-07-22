@@ -1,9 +1,16 @@
 import os
+import sys
 import glob
 import re
 import yaml
 import logging
 from PIL import Image, ImageDraw, ImageFont
+
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
+
+from summary_gen import get_or_generate_chapter_summary
 
 # 字型路徑（支援 Windows 與 Linux / GitHub Actions）
 FONT_PATHS = [
@@ -62,18 +69,21 @@ def get_font(size):
     return ImageFont.load_default()
 
 
-def generate_title_card(book_title, chap_num, chapter_title, output_path):
+def generate_title_card(book_title, chap_num, chapter_title, output_path, summary_text=""):
     """
     用 Pillow 產生 1280×720 的章節標題卡圖片。
-    版面：
-      - 深色漸層背景（從深靛藍到近黑）
-      - 裝飾金色橫線（上下各一）
-      - 上方 1/3：書名（金色）
-      - 中央：章節標題（白色大字 + 陰影）
+    版面設計：
+      - 深色高雅漸層背景
+      - 頂部裝飾金線 (y=140)
+      - 上方：書名（金色，y=165）
+      - 中央：章節標題（白色大字 + 陰影，y=245）
+      - 中間分割金線 (y=370)
+      - 中下：50字內 AI 劇情摘要 (柔和白/銀色，y=405~515)
+      - 底部安全區 (y=530~720) 留空，避免被 YouTube CC 字幕遮擋
     """
     W, H = 1280, 720
 
-    # ── 背景：從深靛藍到近黑的漸層 ──
+    # ── 背景：深靛藍至近黑漸層 ──
     img = Image.new("RGB", (W, H))
     draw = ImageDraw.Draw(img)
     for y in range(H):
@@ -83,25 +93,23 @@ def generate_title_card(book_title, chap_num, chapter_title, output_path):
         b = int(30 + t * 20)
         draw.line([(0, y), (W, y)], fill=(r, g, b))
 
-    # ── 裝飾用橫線 ──
     gold = (212, 175, 55)
-    line_y_top    = H // 4
-    line_y_bottom = H * 3 // 4
-    draw.line([(120, line_y_top),    (W - 120, line_y_top)],    fill=gold, width=1)
-    draw.line([(120, line_y_bottom), (W - 120, line_y_bottom)], fill=gold, width=1)
 
-    # ── 書名（金色，上方 1/3 處）──
-    font_title = get_font(52)
+    # ── 1. 頂部金線與書名 ──
+    line_y_top = 140
+    draw.line([(120, line_y_top), (W - 120, line_y_top)], fill=gold, width=1)
+
+    font_title = get_font(48)
     title_text = book_title
     try:
         bbox = draw.textbbox((0, 0), title_text, font=font_title)
         tw = bbox[2] - bbox[0]
     except AttributeError:
         tw, _ = draw.textsize(title_text, font=font_title)
-    draw.text(((W - tw) // 2, line_y_top + 28), title_text, font=font_title, fill=gold)
+    draw.text(((W - tw) // 2, line_y_top + 20), title_text, font=font_title, fill=gold)
 
-    # ── 章節標題（白色，中央）──
-    font_chap = get_font(80)
+    # ── 2. 中央章節標題 ──
+    font_chap = get_font(68)
     chap_text = chapter_title
     try:
         bbox = draw.textbbox((0, 0), chap_text, font=font_chap)
@@ -110,9 +118,8 @@ def generate_title_card(book_title, chap_num, chapter_title, output_path):
     except AttributeError:
         cw, ch = draw.textsize(chap_text, font=font_chap)
 
-    # 若章節標題過長，縮小字體
     if cw > W - 200:
-        font_chap = get_font(52)
+        font_chap = get_font(48)
         try:
             bbox = draw.textbbox((0, 0), chap_text, font=font_chap)
             cw = bbox[2] - bbox[0]
@@ -121,10 +128,41 @@ def generate_title_card(book_title, chap_num, chapter_title, output_path):
             cw, ch = draw.textsize(chap_text, font=font_chap)
 
     cx = (W - cw) // 2
-    cy = (H - ch) // 2 + 20
-    # 文字陰影（增加可讀性）
+    cy = 245
     draw.text((cx + 3, cy + 3), chap_text, font=font_chap, fill=(0, 0, 0, 180))
     draw.text((cx, cy), chap_text, font=font_chap, fill=(255, 255, 255))
+
+    # ── 3. 中間分隔金線 ──
+    line_y_middle = 370
+    draw.line([(140, line_y_middle), (W - 140, line_y_middle)], fill=gold, width=1)
+
+    # ── 4. AI 劇情摘要 (避開底部字幕區，擺放於 y=405~515) ──
+    if summary_text:
+        font_sum = get_font(28)
+        sum_color = (220, 225, 235)
+        
+        # 進行自動分行 (每行最多約 34 字)
+        max_chars_per_line = 34
+        lines = []
+        for i in range(0, len(summary_text), max_chars_per_line):
+            lines.append(summary_text[i:i + max_chars_per_line])
+        
+        # 最多顯示 2 行
+        lines = lines[:2]
+        
+        start_y = 405
+        for idx, line in enumerate(lines):
+            try:
+                bbox = draw.textbbox((0, 0), line, font=font_sum)
+                lw = bbox[2] - bbox[0]
+            except AttributeError:
+                lw, _ = draw.textsize(line, font=font_sum)
+            
+            lx = (W - lw) // 2
+            ly = start_y + idx * 40
+            # 陰影 + 本文
+            draw.text((lx + 2, ly + 2), line, font=font_sum, fill=(0, 0, 0, 150))
+            draw.text((lx, ly), line, font=font_sum, fill=sum_color)
 
     img.save(output_path, "JPEG", quality=92)
     logging.info(f"[ImageGen] ✓ Generated title card: {os.path.basename(output_path)}")
@@ -134,7 +172,7 @@ def generate_title_card(book_title, chap_num, chapter_title, output_path):
 def run_image_gen():
     """
     掃描 Audio/ 目錄中所有章節 WAV，為每一章產生對應的 title_card_chapter_N.jpg。
-    已存在則跳過（冪等）。
+    包含自動生成 50 字 AI 劇情摘要並排版至圖片中。
     """
     config = load_config()
     book_title = config.get("book_title", "UnknownBook")
@@ -158,7 +196,7 @@ def run_image_gen():
         logging.warning("[ImageGen] No chapter WAV files found in Audio/. Skipping title card generation.")
         return
 
-    logging.info(f"[ImageGen] Found {len(wav_files)} chapter(s). Generating title cards...")
+    logging.info(f"[ImageGen] Found {len(wav_files)} chapter(s). Generating title cards with AI summaries...")
 
     generated = 0
     skipped   = 0
@@ -166,13 +204,16 @@ def run_image_gen():
         chap_num = parse_chapter_num(os.path.basename(wav_path))
         out_path = os.path.join(images_dir, f"{book_title}_chapter_{chap_num}.jpg")
 
+        # 取得或自動生成章節 AI 摘要
+        summary_text = get_or_generate_chapter_summary(workspace_dir, book_title, chap_num)
+
         if os.path.exists(out_path):
             logging.info(f"[ImageGen] Skipping existing: {book_title}_chapter_{chap_num}.jpg")
             skipped += 1
             continue
 
         chapter_title = get_chapter_title(workspace_dir, book_title, chap_num)
-        ok = generate_title_card(book_title, chap_num, chapter_title, out_path)
+        ok = generate_title_card(book_title, chap_num, chapter_title, out_path, summary_text=summary_text)
         if ok:
             generated += 1
 

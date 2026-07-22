@@ -33,7 +33,8 @@ logging.basicConfig(
 
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
-    "https://www.googleapis.com/auth/youtube"
+    "https://www.googleapis.com/auth/youtube",
+    "https://www.googleapis.com/auth/youtube.force-ssl"
 ]
 
 def get_authenticated_service():
@@ -277,15 +278,106 @@ def upload_video_file(youtube, video_path, title, description, category_id="22",
 
     return video_id
 
+def upload_caption_file(youtube, video_id, srt_path, language="zh-TW", name="繁體中文"):
+    """使用 YouTube Captions API 上傳 CC 字幕軌檔 (SRT)"""
+    if not srt_path or not os.path.exists(srt_path) or os.path.getsize(srt_path) < 10:
+        logging.warning(f"⚠️ [Caption] 字幕檔不存在或為空: {srt_path}")
+        return False
+
+    # 1. 清除該影片歷史舊字幕軌 (避免舊測試檔殘留)
+    try:
+        cap_list = youtube.captions().list(part="snippet", videoId=video_id).execute()
+        for item in cap_list.get("items", []):
+            cap_id = item["id"]
+            logging.info(f"  🧹 清除舊字幕軌 (ID: {cap_id})...")
+            try:
+                youtube.captions().delete(id=cap_id).execute()
+            except Exception as e:
+                logging.warning(f"  無法刪除舊字幕軌 {cap_id}: {e}")
+    except Exception as e:
+        logging.warning(f"  無法列出既有字幕軌: {e}")
+
+    # 2. 上傳全新 SRT 字幕檔
+    file_size_kb = os.path.getsize(srt_path) / 1024.0
+    logging.info(f"💬 開始 API 上傳 CC 字幕軌至 [Video ID: {video_id}] ({file_size_kb:.1f} KB)...")
+
+    body = {
+        "snippet": {
+            "videoId": video_id,
+            "language": language,
+            "name": name,
+            "isDraft": False
+        }
+    }
+    media = MediaFileUpload(srt_path, mimetype="*/*", resumable=False)
+
+    try:
+        req = youtube.captions().insert(part="snippet", body=body, media_body=media)
+        res = req.execute()
+        cap_id = res.get("id")
+        logging.info(f"🎉 CC 字幕成功上傳並生效！(Video ID: {video_id}, Caption ID: {cap_id})")
+        return True
+    except Exception as e:
+        logging.error(f"❌ 上傳 CC 字幕失敗 [Video ID: {video_id}]: {e}")
+        return False
+
+def generate_part_srt(sliced_items, output_srt_path):
+    """從 sliced_items 中的單章 srt 檔與 dur，無縫動態合併生成整個 Part 的完整 SRT"""
+    from subtitle_gen import parse_timestamp_to_seconds, format_timestamp
+
+    current_offset = 0.0
+    global_index = 1
+    total_blocks = 0
+
+    with open(output_srt_path, "w", encoding="utf-8") as out_f:
+        for item in sliced_items:
+            srt_p = item.get("srt_path")
+            dur = item.get("dur", 0.0)
+
+            if srt_p and os.path.exists(srt_p):
+                try:
+                    with open(srt_p, "r", encoding="utf-8") as in_f:
+                        content = in_f.read().strip().split('\n\n')
+                        for block in content:
+                            lines = block.strip().split('\n')
+                            if len(lines) >= 3:
+                                time_line = lines[1]
+                                if '-->' in time_line:
+                                    start_str, end_str = time_line.split('-->')
+                                    start_sec = parse_timestamp_to_seconds(start_str.strip())
+                                    end_sec = parse_timestamp_to_seconds(end_str.strip())
+
+                                    new_start_ts = format_timestamp(start_sec + current_offset)
+                                    new_end_ts = format_timestamp(end_sec + current_offset)
+
+                                    out_f.write(f"{global_index}\n")
+                                    out_f.write(f"{new_start_ts} --> {new_end_ts}\n")
+                                    for text_line in lines[2:]:
+                                        out_f.write(f"{text_line}\n")
+                                    out_f.write("\n")
+                                    global_index += 1
+                                    total_blocks += 1
+                except Exception as e:
+                    logging.warning(f"解析字幕檔失敗 {srt_p}: {e}")
+            current_offset += dur
+
+    logging.info(f"✅ 已生成 Part 合併字幕檔: {os.path.basename(output_srt_path)} (共 {total_blocks} 條字幕)")
+    return total_blocks > 0
+
 def get_run_artifact_names(run_id, repo):
     cmd = ["gh", "api", f"repos/{repo}/actions/runs/{run_id}/artifacts", "--jq", ".artifacts[].name"]
     res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if res.returncode != 0:
         logging.error(f"Failed to fetch artifacts for run {run_id}: {res.stderr}")
         return []
-    names = [n.strip() for n in res.stdout.splitlines() if n.strip().startswith("video-worker-")]
-    names.sort(key=lambda x: int(re.search(r'\d+', x).group()) if re.search(r'\d+', x) else 999)
-    return names
+    all_names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
+    mp4_names = [n for n in all_names if n.startswith("mp4-worker-")]
+    if mp4_names:
+        mp4_names.sort(key=lambda x: int(re.search(r'\d+', x).group()) if re.search(r'\d+', x) else 999)
+        return mp4_names
+    video_names = [n for n in all_names if n.startswith("video-worker-")]
+    video_names.sort(key=lambda x: int(re.search(r'\d+', x).group()) if re.search(r'\d+', x) else 999)
+    return video_names
 
 def download_artifact_task(run_id, repo, artifact_name, dest_dir):
     if os.path.exists(dest_dir):
@@ -343,6 +435,8 @@ def main():
     from part_builder import parse_chapter_num, get_media_duration, merge_part_videos
     from metadata_gen import generate_video_title
 
+    upload_subtitles_dir = os.path.abspath("Upload_Subtitles")
+    os.makedirs(upload_subtitles_dir, exist_ok=True)
     temp_parts_dir = os.path.abspath("temp_parts_output")
     os.makedirs(temp_parts_dir, exist_ok=True)
     temp_dl_dir = os.path.abspath("temp_api_upload_workspace")
@@ -396,8 +490,16 @@ def main():
                 if not any(x["path"] == f_path for x in chapter_pool):
                     c_num = parse_chapter_num(os.path.basename(f_path))
                     dur = get_media_duration(f_path)
+
+                    srt_path = f_path.replace("/Video/", "/Subtitles/").replace("\\Video\\", "\\Subtitles\\").replace(".mp4", ".srt")
+                    if not os.path.exists(srt_path):
+                        parent_art = os.path.dirname(os.path.dirname(f_path))
+                        srt_matches = glob.glob(os.path.join(parent_art, "**", f"*chapter_{c_num}.srt"), recursive=True)
+                        srt_path = srt_matches[0] if srt_matches else None
+
                     chapter_pool.append({
                         "path": f_path,
+                        "srt_path": srt_path,
                         "chap_num": c_num,
                         "dur": dur
                     })
@@ -447,7 +549,11 @@ def main():
                     continue
 
                 out_name = f"{book_title}_Part_{part_counter:02d}_Ch{s_c:04d}_to_Ch{e_c:04d}.mp4"
+                out_srt_name = f"{book_title}_Part_{part_counter:02d}_Ch{s_c:04d}_to_Ch{e_c:04d}.srt"
                 out_path = os.path.join(temp_parts_dir, out_name)
+                out_srt_path = os.path.join(upload_subtitles_dir, out_srt_name)
+
+                srt_ok = generate_part_srt(sliced_items, out_srt_path)
 
                 part_info = {
                     "part_num": part_counter,
@@ -486,6 +592,8 @@ def main():
 
                     if v_id:
                         total_uploaded += 1
+                        if srt_ok and os.path.exists(out_srt_path):
+                            upload_caption_file(youtube, v_id, out_srt_path)
                         if playlist_id:
                             add_video_to_playlist(youtube, playlist_id, v_id)
 
@@ -493,7 +601,7 @@ def main():
                         logging.info(f"✅ 【第 {part_counter} 部】成功上傳並加入播放清單: {p_meta['title']}\n")
                         sys.stdout.flush()
 
-                    # 精準刪除已上傳完畢的單章與 Part
+                    # 精準刪除已上傳完畢的單章與 Part 影片檔 (合併字幕保留於 Upload_Subtitles 目錄)
                     logging.info(f"🧹 釋放硬碟空間：清理【第 {part_counter} 部】已上傳完畢的 {len(sliced_items)} 個單章原始檔與 Part 大影片...")
                     for item in sliced_items:
                         try:
@@ -505,8 +613,8 @@ def main():
                     if os.path.exists(out_path):
                         try:
                             os.remove(out_path)
-                        except Exception as e:
-                            logging.warning(f"刪除 Part 檔 {out_path} 失敗: {e}")
+                        except Exception:
+                            pass
 
                 # 從緩衝池中移除已處理的章節
                 sliced_paths = set(x["path"] for x in sliced_items)
@@ -585,6 +693,14 @@ def main():
             v_cover = item["cover_path"]
             part_n = item["part_num"]
 
+            # 尋找對應的 SRT 字幕檔 (優先搜尋 Upload_Subtitles 資料夾)
+            v_srt_name = os.path.basename(v_path).replace(".mp4", ".srt")
+            v_srt = os.path.join(upload_subtitles_dir, v_srt_name)
+            if not os.path.exists(v_srt):
+                v_srt = v_path.replace(".mp4", ".srt")
+                if not os.path.exists(v_srt):
+                    v_srt = None
+
             full_desc = f"{v_desc}\n\n播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
             logging.info(f"[API_UPLOAD_MARKER] START | Part {part_n}/{len(parts_to_upload)} | Ch {item['start_chap']}~{item['end_chap']} | {os.path.basename(v_path)}")
             v_id = upload_video_file(
@@ -597,6 +713,8 @@ def main():
             )
             if v_id:
                 total_uploaded += 1
+                if v_srt and os.path.exists(v_srt):
+                    upload_caption_file(youtube, v_id, v_srt)
                 if playlist_id:
                     add_video_to_playlist(youtube, playlist_id, v_id)
                 logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_n}/{len(parts_to_upload)} | VideoID {v_id} | total {total_uploaded}")
