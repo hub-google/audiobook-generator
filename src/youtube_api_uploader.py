@@ -286,14 +286,22 @@ def upload_video_file(youtube, video_path, title, description, category_id="22",
     sys.stdout.flush()
 
     if cover_path and os.path.exists(cover_path):
-        try:
-            youtube.thumbnails().set(
-                videoId=video_id,
-                media_body=MediaFileUpload(cover_path)
-            ).execute()
-            logging.info("🖼️ 成功更新影片封面縮圖！")
-        except Exception as e:
-            logging.warning(f"⚠️ 設定縮圖失敗: {e}")
+        for attempt in range(5):
+            try:
+                youtube.thumbnails().set(
+                    videoId=video_id,
+                    media_body=MediaFileUpload(cover_path)
+                ).execute()
+                logging.info("🖼️ 成功更新影片封面縮圖！")
+                break
+            except Exception as e:
+                if "uploadRateLimitExceeded" in str(e) or "429" in str(e):
+                    wait_sec = (attempt + 1) * 10
+                    logging.warning(f"⚠️ 設定縮圖觸發速率限制 (429)，等待 {wait_sec} 秒後重試 ({attempt+1}/5)...")
+                    time.sleep(wait_sec)
+                else:
+                    logging.warning(f"⚠️ 設定縮圖失敗: {e}")
+                    break
 
     return video_id
 
