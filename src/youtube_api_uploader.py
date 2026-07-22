@@ -270,16 +270,29 @@ def upload_video_file(youtube, video_path, title, description, category_id="22",
     last_logged_pct = -10
     start_time = time.time()
 
-    while response is None:
-        status, response = request.next_chunk()
-        if status:
-            pct = int(status.progress() * 100)
-            if pct - last_logged_pct >= 20 or pct == 100:
-                last_logged_pct = pct
-                elapsed = time.time() - start_time
-                speed_mb = (os.path.getsize(video_path) * status.progress() / (1024 * 1024)) / (elapsed if elapsed > 0 else 1)
-                logging.info(f"   └─ 上傳進度: {pct}% ({speed_mb:.1f} MB/s)")
-                sys.stdout.flush()
+    try:
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                pct = int(status.progress() * 100)
+                if pct - last_logged_pct >= 20 or pct == 100:
+                    last_logged_pct = pct
+                    elapsed = time.time() - start_time
+                    speed_mb = (os.path.getsize(video_path) * status.progress() / (1024 * 1024)) / (elapsed if elapsed > 0 else 1)
+                    logging.info(f"   └─ 上傳進度: {pct}% ({speed_mb:.1f} MB/s)")
+                    sys.stdout.flush()
+    except Exception as e:
+        err_str = str(e)
+        if "uploadLimitExceeded" in err_str:
+            logging.error("🚨 【YouTube 頻道每日影片上傳數量限制】 (uploadLimitExceeded)")
+            logging.error("👉 您的 YouTube 頻道今日上傳影片數量已達上限（此為 YouTube 頻道安全防範限制，與 API 配額無關）。")
+            logging.error("👉 請等待 24 小時後重試，或前往 YouTube Studio 開通「手機號碼驗證 / 高級功能」以提升每日上傳上限！")
+        elif "quotaExceeded" in err_str or "dailyLimitExceeded" in err_str:
+            logging.error("🚨 【YouTube API 每日配額用盡】 (quotaExceeded)")
+            logging.error("👉 GCP YouTube Data API v3 每日配額單位 (10,000 units) 已耗盡，將於每日 PST 00:00 (台灣時間 15:00) 自動重置。")
+        else:
+            logging.error(f"❌ 影片上傳失敗: {e}")
+        raise e
 
     video_id = response.get("id")
     logging.info(f"✅ 上傳成功！影片 ID: {video_id} (網址: https://www.youtube.com/watch?v={video_id})")

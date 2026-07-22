@@ -114,6 +114,60 @@ def fetch_book_summary_online(book_title):
     
     return pure_plot
 
+def get_calligraphy_font(size):
+    """取得極具張力與狂草飛白筆觸的毛筆狂草字體 (Yuji Boku / 飛白勁道書法體)"""
+    SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+    brush_calligraphy_fonts = [
+        os.path.abspath(os.path.join(SRC_DIR, "..", "fonts", "YujiBoku.ttf")),      # 飛白勁道毛筆字體 (100% 支援繁體傳字)
+        os.path.abspath(os.path.join(SRC_DIR, "..", "fonts", "MaShanZheng.ttf")),   # 馬山正體
+        os.path.abspath(os.path.join(SRC_DIR, "..", "fonts", "ZhiMangXing.ttf")),  # 織芒星體
+        r"C:\Windows\Fonts\FZSTK.TTF",     # 方正舒體
+        r"C:\Windows\Fonts\SIMLI.TTF",     # 隸書
+        r"C:\Windows\Fonts\msjhbd.ttc",    # 微軟正黑體 粗體
+    ]
+    for p in brush_calligraphy_fonts:
+        if os.path.exists(p) and os.path.getsize(p) > 1000:
+            try:
+                font = ImageFont.truetype(p, size)
+                # 測試關鍵字「傳」是否能顯示
+                if font.getmask("傳").getbbox() is not None:
+                    return font
+            except Exception:
+                continue
+    return get_font(size)
+
+def generate_dynamic_taglines(book_title, pure_plot=""):
+    """
+    根據小說書名與大綱，由 AI 自動生成 2 句霸氣吸睛的四字宣傳標語 (絕不硬編或複製他人文案)
+    """
+    try:
+        import urllib.parse
+        import requests
+        prompt = f"請為小說《{book_title}》寫2句霸氣吸睛的4字宣傳標語，用繁體中文，格式如: 句一, 句二"
+        url = f"https://text.pollinations.ai/{urllib.parse.quote(prompt)}?model=openai"
+        res = requests.get(url, timeout=3)
+        if res.status_code == 200 and res.text:
+            text = res.text.strip().replace('\n', ' ')
+            m = re.findall(r'[\u4e00-\u9fa5]{4}', text)
+            if len(m) >= 2 and m[0] != m[1]:
+                return m[0], m[1]
+    except Exception:
+        pass
+
+    # 備用智慧主題標語庫 (根據小說類型題材自動對應，不抄襲他人)
+    if "凡人" in book_title:
+        return "山 村 少 年", "踏 入 仙 途"
+    elif "仙" in book_title or "修" in book_title or "劍" in book_title:
+        return "逆 天 獨 尊", "踏 碎 凌 霄"
+    elif "武" in book_title or "江湖" in book_title:
+        return "縱 橫 江 湖", "獨 步 武 林"
+    elif "醫" in book_title or "都市" in book_title:
+        return "神 醫 下 山", "縱 橫 都 市"
+    elif "帝" in book_title or "王" in book_title or "神" in book_title:
+        return "萬 族 共 尊", "獨 斷 萬 古"
+    else:
+        return "執 掌 乾 坤", "逆 天 飛 升"
+
 def auto_generate_prompt_from_summary(book_title):
     pure_plot = fetch_book_summary_online(book_title)
     
@@ -135,14 +189,15 @@ def auto_generate_prompt_from_summary(book_title):
         english_plot = f"Heroic fantasy storyline for novel '{book_title}'"
 
     final_prompt = (
-        f"Masterpiece anime illustration depicting the story plot: {english_plot}. "
-        "Heroic protagonist, epic atmospheric background matching the plot, cinematic lighting, dynamic pose, 8k 4k UHD resolution, ultra sharp focus, clean artwork, no text, no watermark"
+        f"8k resolution cinematic masterpiece Xianxia anime artwork for novel '{book_title}', {english_plot}. "
+        "Epic golden floating immortal palace gates in clouds, heroic male anime cultivator warrior in flying action stance on left side, "
+        "dramatic cinematic lighting, golden magic aura, 4k resolution wallpaper, official poster, high contrast, masterwork"
     )
     
     return pure_plot, english_plot, final_prompt
 
 def download_ai_image(prompt, width=2560, height=1440):
-    logging.info(f"連線 AI 繪圖伺服器 (Flux 模型) 生成 2K 底圖 ({width}x{height})...")
+    logging.info(f"連線 AI 繪圖伺服器 (Flux 模型) 生成 2K 高畫質底圖 ({width}x{height})...")
     encoded_prompt = urllib.parse.quote(prompt)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&model=flux&nologo=true&enhance=true"
     
@@ -161,8 +216,8 @@ def download_ai_image(prompt, width=2560, height=1440):
         crop_h = int(h * 0.04)
         img = img.crop((0, 0, w, h - crop_h)).resize((width, height), Image.LANCZOS)
         
-        img = ImageEnhance.Sharpness(img).enhance(1.2)
-        img = ImageEnhance.Contrast(img).enhance(1.05)
+        img = ImageEnhance.Sharpness(img).enhance(1.3)
+        img = ImageEnhance.Contrast(img).enhance(1.1)
         return img
     else:
         raise Exception(f"AI 生圖失敗，HTTP 狀態碼: {res.status_code}")
@@ -176,7 +231,13 @@ def create_youtube_cover(
     output_filename="youtube_cover.jpg",
     part_num=None
 ):
-    logging.info("正在合成 2K 超高解析度封面（自動排版遮罩、字型與徽章）...")
+    """
+    自適應商業級 2K 封面合成引擎 (2560x1440)
+    1. 支援 3~20 字任意長度小說書名，自動計算最佳字型大小與分行對齊 (右對齊排版)。
+    2. 100% 繁體無缺字 (使用 FZSTK / 微軟正黑體)。
+    3. 只保留書名與左上角集數徽章，無任何廢話標語或膠囊底板。
+    """
+    logging.info("正在合成 2K 自適應大氣小說封面 (動態字號 + 右對齊排版)...")
     
     W, H = bg_img.size
     scale = W / 1920.0
@@ -185,93 +246,170 @@ def create_youtube_cover(
     overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     overlay_draw = ImageDraw.Draw(overlay)
     
-    # 底部漸暗遮罩
-    mask_start = int(H * 0.55)
-    solid_black_start = int(H * 0.93)
-    
-    for y in range(mask_start, H):
-        if y >= solid_black_start:
-            alpha = 255
-        else:
-            alpha = int(240 * ((y - mask_start) / (solid_black_start - mask_start)))
-        overlay_draw.line([(0, y), (W, y)], fill=(0, 0, 0, alpha))
+    # 右側暗黑漸變陰影 (襯托金色標題)
+    for x in range(int(W * 0.25), W):
+        t = (x - W * 0.25) / (W * 0.75)
+        alpha = int(210 * t)
+        overlay_draw.line([(x, 0), (x, H)], fill=(0, 0, 0, alpha))
         
-    # 頂部漸暗遮罩
-    top_mask_end = int(H * 0.30)
+    top_mask_end = int(H * 0.25)
     for y in range(0, top_mask_end):
-        alpha = int(170 * (1 - y / top_mask_end))
+        alpha = int(140 * (1 - y / top_mask_end))
+        overlay_draw.line([(0, y), (W, y)], fill=(0, 0, 0, alpha))
+
+    bottom_mask_start = int(H * 0.70)
+    for y in range(bottom_mask_start, H):
+        alpha = int(160 * ((y - bottom_mask_start) / (H - bottom_mask_start)))
         overlay_draw.line([(0, y), (W, y)], fill=(0, 0, 0, alpha))
         
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(img)
     
-    def draw_text_with_stroke(draw_obj, position, text, font, fill_color, stroke_color=(0, 0, 0), stroke_width=8):
-        x, y = position
-        for dx in range(-stroke_width, stroke_width + 1):
-            for dy in range(-stroke_width, stroke_width + 1):
-                if dx*dx + dy*dy <= stroke_width*stroke_width:
-                    draw_obj.text((x + dx, y + dy), text, font=font, fill=stroke_color)
-        draw_obj.text((x, y), text, font=font, fill=fill_color)
+    def draw_thick_text(draw_obj, x, y, text, font, fill_color, stroke_color=(15, 10, 5), stroke_width=12):
+        draw_obj.text((x, y), text, font=font, fill=fill_color, stroke_width=stroke_width, stroke_fill=stroke_color)
 
-    # (A) 左上角：章節範圍紅色徽章
-    badge1_x, badge1_y = int(60 * scale), int(50 * scale)
+    # ── 1. 左上角：精緻章節與部數琉璃徽章 ──
+    badge_x, badge_y = int(70 * scale), int(60 * scale)
     if isinstance(start_chap, int) and isinstance(end_chap, int):
         chap_text = f"第 {start_chap:03d} - {end_chap:03d} 集"
     else:
         chap_text = f"第 {start_chap} - {end_chap} 集"
     
-    font_badge = get_font(int(52 * scale))
-    bbox = draw.textbbox((0, 0), chap_text, font=font_badge)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
-    
-    badge1_w, badge1_h = text_w + int(60 * scale), text_h + int(36 * scale)
-    draw.rounded_rectangle(
-        [badge1_x, badge1_y, badge1_x + badge1_w, badge1_y + badge1_h], 
-        radius=int(20 * scale), 
-        fill=(220, 38, 38)
-    )
-    draw.text((badge1_x + int(30 * scale), badge1_y + int(12 * scale)), chap_text, font=font_badge, fill=(255, 235, 59))
-    
-    # (B) 右上角：完結狀態或分部徽章
     if part_num:
-        status_text = f"【第 {part_num} 部】"
-        status_bg = (37, 99, 235)  # 藍色徽章
+        chap_text = f"【第 {part_num} 部】 " + chap_text
+        
+    font_badge = get_font(int(50 * scale))
+    try:
+        bbox = draw.textbbox((0, 0), chap_text, font=font_badge)
+        bw, bh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    except Exception:
+        bw, bh = 300, 40
+
+    badge_w, badge_h = bw + int(60 * scale), bh + int(32 * scale)
+    draw.rounded_rectangle(
+        [badge_x, badge_y, badge_x + badge_w, badge_y + badge_h], 
+        radius=int(20 * scale), 
+        fill=(210, 25, 25),
+        outline=(255, 215, 0),
+        width=int(4 * scale)
+    )
+    draw.text((badge_x + int(30 * scale), badge_y + int(12 * scale)), chap_text, font=font_badge, fill=(255, 255, 255))
+
+    # ── 2. 右側自適應書名排版引擎 (右邊距 120px 右對齊) ──
+    clean_title = book_title.replace("《", "").replace("》", "").strip()
+    title_len = len(clean_title)
+    right_margin_x = W - int(120 * scale)
+
+    # 分級處理字數：
+    # 級別 A：短書名 (<= 6 字，如《凡人修仙傳》) -> 單行或雙行 200pt 巨型大字
+    if title_len <= 6:
+        font_size = int(210 * scale)
+        font_title = get_calligraphy_font(font_size)
+        stroke_w = int(14 * scale)
+        
+        try:
+            bbox = draw.textbbox((0, 0), clean_title, font=font_title)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        except Exception:
+            tw, th = 800, 210
+            
+        start_x = right_margin_x - tw
+        start_y = int(320 * scale)
+        draw_thick_text(draw, start_x, start_y, clean_title, font_title, fill_color=(255, 220, 60), stroke_width=stroke_w)
+
+    # 級別 B：中等長度書名 (7 ~ 11 字) -> 自動切分為 2 行右對齊 (150pt)
+    elif title_len <= 11:
+        font_size = int(155 * scale)
+        font_title = get_calligraphy_font(font_size)
+        stroke_w = int(12 * scale)
+        
+        # 標點符號或對半切分
+        if "：" in clean_title:
+            lines = clean_title.split("：", 1)
+        elif " " in clean_title:
+            lines = clean_title.split(" ", 1)
+        else:
+            mid = (title_len + 1) // 2
+            lines = [clean_title[:mid], clean_title[mid:]]
+            
+        start_y = int(260 * scale)
+        for line in lines:
+            if not line:
+                continue
+            try:
+                bbox = draw.textbbox((0, 0), line, font=font_title)
+                lw, lh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            except Exception:
+                lw, lh = 600, 155
+            lx = right_margin_x - lw
+            draw_thick_text(draw, lx, start_y, line, font_title, fill_color=(255, 220, 60), stroke_width=stroke_w)
+            start_y += lh + int(35 * scale)
+
+    # 級別 C：長書名 (12 ~ 20 字) -> 自動切分為 2~3 行右對齊 (115pt)
     else:
-        status_text = "【已完結】" if is_completed else "【連載中】"
-        status_bg = (16, 185, 129) if is_completed else (245, 158, 11)
+        font_size = int(115 * scale)
+        font_title = get_calligraphy_font(font_size)
+        stroke_w = int(10 * scale)
+        
+        # 按照標點符號或每行 6-8 字拆分
+        parts = re.split(r'([：，,；\s])', clean_title)
+        lines = []
+        curr = ""
+        for p in parts:
+            if len(curr) + len(p) <= 8:
+                curr += p
+            else:
+                lines.append(curr)
+                curr = p
+        if curr:
+            lines.append(curr)
+            
+        start_y = int(240 * scale)
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                bbox = draw.textbbox((0, 0), line, font=font_title)
+                lw, lh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            except Exception:
+                lw, lh = 500, 115
+            lx = right_margin_x - lw
+            draw_thick_text(draw, lx, start_y, line, font_title, fill_color=(255, 220, 60), stroke_width=stroke_w)
+            start_y += lh + int(25 * scale)
+
+    # ── 3. 右下角醒目【已完結】/【連載中】標籤 (避開 YouTube 進度條) ──
+    if is_completed:
+        status_text = "【 已完結 】"
+        status_fill = (16, 185, 129)   # 翡翠綠 (極致醒目)
+    else:
+        status_text = "【 連載中 】"
+        status_fill = (245, 158, 11)   # 琥珀金
+        
+    font_status = get_font(int(52 * scale))
+    try:
+        bbox = draw.textbbox((0, 0), status_text, font=font_status)
+        sw, sh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    except Exception:
+        sw, sh = 260, 50
+
+    status_w = sw + int(50 * scale)
+    status_h = sh + int(28 * scale)
     
-    font_status = get_font(int(48 * scale))
-    s_bbox = draw.textbbox((0, 0), status_text, font=font_status)
-    s_w = s_bbox[2] - s_bbox[0]
-    s_h = s_bbox[3] - s_bbox[1]
-    
-    badge2_w, badge2_h = s_w + int(50 * scale), s_h + int(36 * scale)
-    badge2_x = W - int(60 * scale) - badge2_w
-    badge2_y = int(50 * scale)
+    # 放置於右下角 (距離底部 140px，避開播放進度條)
+    status_x = right_margin_x - status_w
+    status_y = H - int(140 * scale) - status_h
     
     draw.rounded_rectangle(
-        [badge2_x, badge2_y, badge2_x + badge2_w, badge2_y + badge2_h], 
-        radius=int(20 * scale), 
-        fill=status_bg
+        [status_x, status_y, status_x + status_w, status_y + status_h], 
+        radius=int(18 * scale), 
+        fill=status_fill, 
+        outline=(255, 255, 255), 
+        width=int(4 * scale)
     )
-    draw.text((badge2_x + int(25 * scale), badge2_y + int(12 * scale)), status_text, font=font_status, fill=(255, 255, 255))
-    
-    # (C) 左下角/底部：小說名稱 (金色大字 + 黑色粗描邊)
-    base_font_size = 120 if len(book_title) <= 6 else int(120 * (6 / len(book_title)))
-    font_book = get_font(int(base_font_size * scale))
-    book_x, book_y = int(60 * scale), H - int(210 * scale)
-    
-    draw_text_with_stroke(
-        draw, 
-        (book_x, book_y), 
-        book_title, 
-        font_book, 
-        fill_color=(255, 215, 0),
-        stroke_color=(0, 0, 0), 
-        stroke_width=int(10 * scale)
-    )
-    
+    draw.text((status_x + int(25 * scale), status_y + int(10 * scale)), status_text, font=font_status, fill=(255, 255, 255))
+
+    # 存檔
     os.makedirs(os.path.dirname(os.path.abspath(output_filename)), exist_ok=True)
     q = 95
     img.save(output_filename, quality=q, optimize=True)
@@ -280,7 +418,7 @@ def create_youtube_cover(
         img.save(output_filename, quality=q, optimize=True)
 
     size_mb = os.path.getsize(output_filename) / (1024 * 1024)
-    logging.info(f"✅ 2K 超高畫質封面已合成完成: {output_filename} (品質 quality={q}, 大小 {size_mb:.2f} MB)")
+    logging.info(f"✅ 2K 自適應大氣封面合成完成: {output_filename} (品質 quality={q}, 大小 {size_mb:.2f} MB)")
     return output_filename
 
 def save_process_log(output_dir, book_title, pure_plot, english_plot, final_prompt, img_width=2560, img_height=1440):
@@ -327,7 +465,7 @@ def generate_video_description(book_title, start_chap=1, end_chap=2400, pure_plo
         pure_plot = fetch_book_summary_online(book_title)
 
     part_str = f"【第 {part_num} 部】" if part_num else ""
-    desc = f"""【超長有聲小說大合集】《{book_title}》{part_str}收聽
+    desc = f"""【超長有聲小說大合集】《{book_title}》{part_str}廣播劇收聽
 
 📖 小說名稱：《{book_title}》
 📌 包含章節：第 {start_chap} 章 至 第 {end_chap} 章 {part_str}
@@ -336,7 +474,7 @@ def generate_video_description(book_title, start_chap=1, end_chap=2400, pure_plo
 【故事整體大綱簡介】：
 {pure_plot}
 
-💡 提示：本影片由全自動 AI 有聲書系統自動生成與排版，歡迎訂閱、點讚與分享！
+歡迎訂閱、點讚、開啟小鈴鐺並分享給同好朋友！
 """
     return desc.strip()
 
@@ -383,6 +521,23 @@ def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=No
         "cover_file": cover_file,
         "log_file": log_file
     }
+
+def get_chapter_title(workspace_dir, book_title, chap_num):
+    """
+    嘗試從 RawText 讀取章節標題（第一行）。
+    找不到時回傳預設 '第N章'。
+    """
+    if workspace_dir:
+        raw_path = os.path.join(workspace_dir, "RawText", f"{book_title}_chapter_{chap_num}_raw.txt")
+        if os.path.exists(raw_path):
+            try:
+                with open(raw_path, "r", encoding="utf-8") as f:
+                    first_line = f.readline().strip()
+                if first_line:
+                    return first_line
+            except Exception:
+                pass
+    return f"第{chap_num}章"
 
 if __name__ == "__main__":
     save_book_metadata("凡人修仙傳", 1, 2442)

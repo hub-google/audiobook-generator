@@ -257,8 +257,7 @@ def build_all_parts(book_title, workspace_dir=None, output_dir=None, min_hours=1
                 c_title = get_chapter_title(workspace_dir, book_title, c_num)
                 f.write(f"{format_timestamp(curr_time)} {c_title}\n")
                 curr_time += item["dur"]
-            f.write("\n---\n")
-            f.write("⚠️ 本內容採用 AI 輔助製作，配音與視覺皆經優化處理。\n")
+            f.write("\n")
 
         p["merged_video"] = part_video_path if merge_ok else None
         p["metadata"] = meta

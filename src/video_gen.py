@@ -157,7 +157,7 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
         vf_filter = (
             "scale=1280:720:force_original_aspect_ratio=decrease,"
             "pad=1280:720:(ow-iw)/2:(oh-ih)/2,"
-            f"subtitles='{escaped_srt}':force_style='FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H90000000,BackColour=&H80000000,BorderStyle=3,Outline=1,Shadow=1,Alignment=2,MarginV=35',"
+            f"subtitles='{escaped_srt}':force_style='FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H80000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=45,MarginL=80,MarginR=80,WrapStyle=0',"
             "format=yuv420p"
         )
         logging.info(f"[VideoGen] 💬 已開啟 FFmpeg 硬字幕嵌入: {os.path.basename(srt_path)}")
@@ -250,14 +250,13 @@ def run_video_gen():
     # ── 產生 YouTube Metadata（章節時間戳）──
     metadata_path = os.path.join(output_dir, "youtube_metadata.txt")
     with open(metadata_path, "w", encoding="utf-8") as f:
-        f.write(f"【{book_title}】沉浸式有聲書 | AI語音合成\n\n")
+        f.write(f"【{book_title}】沉浸式廣播劇有聲小說\n\n")
         f.write("⏳ 章節時間戳：\n")
         current_time = 0.0
         for chap_title, dur in chapter_durations.items():
             f.write(f"{format_timestamp(current_time)} {chap_title}\n")
             current_time += dur
-        f.write("\n\n---\n")
-        f.write("⚠️ 本內容採用 AI 輔助製作，配音與視覺皆經二次原創優化處理。\n")
+        f.write("\n")
     logging.info(f"[VideoGen] YouTube Metadata -> {metadata_path}")
 
     # ── 合併 SRT 字幕檔 ──

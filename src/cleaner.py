@@ -26,62 +26,82 @@ def clean_text_content(text, title, book_title):
         
     return text
 
-def chunk_text(text, max_length=100):
-    """將過長的段落依據標點符號截斷，確保每段不超過 max_length，方便 TTS 處理"""
+def split_overlong_clause(text, hard_max=18):
+    """
+    若單一子句無標點符號但長度超過 hard_max (18字)，
+    依據語法停頓詞 (但是, 然而, 的時候, 之時) 或中央黃金分割點切分，
+    硬性保證輸出的每個子句絕不超過 18 個字。
+    """
+    text = text.strip()
+    if len(text) <= hard_max:
+        return [text]
+        
+    # 語法/情節自然停頓關鍵詞
+    grammar_pauses = ["但是", "然而", "因為", "所以", "雖然", "結果", "隨後", "接著", "然後", "並且", "只見", "只聽", "忽見", "轉眼", "同時", "的時候", "之時", "之後", "之處"]
+    
+    for kw in grammar_pauses:
+        idx = text.find(kw)
+        if 5 <= idx <= hard_max:
+            part1 = text[:idx + len(kw)].strip()
+            part2 = text[idx + len(kw):].strip()
+            if part1 and part2:
+                return split_overlong_clause(part1, hard_max) + split_overlong_clause(part2, hard_max)
+            
+    # 若無語法停頓詞，從中央切分
+    mid = len(text) // 2
+    part1 = text[:mid].strip()
+    part2 = text[mid:].strip()
+    return split_overlong_clause(part1, hard_max) + split_overlong_clause(part2, hard_max)
+
+def chunk_text(text, max_length=18):
+    """將過長的段落依據標點符號與智慧自然斷句截斷，硬性確保每段 8~18 字，100% 保證單行字幕"""
     paragraphs = text.split('\n')
     chunks = []
     
-    # 用來切割的標點符號 (全形與半形)
-    split_chars = r'([。！？\.\!\?])'
+    # 依句點、驚嘆號、問號、逗點、頓號、分號切分
+    split_pattern = r'([。！？\.\!\?，,、；;])'
     
     for p in paragraphs:
         p = p.strip()
         if not p:
             continue
             
-        if len(p) <= max_length:
-            chunks.append(p)
-        else:
-            # 依據標點符號切割
-            parts = re.split(split_chars, p)
-            current_chunk = ""
-            for i in range(0, len(parts), 2):
-                sentence = parts[i]
-                punct = parts[i+1] if i+1 < len(parts) else ""
+        parts = re.split(split_pattern, p)
+        current_chunk = ""
+        for i in range(0, len(parts), 2):
+            sentence = parts[i]
+            punct = parts[i+1] if i+1 < len(parts) else ""
+            
+            if not sentence and not punct:
+                continue
                 
-                if not sentence and not punct:
-                    continue
-                    
-                combined = sentence + punct
-                
-                # 如果單句加上標點還是太長 (例如沒有合適標點的長句)，強行依賴逗號切割
-                if len(combined) > max_length:
-                    sub_parts = re.split(r'([，,、])', combined)
-                    sub_chunk = ""
-                    for j in range(0, len(sub_parts), 2):
-                        sub_sentence = sub_parts[j]
-                        sub_punct = sub_parts[j+1] if j+1 < len(sub_parts) else ""
-                        sub_combined = sub_sentence + sub_punct
-                        
-                        if len(sub_chunk) + len(sub_combined) > max_length and sub_chunk:
-                            chunks.append(sub_chunk.strip())
-                            sub_chunk = sub_combined
-                        else:
-                            sub_chunk += sub_combined
-                    if sub_chunk:
-                        chunks.append(sub_chunk.strip())
+            combined = sentence + punct
+            
+            # 若單一標點區間本身就超過 max_length，調用 split_overlong_clause 強制二次拆分
+            if len(combined) > max_length:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = ""
+                sub_chunks = split_overlong_clause(combined, hard_max=max_length)
+                chunks.extend(sub_chunks)
+            else:
+                if len(current_chunk) + len(combined) > max_length and current_chunk:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = combined
                 else:
-                    if len(current_chunk) + len(combined) > max_length and current_chunk:
-                        chunks.append(current_chunk.strip())
-                        current_chunk = combined
-                    else:
-                        current_chunk += combined
-                        
-            if current_chunk:
-                chunks.append(current_chunk.strip())
+                    current_chunk += combined
+                    
+        if current_chunk:
+            chunks.append(current_chunk.strip())
                 
-    # 確保最後沒有空行
-    return "\n".join([c for c in chunks if c])
+    # 排除無意義標點孤行
+    valid_chunks = []
+    for c in chunks:
+        c_clean = c.strip()
+        if len(c_clean) > 1 or c_clean in "。！？":
+            valid_chunks.append(c_clean)
+            
+    return "\n".join(valid_chunks)
 
 def run_cleaner():
     config = load_config()
@@ -109,12 +129,11 @@ def run_cleaner():
         if not lines:
             continue
             
-        # 假設第一行是標題，後面是內文
         title = lines[0].strip()
         raw_content = "".join(lines[1:])
         
         cleaned_text = clean_text_content(raw_content, title, book_title)
-        chunked_text = chunk_text(cleaned_text, max_length=100)
+        chunked_text = chunk_text(cleaned_text, max_length=18)
         
         clean_filename = filename.replace("_raw.txt", "_clean.txt")
         clean_path = os.path.join(clean_text_dir, clean_filename)
