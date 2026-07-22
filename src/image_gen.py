@@ -95,64 +95,67 @@ def generate_title_card(book_title, chap_num, chapter_title, output_path, summar
 
     gold = (212, 175, 55)
 
-    # ── 1. 頂部金線與書名 ──
-    line_y_top = 140
-    draw.line([(120, line_y_top), (W - 120, line_y_top)], fill=gold, width=1)
-
-    font_title = get_font(48)
-    title_text = book_title
+    # ── 1. 【頂部標題列區】 (y = 0 ~ 135) ──
+    font_title = get_font(32)
+    title_text = f"《{book_title}》"
     try:
         bbox = draw.textbbox((0, 0), title_text, font=font_title)
         tw = bbox[2] - bbox[0]
     except AttributeError:
         tw, _ = draw.textsize(title_text, font=font_title)
-    draw.text(((W - tw) // 2, line_y_top + 20), title_text, font=font_title, fill=gold)
+    draw.text(((W - tw) // 2, 35), title_text, font=font_title, fill=gold)
 
-    # ── 2. 中央章節標題 ──
-    font_chap = get_font(68)
+    # 中央章節標題
+    font_chap = get_font(50)
     chap_text = chapter_title
     try:
         bbox = draw.textbbox((0, 0), chap_text, font=font_chap)
         cw = bbox[2] - bbox[0]
-        ch = bbox[3] - bbox[1]
     except AttributeError:
-        cw, ch = draw.textsize(chap_text, font=font_chap)
+        cw, _ = draw.textsize(chap_text, font=font_chap)
 
     if cw > W - 200:
-        font_chap = get_font(48)
+        font_chap = get_font(38)
         try:
             bbox = draw.textbbox((0, 0), chap_text, font=font_chap)
             cw = bbox[2] - bbox[0]
-            ch = bbox[3] - bbox[1]
         except AttributeError:
-            cw, ch = draw.textsize(chap_text, font=font_chap)
+            cw, _ = draw.textsize(chap_text, font=font_chap)
 
     cx = (W - cw) // 2
-    cy = 245
-    draw.text((cx + 3, cy + 3), chap_text, font=font_chap, fill=(0, 0, 0, 180))
+    cy = 75
+    draw.text((cx + 2, cy + 2), chap_text, font=font_chap, fill=(0, 0, 0, 180))
     draw.text((cx, cy), chap_text, font=font_chap, fill=(255, 255, 255))
 
-    # ── 3. 中間分隔金線 ──
-    line_y_middle = 370
-    draw.line([(140, line_y_middle), (W - 140, line_y_middle)], fill=gold, width=1)
+    # 頂部分隔金線
+    line_y_top = 135
+    draw.line([(140, line_y_top), (W - 140, line_y_top)], fill=gold, width=1)
 
-    # ── 4. AI 劇情摘要 (避開底部字幕區，擺放於 y=405~515) ──
+    # ── 2. 【中央 AI 劇情摘要區】 (y = 145 ~ 420) ──
     if not summary_text:
         summary_text = f"【本章大綱】《{book_title}》第 {chap_num} 章精彩故事劇情演繹。"
 
-    font_sum = get_font(30)
-    sum_color = (235, 240, 250)
+    # 摘要標題
+    font_sum_header = get_font(22)
+    sum_header_text = "📜 【本章劇情大綱】"
+    try:
+        bbox = draw.textbbox((0, 0), sum_header_text, font=font_sum_header)
+        hw = bbox[2] - bbox[0]
+    except AttributeError:
+        hw, _ = draw.textsize(sum_header_text, font=font_sum_header)
+    draw.text(((W - hw) // 2, 155), sum_header_text, font=font_sum_header, fill=(220, 185, 90))
+
+    # 摘要內容 (36 字自動換行，最多 4 行)
+    font_sum = get_font(24)
+    sum_color = (225, 230, 240)
     
-    # 進行自動分行 (每行最多約 32 字)
-    max_chars_per_line = 32
+    max_chars_per_line = 36
     lines = []
     for i in range(0, len(summary_text), max_chars_per_line):
         lines.append(summary_text[i:i + max_chars_per_line])
-    
-    # 最多顯示 3 行
-    lines = lines[:3]
-    
-    start_y = 405
+    lines = lines[:4]
+
+    start_y = 195
     for idx, line in enumerate(lines):
         try:
             bbox = draw.textbbox((0, 0), line, font=font_sum)
@@ -161,11 +164,17 @@ def generate_title_card(book_title, chap_num, chapter_title, output_path, summar
             lw, _ = draw.textsize(line, font=font_sum)
         
         lx = (W - lw) // 2
-        ly = start_y + idx * 42
-        # 黑色粗陰影 + 明亮本文
-        for offset_x, offset_y in [(-2, -2), (2, -2), (-2, 2), (2, 2), (0, 3)]:
-            draw.text((lx + offset_x, ly + offset_y), line, font=font_sum, fill=(0, 0, 0, 230))
+        ly = start_y + idx * 38
+        # 暗色陰影 + 本文
+        for offset_x, offset_y in [(-1, -1), (1, -1), (-1, 1), (1, 1), (0, 2)]:
+            draw.text((lx + offset_x, ly + offset_y), line, font=font_sum, fill=(0, 0, 0, 220))
         draw.text((lx, ly), line, font=font_sum, fill=sum_color)
+
+    # 下方分隔金線 (切開摘要區與字幕區)
+    line_y_middle = 420
+    draw.line([(140, line_y_middle), (W - 140, line_y_middle)], fill=gold, width=1)
+
+    # ── 3. 【底部字幕專屬保留區】 (y = 425 ~ 720 留空給 FFmpeg 硬字幕) ──
 
     img.save(output_path, "JPEG", quality=92)
     logging.info(f"[ImageGen] ✓ Generated title card: {os.path.basename(output_path)}")

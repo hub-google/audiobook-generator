@@ -20,37 +20,61 @@ def generate_ai_chapter_summary(chapter_num, content, max_chars=50):
         f"章節內文摘要：\n{sample_text}"
     )
 
+    # 嘗試免 KEY 網路 API (Pollinations AI)
     try:
-        from g4f.client import Client
-        models_to_try = ["gpt-4o-mini", "qwen-2.5-72b", "llama-3.3-70b"]
-        client = Client()
-        for model in models_to_try:
-            try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": "你是一位專業的小說劇情總結專家，善於提煉故事核心，請精準控制字數在50字以內。"},
-                        {"role": "user", "content": prompt}
-                    ]
-                )
-                raw_ans = response.choices[0].message.content.strip()
-                clean_ans = re.sub(r'[\"\']', '', raw_ans).replace('\n', ' ')
-                if len(clean_ans) > 0:
-                    if len(clean_ans) > max_chars:
-                        clean_ans = clean_ans[:max_chars - 3] + "..."
-                    return clean_ans, model
-            except Exception:
-                continue
+        import urllib.parse
+        import requests
+        api_prompt = f"請用繁體中文將《{chapter_num}章》內文總結為50字以內的核心大綱（勿贅述）：\n{content[:1800]}"
+        encoded_prompt = urllib.parse.quote(api_prompt)
+        url = f"https://text.pollinations.ai/{encoded_prompt}?model=openai"
+        resp = requests.get(url, timeout=8)
+        if resp.status_code == 200 and resp.text:
+            ans = resp.text.strip()
+            clean_ans = re.sub(r'[\"\']', '', ans).replace('\n', ' ')
+            if len(clean_ans) > 10:
+                if len(clean_ans) > max_chars:
+                    clean_ans = clean_ans[:max_chars - 3] + "..."
+                return clean_ans, "Pollinations AI"
     except Exception as e:
-        logging.warning(f"[SummaryGen] g4f LLM 呼叫跳過: {e}")
+        logging.warning(f"[SummaryGen] Pollinations API 跳過: {e}")
 
-    # 本地備用提煉算法
-    sentences = [s.strip() for s in re.split(r'[。！!？?\n]', content) if len(s.strip()) > 8]
-    selected = sentences[:2] if sentences else ["本章精彩劇情展開"]
-    fallback_summary = "。".join(selected) + "。"
-    if len(fallback_summary) > max_chars:
-        fallback_summary = fallback_summary[:max_chars - 3] + "..."
-    return fallback_summary, "Local Extractor"
+    # ── 智慧全章分區 NLP 提煉演算法 (免網、零 API KEY) ──
+    # 將整章切分為【前段 30% 背景、中段 40% 發展、後段 30% 高潮/轉折】
+    clean_lines = []
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("【") or line.startswith("第"):
+            continue
+        line_no_dialog = re.sub(r'[「"『].*?[」"』]', '', line)
+        if len(line_no_dialog) > 8:
+            clean_lines.append(line_no_dialog)
+
+    if not clean_lines:
+        return f"第{chapter_num}章 精彩故事劇情演繹。", "Local NLP"
+
+    total = len(clean_lines)
+    part1_lines = clean_lines[:max(1, int(total * 0.3))]
+    part2_lines = clean_lines[int(total * 0.3):int(total * 0.7)]
+    part3_lines = clean_lines[int(total * 0.7):]
+
+    def pick_best_sentence(lines, fallback=""):
+        if not lines:
+            return fallback
+        for l in lines:
+            if any(kw in l for kw in ["韓立", "二愣子", "七玄門", "三叔", "村長", "考核", "弟子", "消息", "決定", "靈藥", "修煉"]):
+                return l.split("。")[0]
+        return lines[0].split("。")[0]
+
+    s1 = pick_best_sentence(part1_lines, "")
+    s2 = pick_best_sentence(part2_lines, "")
+    s3 = pick_best_sentence(part3_lines, "")
+
+    parts = [p for p in [s1, s2, s3] if p]
+    full_summary = "。".join(parts) + "。"
+    clean_summary = re.sub(r'\s+', '', full_summary)
+    if len(clean_summary) > max_chars:
+        clean_summary = clean_summary[:max_chars - 3] + "..."
+    return clean_summary, "智慧全章 NLP 提煉"
 
 def get_or_generate_chapter_summary(workspace_dir, book_title, chap_num):
     """
