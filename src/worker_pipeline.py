@@ -105,7 +105,8 @@ def validate_chapter_completeness(config, exact_indices, tts_failed_chapters=Non
                 try:
                     os.makedirs(images_dir, exist_ok=True)
                     chapter_title = get_chapter_title(workspace_dir, book_title, chap_num)
-                    ok = generate_title_card(book_title, chap_num, chapter_title, jpg_path)
+                    summary_text = get_or_generate_chapter_summary(workspace_dir, book_title, chap_num)
+                    ok = generate_title_card(book_title, chap_num, chapter_title, jpg_path, summary_text=summary_text)
                     if ok and os.path.exists(jpg_path) and os.path.getsize(jpg_path) > 100:
                         jpg_ok = True
                         logging.info(f"[Validate] ✓ 第 {chap_num} 章圖片重新生成成功")
