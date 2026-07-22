@@ -48,7 +48,7 @@ def get_authenticated_service():
     # 1. 嘗試從 token.json 讀取
     if os.path.exists(token_path):
         try:
-            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+            creds = Credentials.from_authorized_user_file(token_path)
         except Exception as e:
             logging.warning(f"無法讀取 token.json: {e}")
 
@@ -64,7 +64,7 @@ def get_authenticated_service():
             token_uri="https://oauth2.googleapis.com/token",
             client_id=client_id,
             client_secret=client_secret,
-            scopes=SCOPES
+            scopes=None
         )
 
     # 3. 嘗試動態合成 client_secret.json (如果 CI/CD 或環境中不存在)
@@ -93,10 +93,29 @@ def get_authenticated_service():
                 token_file.write(creds.to_json())
         except Exception as e:
             logging.warning(f"重新整理 Refresh Token 失敗: {e}")
-            creds = None
+            if "invalid_scope" in str(e):
+                logging.info("🔄 嘗試清除顯式 Scope 重新刷新憑證...")
+                try:
+                    creds._scopes = None
+                    creds.refresh(Request())
+                    with open(token_path, "w", encoding="utf-8") as token_file:
+                        token_file.write(creds.to_json())
+                    logging.info("✅ 成功使用 Refresh Token 原始授權刷新 Access Token！")
+                except Exception as ex2:
+                    logging.error(f"❌ 再次刷新失敗: {ex2}")
+                    creds = None
+            else:
+                creds = None
 
-    # 5. 如果是本地執行且沒有有效憑證，開瀏覽器一鍵登入授權
+    # 5. 如果沒有有效憑證，判斷是否為 CI/CD 無頭環境
     if not creds or not creds.valid:
+        is_ci = os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")
+        if is_ci:
+            logging.error("❌ GitHub Actions 無頭環境無法開啟瀏覽器進行互動式授權！")
+            logging.error("👉 請檢查 GitHub Secrets 中的 YOUTUBE_REFRESH_TOKEN / YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET 是否正確。")
+            logging.error("👉 若 Refresh Token 已失效，請在本地 GUI 重新進行 YouTube 授權並將新 Token 更新至 GitHub Secrets。")
+            sys.exit(1)
+
         if not os.path.exists(client_secret_path):
             logging.error(f"❌ 找不到 client_secret.json 且未設定 YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET！請在 GitHub Secrets 設定憑證。")
             sys.exit(1)
