@@ -114,7 +114,7 @@ jobs:
           path: Workspace/
           key: ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-${{ hashFiles('config.yaml', 'src/**') }}
           restore-keys: |
-            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-${{ hashFiles('config.yaml', 'src/**') }}
+            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-
 
       - name: Log Cache Location
         run: |

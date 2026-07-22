@@ -127,7 +127,10 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
         else:
             global_idx = start_global_idx + local_i   # 退回原本的推算方式
 
-        if chap_url in scraped_chapters:
+        raw_filename = f"{book_title}_chapter_{global_idx}_raw.txt"
+        raw_path     = os.path.join(raw_text_dir, raw_filename)
+
+        if chap_url in scraped_chapters or (os.path.exists(raw_path) and os.path.getsize(raw_path) > 10):
             logging.info(f"[Crawler Worker] Skipping already scraped chapter {global_idx}: {chap_url}")
             continue
 
