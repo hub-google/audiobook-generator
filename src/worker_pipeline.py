@@ -206,6 +206,8 @@ def main():
                         help="Mini-batch size for end-to-end processing (default: 1 for per-chapter saving)")
     parser.add_argument("--force",            action="store_true",
                         help="Force re-rendering images and videos even if cached MP4 exists")
+    parser.add_argument("--config",           type=str, default="",
+                        help="Path to config.yaml (defaults to ../config.yaml relative to src/)")
     args = parser.parse_args()
 
     config_path = args.config if args.config else None
