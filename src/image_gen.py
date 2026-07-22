@@ -207,11 +207,6 @@ def run_image_gen():
         # 取得或自動生成章節 AI 摘要
         summary_text = get_or_generate_chapter_summary(workspace_dir, book_title, chap_num)
 
-        if os.path.exists(out_path):
-            logging.info(f"[ImageGen] Skipping existing: {book_title}_chapter_{chap_num}.jpg")
-            skipped += 1
-            continue
-
         chapter_title = get_chapter_title(workspace_dir, book_title, chap_num)
         ok = generate_title_card(book_title, chap_num, chapter_title, out_path, summary_text=summary_text)
         if ok:

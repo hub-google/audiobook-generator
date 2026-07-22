@@ -127,15 +127,13 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
     duration = get_wav_duration(wav_path)
     logging.info(f"[VideoGen] Generating chapter {chap_num} video (audio: {duration:.1f}s) ...")
 
-    # ── 取得章節標題並產生標題卡 ──
+    # ── 取得章節標題並產生標題卡 (包含 50 字 AI 劇情摘要) ──
     chapter_title = get_chapter_title(workspace_dir, book_title, chap_num)
     title_card_path = os.path.join(workspace_dir, "Images", f"{book_title}_chapter_{chap_num}.jpg")
     os.makedirs(os.path.dirname(title_card_path), exist_ok=True)
 
-    if os.path.exists(title_card_path) and os.path.getsize(title_card_path) > 100:
-        card_ok = True
-    else:
-        card_ok = generate_chapter_title_image(book_title, chap_num, chapter_title, title_card_path, workspace_dir=workspace_dir)
+    # 強制產生最新包含 AI 摘要的標題卡圖片
+    card_ok = generate_chapter_title_image(book_title, chap_num, chapter_title, title_card_path, workspace_dir=workspace_dir)
 
     # 若 Pillow 產圖失敗，fallback 到原有背景圖
     if card_ok and os.path.exists(title_card_path):
@@ -147,23 +145,34 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
         logging.error(f"[VideoGen] No image available for chapter {chap_num}!")
         return None, 0
 
-    # ── FFmpeg：靜態圖 + 音訊 → MP4 ──
-    # 靜態背景圖不需要 25fps，-r 1 讓 FFmpeg 只編碼每秒 1 幀，渲染速度提升 3~4 倍
-    # -threads 0 讓 FFmpeg 自動使用所有可用 CPU 核心
+    # ── 檢查是否有對應 SRT 字幕檔並進行內嵌硬字幕（Hardsub）──
+    srt_path = os.path.join(workspace_dir, "Subtitles", f"{book_title}_chapter_{chap_num}.srt")
+    vf_filter = (
+        "scale=1280:720:force_original_aspect_ratio=decrease,"
+        "pad=1280:720:(ow-iw)/2:(oh-ih)/2,"
+        "format=yuv420p"
+    )
+    if os.path.exists(srt_path) and os.path.getsize(srt_path) > 10:
+        escaped_srt = srt_path.replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
+        vf_filter = (
+            "scale=1280:720:force_original_aspect_ratio=decrease,"
+            "pad=1280:720:(ow-iw)/2:(oh-ih)/2,"
+            f"subtitles='{escaped_srt}':force_style='FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=1,Outline=2,Alignment=2,MarginV=25',"
+            "format=yuv420p"
+        )
+        logging.info(f"[VideoGen] 💬 已開啟 FFmpeg 硬字幕嵌入: {os.path.basename(srt_path)}")
+
+    # ── FFmpeg：靜態圖 + 音訊 + 硬字幕 → MP4 ──
     cmd = [
         FFMPEG_PATH, "-y",
         "-loop", "1",
-        "-framerate", "1",           # ⚡ 輸入只有 1fps，避免靜態圖被過採樣
+        "-framerate", "1",
         "-i", img_to_use,
         "-i", wav_path,
-        "-vf", (
-            "scale=1280:720:force_original_aspect_ratio=decrease,"
-            "pad=1280:720:(ow-iw)/2:(oh-ih)/2,"
-            "format=yuv420p"
-        ),
+        "-vf", vf_filter,
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
-        "-r", "1",                   # ⚡ 輸出 1fps（靜態圖無損品質）
-        "-threads", "0",             # ⚡ 使用全部 CPU 核心
+        "-r", "1",
+        "-threads", "0",
         "-c:a", "aac", "-b:a", "128k",
         "-shortest",
         output_video
