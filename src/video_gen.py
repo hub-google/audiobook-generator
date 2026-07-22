@@ -132,8 +132,14 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
     title_card_path = os.path.join(workspace_dir, "Images", f"{book_title}_chapter_{chap_num}.jpg")
     os.makedirs(os.path.dirname(title_card_path), exist_ok=True)
 
-    # 強制產生最新包含 AI 摘要的標題卡圖片
-    card_ok = generate_chapter_title_image(book_title, chap_num, chapter_title, title_card_path, workspace_dir=workspace_dir)
+    # 優先使用已存在的 JPG（image_gen 階段已生成），避免重複呼叫 SummaryGen API
+    jpg_exists = os.path.exists(title_card_path) and os.path.getsize(title_card_path) > 100
+    if jpg_exists:
+        logging.info(f"[VideoGen] ✓ Reusing existing title card: {os.path.basename(title_card_path)}")
+        card_ok = True
+    else:
+        # JPG 不存在時才重新生成（包含 SummaryGen API 呼叫）
+        card_ok = generate_chapter_title_image(book_title, chap_num, chapter_title, title_card_path, workspace_dir=workspace_dir)
 
     # 若 Pillow 產圖失敗，fallback 到原有背景圖
     if card_ok and os.path.exists(title_card_path):
@@ -184,7 +190,7 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
     return output_video, duration
 
 
-def run_video_gen():
+def run_video_gen(build_parts=True, target_indices=None):
     config = load_config()
     book_title = config['book_title']
 
@@ -217,13 +223,26 @@ def run_video_gen():
         logging.warning("[VideoGen] No wav files found in Audio directory.")
         return
 
-    # fallback 背景圖（若 Pillow 失敗時使用）
+    # ── Batch 模式：只處理指定的章節，避免掃全部 WAV ──
+    if not build_parts and target_indices is not None:
+        target_set = set(int(x) for x in target_indices)
+        wav_files = [w for w in wav_files if parse_chapter_num(os.path.basename(w)) in target_set]
+        logging.info(f"[VideoGen] 📦 Batch 模式：只處理第 {sorted(target_set)} 章的 MP4（共 {len(wav_files)} 個 WAV）")
+    else:
+        logging.info(f"[VideoGen] 🌐 全量 Assembly 模式：掃描全部 {len(wav_files)} 個 WAV，準備生成 MP4 與 Part 打包")
+
     fallback_images = sorted(
         glob.glob(os.path.join(images_dir, "*.png")) +
         glob.glob(os.path.join(images_dir, "*.jpg"))
     )
 
-    logging.info(f"[VideoGen] Found {len(wav_files)} chapter wav(s). Generating per-chapter MP4s ...")
+    # 快速統計已存在 MP4 數量
+    existing_mp4_count = sum(
+        1 for w in wav_files
+        if os.path.exists(os.path.join(video_dir, f"{book_title}_chapter_{parse_chapter_num(os.path.basename(w))}.mp4"))
+        and os.path.getsize(os.path.join(video_dir, f"{book_title}_chapter_{parse_chapter_num(os.path.basename(w))}.mp4")) > 1000
+    )
+    logging.info(f"[VideoGen] Found {len(wav_files)} chapter wav(s). MP4 already done: {existing_mp4_count}, need to generate: {len(wav_files) - existing_mp4_count}")
 
     chapter_mp4s      = []
     chapter_durations = {}
@@ -246,6 +265,10 @@ def run_video_gen():
         total_duration += dur
 
     logging.info(f"[VideoGen] Total audio duration: {total_duration:.2f}s ({total_duration/3600:.2f}h)")
+
+    if not build_parts:
+        logging.info("[VideoGen] Single-chapter MP4s generated. Skipping full Part packaging for batch step.")
+        return
 
     # ── 產生 YouTube Metadata（章節時間戳）──
     metadata_path = os.path.join(output_dir, "youtube_metadata.txt")

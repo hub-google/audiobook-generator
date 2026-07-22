@@ -172,25 +172,25 @@ def stage_crawl(config, chapters, start_global_idx, exact_indices=None):
     run_crawler_worker(config, chapters, start_global_idx, exact_indices)
 
 
-def stage_clean(config):
+def stage_clean(config, target_indices=None):
     from cleaner import run_cleaner
-    run_cleaner()
+    run_cleaner(target_indices=target_indices)
 
 
-def stage_tts(config):
+def stage_tts(config, target_indices=None):
     from tts_ms import run_tts_ms
-    succeeded, failed = run_tts_ms()
+    succeeded, failed = run_tts_ms(target_indices=target_indices)
     return succeeded, failed
 
 
-def stage_image_gen(config):
+def stage_image_gen(config, target_indices=None):
     from image_gen import run_image_gen
-    run_image_gen()
+    run_image_gen(target_indices=target_indices)
 
 
-def stage_video_gen(config):
+def stage_video_gen(config, build_parts=True, target_indices=None):
     from video_gen import run_video_gen
-    run_video_gen()
+    run_video_gen(build_parts=build_parts, target_indices=target_indices)
 
 
 # ── 主程式 ────────────────────────────────────────────────
@@ -251,29 +251,33 @@ def main():
             sub_chapters = chapters[i:i + batch_size]
             sub_indices = exact_indices[i:i + batch_size]
 
-            # 檢查這 10 章的 MP4 影片是否都已經存在
-            all_mp4_exist = True
+            # ── 第一道防線：MP4 已存在 → 無條件跳過整個 batch，不跑任何 stage ──
+            missing_mp4s = []
             for c_idx in sub_indices:
                 mp4_file = os.path.join(video_dir, f"{book_title}_chapter_{c_idx}.mp4")
                 if not (os.path.exists(mp4_file) and os.path.getsize(mp4_file) > 1000):
-                    all_mp4_exist = False
-                    break
+                    missing_mp4s.append(c_idx)
 
-            if all_mp4_exist and not args.force:
-                logging.info(f"=== [Worker-{args.worker_id}] ⚡ 第 {sub_indices[0]}~{sub_indices[-1]} 章 MP4 影片已全數生成過，自動跳過此批次！ ===")
+            if not missing_mp4s:
+                logging.info(f"=== [Worker-{args.worker_id}] ⚡ 第 {sub_indices[0]}~{sub_indices[-1]} 章 MP4 已存在，跳過 ===")
                 logging.info(f"[PROGRESS_MARKER] Worker-{args.worker_id} | Ch {sub_indices[0]}~{sub_indices[-1]} done ({i + len(sub_indices)}/{total_in_worker})")
                 continue
 
-            logging.info(f"=== [Worker-{args.worker_id}] ▶️ 開始執行批次：第 {sub_indices[0]}~{sub_indices[-1]} 章 ({len(sub_indices)} 章) 一條龍合成 ===")
+            logging.info(f"=== [Worker-{args.worker_id}] ▶️ 開始執行批次：第 {sub_indices[0]}~{sub_indices[-1]} 章（缺 MP4: {missing_mp4s}）===")
             stage_crawl(config, sub_chapters, sub_indices[0], sub_indices)
-            stage_clean(config)
-            _, failed_in_batch = stage_tts(config)
+            stage_clean(config, target_indices=sub_indices)
+            _, failed_in_batch = stage_tts(config, target_indices=sub_indices)
             if failed_in_batch:
                 tts_failed_chapters.update(failed_in_batch)
-            stage_image_gen(config)
-            stage_video_gen(config)
-            logging.info(f"=== [Worker-{args.worker_id}] ✅ 批次完成：第 {sub_indices[0]}~{sub_indices[-1]} 章 MP4 影片已實打實寫入 Workspace/！ ===")
+            stage_image_gen(config, target_indices=sub_indices)
+            stage_video_gen(config, build_parts=False, target_indices=sub_indices)
+            logging.info(f"=== [Worker-{args.worker_id}] ✅ 批次完成：第 {sub_indices[0]}~{sub_indices[-1]} 章 MP4 已寫入 ===")
             logging.info(f"[PROGRESS_MARKER] Worker-{args.worker_id} | Ch {sub_indices[0]}~{sub_indices[-1]} done ({i + len(sub_indices)}/{total_in_worker})")
+
+        # 所有章節批次完成後，執行 1 次 Full Assembly（Part 打包 + AI 封面）
+        # --force 在這裡才有作用：強制重新打包 Part 大影片
+        logging.info(f"=== [Worker-{args.worker_id}] 所有章節處理完成，開始執行 Part 大影片打包（force={args.force}）===")
+        stage_video_gen(config, build_parts=True)
 
         # 最終完成度驗收
         logging.info(f"=== [Worker-{args.worker_id}] 執行最終完成度驗收 ===")

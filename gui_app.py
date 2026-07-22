@@ -212,81 +212,163 @@ class AudiobookGUIApp:
         if not self.catalog_data:
             return
             
-        try:
-            start_idx = int(self.entry_start.get().strip())
-            end_idx = int(self.entry_end.get().strip())
-        except ValueError:
-            messagebox.showwarning("提示", "開始與結束章節必須為數字！")
-            return
-            
         titles = self.catalog_data.get("chapter_titles", [])
         if not titles:
             messagebox.showinfo("提示", "目前沒有章節標題資訊可供篩選。")
             return
             
-        start_idx = max(1, start_idx)
-        end_idx = min(len(titles), end_idx)
+        try:
+            cur_start = int(self.entry_start.get().strip())
+            cur_end = int(self.entry_end.get().strip())
+        except ValueError:
+            cur_start, cur_end = 1, len(titles)
+            
+        total_chapters = len(titles)
+        cur_start = max(1, min(cur_start, total_chapters))
+        cur_end = max(1, min(cur_end, total_chapters))
         
         top = tk.Toplevel(self.root)
         top.title("選擇要轉換的章節")
-        top.geometry("400x500")
+        top.geometry("520x620")
+        top.minsize(450, 400)
         top.transient(self.root)
         top.grab_set()
 
-        ttk.Label(top, text="請取消勾選「不想轉換」的章節 (例如：請假單)", font=("Microsoft JhengHei", 10, "bold")).pack(pady=10)
+        BG_COLOR = "#f5f6fa"
+        top.configure(bg=BG_COLOR)
 
-        # 加上全選/全不選按鈕
-        btn_frame = ttk.Frame(top)
-        btn_frame.pack(fill=tk.X, padx=10)
+        header_frame = ttk.Frame(top)
+        header_frame.pack(fill=tk.X, padx=15, pady=(15, 5))
 
-        # 中間捲動區塊
-        canvas = tk.Canvas(top, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(top, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
+        ttk.Label(header_frame, text="請取消勾選「不想轉換」的章節 (點擊列或按空白鍵切換勾選)", font=("Microsoft JhengHei", 10, "bold")).pack(anchor="w")
 
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
+        info_lbl = ttk.Label(header_frame, text=f"全書共 {total_chapters} 章 | 目前範圍：第 {cur_start} ~ {cur_end} 章", font=("Microsoft JhengHei", 9), foreground="#666666")
+        info_lbl.pack(anchor="w", pady=(2, 5))
 
-        canvas.pack(side="left", fill="both", expand=True, padx=10, pady=5)
-        scrollbar.pack(side="right", fill="y")
+        # 控制列（全書切換 & 搜尋框）
+        control_frame = ttk.Frame(top)
+        control_frame.pack(fill=tk.X, padx=15, pady=5)
+
+        show_all_var = tk.BooleanVar(value=True)
         
-        # 滑鼠滾輪支援
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        ttk.Label(control_frame, text="🔍 搜尋:").pack(side=tk.LEFT, padx=(0, 4))
+        search_entry = ttk.Entry(control_frame, width=16)
+        search_entry.pack(side=tk.LEFT, padx=(0, 10))
 
-        self.checkbox_vars = {}
-        for i in range(start_idx, end_idx + 1):
-            global_idx = i
-            title = titles[i - 1]
-            var = tk.BooleanVar(value=(global_idx not in self.excluded_chapters))
-            self.checkbox_vars[global_idx] = var
-            cb = ttk.Checkbutton(scrollable_frame, text=f"第 {global_idx} 章: {title}", variable=var)
-            cb.pack(anchor="w", pady=2)
+        # 中間 Listbox + Scrollbar 區塊
+        container = ttk.Frame(top)
+        container.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+
+        scrollbar = ttk.Scrollbar(container, orient="vertical")
+        listbox = tk.Listbox(
+            container,
+            selectmode=tk.SINGLE,
+            font=("Microsoft JhengHei", 10),
+            activestyle="none",
+            highlightthickness=1,
+            highlightcolor="#0097e6",
+            selectbackground="#e1f5fe",
+            selectforeground="#000000",
+            bd=1,
+            relief="solid",
+            yscrollcommand=scrollbar.set
+        )
+        scrollbar.config(command=listbox.yview)
+
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # 紀錄目前每個章節的勾選狀態 {global_idx: True/False} (True = 要轉換)
+        chapter_state = {}
+        for i in range(1, total_chapters + 1):
+            chapter_state[i] = (i not in self.excluded_chapters)
+
+        # 紀錄目前 Listbox 顯示的章節編號列表 (對應 Listbox index)
+        visible_indices = []
+
+        def _update_listbox():
+            listbox.delete(0, tk.END)
+            visible_indices.clear()
+
+            is_show_all = show_all_var.get()
+            s_idx = 1 if is_show_all else cur_start
+            e_idx = total_chapters if is_show_all else cur_end
             
+            filter_text = search_entry.get().strip().lower()
+
+            for i in range(s_idx, e_idx + 1):
+                global_idx = i
+                title = titles[i - 1]
+                display_text = f"第 {global_idx} 章: {title}"
+
+                if filter_text and filter_text not in display_text.lower():
+                    continue
+
+                visible_indices.append(global_idx)
+                is_checked = chapter_state.get(global_idx, True)
+                mark = "[✓]" if is_checked else "[  ]"
+                listbox.insert(tk.END, f"{mark}  {display_text}")
+
+        chk_show_all = ttk.Checkbutton(control_frame, text="🌐 顯示全書章節", variable=show_all_var, command=_update_listbox)
+        chk_show_all.pack(side=tk.LEFT, padx=(0, 10))
+
+        search_entry.bind("<KeyRelease>", lambda e: _update_listbox())
+
+        def _toggle_item(event=None):
+            sel = listbox.curselection()
+            if not sel:
+                return
+            index = sel[0]
+            if 0 <= index < len(visible_indices):
+                g_idx = visible_indices[index]
+                chapter_state[g_idx] = not chapter_state[g_idx]
+                
+                # 更新 Listbox 單行顯示
+                mark = "[✓]" if chapter_state[g_idx] else "[  ]"
+                display_text = f"第 {g_idx} 章: {titles[g_idx - 1]}"
+                listbox.delete(index)
+                listbox.insert(index, f"{mark}  {display_text}")
+                listbox.selection_set(index)
+                listbox.activate(index)
+
+        # 單擊選取或按空白鍵切換狀態
+        listbox.bind("<ButtonRelease-1>", lambda e: _toggle_item())
+        listbox.bind("<space>", lambda e: (_toggle_item(), "break"))
+
+        _update_listbox()
+
+        # 底部按鈕區
+        btn_frame = ttk.Frame(top)
+        btn_frame.pack(fill=tk.X, padx=15, pady=15)
+
         def _select_all():
-            for var in self.checkbox_vars.values():
-                var.set(True)
+            for g_idx in visible_indices:
+                chapter_state[g_idx] = True
+            _update_listbox()
                 
         def _deselect_all():
-            for var in self.checkbox_vars.values():
-                var.set(False)
+            for g_idx in visible_indices:
+                chapter_state[g_idx] = False
+            _update_listbox()
 
-        def _save():
+        def _invert_select():
+            for g_idx in visible_indices:
+                chapter_state[g_idx] = not chapter_state[g_idx]
+            _update_listbox()
+
+        def _close_dialog():
             self.excluded_chapters.clear()
-            for g_idx, var in self.checkbox_vars.items():
-                if not var.get():
+            for g_idx, is_checked in chapter_state.items():
+                if not is_checked:
                     self.excluded_chapters.add(g_idx)
             top.destroy()
-            canvas.unbind_all("<MouseWheel>")
 
-        ttk.Button(btn_frame, text="全選", command=_select_all).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="全不選", command=_deselect_all).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="確定", style="Accent.TButton", command=_save).pack(side=tk.RIGHT, padx=5)
+        top.protocol("WM_DELETE_WINDOW", _close_dialog)
+
+        ttk.Button(btn_frame, text="全選", command=_select_all).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="全不選", command=_deselect_all).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="反選", command=_invert_select).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="確定", style="Accent.TButton", command=_close_dialog).pack(side=tk.RIGHT, padx=5)
 
     # ── 觸發 GitHub Actions ──
     def trigger_github_actions(self):

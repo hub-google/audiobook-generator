@@ -186,7 +186,7 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice,
     return generated_parts, valid_lines
 
 
-def run_tts_ms():
+def run_tts_ms(target_indices=None):
     """
     回傳兩個 set：
       - succeeded_chapters: 成功生成 WAV 的章節號碼集合
@@ -219,13 +219,6 @@ def run_tts_ms():
     failed_chapters = set()
 
     for filename in filenames:
-        clean_path = os.path.join(clean_text_dir, filename)
-        with open(clean_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-
-        if not lines:
-            continue
-
         # 解析章節號碼
         parts = filename.split("_")
         chap_num = "1"
@@ -233,6 +226,16 @@ def run_tts_ms():
             if p == "chapter" and i + 1 < len(parts):
                 chap_num = parts[i + 1]
                 break
+
+        if target_indices is not None and int(chap_num) not in target_indices:
+            continue
+
+        clean_path = os.path.join(clean_text_dir, filename)
+        with open(clean_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        if not lines:
+            continue
 
         # 最終輸出：{書名}_chapter_{N}.wav
         wav_filename = f"{book_title}_chapter_{chap_num}.wav"

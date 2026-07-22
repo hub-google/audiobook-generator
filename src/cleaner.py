@@ -103,7 +103,13 @@ def chunk_text(text, max_length=18):
             
     return "\n".join(valid_chunks)
 
-def run_cleaner():
+def parse_chapter_num(filename):
+    m = re.search(r'chapter_(\d+)', filename)
+    if m:
+        return int(m.group(1))
+    return 9999
+
+def run_cleaner(target_indices=None):
     config = load_config()
     book_title = config['book_title']
     
@@ -122,7 +128,19 @@ def run_cleaner():
         if not filename.endswith("_raw.txt"):
             continue
             
+        chap_num = parse_chapter_num(filename)
+        if target_indices is not None and chap_num not in target_indices:
+            continue
+
         raw_path = os.path.join(raw_text_dir, filename)
+
+        # 如果已有干淨 clean.txt，且未要求 force，直接跳過
+        clean_filename = filename.replace("_raw.txt", "_clean.txt")
+        clean_path = os.path.join(clean_text_dir, clean_filename)
+        if os.path.exists(clean_path) and os.path.getsize(clean_path) > 10:
+            logging.info(f"[Cleaner] Skipping existing: {clean_filename}")
+            continue
+
         with open(raw_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
             
@@ -134,9 +152,6 @@ def run_cleaner():
         
         cleaned_text = clean_text_content(raw_content, title, book_title)
         chunked_text = chunk_text(cleaned_text, max_length=18)
-        
-        clean_filename = filename.replace("_raw.txt", "_clean.txt")
-        clean_path = os.path.join(clean_text_dir, clean_filename)
         
         with open(clean_path, "w", encoding="utf-8") as f:
             f.write(chunked_text)

@@ -185,7 +185,7 @@ def generate_title_card(book_title, chap_num, chapter_title, output_path, summar
     return True
 
 
-def run_image_gen():
+def run_image_gen(target_indices=None):
     """
     掃描 Audio/ 目錄中所有章節 WAV，為每一章產生對應的 title_card_chapter_N.jpg。
     包含自動生成 50 字 AI 劇情摘要並排版至圖片中。
@@ -212,13 +212,35 @@ def run_image_gen():
         logging.warning("[ImageGen] No chapter WAV files found in Audio/. Skipping title card generation.")
         return
 
-    logging.info(f"[ImageGen] Found {len(wav_files)} chapter(s). Generating title cards with AI summaries...")
+    if target_indices is not None:
+        wav_files = [w for w in wav_files if parse_chapter_num(os.path.basename(w)) in target_indices]
+
+    if not wav_files:
+        logging.info("[ImageGen] No matching chapters in target_indices. Skipping.")
+        return
+
+    # 快速評估：如果 target 節的 JPG 全數存在，立刻跳出
+    all_jpgs_exist = all(
+        os.path.exists(os.path.join(images_dir, f"{book_title}_chapter_{parse_chapter_num(os.path.basename(w))}.jpg"))
+        and os.path.getsize(os.path.join(images_dir, f"{book_title}_chapter_{parse_chapter_num(os.path.basename(w))}.jpg")) > 100
+        for w in wav_files
+    )
+    if all_jpgs_exist:
+        logging.info(f"[ImageGen] ⚡ All {len(wav_files)} target chapter(s) already have title cards. Skipping.")
+        return
+
+    logging.info(f"[ImageGen] Found {len(wav_files)} chapter(s) to process. Generating title cards with AI summaries...")
 
     generated = 0
     skipped   = 0
     for wav_path in wav_files:
         chap_num = parse_chapter_num(os.path.basename(wav_path))
         out_path = os.path.join(images_dir, f"{book_title}_chapter_{chap_num}.jpg")
+
+        if os.path.exists(out_path) and os.path.getsize(out_path) > 100:
+            logging.info(f"[ImageGen] Skipping existing title card: {os.path.basename(out_path)}")
+            skipped += 1
+            continue
 
         # 取得或自動生成章節 AI 摘要
         summary_text = get_or_generate_chapter_summary(workspace_dir, book_title, chap_num)

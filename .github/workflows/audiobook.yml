@@ -126,7 +126,7 @@ jobs:
 
       - name: Run Per-Chapter End-to-End Pipeline (Real-Time Saving)
         run: |
-          python src/worker_pipeline.py --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1 --force
+          python src/worker_pipeline.py --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1
 
       - name: Upload MP4 Videos & Subtitles Only (Lightweight Artifact for YouTube Upload)
         uses: actions/upload-artifact@v4
