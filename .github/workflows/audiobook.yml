@@ -133,8 +133,8 @@ jobs:
         with:
           name: mp4-worker-${{ matrix.worker_id }}
           path: |
-            Workspace/*/*/Video/
-            Workspace/*/*/Subtitles/
+            Workspace/*/Video/
+            Workspace/*/Subtitles/
             Upload_Subtitles/
           if-no-files-found: warn
 

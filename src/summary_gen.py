@@ -103,7 +103,15 @@ def get_or_generate_chapter_summary(workspace_dir, book_title, chap_num):
 
     summary_file = os.path.join(summaries_dir, f"{book_title}_chapter_{chap_num}_summary.txt")
 
-    # 強制重新生成以確保品質
+    if os.path.exists(summary_file) and os.path.getsize(summary_file) > 5:
+        try:
+            with open(summary_file, "r", encoding="utf-8") as f:
+                cached_sum = f.read().strip()
+            if cached_sum:
+                logging.info(f"[SummaryGen] ✓ 讀取已有摘要快取: {os.path.basename(summary_file)}")
+                return cached_sum
+        except Exception:
+            pass
     clean_path = os.path.join(workspace_dir, "CleanText", f"{book_title}_chapter_{chap_num}_clean.txt")
     raw_path   = os.path.join(workspace_dir, "RawText", f"{book_title}_chapter_{chap_num}_raw.txt")
 
