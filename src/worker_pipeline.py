@@ -204,8 +204,8 @@ def main():
                         help="Worker index (0-based)")
     parser.add_argument("--batch-size",       type=int, default=1,
                         help="Mini-batch size for end-to-end processing (default: 1 for per-chapter saving)")
-    parser.add_argument("--config",           type=str, default="",
-                        help="Path to config.yaml (defaults to ../config.yaml relative to src/)")
+    parser.add_argument("--force",            action="store_true",
+                        help="Force re-rendering images and videos even if cached MP4 exists")
     args = parser.parse_args()
 
     config_path = args.config if args.config else None
@@ -257,7 +257,7 @@ def main():
                     all_mp4_exist = False
                     break
 
-            if all_mp4_exist:
+            if all_mp4_exist and not args.force:
                 logging.info(f"=== [Worker-{args.worker_id}] ⚡ 第 {sub_indices[0]}~{sub_indices[-1]} 章 MP4 影片已全數生成過，自動跳過此批次！ ===")
                 logging.info(f"[PROGRESS_MARKER] Worker-{args.worker_id} | Ch {sub_indices[0]}~{sub_indices[-1]} done ({i + len(sub_indices)}/{total_in_worker})")
                 continue

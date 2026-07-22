@@ -112,9 +112,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: Workspace/
-          key: ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-${{ hashFiles('config.yaml') }}
+          key: ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-${{ hashFiles('config.yaml', 'src/**') }}
           restore-keys: |
-            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-
+            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-${{ hashFiles('config.yaml', 'src/**') }}
 
       - name: Log Cache Location
         run: |
@@ -126,7 +126,7 @@ jobs:
 
       - name: Run Per-Chapter End-to-End Pipeline (Real-Time Saving)
         run: |
-          python src/worker_pipeline.py --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1
+          python src/worker_pipeline.py --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1 --force
 
       - name: Upload MP4 Videos & Subtitles Only (Lightweight Artifact for YouTube Upload)
         uses: actions/upload-artifact@v4

@@ -137,32 +137,35 @@ def generate_title_card(book_title, chap_num, chapter_title, output_path, summar
     draw.line([(140, line_y_middle), (W - 140, line_y_middle)], fill=gold, width=1)
 
     # ── 4. AI 劇情摘要 (避開底部字幕區，擺放於 y=405~515) ──
-    if summary_text:
-        font_sum = get_font(28)
-        sum_color = (220, 225, 235)
+    if not summary_text:
+        summary_text = f"【本章大綱】《{book_title}》第 {chap_num} 章精彩故事劇情演繹。"
+
+    font_sum = get_font(30)
+    sum_color = (235, 240, 250)
+    
+    # 進行自動分行 (每行最多約 32 字)
+    max_chars_per_line = 32
+    lines = []
+    for i in range(0, len(summary_text), max_chars_per_line):
+        lines.append(summary_text[i:i + max_chars_per_line])
+    
+    # 最多顯示 3 行
+    lines = lines[:3]
+    
+    start_y = 405
+    for idx, line in enumerate(lines):
+        try:
+            bbox = draw.textbbox((0, 0), line, font=font_sum)
+            lw = bbox[2] - bbox[0]
+        except AttributeError:
+            lw, _ = draw.textsize(line, font=font_sum)
         
-        # 進行自動分行 (每行最多約 34 字)
-        max_chars_per_line = 34
-        lines = []
-        for i in range(0, len(summary_text), max_chars_per_line):
-            lines.append(summary_text[i:i + max_chars_per_line])
-        
-        # 最多顯示 2 行
-        lines = lines[:2]
-        
-        start_y = 405
-        for idx, line in enumerate(lines):
-            try:
-                bbox = draw.textbbox((0, 0), line, font=font_sum)
-                lw = bbox[2] - bbox[0]
-            except AttributeError:
-                lw, _ = draw.textsize(line, font=font_sum)
-            
-            lx = (W - lw) // 2
-            ly = start_y + idx * 40
-            # 陰影 + 本文
-            draw.text((lx + 2, ly + 2), line, font=font_sum, fill=(0, 0, 0, 150))
-            draw.text((lx, ly), line, font=font_sum, fill=sum_color)
+        lx = (W - lw) // 2
+        ly = start_y + idx * 42
+        # 黑色粗陰影 + 明亮本文
+        for offset_x, offset_y in [(-2, -2), (2, -2), (-2, 2), (2, 2), (0, 3)]:
+            draw.text((lx + offset_x, ly + offset_y), line, font=font_sum, fill=(0, 0, 0, 230))
+        draw.text((lx, ly), line, font=font_sum, fill=sum_color)
 
     img.save(output_path, "JPEG", quality=92)
     logging.info(f"[ImageGen] ✓ Generated title card: {os.path.basename(output_path)}")
