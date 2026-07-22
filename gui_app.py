@@ -116,9 +116,6 @@ class AudiobookGUIApp:
         self.btn_api_upload = ttk.Button(action_frame, text="📤 暴速上傳 YouTube (建播放清單)", command=self.trigger_youtube_api_upload)
         self.btn_api_upload.pack(side=tk.LEFT, padx=(0, 10))
 
-        self.btn_stream = ttk.Button(action_frame, text="🎥 發動 YouTube 直播", command=self.trigger_youtube_stream)
-        self.btn_stream.pack(side=tk.LEFT, padx=(0, 10))
-
         self.btn_cancel = ttk.Button(action_frame, text="🛑 取消雲端作業", command=self.cancel_github_actions, state=tk.DISABLED)
         self.btn_cancel.pack(side=tk.LEFT, padx=(0, 15))
 
@@ -357,72 +354,13 @@ class AudiobookGUIApp:
 
                 # 2. 開始輪詢 Workflow 狀態
                 time.sleep(4)
-                self._poll_workflow_runs(repo, token)
+                self._poll_workflow_runs(repo, token, target_workflow_name="Audiobook Automation Pipeline (Parallel)")
 
             except Exception as e:
                 self.root.after(0, lambda err=str(e): self._on_workflow_failed(err))
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def trigger_youtube_stream(self):
-        load_dotenv(ENV_PATH, override=True)
-        repo = os.getenv("GITHUB_REPO", "hub-google/audiobook-generator")
-        token = os.getenv("GITHUB_TOKEN", "")
-
-        if not token:
-            messagebox.showerror("錯誤", "本地 .env 中未找到 GITHUB_TOKEN！請確認檔案。")
-            return
-
-        default_run_id = getattr(self, "current_run_id", "") or ""
-        run_id = simpledialog.askstring(
-            "發動 YouTube Live 直播",
-            "請輸入包含影片 Artifacts 的 GitHub Run ID:\n(如不確定可維持預設值或至 GitHub 複製)",
-            initialvalue=str(default_run_id) if default_run_id else "29843263020"
-        )
-        if not run_id or not run_id.strip():
-            return
-
-        run_id = run_id.strip()
-        self.current_repo = repo
-        self.current_token = token
-        self.current_run_id = None
-        self.cancel_requested = False
-
-        self.btn_run.config(state=tk.DISABLED)
-        if hasattr(self, 'btn_stream'):
-            self.btn_stream.config(state=tk.DISABLED)
-        self.btn_cancel.config(state=tk.NORMAL)
-        self.progress_bar.start(10)
-        self.lbl_status.config(text="啟動直播推流中...", foreground="#e1b12c")
-        self.log(f"🎥 正向 GitHub (Repo: {repo}) 發動 YouTube Live 直播推流 (Target Run ID: {run_id}) ...")
-
-        def _worker():
-            try:
-                headers = {
-                    "Accept": "application/vnd.github+json",
-                    "Authorization": f"Bearer {token}",
-                    "X-GitHub-Api-Version": "2022-11-28"
-                }
-                dispatch_url = f"https://api.github.com/repos/{repo}/actions/workflows/youtube_stream.yml/dispatches"
-                payload = {
-                    "ref": "master",
-                    "inputs": {
-                        "run_id": run_id
-                    }
-                }
-
-                r = requests.post(dispatch_url, headers=headers, json=payload, timeout=15)
-                if r.status_code not in (200, 204):
-                    raise Exception(f"GitHub API 回應錯誤 ({r.status_code}): {r.text}")
-
-                self.root.after(0, lambda: self.log("✓ 成功發動 YouTube Live 直播 Workflow！等待雲端啟動..."))
-                time.sleep(4)
-                self._poll_workflow_runs(repo, token, target_workflow_name="Stream Audiobooks directly to YouTube Live")
-
-            except Exception as e:
-                self.root.after(0, lambda err=str(e): self._on_workflow_failed(err))
-
-        threading.Thread(target=_worker, daemon=True).start()
 
     def trigger_youtube_api_upload(self):
         load_dotenv(ENV_PATH, override=True)
@@ -545,7 +483,7 @@ class AudiobookGUIApp:
                         if run.get("name") != target_workflow_name:
                             continue
                     else:
-                        if run.get("name") not in ("Audiobook Automation Pipeline (Parallel)", "Stream Audiobooks directly to YouTube Live", "Fast Upload Audiobooks & Build YouTube Playlist"):
+                        if run.get("name") != "Audiobook Automation Pipeline (Parallel)":
                             continue
                     run_id = run["id"]
                     self.current_run_id = run_id
