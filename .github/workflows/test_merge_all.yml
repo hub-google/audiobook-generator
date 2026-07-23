@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: 'Workflow Run ID (要下載 worker MP4 產出物的 Run ID，留空則預設找最近一次成功的執行紀錄)'
+        description: 'Workflow Run ID (要下載 worker MP4 產出物的 Run ID，留空則預設找最近一次執行的記錄)'
         required: false
         default: ''
 
@@ -44,10 +44,22 @@ jobs:
             echo "🔍 未提供 Run ID，搜尋最近一次 Audiobook Automation Pipeline 執行記錄..."
             RUN_ID=$(gh run list --workflow "Audiobook Automation Pipeline (Parallel)" --limit 1 --json databaseId -q '.[0].databaseId')
           fi
-          echo "📦 開始下載 Run ID: $RUN_ID 的所有 worker MP4 產出物..."
-          gh run download "$RUN_ID" --dir Workspace/ || true
-          echo "📂 檔案下載完成，以下為已找到的章節 MP4 列表："
-          find Workspace/ -name "*.mp4"
+          echo "📦 目標 Run ID: $RUN_ID"
+          echo "📋 正在讀取該 Run 的 Artifact 列表..."
+          ARTS=$(gh api "repos/${{ github.repository }}/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[].name' | grep mp4-worker || true)
+          
+          if [ -z "$ARTS" ]; then
+            echo "⚠️ 未找到 mp4-worker 前綴的 Artifacts，下載該 Run 的全部 Artifacts..."
+            gh run download "$RUN_ID" --dir Workspace/ || true
+          else
+            for art in $ARTS; do
+              echo "⬇️ 正在極速下載與解壓縮 Worker 產出物: $art ..."
+              gh run download "$RUN_ID" -n "$art" --dir Workspace/ || true
+            done
+          fi
+
+          echo "📂 檔案下載完成，已找到的章節 MP4 列表："
+          find Workspace/ -name "*.mp4" | sort -V
 
       - name: Run Single MP4 Merger Test
         run: |
