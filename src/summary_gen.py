@@ -12,12 +12,15 @@ def get_local_ai_summary(prompt, max_chars=50):
     global _local_pipeline
     try:
         if _local_pipeline is None:
-            from transformers import pipeline
+            from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
             logging.info("[SummaryGen] 🚀 載入在地 AI 模型 (Qwen/Qwen2.5-0.5B-Instruct)...")
+            model_id = "Qwen/Qwen2.5-0.5B-Instruct"
+            tokenizer = AutoTokenizer.from_pretrained(model_id)
+            model = AutoModelForCausalLM.from_pretrained(model_id)
             _local_pipeline = pipeline(
                 "text-generation",
-                model="Qwen/Qwen2.5-0.5B-Instruct",
-                device_map="cpu"
+                model=model,
+                tokenizer=tokenizer
             )
         formatted_prompt = f"<|im_start|>system\n你是一位專業小說大綱提煉助手。請用繁體中文寫出一句40字以內的劇情大綱，切勿有任何多餘廢話與重複標題。<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
         out = _local_pipeline(formatted_prompt, max_new_tokens=60, do_sample=False)
