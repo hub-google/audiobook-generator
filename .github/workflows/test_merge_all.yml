@@ -1,0 +1,61 @@
+name: Test Merge All Chapters into Single MP4
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Workflow Run ID (要下載 worker MP4 產出物的 Run ID，留空則預設找最近一次成功的執行紀錄)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  test_merge:
+    name: "🎬 Merge All Worker MP4s into Single MP4"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download Worker Artifacts from Target Run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p Workspace/
+          RUN_ID="${{ github.event.inputs.run_id }}"
+          if [ -z "$RUN_ID" ]; then
+            echo "🔍 未提供 Run ID，搜尋最近一次 Audiobook Automation Pipeline 執行記錄..."
+            RUN_ID=$(gh run list --workflow "Audiobook Automation Pipeline (Parallel)" --limit 1 --json databaseId -q '.[0].databaseId')
+          fi
+          echo "📦 開始下載 Run ID: $RUN_ID 的所有 worker MP4 產出物..."
+          gh run download "$RUN_ID" --dir Workspace/ || true
+          echo "📂 檔案下載完成，以下為已找到的章節 MP4 列表："
+          find Workspace/ -name "*.mp4"
+
+      - name: Run Single MP4 Merger Test
+        run: |
+          python test_merge_all.py Workspace Output
+
+      - name: Upload Single MP4 Artifact (Optional)
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-book-single-mp4
+          path: Output/*.mp4
+          if-no-files-found: warn
