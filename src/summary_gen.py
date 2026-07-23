@@ -6,93 +6,85 @@ import json
 import time
 import logging
 
-# 《凡人修仙傳》前幾章標準劇情精華快取（確保離線時呈現頂級品質）
-BOOK_PLOT_DATABASE = {
-    1: "山村少年韓立出身貧苦，因家庭窘迫經三叔介紹獲選參加七玄門弟子考核，準備踏上改變命運之路。",
-    2: "韓立隨三叔抵達七玄門所在地彩霞山，結識同伴與門丁，懷著緊張與期待準備迎接收徒測試。",
-    3: "七玄門入門考核極其嚴苛，韓立憑藉堅韌毅力咬牙堅持，最終在最後關頭通過考驗進入門派。",
-    4: "韓立因資質平庸未被選為正式弟子，幸得神醫墨大夫相中收為記名弟子，開啟在神手谷的修煉。",
-    5: "墨大夫傳授韓立無名口訣與醫術，韓立在神手谷苦修數載，意外發現無名口訣能產生神秘修真法力。"
-}
-
-def generate_ai_chapter_summary(chapter_num, content, max_chars=50):
+def generate_ai_chapter_summary(chapter_num, content, max_chars=50, book_title=""):
     """
-    對章節內文進行 50 字內的大綱總結
-    順序：1. 標準經典大綱資料庫  2. Gemini/OpenAI API  3. 在線免 KEY API  4. 智慧情節摘要器
+    將章節整篇 TXT 內容直接發送給免 KEY 在線 AI 模型進行 40 字大綱總結。
+    若 AI 失敗，自動擷取本章開頭精華作為備用大綱。
     """
-    # ── 0. 若為資料庫已有章節，直接傳回頂級大綱 ──
-    if chapter_num in BOOK_PLOT_DATABASE:
-        return BOOK_PLOT_DATABASE[chapter_num], "經典小說劇情資料庫"
-
     clean_text = content.strip()
+    if not clean_text:
+        return "本章暫無摘要", "無內文"
 
-    # ── 1. 嘗試 Gemini / OpenAI API (若有 API Key) ──
-    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if gemini_key:
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            prompt = f"請用繁體中文總結《凡人修仙傳》第{chapter_num}章的核心故事大綱，控制在40-50字以內，語意完整：\n{clean_text[:3000]}"
-            res = model.generate_content(prompt)
-            if res and res.text:
-                ans = res.text.strip().replace('\n', ' ')
-                ans = re.sub(r'^(摘要|大綱|總結)[:：]', '', ans).strip()
-                if len(ans) > max_chars:
-                    ans = ans[:max_chars - 1] + "。"
-                return ans, "Gemini API"
-        except Exception as e:
-            logging.warning(f"[SummaryGen] Gemini API 失敗: {e}")
+    # ── 1. 過濾 RawText 中的網頁廣告與雜訊，擷取真正的章節標題與內文 ──
+    lines = [l.strip() for l in clean_text.splitlines() if l.strip()]
+    cleaned_lines = []
+    for l in lines:
+        if any(noise in l for noise in ["請記住本站域名", "黃金屋", "hjwzw", "讀者", "Chapter"]):
+            continue
+        cleaned_lines.append(l)
 
-    # ── 2. 嘗試免 KEY 在線 API (Pollinations AI) ──
+    chapter_title = cleaned_lines[0] if cleaned_lines else f"第{chapter_num}章"
+    body_lines = [l for l in cleaned_lines[1:] if l != chapter_title and book_title not in l]
+    body_text_full = "\n".join(body_lines)
+
+    # ── 2. 將包含標題與內文的文字傳給免 KEY 在線 AI 模型 ──
     try:
         import requests
-        api_prompt = f"請用繁體中文以40字總結《凡人修仙傳》第{chapter_num}章劇情大綱：\n{clean_text[:1500]}"
+        import urllib.parse
+
+        prompt = (
+            f"請讀取小說《{book_title}》第{chapter_num}章（標題：{chapter_title}）的完整內文，用繁體中文寫出一句40字以內的劇情大綱，"
+            f"精準說明本章發生的關鍵事件，切勿包含「本章講述」、「展開冒險」等廢話：\n\n{body_text_full[:4500]}"
+        )
         url = "https://text.pollinations.ai/"
-        payload = {
-            "messages": [{"role": "user", "content": api_prompt}],
-            "model": "openai"
-        }
-        resp = requests.post(url, json=payload, timeout=4)
-        if resp.status_code == 200 and resp.text:
-            ans = resp.text.strip()
-            clean_ans = re.sub(r'[\"\']', '', ans).replace('\n', ' ')
-            clean_ans = re.sub(r'^(大綱|摘要|總結)[:：]', '', clean_ans).strip()
-            if len(clean_ans) >= 15 and not clean_ans.startswith("{"):
-                if len(clean_ans) > max_chars:
-                    clean_ans = clean_ans[:max_chars - 1] + "。"
-                elif not clean_ans.endswith(("。", "！", "？")):
-                    clean_ans += "。"
-                return clean_ans, "Pollinations AI"
-    except Exception:
-        pass
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-    # ── 3. 高品質智慧離線情節提煉演算法 ──
-    paragraphs = [l.strip() for l in clean_text.splitlines() if l.strip() and not l.strip().startswith(("【", "第"))]
-    if not paragraphs:
-        return f"第{chapter_num}章 精彩故事劇情演繹。", "Local Fallback"
+        # 嘗試模型選項 (openai-fast 與 預設模型)
+        models_to_try = ["openai-fast", ""]
+        for model_name in models_to_try:
+            try:
+                payload = {"messages": [{"role": "user", "content": prompt}]}
+                if model_name:
+                    payload["model"] = model_name
 
-    # 尋找描寫主要動作的段落
-    action_sentences = []
-    for p in paragraphs[:12]:
-        p_clean = re.sub(r'[「"『].*?[」"』]', '', p)
-        for s in re.split(r'[。！!？?]', p_clean):
-            s = s.strip()
-            s = re.sub(r'^(因此|雖然|但是|不過|然而|因為|所以|話說|這時|當初)[，, ]*', '', s)
-            if any(kw in s for kw in ["韓立", "二愣子", "三叔", "七玄門", "墨大夫", "張鐵匠", "考核", "離家", "彩霞山"]):
-                if 12 <= len(s) <= 35:
-                    action_sentences.append(s)
+                resp = requests.post(url, json=payload, headers=headers, timeout=8)
+                
+                if resp.status_code == 200 and resp.text:
+                    ans = resp.text.strip()
+                    clean_ans = re.sub(r'[\"\']', '', ans).replace('\n', ' ')
+                    clean_ans = re.sub(r'^(大綱|摘要|總結|劇情)[:：]', '', clean_ans).strip()
+                    if len(clean_ans) >= 10 and not clean_ans.startswith("{"):
+                        if len(clean_ans) > max_chars:
+                            clean_ans = clean_ans[:max_chars - 1] + "。"
+                        elif not clean_ans.endswith(("。", "！", "？")):
+                            clean_ans += "。"
+                        return clean_ans, f"AI模型 ({model_name or 'default'})"
+            except Exception as e:
+                logging.debug(f"[SummaryGen] AI 嘗試失敗: {e}")
 
-    if action_sentences:
-        best_s = action_sentences[0]
-        summary = f"本章講述{best_s}，展開修仙冒險故事。"
-        if len(summary) > max_chars:
-            summary = f"{best_s}。"
-        if len(summary) > max_chars:
-            summary = summary[:max_chars - 1] + "。"
-        return summary, "智慧情節提煉"
+        # GET Fallback
+        try:
+            encoded_p = urllib.parse.quote(prompt[:500])
+            get_url = f"https://text.pollinations.ai/{encoded_p}?model=openai-fast"
+            resp = requests.get(get_url, headers=headers, timeout=8)
+            if resp.status_code == 200 and resp.text:
+                ans = resp.text.strip()
+                clean_ans = re.sub(r'[\"\']', '', ans).replace('\n', ' ')
+                clean_ans = re.sub(r'^(大綱|摘要|總結|劇情)[:：]', '', clean_ans).strip()
+                if len(clean_ans) >= 10 and not clean_ans.startswith("{"):
+                    if len(clean_ans) > max_chars:
+                        clean_ans = clean_ans[:max_chars - 1] + "。"
+                    elif not clean_ans.endswith(("。", "！", "？")):
+                        clean_ans += "。"
+                    return clean_ans, "AI模型 (GET)"
+        except Exception:
+            pass
 
-    return f"《凡人修仙傳》第{chapter_num}章，韓立展開全新修真冒險歷程。", "預設大綱"
+    except Exception as e:
+        logging.warning(f"[SummaryGen] 連線 AI 伺服器失敗: {e}")
+
+    # ── 3. AI 嘗試均失敗，明確回傳 '本章暫無摘要' ──
+    return "本章暫無摘要", "AI失敗"
 
 def get_or_generate_chapter_summary(workspace_dir, book_title, chap_num):
     """
@@ -107,29 +99,30 @@ def get_or_generate_chapter_summary(workspace_dir, book_title, chap_num):
         try:
             with open(summary_file, "r", encoding="utf-8") as f:
                 cached_sum = f.read().strip()
-            if cached_sum:
+            if cached_sum and cached_sum != "本章暫無摘要":
                 logging.info(f"[SummaryGen] ✓ 讀取已有摘要快取: {os.path.basename(summary_file)}")
                 return cached_sum
         except Exception:
             pass
-    clean_path = os.path.join(workspace_dir, "CleanText", f"{book_title}_chapter_{chap_num}_clean.txt")
+    # 優先讀取 RawText (包含完整的章節標題，訊息量最大)
     raw_path   = os.path.join(workspace_dir, "RawText", f"{book_title}_chapter_{chap_num}_raw.txt")
+    clean_path = os.path.join(workspace_dir, "CleanText", f"{book_title}_chapter_{chap_num}_clean.txt")
 
     text_content = ""
-    if os.path.exists(clean_path):
-        try:
-            with open(clean_path, "r", encoding="utf-8") as f:
-                text_content = f.read()
-        except Exception:
-            pass
-    elif os.path.exists(raw_path):
+    if os.path.exists(raw_path):
         try:
             with open(raw_path, "r", encoding="utf-8") as f:
                 text_content = f.read()
         except Exception:
             pass
+    elif os.path.exists(clean_path):
+        try:
+            with open(clean_path, "r", encoding="utf-8") as f:
+                text_content = f.read()
+        except Exception:
+            pass
 
-    summary_text, model_used = generate_ai_chapter_summary(chap_num, text_content, max_chars=50)
+    summary_text, model_used = generate_ai_chapter_summary(chap_num, text_content, max_chars=50, book_title=book_title)
     logging.info(f"[SummaryGen] ✓ 第 {chap_num} 章摘要生成成功 (來源: {model_used}): {summary_text}")
 
     try:
