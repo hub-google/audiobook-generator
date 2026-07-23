@@ -19,12 +19,14 @@ def get_local_ai_summary(prompt, max_chars=50):
                 model="Qwen/Qwen2.5-0.5B-Instruct",
                 device_map="cpu"
             )
-        messages = [
-            {"role": "system", "content": "你是一位專業小說大綱提煉助手。請用繁體中文回答，精準寫出一句40字以內的劇情大綱，切勿有任何多餘廢話與重複標題。"},
-            {"role": "user", "content": prompt}
-        ]
-        out = _local_pipeline(messages, max_new_tokens=60, do_sample=False)
-        ans = out[0]['generated_text'][-1]['content'].strip()
+        formatted_prompt = f"<|im_start|>system\n你是一位專業小說大綱提煉助手。請用繁體中文寫出一句40字以內的劇情大綱，切勿有任何多餘廢話與重複標題。<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+        out = _local_pipeline(formatted_prompt, max_new_tokens=60, do_sample=False)
+        gen_text = out[0]['generated_text']
+        if "<|im_start|>assistant\n" in gen_text:
+            ans = gen_text.split("<|im_start|>assistant\n")[-1].strip()
+        else:
+            ans = gen_text.replace(formatted_prompt, "").strip()
+        ans = re.sub(r'<\|im_end\|>', '', ans)
         ans = re.sub(r'[\"\']', '', ans).replace('\n', ' ')
         ans = re.sub(r'^(大綱|摘要|總結|劇情)[:：]', '', ans).strip()
         if len(ans) > max_chars:
@@ -33,7 +35,7 @@ def get_local_ai_summary(prompt, max_chars=50):
             ans += "。"
         return ans, "在地AI (Qwen2.5-0.5B)"
     except Exception as e:
-        logging.debug(f"[SummaryGen] 在地 AI 執行無法使用: {e}")
+        logging.warning(f"[SummaryGen] 在地 AI 執行無法使用: {e}")
         return None, None
 
 def generate_ai_chapter_summary(chapter_num, content, max_chars=50, book_title=""):
