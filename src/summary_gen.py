@@ -8,22 +8,42 @@ import logging
 
 _local_pipeline = None
 
-def get_local_ai_summary(prompt, max_chars=50):
+def get_local_ai_summary(prompt, max_chars=130):
     global _local_pipeline
+    if _local_pipeline is False:
+        return None, None
     try:
         if _local_pipeline is None:
             from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
-            logging.info("[SummaryGen] 🚀 載入在地 AI 模型 (Qwen/Qwen2.5-0.5B-Instruct)...")
-            model_id = "Qwen/Qwen2.5-0.5B-Instruct"
+            logging.info("[SummaryGen] 🚀 載入在地 AI 模型 (Qwen/Qwen2.5-1.5B-Instruct)...")
+            model_id = "Qwen/Qwen2.5-1.5B-Instruct"
             tokenizer = AutoTokenizer.from_pretrained(model_id)
-            model = AutoModelForCausalLM.from_pretrained(model_id)
+            model = AutoModelForCausalLM.from_pretrained(model_id, low_cpu_mem_usage=False)
             _local_pipeline = pipeline(
                 "text-generation",
                 model=model,
-                tokenizer=tokenizer
+                tokenizer=tokenizer,
+                device=-1
             )
-        formatted_prompt = f"<|im_start|>system\n你是一位專業小說大綱提煉助手。請用繁體中文寫出一句40字以內的劇情大綱，切勿有任何多餘廢話與重複標題。<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
-        out = _local_pipeline(formatted_prompt, max_new_tokens=60, do_sample=False)
+        formatted_prompt = (
+            f"<|im_start|>system\n"
+            f"你是一位精準的小說劇情摘要專家。請嚴格根據提供的小說章節內文，用繁體中文寫出一段100字左右（約80~130字）的劇情大綱。\n"
+            f"【硬性要求】：\n"
+            f"1. 必須100%忠實於原文，嚴禁憑空捏造文中未出現的人物或未發生的情節。\n"
+            f"2. 必須清楚說明本章出場的核心人物與關鍵劇情發展。\n"
+            f"3. 繁體中文，語意完整流暢，字數嚴格控制在 80~130 字之間。\n"
+            f"<|im_end|>\n"
+            f"<|im_start|>user\n{prompt}<|im_end|>\n"
+            f"<|im_start|>assistant\n"
+        )
+        out = _local_pipeline(
+            formatted_prompt,
+            max_new_tokens=180,
+            do_sample=True,
+            temperature=0.1,
+            top_p=0.9,
+            repetition_penalty=1.15
+        )
         gen_text = out[0]['generated_text']
         if "<|im_start|>assistant\n" in gen_text:
             ans = gen_text.split("<|im_start|>assistant\n")[-1].strip()
@@ -36,14 +56,15 @@ def get_local_ai_summary(prompt, max_chars=50):
             ans = ans[:max_chars - 1] + "。"
         elif not ans.endswith(("。", "！", "？")):
             ans += "。"
-        return ans, "在地AI (Qwen2.5-0.5B)"
+        return ans, "在地AI (Qwen2.5-1.5B)"
     except Exception as e:
         logging.warning(f"[SummaryGen] 在地 AI 執行無法使用: {e}")
+        _local_pipeline = False
         return None, None
 
-def generate_ai_chapter_summary(chapter_num, content, max_chars=50, book_title=""):
+def generate_ai_chapter_summary(chapter_num, content, max_chars=130, book_title=""):
     """
-    將章節整篇 TXT 內容發送給在地 AI (Qwen) 或線上 API 進行 40 字大綱總結。
+    將章節整篇 TXT 內容發送給在地 AI (Qwen2.5-1.5B) 進行 100 字左右的大綱總結。
     """
     clean_text = content.strip()
     if not clean_text:
@@ -62,68 +83,16 @@ def generate_ai_chapter_summary(chapter_num, content, max_chars=50, book_title="
     body_text_full = "\n".join(body_lines)
 
     prompt = (
-        f"請讀取小說《{book_title}》第{chapter_num}章（標題：{chapter_title}）的內文，用繁體中文寫出一句40字以內的劇情大綱，"
-        f"精準說明本章發生的關鍵事件，切勿包含「本章講述」、「展開冒險」等廢話：\n\n{body_text_full[:3000]}"
+        f"請讀取小說《{book_title}》第{chapter_num}章（標題：{chapter_title}）的內文，用繁體中文寫出一段100字左右的劇情大綱，"
+        f"精準說明本章登場人物與發生的關鍵事件：\n\n{body_text_full[:3000]}"
     )
 
-    # ── 2. 優先嘗試在地免費 AI 模型 (GitHub Actions / 本機環境) ──
+    # ── 2. 完全使用在地 AI 模型 (Qwen/Qwen2.5-1.5B-Instruct) ──
     local_ans, local_model = get_local_ai_summary(prompt, max_chars=max_chars)
     if local_ans:
         return local_ans, local_model
 
-    # ── 3. 在地 AI 無法使用時，嘗試免費線上 API ──
-    try:
-        import requests
-        import urllib.parse
-
-        url = "https://text.pollinations.ai/"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-
-        # 嘗試模型選項 (openai-fast 與 預設模型)
-        models_to_try = ["openai-fast", ""]
-        for model_name in models_to_try:
-            try:
-                payload = {"messages": [{"role": "user", "content": prompt}]}
-                if model_name:
-                    payload["model"] = model_name
-
-                resp = requests.post(url, json=payload, headers=headers, timeout=8)
-                
-                if resp.status_code == 200 and resp.text:
-                    ans = resp.text.strip()
-                    clean_ans = re.sub(r'[\"\']', '', ans).replace('\n', ' ')
-                    clean_ans = re.sub(r'^(大綱|摘要|總結|劇情)[:：]', '', clean_ans).strip()
-                    if len(clean_ans) >= 10 and not clean_ans.startswith("{"):
-                        if len(clean_ans) > max_chars:
-                            clean_ans = clean_ans[:max_chars - 1] + "。"
-                        elif not clean_ans.endswith(("。", "！", "？")):
-                            clean_ans += "。"
-                        return clean_ans, f"AI模型 ({model_name or 'default'})"
-            except Exception as e:
-                logging.debug(f"[SummaryGen] AI 嘗試失敗: {e}")
-
-        # GET Fallback
-        try:
-            encoded_p = urllib.parse.quote(prompt[:500])
-            get_url = f"https://text.pollinations.ai/{encoded_p}?model=openai-fast"
-            resp = requests.get(get_url, headers=headers, timeout=8)
-            if resp.status_code == 200 and resp.text:
-                ans = resp.text.strip()
-                clean_ans = re.sub(r'[\"\']', '', ans).replace('\n', ' ')
-                clean_ans = re.sub(r'^(大綱|摘要|總結|劇情)[:：]', '', clean_ans).strip()
-                if len(clean_ans) >= 10 and not clean_ans.startswith("{"):
-                    if len(clean_ans) > max_chars:
-                        clean_ans = clean_ans[:max_chars - 1] + "。"
-                    elif not clean_ans.endswith(("。", "！", "？")):
-                        clean_ans += "。"
-                    return clean_ans, "AI模型 (GET)"
-        except Exception:
-            pass
-
-    except Exception as e:
-        logging.warning(f"[SummaryGen] 連線 AI 伺服器失敗: {e}")
-
-    # ── 3. AI 嘗試均失敗，明確回傳 '本章暫無摘要' ──
+    # ── 3. 在地 AI 無法使用時，明確回傳 '本章暫無摘要' (不使用線上免費 API) ──
     return "本章暫無摘要", "AI失敗"
 
 def get_or_generate_chapter_summary(workspace_dir, book_title, chap_num):
@@ -162,7 +131,7 @@ def get_or_generate_chapter_summary(workspace_dir, book_title, chap_num):
         except Exception:
             pass
 
-    summary_text, model_used = generate_ai_chapter_summary(chap_num, text_content, max_chars=50, book_title=book_title)
+    summary_text, model_used = generate_ai_chapter_summary(chap_num, text_content, max_chars=130, book_title=book_title)
     logging.info(f"[SummaryGen] ✓ 第 {chap_num} 章摘要生成成功 (來源: {model_used}): {summary_text}")
 
     try:
@@ -172,3 +141,19 @@ def get_or_generate_chapter_summary(workspace_dir, book_title, chap_num):
         logging.warning(f"[SummaryGen] 寫入摘要檔失敗: {e}")
 
     return summary_text
+
+if __name__ == "__main__":
+    if sys.platform == "win32":
+        sys.stdout.reconfigure(encoding='utf-8')
+    logging.basicConfig(level=logging.INFO)
+    print("==================================================")
+    print("      🚀 測試執行 summary_gen.py 摘要生成        ")
+    print("==================================================")
+    
+    # 測試執行第 1 章與第 2 章摘要
+    for chap in [1, 2]:
+        res = get_or_generate_chapter_summary("Workspace/凡人修仙傳", "凡人修仙傳", chap)
+        print(f"\n第 {chap} 章結果 ({len(res)}字):")
+        print(res)
+        print("-" * 50)
+

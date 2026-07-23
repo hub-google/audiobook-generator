@@ -4,7 +4,6 @@ import glob
 import re
 import json
 import time
-from g4f.client import Client
 
 # 設定 Windows UTF-8 控制台輸出
 if sys.platform == "win32":
@@ -13,65 +12,16 @@ if sys.platform == "win32":
 # ---------------------------------------------------------
 # 設定路徑與參數
 # ---------------------------------------------------------
-PROJECT_DIR = r"g:\我的雲端硬碟\作品\有聲小說"
+PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+SRC_DIR = os.path.join(PROJECT_DIR, "src")
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
+
+from summary_gen import generate_ai_chapter_summary
+
 CLEAN_TEXT_DIR = os.path.join(PROJECT_DIR, "Workspace", "凡人修仙傳", "CleanText")
 OUTPUT_JSON = os.path.join(PROJECT_DIR, "Workspace", "凡人修仙傳", "chapter_summaries.json")
 OUTPUT_MD = os.path.join(PROJECT_DIR, "Workspace", "凡人修仙傳", "chapter_summaries.md")
-
-# ---------------------------------------------------------
-# 1. 免 API AI 總結函數 (結合 g4f 與 備用 Local 精准抽取)
-# ---------------------------------------------------------
-def generate_ai_chapter_summary(chapter_num, content, max_chars=50):
-    """
-    使用免費 AI (g4f / GPT-4o-mini / LLM) 對章節內文進行 50 字內的大綱總結
-    """
-    # 取前 2500 字進行摘要（涵蓋大部分章節精華與主要動態）
-    sample_text = content[:2500]
-    
-    prompt = (
-        f"請閱讀以下《凡人修仙傳》第 {chapter_num} 章的內文，用繁體中文總結這一章的故事大綱與核心劇情發展。\n"
-        f"【硬性要求】：\n"
-        f"1. 必須使用繁體中文。\n"
-        f"2. 內容精準，切中核心人物與關鍵事件。\n"
-        f"3. 總字數嚴格控制在 {max_chars} 字以內。\n\n"
-        f"章節內文摘要：\n{sample_text}"
-    )
-
-    # 嘗試 1: 使用 g4f Client 多模型重試
-    models_to_try = ["gpt-4o-mini", "qwen-2.5-72b", "llama-3.3-70b"]
-    client = Client()
-
-    for model in models_to_try:
-        try:
-            print(f"   --> 嘗試使用免 API AI ({model}) 生成摘要...")
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "你是一位專業的小說劇情總結專家，善於提煉故事核心，請精準控制字數在50字以內。"},
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            raw_ans = response.choices[0].message.content.strip()
-            # 清理可能的 markdown 標籤或引號
-            clean_ans = re.sub(f'[\"\']', '', raw_ans).replace('\n', ' ')
-            if len(clean_ans) > 0:
-                # 確保字數截斷在 50 字以內
-                if len(clean_ans) > max_chars:
-                    clean_ans = clean_ans[:max_chars-3] + "..."
-                return clean_ans, model
-        except Exception as e:
-            # 繼續嘗試下一個模型
-            continue
-            
-    # 嘗試 2: 備用本地抽取法 (如網路異常時的保底機制)
-    print("   --> [備用機制] 線上 AI 暫時忙碌，啟用關鍵句本地提煉算法...")
-    sentences = [s.strip() for s in re.split(r'[。！!？?\n]', content) if len(s.strip()) > 8]
-    # 選取開頭與情節關鍵句
-    selected = sentences[:2]
-    fallback_summary = "。".join(selected) + "。"
-    if len(fallback_summary) > max_chars:
-        fallback_summary = fallback_summary[:max_chars-3] + "..."
-    return fallback_summary, "Local Extractor"
 
 
 # ---------------------------------------------------------
