@@ -6,10 +6,39 @@ import json
 import time
 import logging
 
+_local_pipeline = None
+
+def get_local_ai_summary(prompt, max_chars=50):
+    global _local_pipeline
+    try:
+        if _local_pipeline is None:
+            from transformers import pipeline
+            logging.info("[SummaryGen] 🚀 載入在地 AI 模型 (Qwen/Qwen2.5-0.5B-Instruct)...")
+            _local_pipeline = pipeline(
+                "text-generation",
+                model="Qwen/Qwen2.5-0.5B-Instruct",
+                device_map="cpu"
+            )
+        messages = [
+            {"role": "system", "content": "你是一位專業小說大綱提煉助手。請用繁體中文回答，精準寫出一句40字以內的劇情大綱，切勿有任何多餘廢話與重複標題。"},
+            {"role": "user", "content": prompt}
+        ]
+        out = _local_pipeline(messages, max_new_tokens=60, do_sample=False)
+        ans = out[0]['generated_text'][-1]['content'].strip()
+        ans = re.sub(r'[\"\']', '', ans).replace('\n', ' ')
+        ans = re.sub(r'^(大綱|摘要|總結|劇情)[:：]', '', ans).strip()
+        if len(ans) > max_chars:
+            ans = ans[:max_chars - 1] + "。"
+        elif not ans.endswith(("。", "！", "？")):
+            ans += "。"
+        return ans, "在地AI (Qwen2.5-0.5B)"
+    except Exception as e:
+        logging.debug(f"[SummaryGen] 在地 AI 執行無法使用: {e}")
+        return None, None
+
 def generate_ai_chapter_summary(chapter_num, content, max_chars=50, book_title=""):
     """
-    將章節整篇 TXT 內容直接發送給免 KEY 在線 AI 模型進行 40 字大綱總結。
-    若 AI 失敗，自動擷取本章開頭精華作為備用大綱。
+    將章節整篇 TXT 內容發送給在地 AI (Qwen) 或線上 API 進行 40 字大綱總結。
     """
     clean_text = content.strip()
     if not clean_text:
@@ -27,15 +56,21 @@ def generate_ai_chapter_summary(chapter_num, content, max_chars=50, book_title="
     body_lines = [l for l in cleaned_lines[1:] if l != chapter_title and book_title not in l]
     body_text_full = "\n".join(body_lines)
 
-    # ── 2. 將包含標題與內文的文字傳給免 KEY 在線 AI 模型 ──
+    prompt = (
+        f"請讀取小說《{book_title}》第{chapter_num}章（標題：{chapter_title}）的內文，用繁體中文寫出一句40字以內的劇情大綱，"
+        f"精準說明本章發生的關鍵事件，切勿包含「本章講述」、「展開冒險」等廢話：\n\n{body_text_full[:3000]}"
+    )
+
+    # ── 2. 優先嘗試在地免費 AI 模型 (GitHub Actions / 本機環境) ──
+    local_ans, local_model = get_local_ai_summary(prompt, max_chars=max_chars)
+    if local_ans:
+        return local_ans, local_model
+
+    # ── 3. 在地 AI 無法使用時，嘗試免費線上 API ──
     try:
         import requests
         import urllib.parse
 
-        prompt = (
-            f"請讀取小說《{book_title}》第{chapter_num}章（標題：{chapter_title}）的完整內文，用繁體中文寫出一句40字以內的劇情大綱，"
-            f"精準說明本章發生的關鍵事件，切勿包含「本章講述」、「展開冒險」等廢話：\n\n{body_text_full[:4500]}"
-        )
         url = "https://text.pollinations.ai/"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
