@@ -571,7 +571,8 @@ class AudiobookGUIApp:
                         created_ts = datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp()
                     except (TypeError, ValueError):
                         created_ts = 0
-                    if created_ts + 2 < trigger_time:
+                    # 容許 1 小時的本地時鐘誤差 (避免本地時間比伺服器快導致漏判)
+                    if created_ts + 3600 < trigger_time:
                         continue
                     if target_workflow_name:
                         if run.get("name") != target_workflow_name:
