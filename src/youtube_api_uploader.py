@@ -11,6 +11,9 @@ import shutil
 import argparse
 import logging
 import subprocess
+import json
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -36,6 +39,72 @@ SCOPES = [
     "https://www.googleapis.com/auth/youtube",
     "https://www.googleapis.com/auth/youtube.force-ssl"
 ]
+
+EXIT_RETRY_LATER = 75
+
+
+class UploadPaused(RuntimeError):
+    """A daily YouTube limit was reached; the upload can safely resume later."""
+
+    def __init__(self, reason, retry_at, original_error=None):
+        super().__init__(reason)
+        self.reason = reason
+        self.retry_at = retry_at
+        self.original_error = original_error
+
+
+def _atomic_write_json(path, data):
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, path)
+
+
+def save_resume_state(path, run_id, privacy, status, reason="", retry_at=None,
+                      completed_titles=None, part_plan=None):
+    data = {
+        "version": 2,
+        "run_id": str(run_id) if run_id else "",
+        "privacy": privacy,
+        "status": status,
+        "reason": reason,
+        "retry_at": retry_at.isoformat() if retry_at else None,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "completed_titles": sorted(completed_titles or []),
+        # Once a Part boundary is chosen it is immutable.  This is what makes a
+        # resumed run continue 1-50, 51-100 instead of repartitioning 1-70, ...
+        "part_plan": list(part_plan or []),
+    }
+    _atomic_write_json(path, data)
+    logging.info("💾 上傳斷點已儲存：%s (%s)", path, status)
+
+
+def load_resume_state(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def classify_daily_limit(error):
+    """Return an UploadPaused instance for the two retryable daily limits."""
+    text = str(error)
+    now = datetime.now(timezone.utc)
+    if "uploadLimitExceeded" in text:
+        # This is a rolling channel limit, not the API project's midnight quota.
+        return UploadPaused("uploadLimitExceeded", now + timedelta(hours=24, minutes=15), error)
+    if "quotaExceeded" in text or "dailyLimitExceeded" in text:
+        pacific = ZoneInfo("America/Los_Angeles")
+        local_now = now.astimezone(pacific)
+        next_midnight = (local_now + timedelta(days=1)).replace(
+            hour=0, minute=15, second=0, microsecond=0
+        )
+        return UploadPaused("quotaExceeded", next_midnight.astimezone(timezone.utc), error)
+    return None
 
 def get_authenticated_service():
     """獲取與授權 YouTube API v3 Service (支援 client_secret.json / token.json / env refresh token)"""
@@ -283,16 +352,19 @@ def upload_video_file(youtube, video_path, title, description, category_id="22",
                     sys.stdout.flush()
     except Exception as e:
         err_str = str(e)
+        paused = classify_daily_limit(e)
         if "uploadLimitExceeded" in err_str:
             logging.error("🚨 【YouTube 頻道每日影片上傳數量限制】 (uploadLimitExceeded)")
             logging.error("👉 您的 YouTube 頻道今日上傳影片數量已達上限（此為 YouTube 頻道安全防範限制，與 API 配額無關）。")
             logging.error("👉 請等待 24 小時後重試，或前往 YouTube Studio 開通「手機號碼驗證 / 高級功能」以提升每日上傳上限！")
         elif "quotaExceeded" in err_str or "dailyLimitExceeded" in err_str:
             logging.error("🚨 【YouTube API 每日配額用盡】 (quotaExceeded)")
-            logging.error("👉 GCP YouTube Data API v3 每日配額單位 (10,000 units) 已耗盡，將於每日 PST 00:00 (台灣時間 15:00) 自動重置。")
+            logging.error("👉 YouTube Data API 配額會在太平洋時間午夜重置；程式已依 PDT/PST 自動換算並預留 15 分鐘。")
         else:
             logging.error(f"❌ 影片上傳失敗: {e}")
-        raise e
+        if paused:
+            raise paused from e
+        raise
 
     video_id = response.get("id")
     logging.info(f"✅ 上傳成功！影片 ID: {video_id} (網址: https://www.youtube.com/watch?v={video_id})")
@@ -439,7 +511,33 @@ def main():
     parser.add_argument("--input-dir", help="Local directory containing MP4 files")
     parser.add_argument("--repo", default="hub-google/audiobook-generator", help="GitHub Repository")
     parser.add_argument("--privacy", default="public", choices=["public", "unlisted", "private"], help="Privacy status")
+    parser.add_argument("--state-file", default="upload_resume_state/state.json",
+                        help="Durable state restored/saved by GitHub Actions")
     args = parser.parse_args()
+
+    saved_state = load_resume_state(args.state_file)
+    completed_titles = set()
+    part_plan = []
+    if saved_state and str(saved_state.get("run_id") or "") == str(args.run_id or saved_state.get("run_id") or ""):
+        completed_titles.update(saved_state.get("completed_titles") or [])
+        part_plan = list(saved_state.get("part_plan") or [])
+    if not args.run_id and saved_state and saved_state.get("status") in {"paused", "running"}:
+        args.run_id = str(saved_state.get("run_id") or "")
+        args.privacy = saved_state.get("privacy") or args.privacy
+        retry_text = saved_state.get("retry_at")
+        if saved_state.get("status") == "paused" and retry_text:
+            retry_at = datetime.fromisoformat(retry_text.replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) < retry_at:
+                logging.info("⏳ 尚未到安全重試時間 %s；本次排程不會呼叫 YouTube。", retry_at.isoformat())
+                return 0
+
+    if not args.run_id and not args.input_dir:
+        logging.info("✅ 沒有待續傳的 YouTube 工作。")
+        return 0
+
+    if args.run_id:
+        save_resume_state(args.state_file, args.run_id, args.privacy, "running",
+                          completed_titles=completed_titles, part_plan=part_plan)
 
     youtube = get_authenticated_service()
 
@@ -450,6 +548,17 @@ def main():
     book_title = "有聲小說全集"
     start_chap, end_chap = 1, 2400
     config_path = os.path.join(SRC_DIR, "..", "config.yaml")
+    if args.run_id:
+        # Use the source run's generated config. The repository copy may belong
+        # to an older book and would create/cache a cover under the wrong title.
+        shared_config_dir = os.path.abspath("temp_source_run_config")
+        if download_artifact_task(args.run_id, args.repo, "shared-config", shared_config_dir):
+            downloaded_config = os.path.join(shared_config_dir, "config.yaml")
+            if os.path.exists(downloaded_config):
+                config_path = downloaded_config
+                logging.info("已載入來源 Run 的 shared-config：%s", config_path)
+        else:
+            logging.warning("無法下載 shared-config，改用 repository config.yaml。")
     if os.path.exists(config_path):
         try:
             import yaml
@@ -553,20 +662,44 @@ def main():
 
                 pool_dur = sum(x["dur"] for x in chapter_pool)
 
-                if pool_dur < min_seconds and not is_last_artifact:
-                    logging.info(f"   目前累計 {len(chapter_pool)} 章 (約 {pool_dur/3600:.2f} 小時)，尚未滿 10 小時，繼續下載下一包...")
+                # Wait until the pool exceeds 11 hours before closing a Part.
+                # Otherwise artifact/worker size could change an identical book
+                # from Ch1-50 to Ch1-70 on another run.
+                if pool_dur <= max_seconds and not is_last_artifact:
+                    logging.info(f"   目前累計 {len(chapter_pool)} 章 (約 {pool_dur/3600:.2f} 小時)，等待足夠章節以固定 11 小時邊界...")
                     break
 
                 sliced_items = []
                 sliced_dur = 0.0
+                locked_part = next(
+                    (p for p in part_plan if int(p.get("part_num", 0)) == part_counter),
+                    None,
+                )
 
-                for item in chapter_pool:
-                    if sliced_items and (sliced_dur + item["dur"] > max_seconds):
+                if locked_part:
+                    locked_chapters = [int(n) for n in locked_part.get("chapters", [])]
+                    available = {int(item["chap_num"]): item for item in chapter_pool}
+                    missing = [n for n in locked_chapters if n not in available]
+                    if missing and not is_last_artifact:
+                        logging.info(
+                            "鎖定的第 %s 部尚缺章節 %s，繼續下載下一個 Artifact。",
+                            part_counter, missing[:8]
+                        )
                         break
-                    sliced_items.append(item)
-                    sliced_dur += item["dur"]
-                    if sliced_dur >= max_seconds:
-                        break
+                    if missing:
+                        raise RuntimeError(
+                            f"斷點規劃損壞：第 {part_counter} 部缺少章節 {missing}"
+                        )
+                    sliced_items = [available[n] for n in locked_chapters]
+                    sliced_dur = sum(item["dur"] for item in sliced_items)
+                else:
+                    for item in chapter_pool:
+                        if sliced_items and (sliced_dur + item["dur"] > max_seconds):
+                            break
+                        sliced_items.append(item)
+                        sliced_dur += item["dur"]
+                        if sliced_dur >= max_seconds:
+                            break
 
                 if not sliced_items:
                     break
@@ -575,7 +708,23 @@ def main():
                 e_c = sliced_items[-1]["chap_num"]
                 expected_title = generate_video_title(book_title, start_chap=s_c, end_chap=e_c, part_num=part_counter)
 
-                if expected_title in existing_titles:
+                if not locked_part:
+                    locked_part = {
+                        "part_num": part_counter,
+                        "start_chap": s_c,
+                        "end_chap": e_c,
+                        "chapters": [int(item["chap_num"]) for item in sliced_items],
+                        "title": expected_title,
+                    }
+                    part_plan.append(locked_part)
+                    # Persist before merge/upload. A crash at any later instruction
+                    # must reuse this exact chapter membership.
+                    save_resume_state(
+                        args.state_file, args.run_id, args.privacy, "running",
+                        completed_titles=completed_titles, part_plan=part_plan
+                    )
+
+                if expected_title in existing_titles or expected_title in completed_titles:
                     logging.info(f"⏭️ 【第 {part_counter} 部】(第 {s_c}~{e_c} 章) 已存在於 YouTube 播放清單，觸發【智能斷點續傳】秒跳過！")
                     for item in sliced_items:
                         try:
@@ -621,25 +770,40 @@ def main():
                     logging.info(f"[API_UPLOAD_MARKER] START | Part {part_counter} | Ch {s_c}~{e_c} | {out_name}")
                     sys.stdout.flush()
 
-                    v_id = upload_video_file(
-                        youtube,
-                        video_path=out_path,
-                        title=p_meta["title"],
-                        description=full_desc,
-                        privacy_status=args.privacy,
-                        cover_path=p_meta["cover_file"]
-                    )
+                    try:
+                        v_id = upload_video_file(
+                            youtube,
+                            video_path=out_path,
+                            title=p_meta["title"],
+                            description=full_desc,
+                            privacy_status=args.privacy,
+                            cover_path=p_meta["cover_file"]
+                        )
+                    except UploadPaused as paused:
+                        save_resume_state(args.state_file, args.run_id, args.privacy, "paused",
+                                          paused.reason, paused.retry_at, completed_titles, part_plan)
+                        logging.error("⏸️ 已安全暫停；下次可重試時間：%s", paused.retry_at.isoformat())
+                        return EXIT_RETRY_LATER
 
                     if v_id:
                         total_uploaded += 1
+                        completed_titles.add(p_meta["title"])
+                        # Persist immediately after videos.insert succeeds. If captions or playlist
+                        # insertion later crashes, the next run must not upload the video twice.
+                        save_resume_state(args.state_file, args.run_id, args.privacy, "running",
+                                          completed_titles=completed_titles, part_plan=part_plan)
                         if srt_ok and os.path.exists(out_srt_path):
                             upload_caption_file(youtube, v_id, out_srt_path)
                         if playlist_id:
                             add_video_to_playlist(youtube, playlist_id, v_id)
 
-                        logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_counter} | VideoID {v_id} | total {total_uploaded}")
+                        logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_counter} | Ch {s_c}~{e_c} | VideoID {v_id}, total {total_uploaded}")
                         logging.info(f"✅ 【第 {part_counter} 部】成功上傳並加入播放清單: {p_meta['title']}\n")
                         sys.stdout.flush()
+
+                    if not v_id:
+                        logging.error("❌ 未取得 Video ID，保留所有檔案並中止，避免斷點被錯誤推進。")
+                        return 1
 
                     # 精準刪除已上傳完畢的單章與 Part 影片檔 (合併字幕保留於 Upload_Subtitles 目錄)
                     logging.info(f"🧹 釋放硬碟空間：清理【第 {part_counter} 部】已上傳完畢的 {len(sliced_items)} 個單章原始檔與 Part 大影片...")
@@ -663,8 +827,8 @@ def main():
                 part_counter += 1
 
                 remaining_dur = sum(x["dur"] for x in chapter_pool)
-                if remaining_dur < min_seconds and not is_last_artifact:
-                    logging.info(f"   第一包剩餘 {len(chapter_pool)} 章 (約 {remaining_dur/3600:.2f} 小時)，保留至下一包繼續累加時長...")
+                if remaining_dur <= max_seconds and not is_last_artifact:
+                    logging.info(f"   剩餘 {len(chapter_pool)} 章 (約 {remaining_dur/3600:.2f} 小時)，繼續下載以固定分部邊界...")
                     break
 
             # 等待背景預載線程完成
@@ -733,6 +897,10 @@ def main():
             v_cover = item["cover_path"]
             part_n = item["part_num"]
 
+            if v_title in existing_titles or v_title in completed_titles:
+                logging.info("⏭️ 已上傳，跳過：%s", v_title)
+                continue
+
             # 尋找對應的 SRT 字幕檔 (優先搜尋 Upload_Subtitles 資料夾)
             v_srt_name = os.path.basename(v_path).replace(".mp4", ".srt")
             v_srt = os.path.join(upload_subtitles_dir, v_srt_name)
@@ -743,27 +911,38 @@ def main():
 
             full_desc = f"{v_desc}\n\n播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
             logging.info(f"[API_UPLOAD_MARKER] START | Part {part_n}/{len(parts_to_upload)} | Ch {item['start_chap']}~{item['end_chap']} | {os.path.basename(v_path)}")
-            v_id = upload_video_file(
-                youtube,
-                video_path=v_path,
-                title=v_title,
-                description=full_desc,
-                privacy_status=args.privacy,
-                cover_path=v_cover
-            )
+            try:
+                v_id = upload_video_file(
+                    youtube,
+                    video_path=v_path,
+                    title=v_title,
+                    description=full_desc,
+                    privacy_status=args.privacy,
+                    cover_path=v_cover
+                )
+            except UploadPaused as paused:
+                save_resume_state(args.state_file, args.run_id, args.privacy, "paused",
+                                  paused.reason, paused.retry_at, completed_titles, part_plan)
+                return EXIT_RETRY_LATER
             if v_id:
                 total_uploaded += 1
+                completed_titles.add(v_title)
+                save_resume_state(args.state_file, args.run_id, args.privacy, "running",
+                                  completed_titles=completed_titles, part_plan=part_plan)
                 if v_srt and os.path.exists(v_srt):
                     upload_caption_file(youtube, v_id, v_srt)
                 if playlist_id:
                     add_video_to_playlist(youtube, playlist_id, v_id)
-                logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_n}/{len(parts_to_upload)} | VideoID {v_id} | total {total_uploaded}")
+                logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_n}/{len(parts_to_upload)} | Ch {item['start_chap']}~{item['end_chap']} | VideoID {v_id}, total {total_uploaded}")
 
     logging.info("="*60)
     logging.info(f"🎉 全部影片極速上傳完畢！共上傳 {total_uploaded} 部分部影片至 YouTube 播放清單！")
     if playlist_id:
         logging.info(f"👉 播放清單網址: https://www.youtube.com/playlist?list={playlist_id}")
     logging.info("="*60)
+    save_resume_state(args.state_file, args.run_id, args.privacy, "complete",
+                      completed_titles=completed_titles, part_plan=part_plan)
+    return 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

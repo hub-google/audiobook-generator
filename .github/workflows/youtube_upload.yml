@@ -1,12 +1,15 @@
 name: Fast Upload Audiobooks & Build YouTube Playlist
 
 on:
+  schedule:
+    # Hourly wake-up. The state file decides whether the safe retry time has arrived.
+    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       run_id:
         description: 'GitHub Actions Run ID containing video worker artifacts (e.g. 29821206020)'
-        required: true
-        default: '29821206020'
+        required: false
+        default: ''
       privacy:
         description: 'Video privacy status (public, unlisted, private)'
         required: true
@@ -15,6 +18,10 @@ on:
 permissions:
   contents: read
   actions: read
+
+concurrency:
+  group: youtube-resumable-upload
+  cancel-in-progress: false
 
 jobs:
   fast_api_upload:
@@ -38,11 +45,41 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg fonts-noto-cjk fonts-wqy-zenhei
 
+      - name: Restore latest YouTube upload checkpoint
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            upload_resume_state/
+            Workspace/*/Cover/
+          key: youtube-upload-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            youtube-upload-state-
+
       - name: Run Fast Upload & Playlist Builder
+        id: uploader
         env:
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          python src/youtube_api_uploader.py --run-id "${{ github.event.inputs.run_id }}" --repo "${{ github.repository }}" --privacy "${{ github.event.inputs.privacy }}"
+          set +e
+          python src/youtube_api_uploader.py \
+            --run-id "${{ github.event.inputs.run_id }}" \
+            --repo "${{ github.repository }}" \
+            --privacy "${{ github.event.inputs.privacy || 'public' }}" \
+            --state-file upload_resume_state/state.json
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -ne 0 ] && [ "$code" -ne 75 ]; then exit "$code"; fi
+
+      - name: Save YouTube upload checkpoint
+        if: always() && hashFiles('upload_resume_state/state.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            upload_resume_state/
+            Workspace/*/Cover/
+          key: youtube-upload-state-${{ github.run_id }}-${{ github.run_attempt }}

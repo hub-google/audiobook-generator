@@ -153,8 +153,12 @@ def run_cleaner(target_indices=None):
         cleaned_text = clean_text_content(raw_content, title, book_title)
         chunked_text = chunk_text(cleaned_text, max_length=18)
         
-        with open(clean_path, "w", encoding="utf-8") as f:
+        clean_tmp = clean_path + ".tmp"
+        with open(clean_tmp, "w", encoding="utf-8") as f:
             f.write(chunked_text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(clean_tmp, clean_path)
             
         logging.info(f"[Cleaner] Cleaned, chunked and saved text to {clean_path}")
 

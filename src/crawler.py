@@ -130,7 +130,9 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
         raw_filename = f"{book_title}_chapter_{global_idx}_raw.txt"
         raw_path     = os.path.join(raw_text_dir, raw_filename)
 
-        if chap_url in scraped_chapters or (os.path.exists(raw_path) and os.path.getsize(raw_path) > 10):
+        # progress.json is only an index. The actual output file is the source of
+        # truth, otherwise a stale progress entry can permanently skip a chapter.
+        if os.path.exists(raw_path) and os.path.getsize(raw_path) > 10:
             logging.info(f"[Crawler Worker] Skipping already scraped chapter {global_idx}: {chap_url}")
             continue
 
@@ -159,13 +161,21 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
 
                 raw_filename = f"{book_title}_chapter_{global_idx}_raw.txt"
                 raw_path     = os.path.join(raw_text_dir, raw_filename)
-                with open(raw_path, "w", encoding="utf-8") as f:
+                raw_tmp = raw_path + ".tmp"
+                with open(raw_tmp, "w", encoding="utf-8") as f:
                     f.write(title + "\n\n" + raw_text)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(raw_tmp, raw_path)
                 logging.info(f"[Crawler Worker] Saved: {raw_filename}")
 
                 scraped_chapters.append(chap_url)
-                with open(progress_file, "w", encoding="utf-8") as f:
+                progress_tmp = progress_file + ".tmp"
+                with open(progress_tmp, "w", encoding="utf-8") as f:
                     json.dump({"scraped_chapters": scraped_chapters}, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(progress_tmp, progress_file)
                 break
 
             except Exception as e:

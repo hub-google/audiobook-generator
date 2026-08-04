@@ -98,16 +98,10 @@ def get_font(size):
 
 def generate_chapter_title_image(book_title, chap_num, chapter_title, output_path, workspace_dir=""):
     """
-    呼叫 image_gen 生成含 50 字 AI 劇情摘要與避開 CC 字幕區域的標題卡圖片
+    呼叫 image_gen 生成避開硬字幕區域的章節標題卡。
     """
     from image_gen import generate_title_card
-    from summary_gen import get_or_generate_chapter_summary
-    
-    summary_text = ""
-    if workspace_dir:
-        summary_text = get_or_generate_chapter_summary(workspace_dir, book_title, chap_num)
-        
-    return generate_title_card(book_title, chap_num, chapter_title, output_path, summary_text=summary_text)
+    return generate_title_card(book_title, chap_num, chapter_title, output_path)
 
 
 def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fallback_images):
@@ -120,25 +114,27 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
     chap_num = parse_chapter_num(wav_name)
     output_video = os.path.join(output_dir, f"{book_title}_chapter_{chap_num}.mp4")
 
-    if os.path.exists(output_video):
+    if os.path.exists(output_video) and os.path.getsize(output_video) > 1000:
         logging.info(f"[VideoGen] Skipping existing: {os.path.basename(output_video)}")
         return output_video, get_wav_duration(wav_path)
+    if os.path.exists(output_video):
+        os.remove(output_video)
 
     duration = get_wav_duration(wav_path)
     logging.info(f"[VideoGen] Generating chapter {chap_num} video (audio: {duration:.1f}s) ...")
 
-    # ── 取得章節標題並產生標題卡 (包含 50 字 AI 劇情摘要) ──
+    # ── 取得章節標題並產生標題卡（下方保留硬字幕安全區）──
     chapter_title = get_chapter_title(workspace_dir, book_title, chap_num)
     title_card_path = os.path.join(workspace_dir, "Images", f"{book_title}_chapter_{chap_num}.jpg")
     os.makedirs(os.path.dirname(title_card_path), exist_ok=True)
 
-    # 優先使用已存在的 JPG（image_gen 階段已生成），避免重複呼叫 SummaryGen API
+    # 優先使用 image_gen 階段已生成的 JPG。
     jpg_exists = os.path.exists(title_card_path) and os.path.getsize(title_card_path) > 100
     if jpg_exists:
         logging.info(f"[VideoGen] ✓ Reusing existing title card: {os.path.basename(title_card_path)}")
         card_ok = True
     else:
-        # JPG 不存在時才重新生成（包含 SummaryGen API 呼叫）
+        # JPG 不存在時，以同一套無摘要版型補圖。
         card_ok = generate_chapter_title_image(book_title, chap_num, chapter_title, title_card_path, workspace_dir=workspace_dir)
 
     # 若 Pillow 產圖失敗，fallback 到原有背景圖
@@ -169,6 +165,9 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
         logging.info(f"[VideoGen] 💬 已開啟 FFmpeg 硬字幕嵌入: {os.path.basename(srt_path)}")
 
     # ── FFmpeg：靜態圖 + 音訊 + 硬字幕 → MP4 ──
+    partial_video = output_video + ".partial.mp4"
+    if os.path.exists(partial_video):
+        os.remove(partial_video)
     cmd = [
         FFMPEG_PATH, "-y",
         "-loop", "1",
@@ -181,10 +180,13 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
         "-threads", "0",
         "-c:a", "aac", "-b:a", "128k",
         "-shortest",
-        output_video
+        partial_video
     ]
     t0 = time.time()
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not os.path.exists(partial_video) or os.path.getsize(partial_video) <= 1000:
+        raise RuntimeError(f"FFmpeg produced an invalid MP4: {partial_video}")
+    os.replace(partial_video, output_video)
     elapsed = time.time() - t0
     logging.info(f"[VideoGen] 🎉 Chapter {chap_num} MP4 generated successfully -> {os.path.basename(output_video)} (took {elapsed:.1f}s)")
     return output_video, duration

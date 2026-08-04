@@ -240,11 +240,19 @@ def run_tts_ms(target_indices=None):
         # 最終輸出：{書名}_chapter_{N}.wav
         wav_filename = f"{book_title}_chapter_{chap_num}.wav"
         wav_path = os.path.join(audio_dir, wav_filename)
+        srt_path = os.path.join(workspace_dir, "Subtitles", f"{book_title}_chapter_{chap_num}.srt")
 
-        if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
-            logging.info(f"[TTS_MS] Skipping existing: {wav_filename}")
+        wav_ok = os.path.exists(wav_path) and os.path.getsize(wav_path) > 100
+        srt_ok = os.path.exists(srt_path) and os.path.getsize(srt_path) > 10
+        if wav_ok and srt_ok:
+            logging.info(f"[TTS_MS] Skipping existing WAV + SRT: {wav_filename}")
             succeeded_chapters.add(int(chap_num))
             continue
+        if wav_ok != srt_ok:
+            logging.warning("[TTS_MS] 第 %s 章只有部分產物，清除後安全重建 WAV + SRT。", chap_num)
+            for incomplete_path in (wav_path, srt_path):
+                if os.path.exists(incomplete_path):
+                    os.remove(incomplete_path)
 
         # ── 章節層級重試：最多嘗試 3 次（每次都是全章從頭重做）──
         CHAPTER_MAX_ATTEMPTS = 3

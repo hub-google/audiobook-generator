@@ -1,17 +1,23 @@
 import os
 import sys
 import re
+import json
+import random
 import urllib.parse
 import requests
 import logging
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [MetadataGen] %(levelname)s %(message)s",
     handlers=[logging.StreamHandler()]
 )
+
 
 FONT_PATHS = [
     r"C:\Windows\Fonts\msjhbd.ttc",   # 微軟正黑體 粗體
@@ -79,10 +85,11 @@ def clean_pure_plot_summary(text):
         return "。".join(plot_focused) + "。"
     return text
 
-def fetch_book_summary_online(book_title):
-    """從網路搜尋該小說的「純劇情大綱與故事背景」"""
+def fetch_book_summary_details(book_title):
+    """取得小說簡介及來源；找不到時明確回報，不製造替代劇情。"""
     logging.info(f"正在搜尋《{book_title}》的整體小說劇情大綱與簡介...")
     raw_summary = ""
+    source = ""
     
     # 嘗試 1: 中文維基百科 REST API
     try:
@@ -93,6 +100,7 @@ def fetch_book_summary_online(book_title):
             extract = res.json().get("extract", "")
             if extract:
                 raw_summary = extract
+                source = "zh.wikipedia.org"
     except Exception as e:
         logging.debug(f"[維基百科略過]: {e}")
 
@@ -105,14 +113,18 @@ def fetch_book_summary_online(book_title):
                 extract = res.json().get("AbstractText", "")
                 if extract:
                     raw_summary = extract
+                    source = "api.duckduckgo.com"
         except Exception:
             pass
 
     pure_plot = clean_pure_plot_summary(raw_summary)
     if not pure_plot:
-        pure_plot = f"講述《{book_title}》主角踏上充滿考驗與驚險的冒險旅程，展現壯麗的世界觀與英雄傳奇。"
-    
-    return pure_plot
+        logging.warning("查不到《%s》的可靠小說簡介；封面將使用題材中性備用方案。", book_title)
+    return pure_plot, source
+
+
+def fetch_book_summary_online(book_title):
+    return fetch_book_summary_details(book_title)[0]
 
 def get_calligraphy_font(size):
     """取得極具張力與狂草飛白筆觸的毛筆狂草字體 (Yuji Boku / 飛白勁道書法體)"""
@@ -168,61 +180,151 @@ def generate_dynamic_taglines(book_title, pure_plot=""):
     else:
         return "執 掌 乾 坤", "逆 天 飛 升"
 
-def auto_generate_prompt_from_summary(book_title):
-    pure_plot = fetch_book_summary_online(book_title)
+def _neutral_cover_prompt(book_title):
+    return (
+        f"Premium cinematic book-cover artwork inspired only by the title '{book_title}', "
+        "genre-neutral atmospheric environment, no specific character appearance or invented story event, "
+        "16:9 YouTube thumbnail composition, clear focal subject separated from a clean text-safe area, "
+        "high detail, crisp focus, strong silhouette and tonal separation, readable at small thumbnail size, "
+        "no text, no letters, no logo, no watermark"
+    )
+
+
+def analyze_cover_brief(book_title, pure_plot, source="", workspace_dir=None, analyzer=None):
+    """可替換的封面分析層：手動 JSON > 注入分析器 > 保守本地分析。"""
+    manual_path = os.path.join(workspace_dir, "Cover", "cover_brief.json") if workspace_dir else ""
+    if manual_path and os.path.exists(manual_path):
+        try:
+            with open(manual_path, "r", encoding="utf-8") as f:
+                brief = json.load(f)
+            brief["analysis_method"] = "manual"
+            return brief
+        except (OSError, ValueError) as exc:
+            logging.warning("手動封面分析檔無法讀取：%s", exc)
+    if analyzer:
+        brief = analyzer(book_title=book_title, synopsis=pure_plot, source=source)
+        brief["analysis_method"] = "external"
+        return brief
+    if not pure_plot:
+        return {"analysis_method": "neutral_fallback", "genre": "unknown", "prompt": _neutral_cover_prompt(book_title)}
+
+    genre_rules = [
+        ("修仙／仙俠", ["修仙", "仙界", "修煉", "修炼", "靈根", "灵根", "宗門", "宗门", "成仙"]),
+        ("武俠", ["武俠", "江湖", "武林"]),
+        ("科幻", ["科幻", "星際", "太空", "未來"]),
+        ("歷史", ["歷史", "朝代", "帝國", "宮廷"]),
+        ("都市", ["都市", "現代", "城市"]),
+        ("懸疑", ["懸疑", "案件", "推理", "偵探"]),
+    ]
+    genre = next((name for name, keys in genre_rules if any(k in pure_plot for k in keys)), "文學／奇幻")
+    return {
+        "analysis_method": "local_evidence_only",
+        "genre": genre,
+        "source": source,
+        "synopsis": pure_plot,
+    }
+
+def generate_gemini_art_prompt(book_title, pure_plot):
+    """
+    使用 Google AI Studio Gemini 藝術總監引擎，分析全本小說名稱與完整劇情簡介，
+    產出高質感、鮮豔震撼、具備核心主角與靈魂法寶/特徵的 8K 影視級英文 AI 生圖提示詞 (Art Prompt)。
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("❌ [CRITICAL] 缺少 GEMINI_API_KEY！無法啟動 Gemini LLM 藝術總監引擎，流程中斷。")
+
+    logging.info(f"🎨 啟動 Gemini 藝術總監引擎分析《{book_title}》劇情與視覺風格...")
     
-    english_plot = ""
-    try:
-        text_to_translate = f"Plot of '{book_title}': {pure_plot[:180]}"
-        res = requests.get(
-            "https://api.mymemory.translated.net/get",
-            params={"q": text_to_translate, "langpair": "zh-TW|en"},
-            timeout=10
-        )
-        if res.status_code == 200:
-            english_plot = res.json().get("responseData", {}).get("translatedText", "")
-            logging.info(f"--> [自動翻譯純劇情英文]: {english_plot}")
-    except Exception as e:
-        logging.debug(f"[翻譯 API 略過]: {e}")
-
-    if not english_plot:
-        english_plot = f"Heroic fantasy storyline for novel '{book_title}'"
-
-    final_prompt = (
-        f"8k resolution cinematic masterpiece Xianxia anime artwork for novel '{book_title}', {english_plot}. "
-        "Epic golden floating immortal palace gates in clouds, heroic male anime cultivator warrior in flying action stance on left side, "
-        "dramatic cinematic lighting, golden magic aura, 4k resolution wallpaper, official poster, high contrast, masterwork"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
+    
+    sys_instruction = (
+        "You are a world-class Hollywood concept artist and master book-cover art director. "
+        "Carefully analyze the given book title and synopsis to create a breathtaking, ultra-vibrant, 16:9 cinematic 8K concept art prompt in English.\n"
+        "IMPORTANT RULES:\n"
+        "1. DYNAMIC STORY ANALYSIS: Fully analyze the unique setting, era, genre, core characters, iconic artifacts/objects, atmosphere, and major plot points from the provided title and synopsis. Customize every visual detail specifically for this book.\n"
+        "2. HIGH-AESTHETIC CHARACTER DESIGN: If the scene features a character, they MUST be exceptionally attractive and stylish according to mainstream visual standards (e.g. extremely handsome/stunningly gorgeous face, sharp refined facial features, idol-level facial structure, photogenic, high-end fashionable attire appropriate for the story's setting). NEVER generate plain, ordinary, or generic characters.\n"
+        "3. DYNAMIC FOCAL POINT & ENVIRONMENT: Feature the central hero or primary story conflict in a compelling 16:9 focal composition with atmospheric cinematic lighting.\n"
+        "4. VIBRANT COLORS & LIGHTING: Use vibrant, vivid color contrasts and dynamic lighting matching the story mood instead of dull, dark, or muddy colors.\n"
+        "5. QUALITY & BEAUTY KEYWORDS: MUST include: 'extremely handsome facial features, high aesthetic appealing face, hyperrealistic 8k resolution, crisp focus, epic cinematic lighting, masterpiece composition, highly detailed, trending on ArtStation'.\n"
+        "6. DO NOT include any text, title letters, logos, watermarks, or signatures in the visual.\n"
+        "7. Output ONLY the raw English prompt text, without any intro/outro, quotes, or markdown backticks."
     )
     
-    return pure_plot, english_plot, final_prompt
+    user_prompt = f"Book Title: 《{book_title}》\nSynopsis:\n{pure_plot}\n\nPlease generate a breathtaking cinematic masterpiece concept art prompt in English."
+    
+    payload = {
+        "contents": [{
+            "parts": [{"text": sys_instruction + "\n\n" + user_prompt}]
+        }]
+    }
+    
+    res = requests.post(url, json=payload, timeout=30)
+    if res.status_code == 200:
+        candidates = res.json().get("candidates", [])
+        if candidates and "content" in candidates[0]:
+            prompt_text = candidates[0]["content"]["parts"][0]["text"].strip()
+            prompt_text = re.sub(r"^```[a-zA-Z]*\n?", "", prompt_text).rstrip("`").strip()
+            prompt_text = prompt_text.strip('"').strip("'")
+            logging.info(f"✨ Gemini 藝術總監產出提示詞成功: {prompt_text[:120]}...")
+            return prompt_text
+    
+    raise Exception(f"❌ Gemini 藝術總監 Prompt 生成失敗 (HTTP {res.status_code}): {res.text[:300]}")
+
+
+def auto_generate_prompt_from_summary(book_title, workspace_dir=None, analyzer=None):
+    pure_plot, source = fetch_book_summary_details(book_title)
+    brief = analyze_cover_brief(book_title, pure_plot, source=source, workspace_dir=workspace_dir, analyzer=analyzer)
+    if brief.get("prompt"):
+        return pure_plot, "", brief["prompt"], brief
+    
+    # 透過 Gemini LLM 藝術總監產生大師級 Prompt
+    final_prompt = generate_gemini_art_prompt(book_title, pure_plot)
+    brief["prompt"] = final_prompt
+    return pure_plot, pure_plot, final_prompt, brief
+
 
 def download_ai_image(prompt, width=2560, height=1440):
-    logging.info(f"連線 AI 繪圖伺服器 (Flux 模型) 生成 2K 高畫質底圖 ({width}x{height})...")
-    encoded_prompt = urllib.parse.quote(prompt)
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&model=flux&nologo=true&enhance=true"
+    import time
+    import io
+    logging.info(f"🖼️ 連線 Hugging Face AI 繪圖伺服器 (FLUX.1-schnell) 生成 2K 高畫質封面底圖 ({width}x{height})...")
     
-    headers = {"User-Agent": "Mozilla/5.0"}
-    res = requests.get(url, headers=headers, timeout=90)
-    
-    if res.status_code == 200:
-        logging.info("✅ 成功從 AI 繪圖 API 下載超高畫質底圖！")
-        bg_path = "temp_ai_bg.jpg"
-        with open(bg_path, "wb") as f:
-            f.write(res.content)
-            
-        img = Image.open(bg_path).convert("RGB")
-        
-        w, h = img.size
-        crop_h = int(h * 0.04)
-        img = img.crop((0, 0, w, h - crop_h)).resize((width, height), Image.LANCZOS)
-        
-        img = ImageEnhance.Sharpness(img).enhance(1.3)
-        img = ImageEnhance.Contrast(img).enhance(1.1)
-        return img
-    else:
-        raise Exception(f"AI 生圖失敗，HTTP 狀態碼: {res.status_code}")
+    hf_token = os.getenv("HF_TOKEN")
+    if not hf_token or not hf_token.startswith("hf_"):
+        raise ValueError("❌ [CRITICAL] 缺少有效 HF_TOKEN！無法啟動 Hugging Face 生圖，流程直接終止。")
 
-def create_youtube_cover(
+    img = None
+    try:
+        try:
+            from huggingface_hub import InferenceClient
+            client = InferenceClient(model="black-forest-labs/FLUX.1-schnell", token=hf_token)
+            img = client.text_to_image(prompt)
+        except Exception as hf_err:
+            logging.warning(f"⚠️ huggingface_hub 呼叫失敗，改用 REST API 重試: {hf_err}")
+            api_url = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
+            headers = {"Authorization": f"Bearer {hf_token}"}
+            res = requests.post(api_url, headers=headers, json={"inputs": prompt}, timeout=60)
+            if res.status_code == 200:
+                img = Image.open(io.BytesIO(res.content))
+            else:
+                raise Exception(f"HTTP {res.status_code}: {res.text[:200]}")
+
+        if img:
+            bg_path = "temp_ai_bg.jpg"
+            img.save(bg_path)
+            img = img.convert("RGB")
+            w, h = img.size
+            crop_h = int(h * 0.04)
+            img = img.crop((0, 0, w, h - crop_h)).resize((width, height), Image.LANCZOS)
+            img = ImageEnhance.Sharpness(img).enhance(1.4)
+            img = ImageEnhance.Contrast(img).enhance(1.1)
+            logging.info("✅ 成功從 Hugging Face FLUX.1 生成超高畫質底圖！")
+            return img
+    except Exception as e:
+        raise RuntimeError(f"❌ [CRITICAL] Hugging Face 生圖失敗: {e}！流程直接終止，嚴禁降級使用低品質備用圖。")
+
+
+
+def _create_youtube_cover_legacy(
     bg_img, 
     book_title, 
     start_chap, 
@@ -427,6 +529,96 @@ def create_youtube_cover(
     logging.info(f"✅ 2K 自適應大氣封面合成完成: {output_filename} (品質 quality={q}, 大小 {size_mb:.2f} MB)")
     return output_filename
 
+
+def _measure(draw, text, font):
+    box = draw.textbbox((0, 0), text, font=font)
+    return box[2] - box[0], box[3] - box[1]
+
+
+def _fit_font(draw, text, max_width, start_size, min_size=54):
+    for size in range(start_size, min_size - 1, -4):
+        font = get_calligraphy_font(size)
+        if _measure(draw, text, font)[0] <= max_width:
+            return font
+    return get_calligraphy_font(min_size)
+
+
+def _create_youtube_cover_redesign(
+    bg_img,
+    book_title,
+    start_chap,
+    end_chap,
+    is_completed=True,
+    output_filename="youtube_cover.jpg",
+    part_num=None,
+):
+    """在固定無文字主視覺上疊加一致的 Part 資訊版型。"""
+    width, height = 2560, 1440
+    img = bg_img.convert("RGB").resize((width, height), Image.LANCZOS)
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    shade = ImageDraw.Draw(overlay)
+
+    # 僅使用局部漸層，不以大面積黑色矩形遮蔽主視覺。
+    for x in range(0, 1450):
+        alpha = int(178 * (1 - x / 1450) ** 1.7)
+        shade.line([(x, 0), (x, height)], fill=(4, 8, 22, alpha))
+    for y in range(920, height):
+        alpha = int(92 * (y - 920) / (height - 920))
+        shade.line([(0, y), (width, y)], fill=(3, 6, 16, alpha))
+    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+    draw = ImageDraw.Draw(img)
+
+    clean_title = book_title.replace("《", "").replace("》", "").strip()
+    title_font = _fit_font(draw, clean_title, 1340, 220, 92)
+    title_w, title_h = _measure(draw, clean_title, title_font)
+    title_x, title_y = 105, 245
+    # 輕量陰影取代粗黑描邊。
+    draw.text((title_x + 7, title_y + 9), clean_title, font=title_font, fill=(0, 0, 0))
+    draw.text((title_x, title_y), clean_title, font=title_font, fill=(255, 224, 118), stroke_width=2, stroke_fill=(102, 67, 16))
+    draw.line([(title_x, title_y + title_h + 45), (title_x + min(title_w, 760), title_y + title_h + 45)], fill=(222, 184, 76), width=5)
+
+    part_text = f"第 {part_num} 部" if part_num else "完整合集"
+    range_text = f"第 {int(start_chap):03d}–{int(end_chap):03d} 章" if str(start_chap).isdigit() and str(end_chap).isdigit() else f"第 {start_chap}–{end_chap} 章"
+    info_font = get_font(65)
+    info_text = f"{part_text}  ·  {range_text}"
+    info_w, info_h = _measure(draw, info_text, info_font)
+    info_x, info_y = 110, 690
+    draw.rounded_rectangle((info_x - 24, info_y - 18, info_x + info_w + 28, info_y + info_h + 30), radius=18, fill=(15, 24, 48), outline=(224, 187, 82), width=3)
+    draw.text((info_x, info_y), info_text, font=info_font, fill=(255, 255, 255))
+
+    status_text = "已完結" if is_completed else "連載中"
+    status_fill = (5, 143, 105) if is_completed else (185, 50, 38)
+    status_font = get_font(92)
+    status_w, status_h = _measure(draw, status_text, status_font)
+    pad_x, pad_y = 58, 34
+    box_w, box_h = status_w + pad_x * 2, status_h + pad_y * 2
+    status_x = width - box_w - 105
+    status_y = 92
+    draw.rounded_rectangle((status_x, status_y, status_x + box_w, status_y + box_h), radius=28, fill=status_fill, outline=(255, 232, 157), width=7)
+    draw.text((status_x + pad_x, status_y + pad_y - 9), status_text, font=status_font, fill=(255, 255, 255), stroke_width=2, stroke_fill=(0, 55, 42))
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_filename)), exist_ok=True)
+    quality = 94
+    img.save(output_filename, "JPEG", quality=quality, optimize=True)
+    while os.path.getsize(output_filename) >= 2_000_000 and quality > 55:
+        quality -= 4
+        img.save(output_filename, "JPEG", quality=quality, optimize=True)
+    logging.info("✅ Part 封面完成（固定主視覺版型）: %s", output_filename)
+    return output_filename
+
+
+def create_youtube_cover(bg_img, book_title, start_chap, end_chap, is_completed=True, output_filename="youtube_cover.jpg", part_num=None):
+    """使用專案原有封面文字排版；底圖仍採每本小說唯一 master cover。"""
+    return _create_youtube_cover_legacy(
+        bg_img,
+        book_title,
+        start_chap,
+        end_chap,
+        is_completed=is_completed,
+        output_filename=output_filename,
+        part_num=part_num,
+    )
+
 def save_process_log(output_dir, book_title, pure_plot, english_plot, final_prompt, img_width=2560, img_height=1440):
     log_filename = os.path.join(output_dir, f"{book_title}_process_log.txt")
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -438,10 +630,10 @@ AI 封面全自動生成過程記錄 Log
 輸出解析度: {img_width} x {img_height} (2K QHD 超高畫質)
 ======================================================================
 
-1️⃣ Python 全自動從網路抓取的【純劇情大綱】
+1️⃣ 從可靠來源取得的【小說簡介】
 ----------------------------------------------------------------------
 {pure_plot}
-(註: 已自動過濾作者名稱、出版年份、連載平台、字數等無關元數據雜訊)
+(若此處為空，代表查無可靠簡介，提示詞已改用中性備用方案。)
 
 2️⃣ Python 免費翻譯成的【英文劇情】
 ----------------------------------------------------------------------
@@ -451,9 +643,9 @@ AI 封面全自動生成過程記錄 Log
 ----------------------------------------------------------------------
 {final_prompt}
 
-4️⃣ 帶入 enhance=true 後，雲端 Flux AI 最終擴充渲染說明
+4️⃣ 主視覺生成與快取說明
 ----------------------------------------------------------------------
-根據上述專注於《{book_title}》劇情大綱的英文 Prompt，Pollinations AI 的雲端 Flux 繪圖大模型帶入 `enhance=true` 後，自動擴充細節，繪製出符合該小說背景與主角氣質的 2K 超高畫質（{img_width}x{img_height}）動漫風格底圖，並由 Pillow 合成金色大字標題與【已完結】/【集數】徽章。
+上述提示詞只使用查得的小說資訊，不固定指定仙俠、人物性別、宮殿或法術。無文字主視覺固定快取於 Cover/master_cover.jpg；各 Part 只在其複本上疊加書名、部數、章節範圍與狀態。
 ======================================================================
 """
     with open(log_filename, "w", encoding="utf-8") as f:
@@ -484,14 +676,86 @@ def generate_video_description(book_title, start_chap=1, end_chap=2400, pure_plo
 """
     return desc.strip()
 
-def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=None, is_completed=True, part_num=None):
+def _valid_master_cover(path):
+    if not os.path.exists(path) or os.path.getsize(path) < 10_000:
+        return False
+    try:
+        with Image.open(path) as image:
+            image.verify()
+        with Image.open(path) as image:
+            return image.width >= 1280 and image.height >= 720
+    except (OSError, ValueError):
+        return False
+
+
+def _neutral_master_image(width=2560, height=1440):
+    """生圖服務不可用時的無文字、中性高品質本地備援。"""
+    image = Image.new("RGB", (width, height))
+    draw = ImageDraw.Draw(image)
+    for y in range(height):
+        t = y / height
+        draw.line([(0, y), (width, y)], fill=(int(12 + 20*t), int(22 + 24*t), int(50 + 42*t)))
+    for radius, alpha in [(650, 32), (430, 42), (260, 58)]:
+        glow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(glow)
+        gd.ellipse((width-900-radius, 380-radius, width-900+radius, 380+radius), fill=(224, 177, 76, alpha))
+        image = Image.alpha_composite(image.convert("RGBA"), glow).convert("RGB")
+    return image
+
+
+def ensure_master_cover(book_title, book_workspace_dir, force_regenerate=False, analyzer=None):
+    """取得每本小說唯一無文字主視覺；正常執行只生成一次。"""
+    cover_dir = os.path.join(book_workspace_dir, "Cover")
+    os.makedirs(cover_dir, exist_ok=True)
+    master_path = os.path.join(cover_dir, "master_cover.jpg")
+    # Only an explicit caller request may spend money regenerating this image.
+    force = bool(force_regenerate)
+    if _valid_master_cover(master_path) and not force:
+        logging.info("♻️ 重用小說主視覺快取: %s", master_path)
+        return master_path, None
+
+    if force:
+        logging.warning("已要求強制重生《%s》主視覺。", book_title)
+    pure_plot, english_plot, final_prompt, brief = auto_generate_prompt_from_summary(
+        book_title, workspace_dir=book_workspace_dir, analyzer=analyzer
+    )
+    master = download_ai_image(final_prompt, width=2560, height=1440)
+
+    master.convert("RGB").save(master_path, "JPEG", quality=94, optimize=True)
+    with open(os.path.join(cover_dir, "master_cover_prompt.json"), "w", encoding="utf-8") as f:
+        json.dump({"book_title": book_title, "brief": brief, "prompt": final_prompt}, f, ensure_ascii=False, indent=2)
+    save_process_log(cover_dir, book_title, pure_plot, english_plot, final_prompt)
+    logging.info("✅ 已建立小說唯一無文字主視覺: %s", master_path)
+    return master_path, (pure_plot, english_plot, final_prompt)
+
+
+def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=None, is_completed=True, part_num=None, force_regenerate_master=False, cover_analyzer=None):
+    src_dir = os.path.dirname(os.path.abspath(__file__))
+    book_workspace_dir = os.path.abspath(os.path.join(src_dir, "..", "Workspace", book_title))
     if not workspace_dir:
-        SRC_DIR = os.path.dirname(os.path.abspath(__file__))
-        workspace_dir = os.path.abspath(os.path.join(SRC_DIR, "..", "Workspace", book_title))
+        # 上傳器可能先建立所有 Part 再逐一上傳；每部必須有獨立成品路徑，
+        # 才不會全部指向最後一次覆寫的 youtube_cover.jpg。
+        workspace_dir = os.path.join(book_workspace_dir, f"Part_{int(part_num):02d}") if part_num else book_workspace_dir
+    workspace_dir = os.path.abspath(workspace_dir)
+    # part_builder 傳入 Workspace/{書名}/Part_XX；主視覺仍固定回到書籍根目錄。
+    if re.fullmatch(r"Part_\d+", os.path.basename(workspace_dir), re.IGNORECASE):
+        book_workspace_dir = os.path.dirname(workspace_dir)
 
     os.makedirs(workspace_dir, exist_ok=True)
-
-    pure_plot, english_plot, final_prompt = auto_generate_prompt_from_summary(book_title)
+    master_cover, generated_info = ensure_master_cover(
+        book_title, book_workspace_dir, force_regenerate=force_regenerate_master, analyzer=cover_analyzer
+    )
+    if generated_info:
+        pure_plot, english_plot, final_prompt = generated_info
+    else:
+        pure_plot = ""
+        prompt_record = os.path.join(book_workspace_dir, "Cover", "master_cover_prompt.json")
+        try:
+            with open(prompt_record, "r", encoding="utf-8") as f:
+                pure_plot = json.load(f).get("brief", {}).get("synopsis", "")
+        except (OSError, ValueError):
+            pass
+        english_plot, final_prompt = "", "(reused cached master cover)"
 
     title = generate_video_title(book_title, start_chap, end_chap, part_num=part_num)
     desc = generate_video_description(book_title, start_chap, end_chap, pure_plot=pure_plot, part_num=part_num)
@@ -506,12 +770,12 @@ def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=No
     with open(desc_file, "w", encoding="utf-8") as f:
         f.write(desc)
 
-    # 下載 AI 高畫質底圖並合成封面
-    bg_img = download_ai_image(final_prompt, width=2560, height=1440)
+    # 每一部只在同一張無文字 master cover 上疊加可變資訊。
+    with Image.open(master_cover) as cached_master:
+        bg_img = cached_master.convert("RGB").copy()
     create_youtube_cover(bg_img, book_title, start_chap, end_chap, is_completed=is_completed, output_filename=cover_file, part_num=part_num)
 
-    # 記錄 log
-    log_file = save_process_log(workspace_dir, book_title, pure_plot, english_plot, final_prompt)
+    log_file = os.path.join(book_workspace_dir, "Cover", f"{book_title}_process_log.txt")
 
     logging.info(f"📁 本地 Metadata 檔案已全數存入: {workspace_dir}")
     logging.info(f"   • 標題: {title_file}")
@@ -525,6 +789,7 @@ def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=No
         "title_file": title_file,
         "desc_file": desc_file,
         "cover_file": cover_file,
+        "master_cover_file": master_cover,
         "log_file": log_file
     }
 

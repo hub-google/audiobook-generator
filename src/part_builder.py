@@ -167,11 +167,22 @@ def merge_part_videos(part_info, output_video_path):
     if not files:
         return False
 
-    if len(files) == 1:
-        shutil.copy(files[0], output_video_path)
+    if os.path.exists(output_video_path) and os.path.getsize(output_video_path) > 1000:
+        logging.info("⏭️ 沿用已完成的合併影片：%s", os.path.basename(output_video_path))
         return True
+    if os.path.exists(output_video_path):
+        os.remove(output_video_path)
 
     os.makedirs(os.path.dirname(output_video_path), exist_ok=True)
+    partial_path = output_video_path + ".partial.mp4"
+    if os.path.exists(partial_path):
+        os.remove(partial_path)
+
+    if len(files) == 1:
+        shutil.copy(files[0], partial_path)
+        os.replace(partial_path, output_video_path)
+        return True
+
     concat_txt = os.path.join(os.path.dirname(output_video_path), f"concat_part_{part_info['part_num']}.txt")
 
     with open(concat_txt, "w", encoding="utf-8") as f:
@@ -185,7 +196,7 @@ def merge_part_videos(part_info, output_video_path):
         "-safe", "0",
         "-i", concat_txt,
         "-c", "copy",
-        output_video_path
+        partial_path
     ]
     res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if os.path.exists(concat_txt):
@@ -194,11 +205,14 @@ def merge_part_videos(part_info, output_video_path):
         except Exception:
             pass
 
-    ok = res.returncode == 0 and os.path.exists(output_video_path)
+    ok = res.returncode == 0 and os.path.exists(partial_path) and os.path.getsize(partial_path) > 1000
     if ok:
+        os.replace(partial_path, output_video_path)
         size_mb = os.path.getsize(output_video_path) / (1024 * 1024)
         logging.info(f"✅ 【第 {part_info['part_num']} 部】無損影片合併成功 -> {os.path.basename(output_video_path)} ({size_mb:.1f} MB)")
     else:
+        if os.path.exists(partial_path):
+            os.remove(partial_path)
         logging.error(f"❌ 【第 {part_info['part_num']} 部】影片合併失敗: {res.stderr}")
     return ok
 

@@ -113,7 +113,7 @@ class AudiobookGUIApp:
         self.btn_run = ttk.Button(action_frame, text="🚀 發動 GitHub Actions 雲端製作", style="Accent.TButton", command=self.trigger_github_actions)
         self.btn_run.pack(side=tk.LEFT, padx=(0, 10))
 
-        self.btn_api_upload = ttk.Button(action_frame, text="📤 暴速上傳 YouTube (建播放清單)", command=self.trigger_youtube_api_upload)
+        self.btn_api_upload = ttk.Button(action_frame, text="📤 YouTube 上傳（自動續傳）", command=self.trigger_youtube_api_upload)
         self.btn_api_upload.pack(side=tk.LEFT, padx=(0, 10))
 
         self.btn_cancel = ttk.Button(action_frame, text="🛑 取消雲端作業", command=self.cancel_github_actions, state=tk.DISABLED)
@@ -393,6 +393,9 @@ class AudiobookGUIApp:
         if not start_chap.isdigit() or not end_chap.isdigit():
             messagebox.showwarning("提示", "開始與結束章節必須為數字！")
             return
+        if int(start_chap) < 1 or int(start_chap) > int(end_chap):
+            messagebox.showwarning("提示", "章節範圍無效：開始章必須大於 0，且不能大於結束章。")
+            return
 
         self.btn_run.config(state=tk.DISABLED)
         self.btn_cancel.config(state=tk.NORMAL)
@@ -455,9 +458,9 @@ class AudiobookGUIApp:
 
         default_run_id = getattr(self, "current_run_id", "") or ""
         run_id = simpledialog.askstring(
-            "暴速上傳 YouTube (自動建播放清單)",
-            "請輸入包含影片 Artifacts 的 GitHub Run ID:\n(如不確定可維持預設值或至 GitHub 複製)",
-            initialvalue=str(default_run_id) if default_run_id else "29821206020"
+            "YouTube 上傳（自動斷點續傳）",
+            "請輸入包含影片 Artifacts 的 GitHub Run ID：\n達到 YouTube 限額時會保存斷點，並在安全時間自動續傳。",
+            initialvalue=str(default_run_id) if default_run_id else ""
         )
         if not run_id or not run_id.strip():
             return
@@ -477,6 +480,7 @@ class AudiobookGUIApp:
         self.progress_bar.start(10)
         self.lbl_status.config(text="啟動暴速 API 上傳中...", foreground="#e1b12c")
         self.log(f"📤 正向 GitHub (Repo: {repo}) 發動 YouTube API 極速上傳與播放清單建置 (Target Run ID: {run_id}) ...")
+        self.log("↻ 若遇到 API 配額或頻道 24 小時上傳限制，雲端排程會自動從未上傳的分部繼續；不必再次按按鈕。")
 
         def _worker():
             try:
@@ -560,6 +564,14 @@ class AudiobookGUIApp:
                 runs = r.json().get("workflow_runs", [])
                 for run in runs:
                     if run.get("status") == "completed":
+                        continue
+                    created_at = run.get("created_at", "")
+                    try:
+                        from datetime import datetime
+                        created_ts = datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp()
+                    except (TypeError, ValueError):
+                        created_ts = 0
+                    if created_ts + 2 < trigger_time:
                         continue
                     if target_workflow_name:
                         if run.get("name") != target_workflow_name:
@@ -679,7 +691,7 @@ class AudiobookGUIApp:
 
                                 # 解析 API 上傳標籤 [API_UPLOAD_MARKER]
                                 api_matches = re.findall(
-                                    r'\[API_UPLOAD_MARKER\] (START|DONE) \| Item (\S+) \| (\S+) \| (.+)',
+                                    r'\[API_UPLOAD_MARKER\] (START|DONE) \| Part (\S+) \| Ch (\S+) \| (.+)',
                                     r_log.text
                                 )
                                 for action, item_prog, chap_str, detail in api_matches:
