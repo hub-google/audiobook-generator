@@ -1,9 +1,6 @@
 name: Fast Upload Audiobooks & Build YouTube Playlist
 
 on:
-  schedule:
-    # Hourly wake-up. The state file decides whether the safe retry time has arrived.
-    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       run_id:

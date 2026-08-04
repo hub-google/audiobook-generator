@@ -260,7 +260,7 @@ def get_or_create_playlist(youtube, playlist_title, playlist_desc=""):
         logging.error(f"❌ 查詢/建立播放清單失敗: {e}")
         return None
 
-def add_video_to_playlist(youtube, playlist_id, video_id):
+def add_video_to_playlist(youtube, playlist_id, video_id, position=None):
     """將影片加到指定的播放清單中 (依呼叫順序追加)"""
     try:
         body = {
@@ -272,6 +272,8 @@ def add_video_to_playlist(youtube, playlist_id, video_id):
                 }
             }
         }
+        if position is not None:
+            body["snippet"]["position"] = int(position)
         youtube.playlistItems().insert(
             part="snippet",
             body=body
@@ -485,11 +487,98 @@ def get_run_artifact_names(run_id, repo):
     all_names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
     mp4_names = [n for n in all_names if n.startswith("mp4-worker-")]
     if mp4_names:
-        mp4_names.sort(key=lambda x: int(re.search(r'\d+', x).group()) if re.search(r'\d+', x) else 999)
+        mp4_names.sort(key=artifact_worker_index)
         return mp4_names
     video_names = [n for n in all_names if n.startswith("video-worker-")]
-    video_names.sort(key=lambda x: int(re.search(r'\d+', x).group()) if re.search(r'\d+', x) else 999)
+    video_names.sort(key=artifact_worker_index)
     return video_names
+
+
+def artifact_worker_index(name):
+    """Extract the worker id, never the ``4`` embedded in the ``mp4`` prefix."""
+    match = re.search(r"(?:mp4|video)-worker-(\d+)$", name)
+    if not match:
+        raise ValueError(f"無法識別 Worker Artifact 名稱：{name}")
+    return int(match.group(1))
+
+
+def scan_artifact_chapters(artifact_dir, artifact_name):
+    """Inventory chapter media in one downloaded artifact."""
+    chapters = []
+    for video_path in glob.glob(os.path.join(artifact_dir, "**", "*.mp4"), recursive=True):
+        chapter_num = parse_chapter_num(os.path.basename(video_path))
+        if chapter_num == 999999:
+            continue
+        srt_path = video_path.replace("/Video/", "/Subtitles/").replace("\\Video\\", "\\Subtitles\\").replace(".mp4", ".srt")
+        if not os.path.exists(srt_path):
+            srt_matches = glob.glob(
+                os.path.join(artifact_dir, "**", f"*chapter_{chapter_num}.srt"),
+                recursive=True,
+            )
+            srt_path = srt_matches[0] if srt_matches else None
+        chapters.append({
+            "artifact": artifact_name,
+            "chap_num": chapter_num,
+            "dur": get_media_duration(video_path),
+            "video_relpath": os.path.relpath(video_path, artifact_dir),
+            "srt_relpath": os.path.relpath(srt_path, artifact_dir) if srt_path else None,
+        })
+    return sorted(chapters, key=lambda item: item["chap_num"])
+
+
+def validate_chapter_inventory(chapters, expected_start, expected_end):
+    """Refuse to upload unless the complete book is present exactly once."""
+    numbers = [int(item["chap_num"]) for item in chapters]
+    duplicates = sorted({number for number in numbers if numbers.count(number) > 1})
+    expected = list(range(int(expected_start), int(expected_end) + 1))
+    missing = sorted(set(expected) - set(numbers))
+    unexpected = sorted(set(numbers) - set(expected))
+    if duplicates or missing or unexpected or numbers != sorted(numbers):
+        raise RuntimeError(
+            "章節盤點不完整，禁止開始上傳："
+            f"重複={duplicates[:10]}，缺少={missing[:10]}，超出範圍={unexpected[:10]}"
+        )
+
+
+def build_part_plan_from_inventory(chapters, min_seconds=10 * 3600, max_seconds=11 * 3600):
+    """Plan every Part globally before any merge or YouTube API upload."""
+    if not chapters:
+        raise RuntimeError("沒有可供分部的章節")
+    ordered = sorted(chapters, key=lambda item: int(item["chap_num"]))
+    plan = []
+    current = []
+    current_duration = 0.0
+    for item in ordered:
+        duration = float(item["dur"])
+        if duration <= 0:
+            raise RuntimeError(f"第 {item['chap_num']} 章無法取得有效片長")
+        if current and current_duration + duration > max_seconds:
+            plan.append(_make_planned_part(len(plan) + 1, current, current_duration))
+            current = []
+            current_duration = 0.0
+        current.append(item)
+        current_duration += duration
+    if current:
+        plan.append(_make_planned_part(len(plan) + 1, current, current_duration))
+
+    for previous, following in zip(plan, plan[1:]):
+        if following["start_chap"] != previous["end_chap"] + 1:
+            raise RuntimeError(f"分部不連續：Part {previous['part_num']} 後接 Part {following['part_num']}")
+    for part in plan[:-1]:
+        if part["duration"] < min_seconds:
+            logging.warning("Part %s 只有 %.2f 小時；受 11 小時硬上限約束。", part["part_num"], part["duration"] / 3600)
+    return plan
+
+
+def _make_planned_part(part_num, items, duration):
+    return {
+        "part_num": part_num,
+        "start_chap": int(items[0]["chap_num"]),
+        "end_chap": int(items[-1]["chap_num"]),
+        "chapters": [int(item["chap_num"]) for item in items],
+        "artifacts": list(dict.fromkeys(item["artifact"] for item in items)),
+        "duration": duration,
+    }
 
 def download_artifact_task(run_id, repo, artifact_name, dest_dir):
     if os.path.exists(dest_dir):
@@ -605,9 +694,48 @@ def main():
 
         logging.info(f"共有 {len(artifact_names)} 個 Worker Artifacts 待處理。")
 
-        chapter_pool = []
         min_seconds = 10.0 * 3600.0
         max_seconds = 11.0 * 3600.0
+
+        # Phase 1: inventory every chapter before creating or uploading Part 1.
+        # Probe one artifact at a time so the runner never stores the full book.
+        inventory = []
+        logging.info("🔎 第一階段：盤點全部 Worker Artifacts；此階段不會上傳任何影片。")
+        for inventory_index, artifact_name in enumerate(artifact_names, 1):
+            inventory_dir = os.path.join(temp_dl_dir, f"inventory-{artifact_name}")
+            logging.info("📦 盤點 [%s/%s]：%s", inventory_index, len(artifact_names), artifact_name)
+            if not download_artifact_task(args.run_id, args.repo, artifact_name, inventory_dir):
+                raise RuntimeError(f"Artifact 下載失敗，禁止上傳：{artifact_name}")
+            scanned = scan_artifact_chapters(inventory_dir, artifact_name)
+            if not scanned:
+                raise RuntimeError(f"Artifact 沒有章節 MP4，禁止上傳：{artifact_name}")
+            inventory.extend(scanned)
+            shutil.rmtree(inventory_dir, ignore_errors=True)
+
+        inventory.sort(key=lambda item: int(item["chap_num"]))
+        validate_chapter_inventory(inventory, start_chap, end_chap)
+        part_plan = build_part_plan_from_inventory(inventory, min_seconds, max_seconds)
+        for planned in part_plan:
+            planned["title"] = generate_video_title(
+                book_title,
+                start_chap=planned["start_chap"],
+                end_chap=planned["end_chap"],
+                part_num=planned["part_num"],
+            )
+            logging.info(
+                "🧭 Part %02d：第 %04d~%04d 章，共 %d 章，%.2f 小時",
+                planned["part_num"], planned["start_chap"], planned["end_chap"],
+                len(planned["chapters"]), planned["duration"] / 3600,
+            )
+        if part_plan[0]["start_chap"] != start_chap:
+            raise RuntimeError("Part 1 並非從全書第一章開始，禁止上傳")
+        save_resume_state(
+            args.state_file, args.run_id, args.privacy, "planned",
+            completed_titles=completed_titles, part_plan=part_plan,
+        )
+        logging.info("✅ 全書分部規劃已鎖定；第二階段將嚴格依 Part 1 → Part %s 串行上傳。", len(part_plan))
+
+        chapter_pool = []
 
         import threading
 
@@ -795,7 +923,7 @@ def main():
                         if srt_ok and os.path.exists(out_srt_path):
                             upload_caption_file(youtube, v_id, out_srt_path)
                         if playlist_id:
-                            add_video_to_playlist(youtube, playlist_id, v_id)
+                            add_video_to_playlist(youtube, playlist_id, v_id, position=part_counter - 1)
 
                         logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_counter} | Ch {s_c}~{e_c} | VideoID {v_id}, total {total_uploaded}")
                         logging.info(f"✅ 【第 {part_counter} 部】成功上傳並加入播放清單: {p_meta['title']}\n")
@@ -932,7 +1060,7 @@ def main():
                 if v_srt and os.path.exists(v_srt):
                     upload_caption_file(youtube, v_id, v_srt)
                 if playlist_id:
-                    add_video_to_playlist(youtube, playlist_id, v_id)
+                    add_video_to_playlist(youtube, playlist_id, v_id, position=part_n - 1)
                 logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_n}/{len(parts_to_upload)} | Ch {item['start_chap']}~{item['end_chap']} | VideoID {v_id}, total {total_uploaded}")
 
     logging.info("="*60)
