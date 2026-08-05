@@ -485,19 +485,30 @@ def generate_part_srt(sliced_items, output_srt_path):
     return total_blocks > 0
 
 def get_run_artifact_names(run_id, repo):
-    cmd = ["gh", "api", f"repos/{repo}/actions/runs/{run_id}/artifacts", "--jq", ".artifacts[].name"]
+    # One worker normally publishes both mp4-worker-* and video-worker-*.
+    # GitHub returns only 30 artifacts per page by default, so a 20-worker run
+    # already spans multiple pages (shared-config + 40 worker artifacts).
+    cmd = [
+        "gh", "api", "--paginate",
+        f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100",
+        "--jq", ".artifacts[].name",
+    ]
     res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if res.returncode != 0:
         logging.error(f"Failed to fetch artifacts for run {run_id}: {res.stderr}")
         return []
     all_names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
-    mp4_names = [n for n in all_names if n.startswith("mp4-worker-")]
-    if mp4_names:
-        mp4_names.sort(key=artifact_worker_index)
-        return mp4_names
-    video_names = [n for n in all_names if n.startswith("video-worker-")]
-    video_names.sort(key=artifact_worker_index)
-    return video_names
+    return select_worker_artifacts(all_names)
+
+
+def select_worker_artifacts(all_names):
+    """Select one artifact per worker, preferring the lightweight MP4 artifact."""
+    selected = {}
+    for prefix in ("video-worker-", "mp4-worker-"):
+        for name in all_names:
+            if name.startswith(prefix):
+                selected[artifact_worker_index(name)] = name
+    return [selected[index] for index in sorted(selected)]
 
 
 def artifact_worker_index(name):
