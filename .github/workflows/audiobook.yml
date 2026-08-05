@@ -97,8 +97,8 @@ jobs:
 
       - name: Install System Deps (FFmpeg + CJK Fonts)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg fonts-noto-cjk fonts-wqy-zenhei
+          sudo env DEBIAN_FRONTEND=noninteractive timeout 10m apt-get update -qq -o Acquire::Retries=3
+          sudo env DEBIAN_FRONTEND=noninteractive timeout 15m apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o DPkg::Lock::Timeout=60 ffmpeg fonts-noto-cjk fonts-wqy-zenhei
 
       - name: Install Python Dependencies
         run: pip install -r requirements.txt
@@ -169,13 +169,13 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install System Deps (FFmpeg + CJK Fonts)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg fonts-noto-cjk fonts-wqy-zenhei
-
       - name: Install Python Dependencies
         run: pip install -r requirements.txt
+
+      - name: Install FFmpeg
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive timeout 10m apt-get update -qq -o Acquire::Retries=3
+          sudo env DEBIAN_FRONTEND=noninteractive timeout 10m apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o DPkg::Lock::Timeout=60 ffmpeg
 
       - name: Restore latest YouTube upload checkpoint
         uses: actions/cache/restore@v4
@@ -214,6 +214,3 @@ jobs:
             upload_resume_state/
             Workspace/*/Cover/
           key: youtube-upload-state-${{ github.run_id }}-${{ github.run_attempt }}
-
-
-
