@@ -75,17 +75,14 @@ def validate_chapter_completeness(config, exact_indices, tts_failed_chapters=Non
     images_dir    = os.path.join(workspace_dir, "Images")
     subtitles_dir = os.path.join(workspace_dir, "Subtitles")
 
-    tts_failed = tts_failed_chapters or set()
-    final_failed = set(tts_failed)
+    # Files are the source of truth. A chapter that failed TTS earlier may have
+    # succeeded during a later recovery round, so historical failure markers
+    # must not permanently poison final validation.
+    final_failed = set()
     complete_chapters = []
     IMAGE_MAX_ATTEMPTS = 3
 
     for chap_num in sorted(exact_indices):
-        # TTS 已記錄失敗，不重複驗收
-        if chap_num in tts_failed:
-            logging.warning(f"[Validate] 第 {chap_num} 章已由 TTS 階段標記失敗，跳過驗收")
-            continue
-
         wav_path = os.path.join(audio_dir,     f"{book_title}_chapter_{chap_num}.wav")
         jpg_path = os.path.join(images_dir,    f"{book_title}_chapter_{chap_num}.jpg")
         srt_path = os.path.join(subtitles_dir, f"{book_title}_chapter_{chap_num}.srt")
@@ -162,6 +159,40 @@ def print_final_report(complete_chapters, failed_chapters, worker_id):
         logging.info("  🎉 所有章節均成功，無任何失敗！")
     logging.info("=" * 60)
     logging.info("")
+
+
+def require_complete_worker(failed_chapters, worker_id):
+    """Prevent a partial worker artifact from being reported as successful."""
+    if failed_chapters:
+        failed = sorted(int(chapter) for chapter in failed_chapters)
+        raise RuntimeError(
+            f"Worker {worker_id} 章節驗收失敗，禁止發布不完整 artifact：{failed}"
+        )
+
+
+def recover_incomplete_chapters(config, chapters, exact_indices, failed_chapters,
+                                worker_id, max_rounds=3):
+    """Retry the complete pipeline only for chapters that failed validation."""
+    pending = sorted(int(chapter) for chapter in failed_chapters)
+    chapter_by_index = dict(zip(exact_indices, chapters))
+
+    for recovery_round in range(1, max_rounds + 1):
+        if not pending:
+            break
+        logging.warning(
+            "[Worker-%s] 自動缺章修復 %s/%s：%s",
+            worker_id, recovery_round, max_rounds, pending,
+        )
+        retry_urls = [chapter_by_index[index] for index in pending]
+        stage_crawl(config, retry_urls, pending[0], pending)
+        stage_clean(config, target_indices=pending)
+        stage_tts(config, target_indices=pending)
+        stage_image_gen(config, target_indices=pending)
+        stage_video_gen(config, build_parts=False, target_indices=pending)
+        _, still_failed = validate_chapter_completeness(config, pending)
+        pending = sorted(still_failed)
+
+    return set(pending)
 
 
 # ── 各 Stage 處理函式 ──────────────────────────────────────
@@ -273,17 +304,25 @@ def main():
             logging.info(f"=== [Worker-{args.worker_id}] ✅ 批次完成：第 {sub_indices[0]}~{sub_indices[-1]} 章 MP4 已寫入 ===")
             logging.info(f"[PROGRESS_MARKER] Worker-{args.worker_id} | Ch {sub_indices[0]}~{sub_indices[-1]} done ({i + len(sub_indices)}/{total_in_worker})")
 
-        # 所有章節批次完成後，執行 1 次 Full Assembly（Part 打包 + AI 封面）
-        # --force 在這裡才有作用：強制重新打包 Part 大影片
-        logging.info(f"=== [Worker-{args.worker_id}] 所有章節處理完成，開始執行 Part 大影片打包（force={args.force}）===")
-        stage_video_gen(config, build_parts=True)
-
-        # 最終完成度驗收
+        # Validate before packaging. Any missing chapter is retried through the
+        # complete pipeline, then validated again before artifacts may publish.
         logging.info(f"=== [Worker-{args.worker_id}] 執行最終完成度驗收 ===")
         complete_chapters, final_failed = validate_chapter_completeness(
             config, exact_indices, tts_failed_chapters
         )
+        if final_failed:
+            final_failed = recover_incomplete_chapters(
+                config, chapters, exact_indices, final_failed, args.worker_id
+            )
+            complete_chapters, final_failed = validate_chapter_completeness(
+                config, exact_indices
+            )
         print_final_report(complete_chapters, final_failed, args.worker_id)
+        require_complete_worker(final_failed, args.worker_id)
+
+        # Only a complete worker may build aggregate outputs.
+        logging.info(f"=== [Worker-{args.worker_id}] 驗收完成，開始執行 Part 大影片打包（force={args.force}）===")
+        stage_video_gen(config, build_parts=True)
 
     elif stage == "crawl":
         stage_crawl(config, chapters, start_global_idx, exact_indices)
@@ -306,6 +345,7 @@ def main():
             config, exact_indices, tts_failed_chapters
         )
         print_final_report(complete_chapters, final_failed, args.worker_id)
+        require_complete_worker(final_failed, args.worker_id)
 
     logging.info(f"=== Worker {args.worker_id} | Stage: {stage} DONE ===")
 

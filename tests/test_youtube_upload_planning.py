@@ -8,9 +8,45 @@ from src.youtube_api_uploader import (
     select_worker_artifacts,
     validate_chapter_inventory,
 )
+from src.worker_pipeline import recover_incomplete_chapters, require_complete_worker
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
+    def test_partial_worker_cannot_report_success(self):
+        with self.assertRaisesRegex(RuntimeError, "1172"):
+            require_complete_worker({1172}, 16)
+
+    def test_complete_worker_is_accepted(self):
+        require_complete_worker(set(), 16)
+
+    @patch("src.worker_pipeline.stage_video_gen")
+    @patch("src.worker_pipeline.stage_image_gen")
+    @patch("src.worker_pipeline.stage_tts")
+    @patch("src.worker_pipeline.stage_clean")
+    @patch("src.worker_pipeline.stage_crawl")
+    @patch("src.worker_pipeline.validate_chapter_completeness")
+    def test_missing_chapter_runs_full_automatic_recovery_pipeline(
+        self, validate, crawl, clean, tts, image_gen, video_gen
+    ):
+        validate.return_value = ([1172], set())
+        remaining = recover_incomplete_chapters(
+            {"book_title": "book"},
+            ["/chapter-1171", "/chapter-1172"],
+            [1171, 1172],
+            {1172},
+            worker_id=16,
+        )
+        self.assertEqual(remaining, set())
+        crawl.assert_called_once_with(
+            {"book_title": "book"}, ["/chapter-1172"], 1172, [1172]
+        )
+        clean.assert_called_once_with({"book_title": "book"}, target_indices=[1172])
+        tts.assert_called_once_with({"book_title": "book"}, target_indices=[1172])
+        image_gen.assert_called_once_with({"book_title": "book"}, target_indices=[1172])
+        video_gen.assert_called_once_with(
+            {"book_title": "book"}, build_parts=False, target_indices=[1172]
+        )
+
     def test_artifact_query_requests_every_page(self):
         completed = type("Completed", (), {
             "returncode": 0,

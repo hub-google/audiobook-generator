@@ -125,6 +125,9 @@ jobs:
           echo "=================================================="
 
       - name: Run Per-Chapter End-to-End Pipeline (Real-Time Saving)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           python src/worker_pipeline.py --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1
 

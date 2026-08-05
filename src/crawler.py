@@ -156,8 +156,12 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
                 raw_text    = content_div.get_text(separator='\n') if content_div else ""
 
                 if not raw_text:
-                    logging.warning(f"[Crawler Worker] No content for chapter {global_idx}: {title}")
-                    break
+                    # The site occasionally returns a 200 anti-bot/empty page.
+                    # Treat that as a transient fetch failure and use the same
+                    # retry/backoff path as HTTP and network errors.
+                    raise ValueError(
+                        f"No chapter content in response (title={title!r})"
+                    )
 
                 raw_filename = f"{book_title}_chapter_{global_idx}_raw.txt"
                 raw_path     = os.path.join(raw_text_dir, raw_filename)
