@@ -60,7 +60,8 @@ def create_silent_wav(wav_path, ffmpeg_path="ffmpeg", duration=1.5):
         return False
 
 
-async def _generate_one_segment(semaphore, text, mp3_path, wav_path, part_label, voice, ffmpeg_path="ffmpeg", max_retries=3):
+async def _generate_one_segment(semaphore, text, mp3_path, wav_path, part_label, voice,
+                                rate="+0%", ffmpeg_path="ffmpeg", max_retries=3):
     """
     非同步生成單一段落的 Edge-TTS MP3。
     使用 Semaphore 限制最大並行數，失敗時最多重試 max_retries 次。
@@ -74,7 +75,7 @@ async def _generate_one_segment(semaphore, text, mp3_path, wav_path, part_label,
     async with semaphore:
         for attempt in range(max_retries):
             try:
-                communicate = edge_tts.Communicate(clean_t, voice)
+                communicate = edge_tts.Communicate(clean_t, voice, rate=rate)
                 await communicate.save(mp3_path)
                 # 確認產出的 MP3 不是空檔
                 if os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 100:
@@ -103,7 +104,7 @@ async def _generate_one_segment(semaphore, text, mp3_path, wav_path, part_label,
         return False
 
 
-async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice,
+async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, rate,
                                   ffmpeg_path, max_concurrency=5, max_retries=3):
     """
     並行非同步處理一章所有段落。
@@ -142,7 +143,10 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice,
             # 清除殘留的不完整 WAV
             if os.path.exists(wav_path):
                 os.remove(wav_path)
-            coros.append(_generate_one_segment(semaphore, text, mp3_path, wav_path, part_label, voice, ffmpeg_path, max_retries))
+            coros.append(_generate_one_segment(
+                semaphore, text, mp3_path, wav_path, part_label, voice,
+                rate, ffmpeg_path, max_retries
+            ))
             skip_flags.append(False)
 
     # 並行執行所有 TTS 請求
@@ -210,8 +214,12 @@ def run_tts_ms(target_indices=None):
     # 取得語音設定
     tts_cfg = config.get('tts', {})
     voice = tts_cfg.get('edge_voice', tts_cfg.get('voice', 'zh-CN-YunxiNeural'))
+    # Legacy configs have no edge_rate and must keep their original speed.
+    # New GUI runs receive +50% from catalog_parser.py.
+    rate = tts_cfg.get('edge_rate', '+0%')
     max_concurrency = int(tts_cfg.get('tts_concurrency', 5))
     max_retries = int(tts_cfg.get('tts_max_retries', 3))
+    logging.info("[TTS_MS] Edge-TTS voice=%s, rate=%s", voice, rate)
 
     filenames = sorted([f for f in os.listdir(clean_text_dir) if f.endswith("_clean.txt")])
 
@@ -273,7 +281,7 @@ def run_tts_ms(target_indices=None):
             generated_parts, valid_lines = asyncio.run(
                 _process_chapter_async(
                     lines, book_title, chap_num, audio_dir,
-                    voice, ffmpeg_path, max_concurrency, max_retries
+                    voice, rate, ffmpeg_path, max_concurrency, max_retries
                 )
             )
 

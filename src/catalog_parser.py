@@ -120,7 +120,8 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
         "chapters_per_worker": chapters_per_worker,  # 新增：讓 Worker 知道每台機器的額度
         "tts": {
             "engine": "edge-tts",
-            "edge_voice": "zh-CN-YunxiNeural"
+            "edge_voice": "zh-CN-YunxiNeural",
+            "edge_rate": "+50%"
         },
         "paths": {
             "workspace_base": "Workspace"
