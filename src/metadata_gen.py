@@ -19,6 +19,20 @@ logging.basicConfig(
 )
 
 
+LIGHT_PAINTING_STYLE = (
+    "Spectacular light painting art style, with luminous energy trails, "
+    "flowing long-exposure light ribbons, radiant contours, and controlled "
+    "glowing accents integrated naturally into the story scene."
+)
+
+COVER_OUTPUT_RULES = "No text, no letters, no logo, no watermark, no signature."
+
+
+def finalize_cover_prompt(prompt):
+    """套用所有封面來源都不可繞過的全域生圖風格與輸出限制。"""
+    return f"{prompt.strip()} {LIGHT_PAINTING_STYLE} {COVER_OUTPUT_RULES}"
+
+
 FONT_PATHS = [
     r"C:\Windows\Fonts\msjhbd.ttc",   # 微軟正黑體 粗體
     r"C:\Windows\Fonts\msjh.ttc",     # 微軟正黑體
@@ -206,20 +220,10 @@ def analyze_cover_brief(book_title, pure_plot, source="", workspace_dir=None, an
         brief["analysis_method"] = "external"
         return brief
     if not pure_plot:
-        return {"analysis_method": "neutral_fallback", "genre": "unknown", "prompt": _neutral_cover_prompt(book_title)}
+        return {"analysis_method": "neutral_fallback", "prompt": _neutral_cover_prompt(book_title)}
 
-    genre_rules = [
-        ("修仙／仙俠", ["修仙", "仙界", "修煉", "修炼", "靈根", "灵根", "宗門", "宗门", "成仙"]),
-        ("武俠", ["武俠", "江湖", "武林"]),
-        ("科幻", ["科幻", "星際", "太空", "未來"]),
-        ("歷史", ["歷史", "朝代", "帝國", "宮廷"]),
-        ("都市", ["都市", "現代", "城市"]),
-        ("懸疑", ["懸疑", "案件", "推理", "偵探"]),
-    ]
-    genre = next((name for name, keys in genre_rules if any(k in pure_plot for k in keys)), "文學／奇幻")
     return {
         "analysis_method": "local_evidence_only",
-        "genre": genre,
         "source": source,
         "synopsis": pure_plot,
     }
@@ -275,15 +279,17 @@ def auto_generate_prompt_from_summary(book_title, workspace_dir=None, analyzer=N
     pure_plot, source = fetch_book_summary_details(book_title)
     brief = analyze_cover_brief(book_title, pure_plot, source=source, workspace_dir=workspace_dir, analyzer=analyzer)
     if brief.get("prompt"):
-        return pure_plot, "", brief["prompt"], brief
+        final_prompt = finalize_cover_prompt(brief["prompt"])
+        brief["prompt"] = final_prompt
+        return pure_plot, "", final_prompt, brief
     
     # 透過 Gemini LLM 藝術總監產生大師級 Prompt
-    final_prompt = generate_gemini_art_prompt(book_title, pure_plot)
+    final_prompt = finalize_cover_prompt(generate_gemini_art_prompt(book_title, pure_plot))
     brief["prompt"] = final_prompt
     return pure_plot, pure_plot, final_prompt, brief
 
 
-def download_ai_image(prompt, width=2560, height=1440):
+def download_ai_image(prompt, width=1280, height=720):
     import time
     import io
     logging.info(f"🖼️ 連線 Hugging Face AI 繪圖伺服器 (FLUX.1-schnell) 生成 2K 高畫質封面底圖 ({width}x{height})...")
@@ -297,26 +303,43 @@ def download_ai_image(prompt, width=2560, height=1440):
         try:
             from huggingface_hub import InferenceClient
             client = InferenceClient(model="black-forest-labs/FLUX.1-schnell", token=hf_token)
-            img = client.text_to_image(prompt)
+            img = client.text_to_image(
+                prompt,
+                width=width,
+                height=height,
+                num_inference_steps=4,
+                guidance_scale=0.0,
+            )
         except Exception as hf_err:
             logging.warning(f"⚠️ huggingface_hub 呼叫失敗，改用 REST API 重試: {hf_err}")
             api_url = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
             headers = {"Authorization": f"Bearer {hf_token}"}
-            res = requests.post(api_url, headers=headers, json={"inputs": prompt}, timeout=60)
+            res = requests.post(
+                api_url,
+                headers=headers,
+                json={
+                    "inputs": prompt,
+                    "parameters": {
+                        "width": width,
+                        "height": height,
+                        "num_inference_steps": 4,
+                        "guidance_scale": 0.0,
+                    },
+                },
+                timeout=60,
+            )
             if res.status_code == 200:
                 img = Image.open(io.BytesIO(res.content))
             else:
                 raise Exception(f"HTTP {res.status_code}: {res.text[:200]}")
 
         if img:
-            bg_path = "temp_ai_bg.jpg"
-            img.save(bg_path)
             img = img.convert("RGB")
-            w, h = img.size
-            crop_h = int(h * 0.04)
-            img = img.crop((0, 0, w, h - crop_h)).resize((width, height), Image.LANCZOS)
-            img = ImageEnhance.Sharpness(img).enhance(1.4)
-            img = ImageEnhance.Contrast(img).enhance(1.1)
+            if img.size != (width, height):
+                raise RuntimeError(
+                    f"Hugging Face returned {img.size[0]}x{img.size[1]}; "
+                    f"expected {width}x{height}. Refusing to stretch the image."
+                )
             logging.info("✅ 成功從 Hugging Face FLUX.1 生成超高畫質底圖！")
             return img
     except Exception as e:
@@ -719,7 +742,7 @@ def ensure_master_cover(book_title, book_workspace_dir, force_regenerate=False, 
     pure_plot, english_plot, final_prompt, brief = auto_generate_prompt_from_summary(
         book_title, workspace_dir=book_workspace_dir, analyzer=analyzer
     )
-    master = download_ai_image(final_prompt, width=2560, height=1440)
+    master = download_ai_image(final_prompt, width=1280, height=720)
 
     master.convert("RGB").save(master_path, "JPEG", quality=94, optimize=True)
     with open(os.path.join(cover_dir, "master_cover_prompt.json"), "w", encoding="utf-8") as f:
