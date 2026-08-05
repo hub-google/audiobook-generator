@@ -21,6 +21,12 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, HttpError
 
+try:
+    from .part_builder import parse_chapter_num, get_media_duration, merge_part_videos
+except ImportError:
+    # Support running this file directly as ``python src/youtube_api_uploader.py``.
+    from part_builder import parse_chapter_num, get_media_duration, merge_part_videos
+
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -670,7 +676,6 @@ def main():
     playlist_id = get_or_create_playlist(youtube, playlist_name, playlist_desc)
     existing_titles = get_existing_playlist_video_titles(youtube, playlist_id)
 
-    from part_builder import parse_chapter_num, get_media_duration, merge_part_videos
     from metadata_gen import generate_video_title
 
     upload_subtitles_dir = os.path.abspath("Upload_Subtitles")
