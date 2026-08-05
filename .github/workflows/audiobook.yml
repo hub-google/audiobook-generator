@@ -199,7 +199,12 @@ jobs:
           set +e
           python src/youtube_api_uploader.py --run-id "${{ github.run_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
           code=$?
-          if [ "$code" -ne 0 ] && [ "$code" -ne 75 ]; then exit "$code"; fi
+          if [ "$code" -eq 75 ]; then
+            echo "## YouTube upload paused (incomplete)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Checkpoint saved. The scheduled upload workflow will resume after retry_at." >> "$GITHUB_STEP_SUMMARY"
+            exit 75
+          fi
+          if [ "$code" -ne 0 ]; then exit "$code"; fi
 
       - name: Save YouTube upload checkpoint
         if: always() && hashFiles('upload_resume_state/state.json') != ''
