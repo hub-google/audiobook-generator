@@ -910,6 +910,10 @@ def main():
                     except UploadPaused as paused:
                         save_resume_state(args.state_file, args.run_id, args.privacy, "paused",
                                           paused.reason, paused.retry_at, completed_titles, part_plan)
+                        logging.error(
+                            "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
+                            len(completed_titles), len(part_plan), paused.retry_at.isoformat(), args.run_id, paused.reason,
+                        )
                         logging.error("⏸️ 已安全暫停；下次可重試時間：%s", paused.retry_at.isoformat())
                         return EXIT_RETRY_LATER
 
@@ -1051,6 +1055,10 @@ def main():
             except UploadPaused as paused:
                 save_resume_state(args.state_file, args.run_id, args.privacy, "paused",
                                   paused.reason, paused.retry_at, completed_titles, part_plan)
+                logging.error(
+                    "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
+                    len(completed_titles), len(part_plan), paused.retry_at.isoformat(), args.run_id, paused.reason,
+                )
                 return EXIT_RETRY_LATER
             if v_id:
                 total_uploaded += 1
@@ -1070,6 +1078,10 @@ def main():
     logging.info("="*60)
     save_resume_state(args.state_file, args.run_id, args.privacy, "complete",
                       completed_titles=completed_titles, part_plan=part_plan)
+    logging.info(
+        "[API_UPLOAD_STATUS] COMPLETE | uploaded=%s | total=%s | source_run=%s",
+        len(completed_titles), len(part_plan) or len(completed_titles), args.run_id or "local",
+    )
     return 0
 
 if __name__ == "__main__":

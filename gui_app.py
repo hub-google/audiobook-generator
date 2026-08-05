@@ -556,10 +556,39 @@ class AudiobookGUIApp:
             f"?event=workflow_dispatch&per_page=10"
         )
 
+        connection_lost = False
+
+        def github_get(url, **kwargs):
+            """Keep monitoring alive across temporary local network outages."""
+            nonlocal connection_lost
+            while True:
+                try:
+                    response = requests.get(url, headers=headers, **kwargs)
+                    if connection_lost:
+                        connection_lost = False
+                        self.root.after(0, lambda: self.log(
+                            "🌐 網路已恢復，正在重新同步雲端 Run、Jobs 與執行紀錄…"
+                        ))
+                        self.root.after(0, lambda: self.lbl_status.config(
+                            text="網路已恢復，正在補回狀態…", foreground="#2980b9"
+                        ))
+                    return response
+                except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+                    if not connection_lost:
+                        connection_lost = True
+                        detail = str(exc)
+                        self.root.after(0, lambda d=detail: self.log(
+                            f"⚠️ 無法連線至 GitHub；雲端工作不受影響，GUI 將持續重試。\n   {d}"
+                        ))
+                        self.root.after(0, lambda: self.lbl_status.config(
+                            text="網路中斷，等待重新連線…", foreground="#e1b12c"
+                        ))
+                    time.sleep(5)
+
         run_id = None
         max_wait = 40
         for attempt in range(max_wait):
-            r = requests.get(runs_url, headers=headers, timeout=10)
+            r = github_get(runs_url, timeout=10)
             if r.status_code == 200:
                 runs = r.json().get("workflow_runs", [])
                 for run in runs:
@@ -603,29 +632,27 @@ class AudiobookGUIApp:
         prev_jobs_status = {}
         seen_progress_markers = {}
         last_log_check = {}
+        completed_logs_checked = set()
+        upload_pause = None
+        upload_complete = None
 
         while True:
             # 1. 查詢整體 Run 狀態
-            r_run = requests.get(run_url, headers=headers, timeout=10)
+            r_run = github_get(run_url, timeout=10)
+            run_status = None
+            run_conclusion = None
             if r_run.status_code == 200:
                 run_data = r_run.json()
                 run_status = run_data.get("status")
                 run_conclusion = run_data.get("conclusion")
                 self.root.after(0, lambda s=run_status: self.lbl_status.config(text=f"雲端狀態: {s}", foreground="#2980b9"))
 
-                if run_status == "completed":
-                    if run_conclusion == "success":
-                        self.root.after(0, lambda: self._on_workflow_success(repo, run_id))
-                    else:
-                        self.root.after(0, lambda c=run_conclusion: self._on_workflow_failed(f"雲端執行失敗: {c}"))
-                    break
-
             # 2. 查詢並行 Jobs 狀態 (支援分頁，避免超過 30 個 Job 就印不出來)
             all_jobs = []
             page = 1
             while True:
                 paged_url = f"{jobs_url}?per_page=100&page={page}"
-                r_jobs = requests.get(paged_url, headers=headers, timeout=10)
+                r_jobs = github_get(paged_url, timeout=10)
                 if r_jobs.status_code == 200:
                     jobs = r_jobs.json().get("jobs", [])
                     if not jobs:
@@ -651,15 +678,21 @@ class AudiobookGUIApp:
                         msg += f" ({j_conc})"
                     self.root.after(0, lambda m=msg: self.log(m))
 
-                # 3. 針對正在執行的 Worker Job，抓取即時 Log 解析章節進度
-                if j_status == "in_progress" and j_id:
+                # 3. 抓取執行中與剛完成的 Job Log；復網後可補回離線期間的章節進度
+                should_check_log = (
+                    j_status == "in_progress"
+                    or (j_status == "completed" and j_id not in completed_logs_checked)
+                )
+                if should_check_log and j_id:
                     now = time.time()
-                    if now - last_log_check.get(j_id, 0) >= 12:
+                    if j_status == "completed" or now - last_log_check.get(j_id, 0) >= 12:
                         last_log_check[j_id] = now
                         try:
                             log_url = f"https://api.github.com/repos/{repo}/actions/jobs/{j_id}/logs"
-                            r_log = requests.get(log_url, headers=headers, timeout=5, allow_redirects=True)
+                            r_log = github_get(log_url, timeout=5, allow_redirects=True)
                             if r_log.status_code == 200:
+                                if j_status == "completed":
+                                    completed_logs_checked.add(j_id)
                                 if j_id not in seen_progress_markers:
                                     seen_progress_markers[j_id] = set()
 
@@ -705,6 +738,21 @@ class AudiobookGUIApp:
                                             p_msg = f"     ├─ 📤 [API上傳進度] [{item_prog}] ✅ 成功上傳並加入播放清單: {chap_str} ({detail})"
                                         self.root.after(0, lambda m=p_msg: self.log(m))
 
+                                status_matches = re.findall(
+                                    r'\[API_UPLOAD_STATUS\] (PAUSED|COMPLETE) \| uploaded=(\d+) \| total=(\d+)'
+                                    r'(?: \| retry_at=([^ |]+) \| source_run=([^ |]+) \| reason=([^\r\n]+)'
+                                    r'| \| source_run=([^ |]+))',
+                                    r_log.text,
+                                )
+                                for state, uploaded, total, retry_at, source_run, reason, complete_source in status_matches:
+                                    if state == "PAUSED":
+                                        upload_pause = {
+                                            "uploaded": int(uploaded), "total": int(total),
+                                            "retry_at": retry_at, "source_run": source_run, "reason": reason.strip(),
+                                        }
+                                    else:
+                                        upload_complete = {"uploaded": int(uploaded), "total": int(total)}
+
                                 # 相容備用：解析 "批次完成：第 X~Y 章"
                                 fallback_matches = re.findall(
                                     r'=== \[Worker-(\d+)\] ✅ 批次完成：第 (\S+) 章 MP4 影片已實打實寫入 Workspace/！ ===',
@@ -718,6 +766,28 @@ class AudiobookGUIApp:
                                         self.root.after(0, lambda m=p_msg: self.log(m))
                         except Exception:
                             pass
+
+            # Jobs and logs are synchronized before showing the terminal result, so
+            # progress produced while the GUI was offline is not skipped.
+            if run_status == "completed":
+                if upload_pause:
+                    retry_text = upload_pause["retry_at"]
+                    self.root.after(0, lambda p=upload_pause, t=retry_text: self._on_workflow_failed(
+                        f"YouTube 上傳尚未完成：{p['uploaded']}/{p['total']} 部。"
+                        f" 原因：{p['reason']}。安全重試時間：{t}。"
+                        " 系統會每 30 分鐘檢查並自動斷點續傳。"
+                    ))
+                elif run_conclusion == "success" and upload_complete:
+                    self.root.after(0, lambda: self._on_workflow_success(repo, run_id))
+                elif run_conclusion == "success" and target_workflow_name == "Fast Upload Audiobooks & Build YouTube Playlist":
+                    self.root.after(0, lambda: self._on_workflow_failed(
+                        "GitHub Job 結束，但未找到 YouTube COMPLETE 標記；不得判定為全部上傳完成。"
+                    ))
+                elif run_conclusion == "success":
+                    self.root.after(0, lambda: self._on_workflow_success(repo, run_id))
+                else:
+                    self.root.after(0, lambda c=run_conclusion: self._on_workflow_failed(f"雲端執行失敗: {c}"))
+                break
 
             time.sleep(5)
 
