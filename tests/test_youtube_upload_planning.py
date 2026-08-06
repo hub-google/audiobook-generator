@@ -1,17 +1,51 @@
+import os
+import tempfile
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from src.youtube_api_uploader import (
     artifact_worker_index,
     build_part_plan_from_inventory,
     get_run_artifact_names,
+    load_resume_state,
+    save_resume_state,
+    set_video_thumbnail,
     select_worker_artifacts,
+    ThumbnailUploadPaused,
     validate_chapter_inventory,
 )
 from src.worker_pipeline import recover_incomplete_chapters, require_complete_worker
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
+    def test_checkpoint_preserves_pending_thumbnail_video_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = os.path.join(temp_dir, "state.json")
+            save_resume_state(
+                state_path, "123", "public", "paused",
+                reason="thumbnailRateLimit",
+                retry_at=datetime.now(timezone.utc),
+                completed_titles={"Part 11"},
+                part_plan=[{"part_num": 11, "title": "Part 11"}],
+                pending_thumbnails={"Part 11": "video-11"},
+            )
+            state = load_resume_state(state_path)
+        self.assertEqual(state["version"], 3)
+        self.assertEqual(state["pending_thumbnails"], {"Part 11": "video-11"})
+
+    @patch("src.youtube_api_uploader.time.sleep")
+    @patch("src.youtube_api_uploader.MediaFileUpload")
+    def test_thumbnail_rate_limit_becomes_resumable_pause(self, media, sleep):
+        request = type("Request", (), {"execute": lambda self: (_ for _ in ()).throw(Exception("429 uploadRateLimitExceeded"))})()
+        thumbnails = type("Thumbnails", (), {"set": lambda self, **kwargs: request})()
+        youtube = type("YouTube", (), {"thumbnails": lambda self: thumbnails})()
+        with tempfile.NamedTemporaryFile() as cover:
+            with self.assertRaises(ThumbnailUploadPaused) as raised:
+                set_video_thumbnail(youtube, "video-11", cover.name, attempts=2)
+        self.assertEqual(raised.exception.video_id, "video-11")
+        self.assertEqual(sleep.call_count, 2)
+
     def test_partial_worker_cannot_report_success(self):
         with self.assertRaisesRegex(RuntimeError, "1172"):
             require_complete_worker({1172}, 16)

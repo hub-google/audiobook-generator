@@ -75,7 +75,19 @@ jobs:
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" -eq 75 ]; then
             echo "## YouTube upload paused (incomplete)" >> "$GITHUB_STEP_SUMMARY"
-            echo "Checkpoint saved. A scheduled run will resume after retry_at." >> "$GITHUB_STEP_SUMMARY"
+            python - <<'PY'
+          import json, os
+          with open("upload_resume_state/state.json", encoding="utf-8") as f:
+              state = json.load(f)
+          done = len(state.get("completed_titles", []))
+          total = len(state.get("part_plan", []))
+          pending = len(state.get("pending_thumbnails", {}))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write(f"Progress: **{done}/{total} Parts**  \n")
+              f.write(f"Pending thumbnails: **{pending}**  \n")
+              f.write(f"Reason: `{state.get('reason') or 'incomplete'}`  \n")
+              f.write(f"Retry after: `{state.get('retry_at') or 'next scheduled run'}`\n")
+          PY
             exit 75
           fi
           if [ "$code" -ne 0 ]; then exit "$code"; fi

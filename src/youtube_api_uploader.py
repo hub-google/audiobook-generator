@@ -59,6 +59,14 @@ class UploadPaused(RuntimeError):
         self.original_error = original_error
 
 
+class ThumbnailUploadPaused(UploadPaused):
+    """The video exists, but its custom thumbnail still needs to be applied."""
+
+    def __init__(self, video_id, retry_at, original_error=None):
+        super().__init__("thumbnailRateLimit", retry_at, original_error)
+        self.video_id = video_id
+
+
 def _atomic_write_json(path, data):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     tmp_path = path + ".tmp"
@@ -70,9 +78,9 @@ def _atomic_write_json(path, data):
 
 
 def save_resume_state(path, run_id, privacy, status, reason="", retry_at=None,
-                      completed_titles=None, part_plan=None):
+                      completed_titles=None, part_plan=None, pending_thumbnails=None):
     data = {
-        "version": 2,
+        "version": 3,
         "run_id": str(run_id) if run_id else "",
         "privacy": privacy,
         "status": status,
@@ -83,6 +91,10 @@ def save_resume_state(path, run_id, privacy, status, reason="", retry_at=None,
         # Once a Part boundary is chosen it is immutable.  This is what makes a
         # resumed run continue 1-50, 51-100 instead of repartitioning 1-70, ...
         "part_plan": list(part_plan or []),
+        # title -> video id.  A video upload is durable even when the following
+        # thumbnails.set call is rate-limited, so resume must repair it instead
+        # of uploading the same multi-hour video a second time.
+        "pending_thumbnails": dict(pending_thumbnails or {}),
     }
     _atomic_write_json(path, data)
     logging.info("💾 上傳斷點已儲存：%s (%s)", path, status)
@@ -318,6 +330,66 @@ def get_existing_playlist_video_titles(youtube, playlist_id):
             logging.warning(f"無法獲取播放清單既有影片清單: {e}")
     return titles
 
+
+def get_playlist_video_index(youtube, playlist_id):
+    """Return playlist title -> video id for checkpoint migration/repair."""
+    index = {}
+    if not playlist_id:
+        return index
+    next_page_token = None
+    while True:
+        res = youtube.playlistItems().list(
+            part="snippet", playlistId=playlist_id, maxResults=50,
+            pageToken=next_page_token,
+        ).execute()
+        for item in res.get("items", []):
+            snippet = item.get("snippet", {})
+            video_id = snippet.get("resourceId", {}).get("videoId")
+            title = str(snippet.get("title") or "").strip()
+            if title and video_id:
+                index[title] = video_id
+        next_page_token = res.get("nextPageToken")
+        if not next_page_token:
+            return index
+
+def set_video_thumbnail(youtube, video_id, cover_path, attempts=5):
+    """Apply a custom thumbnail or raise a resumable post-upload pause."""
+    if not cover_path or not os.path.exists(cover_path):
+        raise ThumbnailUploadPaused(
+            video_id, datetime.now(timezone.utc) + timedelta(hours=1),
+            RuntimeError(f"封面檔不存在：{cover_path}"),
+        )
+
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            youtube.thumbnails().set(
+                videoId=video_id,
+                media_body=MediaFileUpload(cover_path)
+            ).execute()
+            logging.info("🖼️ 成功更新影片封面縮圖！")
+            return True
+        except Exception as e:
+            last_error = e
+            if "uploadRateLimitExceeded" in str(e) or "429" in str(e):
+                wait_sec = (attempt + 1) * 10
+                logging.warning(
+                    "⚠️ 設定縮圖觸發速率限制 (429)，等待 %s 秒後重試 (%s/%s)...",
+                    wait_sec, attempt + 1, attempts,
+                )
+                time.sleep(wait_sec)
+                continue
+            raise ThumbnailUploadPaused(
+                video_id, datetime.now(timezone.utc) + timedelta(hours=1), e,
+            ) from e
+
+    raise ThumbnailUploadPaused(
+        video_id,
+        datetime.now(timezone.utc) + timedelta(hours=1),
+        last_error,
+    )
+
+
 def upload_video_file(youtube, video_path, title, description, category_id="22", privacy_status="public", cover_path=None):
     """使用 Resumable 上傳 MP4 到 YouTube"""
     file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
@@ -378,23 +450,7 @@ def upload_video_file(youtube, video_path, title, description, category_id="22",
     logging.info(f"✅ 上傳成功！影片 ID: {video_id} (網址: https://www.youtube.com/watch?v={video_id})")
     sys.stdout.flush()
 
-    if cover_path and os.path.exists(cover_path):
-        for attempt in range(5):
-            try:
-                youtube.thumbnails().set(
-                    videoId=video_id,
-                    media_body=MediaFileUpload(cover_path)
-                ).execute()
-                logging.info("🖼️ 成功更新影片封面縮圖！")
-                break
-            except Exception as e:
-                if "uploadRateLimitExceeded" in str(e) or "429" in str(e):
-                    wait_sec = (attempt + 1) * 10
-                    logging.warning(f"⚠️ 設定縮圖觸發速率限制 (429)，等待 {wait_sec} 秒後重試 ({attempt+1}/5)...")
-                    time.sleep(wait_sec)
-                else:
-                    logging.warning(f"⚠️ 設定縮圖失敗: {e}")
-                    break
+    set_video_thumbnail(youtube, video_id, cover_path)
 
     return video_id
 
@@ -624,9 +680,11 @@ def main():
     saved_state = load_resume_state(args.state_file)
     completed_titles = set()
     part_plan = []
+    pending_thumbnails = {}
     if saved_state and str(saved_state.get("run_id") or "") == str(args.run_id or saved_state.get("run_id") or ""):
         completed_titles.update(saved_state.get("completed_titles") or [])
         part_plan = list(saved_state.get("part_plan") or [])
+        pending_thumbnails = dict(saved_state.get("pending_thumbnails") or {})
     if not args.run_id and saved_state and saved_state.get("status") in {"paused", "running"}:
         args.run_id = str(saved_state.get("run_id") or "")
         args.privacy = saved_state.get("privacy") or args.privacy
@@ -635,7 +693,7 @@ def main():
             retry_at = datetime.fromisoformat(retry_text.replace("Z", "+00:00"))
             if datetime.now(timezone.utc) < retry_at:
                 logging.info("⏳ 尚未到安全重試時間 %s；本次排程不會呼叫 YouTube。", retry_at.isoformat())
-                return 0
+                return EXIT_RETRY_LATER
 
     if not args.run_id and not args.input_dir:
         logging.info("✅ 沒有待續傳的 YouTube 工作。")
@@ -643,7 +701,8 @@ def main():
 
     if args.run_id:
         save_resume_state(args.state_file, args.run_id, args.privacy, "running",
-                          completed_titles=completed_titles, part_plan=part_plan)
+                          completed_titles=completed_titles, part_plan=part_plan,
+                          pending_thumbnails=pending_thumbnails)
 
     youtube = get_authenticated_service()
 
@@ -685,7 +744,45 @@ def main():
     playlist_name = f"《{book_title}》有聲小說全集"
     playlist_desc = f"《{book_title}》完整版有聲書全集 (第 {start_chap} 至 {end_chap} 章)，高音質連續播映版。\n歡迎訂閱開啟小鈴鐺！"
     playlist_id = get_or_create_playlist(youtube, playlist_name, playlist_desc)
-    existing_titles = get_existing_playlist_video_titles(youtube, playlist_id)
+    existing_video_ids = get_playlist_video_index(youtube, playlist_id)
+    existing_titles = set(existing_video_ids)
+    logging.info("📋 成功獲取播放清單已有 %s 部影片。", len(existing_titles))
+
+    # Version-2 checkpoints predate pending_thumbnails.  The last completed
+    # title is conservatively repaired once, which fixes the already uploaded
+    # Part 11 whose five thumbnail attempts all received HTTP 429.
+    if saved_state and int(saved_state.get("version") or 0) < 3 and completed_titles:
+        for planned in reversed(part_plan):
+            legacy_title = str(planned.get("title") or "").strip()
+            if legacy_title in completed_titles and legacy_title in existing_video_ids:
+                pending_thumbnails.setdefault(legacy_title, existing_video_ids[legacy_title])
+                logging.info("🧭 舊版斷點遷移：將最後完成影片列入封面核對：%s", legacy_title)
+                break
+
+    # Finish durable post-upload work before creating any more videos.  This is
+    # what repairs a thumbnails.set 429 on the next scheduled run.
+    for pending_title, pending_video_id in list(pending_thumbnails.items()):
+        try:
+            logging.info("🖼️ 續傳待補封面：%s (%s)", pending_title, pending_video_id)
+            set_video_thumbnail(youtube, pending_video_id, cover_path)
+        except ThumbnailUploadPaused as paused:
+            save_resume_state(
+                args.state_file, args.run_id, args.privacy, "paused",
+                paused.reason, paused.retry_at, completed_titles, part_plan,
+                pending_thumbnails,
+            )
+            logging.error(
+                "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
+                len(completed_titles), len(part_plan), paused.retry_at.isoformat(),
+                args.run_id, paused.reason,
+            )
+            return EXIT_RETRY_LATER
+        del pending_thumbnails[pending_title]
+        save_resume_state(
+            args.state_file, args.run_id, args.privacy, "running",
+            completed_titles=completed_titles, part_plan=part_plan,
+            pending_thumbnails=pending_thumbnails,
+        )
 
     from metadata_gen import generate_video_title
 
@@ -748,6 +845,7 @@ def main():
         save_resume_state(
             args.state_file, args.run_id, args.privacy, "planned",
             completed_titles=completed_titles, part_plan=part_plan,
+            pending_thumbnails=pending_thumbnails,
         )
         logging.info("✅ 全書分部規劃已鎖定；第二階段將嚴格依 Part 1 → Part %s 串行上傳。", len(part_plan))
 
@@ -865,7 +963,8 @@ def main():
                     # must reuse this exact chapter membership.
                     save_resume_state(
                         args.state_file, args.run_id, args.privacy, "running",
-                        completed_titles=completed_titles, part_plan=part_plan
+                        completed_titles=completed_titles, part_plan=part_plan,
+                        pending_thumbnails=pending_thumbnails,
                     )
 
                 if expected_title in existing_titles or expected_title in completed_titles:
@@ -923,9 +1022,27 @@ def main():
                             privacy_status=args.privacy,
                             cover_path=p_meta["cover_file"]
                         )
+                    except ThumbnailUploadPaused as paused:
+                        # videos.insert already succeeded.  Persist its id before
+                        # stopping so resume repairs the cover without duplicating
+                        # this multi-hour video.
+                        completed_titles.add(p_meta["title"])
+                        pending_thumbnails[p_meta["title"]] = paused.video_id
+                        save_resume_state(
+                            args.state_file, args.run_id, args.privacy, "paused",
+                            paused.reason, paused.retry_at, completed_titles, part_plan,
+                            pending_thumbnails,
+                        )
+                        logging.error(
+                            "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
+                            len(completed_titles), len(part_plan), paused.retry_at.isoformat(),
+                            args.run_id, paused.reason,
+                        )
+                        return EXIT_RETRY_LATER
                     except UploadPaused as paused:
                         save_resume_state(args.state_file, args.run_id, args.privacy, "paused",
-                                          paused.reason, paused.retry_at, completed_titles, part_plan)
+                                          paused.reason, paused.retry_at, completed_titles, part_plan,
+                                          pending_thumbnails)
                         logging.error(
                             "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
                             len(completed_titles), len(part_plan), paused.retry_at.isoformat(), args.run_id, paused.reason,
@@ -939,7 +1056,8 @@ def main():
                         # Persist immediately after videos.insert succeeds. If captions or playlist
                         # insertion later crashes, the next run must not upload the video twice.
                         save_resume_state(args.state_file, args.run_id, args.privacy, "running",
-                                          completed_titles=completed_titles, part_plan=part_plan)
+                                          completed_titles=completed_titles, part_plan=part_plan,
+                                          pending_thumbnails=pending_thumbnails)
                         if srt_ok and os.path.exists(out_srt_path):
                             upload_caption_file(youtube, v_id, out_srt_path)
                         if playlist_id:
@@ -1068,9 +1186,24 @@ def main():
                     privacy_status=args.privacy,
                     cover_path=v_cover
                 )
+            except ThumbnailUploadPaused as paused:
+                completed_titles.add(v_title)
+                pending_thumbnails[v_title] = paused.video_id
+                save_resume_state(
+                    args.state_file, args.run_id, args.privacy, "paused",
+                    paused.reason, paused.retry_at, completed_titles, part_plan,
+                    pending_thumbnails,
+                )
+                logging.error(
+                    "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
+                    len(completed_titles), len(part_plan), paused.retry_at.isoformat(),
+                    args.run_id, paused.reason,
+                )
+                return EXIT_RETRY_LATER
             except UploadPaused as paused:
                 save_resume_state(args.state_file, args.run_id, args.privacy, "paused",
-                                  paused.reason, paused.retry_at, completed_titles, part_plan)
+                                  paused.reason, paused.retry_at, completed_titles, part_plan,
+                                  pending_thumbnails)
                 logging.error(
                     "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
                     len(completed_titles), len(part_plan), paused.retry_at.isoformat(), args.run_id, paused.reason,
@@ -1080,12 +1213,32 @@ def main():
                 total_uploaded += 1
                 completed_titles.add(v_title)
                 save_resume_state(args.state_file, args.run_id, args.privacy, "running",
-                                  completed_titles=completed_titles, part_plan=part_plan)
+                                  completed_titles=completed_titles, part_plan=part_plan,
+                                  pending_thumbnails=pending_thumbnails)
                 if v_srt and os.path.exists(v_srt):
                     upload_caption_file(youtube, v_id, v_srt)
                 if playlist_id:
                     add_video_to_playlist(youtube, playlist_id, v_id, position=part_n - 1)
                 logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_n}/{len(parts_to_upload)} | Ch {item['start_chap']}~{item['end_chap']} | VideoID {v_id}, total {total_uploaded}")
+
+    if pending_thumbnails:
+        raise RuntimeError(f"仍有 {len(pending_thumbnails)} 部影片等待補封面，禁止標記 complete")
+    if args.run_id:
+        expected_titles = {str(part.get("title") or "").strip() for part in part_plan}
+        expected_titles.discard("")
+        finished_titles = completed_titles | existing_titles
+        missing_titles = sorted(expected_titles - finished_titles)
+        if missing_titles:
+            save_resume_state(
+                args.state_file, args.run_id, args.privacy, "running",
+                reason="incompleteParts", completed_titles=completed_titles,
+                part_plan=part_plan, pending_thumbnails=pending_thumbnails,
+            )
+            logging.error(
+                "[API_UPLOAD_STATUS] INCOMPLETE | finished=%s | total=%s | missing=%s",
+                len(expected_titles) - len(missing_titles), len(expected_titles), missing_titles[:3],
+            )
+            return EXIT_RETRY_LATER
 
     logging.info("="*60)
     logging.info(f"🎉 全部影片極速上傳完畢！共上傳 {total_uploaded} 部分部影片至 YouTube 播放清單！")
@@ -1093,7 +1246,8 @@ def main():
         logging.info(f"👉 播放清單網址: https://www.youtube.com/playlist?list={playlist_id}")
     logging.info("="*60)
     save_resume_state(args.state_file, args.run_id, args.privacy, "complete",
-                      completed_titles=completed_titles, part_plan=part_plan)
+                      completed_titles=completed_titles, part_plan=part_plan,
+                      pending_thumbnails=pending_thumbnails)
     logging.info(
         "[API_UPLOAD_STATUS] COMPLETE | uploaded=%s | total=%s | source_run=%s",
         len(completed_titles), len(part_plan) or len(completed_titles), args.run_id or "local",
