@@ -667,6 +667,21 @@ def download_artifact_task(run_id, repo, artifact_name, dest_dir):
     res = subprocess.run(dl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return res.returncode == 0
 
+def get_latest_successful_run_id(repo):
+    """Fallback when no run_id is passed and no state.json exists: auto-detect latest video production run."""
+    try:
+        cmd = [
+            "gh", "api",
+            f"repos/{repo}/actions/workflows/audiobook.yml/runs?status=success&per_page=1",
+            "--jq", ".workflow_runs[0].id"
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if res.returncode == 0 and res.stdout.strip() and res.stdout.strip() != "null":
+            return res.stdout.strip()
+    except Exception as e:
+        logging.warning("無法自動查詢最新 Run ID: %s", e)
+    return None
+
 def main():
     parser = argparse.ArgumentParser(description="YouTube API Fast Uploader & Playlist Builder")
     parser.add_argument("--run-id", help="GitHub Actions Run ID containing video worker artifacts")
@@ -685,7 +700,8 @@ def main():
         completed_titles.update(saved_state.get("completed_titles") or [])
         part_plan = list(saved_state.get("part_plan") or [])
         pending_thumbnails = dict(saved_state.get("pending_thumbnails") or {})
-    if not args.run_id and saved_state and saved_state.get("status") in {"paused", "running"}:
+    valid_resume_statuses = {"paused", "running", "planned", "incomplete"}
+    if not args.run_id and saved_state and saved_state.get("status") in valid_resume_statuses:
         args.run_id = str(saved_state.get("run_id") or "")
         args.privacy = saved_state.get("privacy") or args.privacy
         retry_text = saved_state.get("retry_at")
@@ -696,8 +712,14 @@ def main():
                 return EXIT_RETRY_LATER
 
     if not args.run_id and not args.input_dir:
-        logging.info("✅ 沒有待續傳的 YouTube 工作。")
-        return 0
+        logging.info("🔍 未指定 --run-id 且無有效斷點紀錄，嘗試自動查詢最新產檔成功的 Run ID...")
+        latest_run_id = get_latest_successful_run_id(args.repo)
+        if latest_run_id:
+            args.run_id = latest_run_id
+            logging.info("💡 自動鎖定最新產檔 Run ID: %s", args.run_id)
+        else:
+            logging.info("✅ 沒有待續傳的 YouTube 工作。")
+            return 0
 
     if args.run_id:
         save_resume_state(args.state_file, args.run_id, args.privacy, "running",
