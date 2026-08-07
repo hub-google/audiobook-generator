@@ -1,32 +1,31 @@
 @echo off
-chcp 65001 >nul
 setlocal EnableDelayedExpansion
 
 echo ==============================================
-echo       Audiobook Generator 專案一鍵部署腳本
+echo    Audiobook Generator Auto-Deploy Script
 echo ==============================================
 echo.
 
-:: 1. 取得 Commit 訊息
+:: 1. Get commit message
 set "MSG=%~1"
 if "!MSG!"=="" (
-    set /p MSG="請輸入 Commit 訊息 (直接 Enter 則預設為 Auto deploy): "
+    set /p MSG="Enter commit message (Press Enter for 'Auto deploy'): "
 )
 if "!MSG!"=="" set "MSG=Auto deploy"
 
-:: 2. 加入所有變更
+:: 2. Add changes
 echo.
-echo [1/3] 正在加入變更至 Git (git add .)
+echo [1/3] Adding changes to Git (git add .)
 git add .
 
-:: 3. 提交變更
+:: 3. Commit changes
 echo.
-echo [2/3] 正在提交變更 (git commit)
+echo [2/3] Committing changes (git commit)
 git commit -m "!MSG!"
 
-:: 4. 從 .env 讀取 GITHUB_TOKEN 並推播
+:: 4. Read GITHUB_TOKEN from .env and push
 echo.
-echo [3/3] 正在推播至 GitHub (git push)...
+echo [3/3] Pushing to GitHub (git push)...
 set "GH_TOKEN="
 if exist .env (
     for /f "tokens=1,2 delims==" %%a in (.env) do (
@@ -37,22 +36,22 @@ if exist .env (
 )
 
 if not "!GH_TOKEN!"=="" (
-    rem 移除可能的空白字元
+    rem Remove possible whitespace and quotes
     set "GH_TOKEN=!GH_TOKEN: =!"
     set "GH_TOKEN=!GH_TOKEN:"=!"
     git push https://!GH_TOKEN!@github.com/hub-google/audiobook-generator.git HEAD
     if !errorlevel! equ 0 (
-        echo [成功] 已使用 .env 金鑰順利推播！
+        echo [SUCCESS] Pushed successfully using token from .env!
     ) else (
-        echo [錯誤] 推播失敗，請檢查網路或金鑰權限。
+        echo [ERROR] Push failed. Please check network or token permissions.
     )
 ) else (
-    echo [警告] 找不到 .env 或 GITHUB_TOKEN，將使用預設驗證方式推播...
+    echo [WARNING] .env or GITHUB_TOKEN not found. Falling back to default auth...
     git push origin HEAD
 )
 
 echo.
 echo ==============================================
-echo                   部署完成！
+echo              Deployment Complete!
 echo ==============================================
 pause
