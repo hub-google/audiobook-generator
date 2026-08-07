@@ -16,8 +16,8 @@ on:
         default: 'public'
 
 permissions:
-  contents: read
-  actions: read
+  contents: write
+  actions: write
 
 concurrency:
   group: youtube-resumable-upload
@@ -73,24 +73,62 @@ jobs:
             --state-file upload_resume_state/state.json
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          if [ "$code" -eq 75 ]; then
-            echo "## YouTube upload paused (incomplete)" >> "$GITHUB_STEP_SUMMARY"
-            python - <<'PY'
+          if [ "$code" -ne 0 ] && [ "$code" -ne 75 ]; then exit "$code"; fi
+          exit "$code"
+
+      - name: Generate Job Summary
+        if: always()
+        run: |
+          python - <<'PY'
           import json, os
-          with open("upload_resume_state/state.json", encoding="utf-8") as f:
+          
+          state_file = "upload_resume_state/state.json"
+          if not os.path.exists(state_file):
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+                  f.write("## YouTube Upload Status\nNo state file found.\n")
+              exit(0)
+              
+          with open(state_file, encoding="utf-8") as f:
               state = json.load(f)
+              
           done = len(state.get("completed_titles", []))
-          total = len(state.get("part_plan", []))
+          total = len(state.get("part_plan", [])) or max(done, 1)
           pending = len(state.get("pending_thumbnails", {}))
+          status = state.get("status", "unknown")
+          
+          status_icon = "⏸️"
+          if status == "complete": status_icon = "🎉"
+          elif status == "failed": status_icon = "❌"
+          elif status == "unknown": status_icon = "⚠️"
+          
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
-              f.write(f"Progress: **{done}/{total} Parts**  \n")
-              f.write(f"Pending thumbnails: **{pending}**  \n")
-              f.write(f"Reason: `{state.get('reason') or 'incomplete'}`  \n")
-              f.write(f"Retry after: `{state.get('retry_at') or 'next scheduled run'}`\n")
+              f.write(f"## {status_icon} YouTube Upload Status: {status.upper()}\n\n")
+              f.write(f"| 項目 | 狀態資訊 |\n|---|---|\n")
+              f.write(f"| **任務進度** | **{done} / {total} Parts** ({done/total*100:.1f}%) |\n")
+              f.write(f"| **Pending Thumbnails** | **{pending}** |\n")
+              if "reason" in state and state["reason"]:
+                  f.write(f"| **Reason** | `{state['reason']}` |\n")
+              if "retry_at" in state and state["retry_at"]:
+                  f.write(f"| **Retry After** | `{state['retry_at']}` |\n")
+                  
+              playlist_url = state.get("playlist_url")
+              if playlist_url and playlist_url.startswith("http"):
+                  f.write(f"| **播放清單** | [點此開啟 YouTube 播放清單]({playlist_url}) |\n")
           PY
-            exit 75
+
+      - name: Auto-disable scheduled workflow on complete
+        if: always() && steps.uploader.outputs.exit_code == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f "upload_resume_state/state.json" ]; then
+            status=$(python -c 'import json; print(json.load(open("upload_resume_state/state.json")).get("status", "unknown"))' 2>/dev/null || echo "unknown")
+            if [ "$status" = "complete" ]; then
+              echo "All uploads completed! Disabling cron schedule..."
+              gh workflow disable "youtube_upload.yml" || true
+              echo "🛑 **Workflow schedule has been automatically disabled to save resources.**" >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
-          if [ "$code" -ne 0 ]; then exit "$code"; fi
 
       - name: Save YouTube upload checkpoint
         if: always() && hashFiles('upload_resume_state/state.json') != ''

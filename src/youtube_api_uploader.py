@@ -78,7 +78,7 @@ def _atomic_write_json(path, data):
 
 
 def save_resume_state(path, run_id, privacy, status, reason="", retry_at=None,
-                      completed_titles=None, part_plan=None, pending_thumbnails=None):
+                      completed_titles=None, part_plan=None, pending_thumbnails=None, playlist_url=None):
     data = {
         "version": 3,
         "run_id": str(run_id) if run_id else "",
@@ -95,6 +95,7 @@ def save_resume_state(path, run_id, privacy, status, reason="", retry_at=None,
         # thumbnails.set call is rate-limited, so resume must repair it instead
         # of uploading the same multi-hour video a second time.
         "pending_thumbnails": dict(pending_thumbnails or {}),
+        "playlist_url": playlist_url,
     }
     _atomic_write_json(path, data)
     logging.info("💾 上傳斷點已儲存：%s (%s)", path, status)
@@ -1225,7 +1226,7 @@ def main():
             except UploadPaused as paused:
                 save_resume_state(args.state_file, args.run_id, args.privacy, "paused",
                                   paused.reason, paused.retry_at, completed_titles, part_plan,
-                                  pending_thumbnails)
+                                  pending_thumbnails, playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None)
                 logging.error(
                     "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
                     len(completed_titles), len(part_plan), paused.retry_at.isoformat(), args.run_id, paused.reason,
@@ -1236,7 +1237,7 @@ def main():
                 completed_titles.add(v_title)
                 save_resume_state(args.state_file, args.run_id, args.privacy, "running",
                                   completed_titles=completed_titles, part_plan=part_plan,
-                                  pending_thumbnails=pending_thumbnails)
+                                  pending_thumbnails=pending_thumbnails, playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None)
                 if v_srt and os.path.exists(v_srt):
                     upload_caption_file(youtube, v_id, v_srt)
                 if playlist_id:
@@ -1255,6 +1256,7 @@ def main():
                 args.state_file, args.run_id, args.privacy, "running",
                 reason="incompleteParts", completed_titles=completed_titles,
                 part_plan=part_plan, pending_thumbnails=pending_thumbnails,
+                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None
             )
             logging.error(
                 "[API_UPLOAD_STATUS] INCOMPLETE | finished=%s | total=%s | missing=%s",
@@ -1269,7 +1271,7 @@ def main():
     logging.info("="*60)
     save_resume_state(args.state_file, args.run_id, args.privacy, "complete",
                       completed_titles=completed_titles, part_plan=part_plan,
-                      pending_thumbnails=pending_thumbnails)
+                      pending_thumbnails=pending_thumbnails, playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None)
     logging.info(
         "[API_UPLOAD_STATUS] COMPLETE | uploaded=%s | total=%s | source_run=%s",
         len(completed_titles), len(part_plan) or len(completed_titles), args.run_id or "local",
