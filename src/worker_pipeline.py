@@ -60,8 +60,9 @@ def validate_chapter_completeness(config, exact_indices, tts_failed_chapters=Non
       ✅ Audio/{書名}_chapter_N.wav   — 聲音檔
       ✅ Images/{書名}_chapter_N.jpg  — 標題卡圖片
       ✅ Subtitles/{書名}_chapter_N.srt — 字幕檔
+      ✅ Video/{書名}_chapter_N.mp4   — 單章影片
 
-    三者缺一不可。
+    四者缺一不可。
     - WAV 或 SRT 缺失：TTS 已用章節重試，到這裡仍缺表示完全失敗。
     - JPG 缺失：此處最多重試 3 次圖片生成。
     仍失敗的章節列入最終失敗清單並清除孤兒檔案。
@@ -74,6 +75,7 @@ def validate_chapter_completeness(config, exact_indices, tts_failed_chapters=Non
     audio_dir     = os.path.join(workspace_dir, "Audio")
     images_dir    = os.path.join(workspace_dir, "Images")
     subtitles_dir = os.path.join(workspace_dir, "Subtitles")
+    video_dir     = os.path.join(workspace_dir, "Video")
 
     # Files are the source of truth. A chapter that failed TTS earlier may have
     # succeeded during a later recovery round, so historical failure markers
@@ -86,10 +88,12 @@ def validate_chapter_completeness(config, exact_indices, tts_failed_chapters=Non
         wav_path = os.path.join(audio_dir,     f"{book_title}_chapter_{chap_num}.wav")
         jpg_path = os.path.join(images_dir,    f"{book_title}_chapter_{chap_num}.jpg")
         srt_path = os.path.join(subtitles_dir, f"{book_title}_chapter_{chap_num}.srt")
+        mp4_path = os.path.join(video_dir,     f"{book_title}_chapter_{chap_num}.mp4")
 
         # ── 檢查 WAV / SRT（不可重試，TTS 已有章節重試機制）──
         wav_ok = os.path.exists(wav_path) and os.path.getsize(wav_path) > 100
         srt_ok = os.path.exists(srt_path) and os.path.getsize(srt_path) > 10
+        mp4_ok = os.path.exists(mp4_path) and os.path.getsize(mp4_path) > 1000
 
         # ── 檢查 JPG，缺失時最多重試 3 次生成 ──
         jpg_ok = os.path.exists(jpg_path) and os.path.getsize(jpg_path) > 100
@@ -118,6 +122,8 @@ def validate_chapter_completeness(config, exact_indices, tts_failed_chapters=Non
             missing.append("JPG圖片")
         if not srt_ok:
             missing.append("SRT字幕")
+        if not mp4_ok:
+            missing.append("MP4影片")
 
         if missing:
             logging.error(
@@ -125,7 +131,7 @@ def validate_chapter_completeness(config, exact_indices, tts_failed_chapters=Non
                 f" 此章將不會被加入影片。"
             )
             # 刪除孤兒檔案
-            for path in [wav_path, jpg_path, srt_path]:
+            for path in [wav_path, jpg_path, srt_path, mp4_path]:
                 if os.path.exists(path):
                     try:
                         os.remove(path)
@@ -134,7 +140,7 @@ def validate_chapter_completeness(config, exact_indices, tts_failed_chapters=Non
                         pass
             final_failed.add(chap_num)
         else:
-            logging.info(f"[Validate] ✓ 第 {chap_num} 章三件齊全 (WAV + JPG + SRT)")
+            logging.info(f"[Validate] ✓ 第 {chap_num} 章四件齊全 (WAV + JPG + SRT + MP4)")
             complete_chapters.append(chap_num)
 
     return complete_chapters, final_failed
@@ -153,7 +159,7 @@ def print_final_report(complete_chapters, failed_chapters, worker_id):
             f"     {sorted(failed_chapters)}"
         )
         logging.error(
-            f"  ⚠️  失敗原因：TTS 語音合成失敗 / SRT 字幕生成失敗 / 圖片生成失敗 (多次重試後仍失敗)"
+            f"  ⚠️  失敗原因：抓取 / TTS / SRT / 圖片 / MP4 任一產物缺失 (多次重試後仍失敗)"
         )
     else:
         logging.info("  🎉 所有章節均成功，無任何失敗！")
@@ -301,8 +307,19 @@ def main():
                 tts_failed_chapters.update(failed_in_batch)
             stage_image_gen(config, target_indices=sub_indices)
             stage_video_gen(config, build_parts=False, target_indices=sub_indices)
-            logging.info(f"=== [Worker-{args.worker_id}] ✅ 批次完成：第 {sub_indices[0]}~{sub_indices[-1]} 章 MP4 已寫入 ===")
-            logging.info(f"[PROGRESS_MARKER] Worker-{args.worker_id} | Ch {sub_indices[0]}~{sub_indices[-1]} done ({i + len(sub_indices)}/{total_in_worker})")
+            still_missing_mp4s = []
+            for c_idx in sub_indices:
+                mp4_file = os.path.join(video_dir, f"{book_title}_chapter_{c_idx}.mp4")
+                if not (os.path.exists(mp4_file) and os.path.getsize(mp4_file) > 1000):
+                    still_missing_mp4s.append(c_idx)
+            if still_missing_mp4s:
+                logging.error(
+                    "[Worker-%s] 批次未產生必要 MP4：%s；將交由缺章修復流程重試",
+                    args.worker_id, still_missing_mp4s,
+                )
+            else:
+                logging.info(f"=== [Worker-{args.worker_id}] ✅ 批次完成：第 {sub_indices[0]}~{sub_indices[-1]} 章 MP4 已寫入 ===")
+                logging.info(f"[PROGRESS_MARKER] Worker-{args.worker_id} | Ch {sub_indices[0]}~{sub_indices[-1]} done ({i + len(sub_indices)}/{total_in_worker})")
 
         # Validate before packaging. Any missing chapter is retried through the
         # complete pipeline, then validated again before artifacts may publish.
@@ -340,7 +357,7 @@ def main():
         stage_video_gen(config)
 
     elif stage == "validate":
-        # 驗收：確認每章三件齊全（WAV + JPG + SRT）
+        # 驗收：確認每章四件齊全（WAV + JPG + SRT + MP4）
         complete_chapters, final_failed = validate_chapter_completeness(
             config, exact_indices, tts_failed_chapters
         )

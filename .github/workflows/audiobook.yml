@@ -241,7 +241,6 @@ jobs:
           set +e
           python src/youtube_api_uploader.py --run-id "${{ github.run_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
           code=$?
-          code=$?
           if [ "$code" -ne 0 ] && [ "$code" -ne 75 ]; then exit "$code"; fi
           exit "$code"
 

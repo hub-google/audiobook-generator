@@ -15,7 +15,11 @@ from src.youtube_api_uploader import (
     ThumbnailUploadPaused,
     validate_chapter_inventory,
 )
-from src.worker_pipeline import recover_incomplete_chapters, require_complete_worker
+from src.worker_pipeline import (
+    recover_incomplete_chapters,
+    require_complete_worker,
+    validate_chapter_completeness,
+)
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
@@ -52,6 +56,51 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
 
     def test_complete_worker_is_accepted(self):
         require_complete_worker(set(), 16)
+
+    def test_worker_validation_requires_single_chapter_mp4(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = os.path.join(temp_dir, "Workspace", "book")
+            for folder in ("Audio", "Images", "Subtitles", "Video"):
+                os.makedirs(os.path.join(workspace, folder), exist_ok=True)
+            files = {
+                "Audio/book_chapter_103.wav": b"w" * 101,
+                "Images/book_chapter_103.jpg": b"j" * 101,
+                "Subtitles/book_chapter_103.srt": b"s" * 11,
+            }
+            for relative_path, content in files.items():
+                with open(os.path.join(workspace, relative_path), "wb") as output:
+                    output.write(content)
+            config = {
+                "book_title": "book",
+                "paths": {"workspace_base": "Workspace"},
+            }
+            with patch("src.worker_pipeline.SRC_DIR", os.path.join(temp_dir, "src")):
+                complete, failed = validate_chapter_completeness(config, [103])
+        self.assertEqual(complete, [])
+        self.assertEqual(failed, {103})
+
+    def test_worker_validation_accepts_all_four_chapter_outputs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = os.path.join(temp_dir, "Workspace", "book")
+            for folder in ("Audio", "Images", "Subtitles", "Video"):
+                os.makedirs(os.path.join(workspace, folder), exist_ok=True)
+            files = {
+                "Audio/book_chapter_103.wav": b"w" * 101,
+                "Images/book_chapter_103.jpg": b"j" * 101,
+                "Subtitles/book_chapter_103.srt": b"s" * 11,
+                "Video/book_chapter_103.mp4": b"v" * 1001,
+            }
+            for relative_path, content in files.items():
+                with open(os.path.join(workspace, relative_path), "wb") as output:
+                    output.write(content)
+            config = {
+                "book_title": "book",
+                "paths": {"workspace_base": "Workspace"},
+            }
+            with patch("src.worker_pipeline.SRC_DIR", os.path.join(temp_dir, "src")):
+                complete, failed = validate_chapter_completeness(config, [103])
+        self.assertEqual(complete, [103])
+        self.assertEqual(failed, set())
 
     @patch("src.worker_pipeline.stage_video_gen")
     @patch("src.worker_pipeline.stage_image_gen")
