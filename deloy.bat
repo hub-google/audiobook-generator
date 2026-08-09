@@ -1,57 +1,50 @@
 @echo off
-setlocal EnableDelayedExpansion
+setlocal EnableExtensions DisableDelayedExpansion
 
-echo ==============================================
-echo    Audiobook Generator Auto-Deploy Script
-echo ==============================================
-echo.
+rem Deploy every tracked/untracked workspace change to the current Git branch.
+rem Usage: deloy.bat "Optional commit message"
 
-:: 1. Get commit message
-set "MSG=%~1"
-if "!MSG!"=="" (
-    set /p MSG="Enter commit message (Press Enter for 'Auto deploy'): "
-)
-if "!MSG!"=="" set "MSG=Auto deploy"
+cd /d "%~dp0"
 
-:: 2. Add changes
-echo.
-echo [1/3] Adding changes to Git (git add .)
-git add .
-
-:: 3. Commit changes
-echo.
-echo [2/3] Committing changes (git commit)
-git commit -m "!MSG!"
-
-:: 4. Read GITHUB_TOKEN from .env and push
-echo.
-echo [3/3] Pushing to GitHub (git push)...
-set "GH_TOKEN="
-if exist .env (
-    for /f "tokens=1,2 delims==" %%a in (.env) do (
-        if "%%a"=="GITHUB_TOKEN" (
-            set "GH_TOKEN=%%b"
-        )
-    )
+git rev-parse --is-inside-work-tree >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] This script is not inside a Git repository.
+    exit /b 1
 )
 
-if not "!GH_TOKEN!"=="" (
-    rem Remove possible whitespace and quotes
-    set "GH_TOKEN=!GH_TOKEN: =!"
-    set "GH_TOKEN=!GH_TOKEN:"=!"
-    git push https://!GH_TOKEN!@github.com/hub-google/audiobook-generator.git HEAD
-    if !errorlevel! equ 0 (
-        echo [SUCCESS] Pushed successfully using token from .env!
-    ) else (
-        echo [ERROR] Push failed. Please check network or token permissions.
-    )
+for /f "delims=" %%B in ('git branch --show-current') do set "DEPLOY_BRANCH=%%B"
+if not defined DEPLOY_BRANCH (
+    echo [ERROR] Git is in detached HEAD state. Switch to a branch first.
+    exit /b 1
+)
+
+set "DEPLOY_MESSAGE=%~1"
+if not defined DEPLOY_MESSAGE set "DEPLOY_MESSAGE=Deploy all workspace changes"
+
+echo [1/4] Staging every added, modified, and deleted file...
+git add -A
+if errorlevel 1 goto :failed
+
+git diff --cached --quiet
+if errorlevel 1 (
+    echo [2/4] Creating commit on %DEPLOY_BRANCH%...
+    git commit -m "%DEPLOY_MESSAGE%"
+    if errorlevel 1 goto :failed
 ) else (
-    echo [WARNING] .env or GITHUB_TOKEN not found. Falling back to default auth...
-    git push origin HEAD
+    echo [2/4] No uncommitted changes; no new commit is needed.
 )
 
-echo.
-echo ==============================================
-echo              Deployment Complete!
-echo ==============================================
-pause
+echo [3/4] Pushing %DEPLOY_BRANCH% to origin...
+git push -u origin "%DEPLOY_BRANCH%"
+if errorlevel 1 goto :failed
+
+echo [4/4] Verifying clean deployment state...
+git status --short
+if errorlevel 1 goto :failed
+
+echo [SUCCESS] All workspace contents were deployed to origin/%DEPLOY_BRANCH%.
+exit /b 0
+
+:failed
+echo [ERROR] Deployment stopped. Review the Git error above.
+exit /b 1
