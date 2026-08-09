@@ -10,6 +10,8 @@ from src.youtube_api_uploader import (
     build_part_plan_from_inventory,
     get_run_artifact_names,
     get_playlist_video_index,
+    get_channel_upload_video_index,
+    add_video_to_playlist,
     is_transient_upload_error,
     load_resume_state,
     save_resume_state,
@@ -146,10 +148,41 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
                 completed_titles={"Part 11"},
                 part_plan=[{"part_num": 11, "title": "Part 11"}],
                 pending_thumbnails={"Part 11": "video-11"},
+                pending_playlist={"Part 11": "video-11"},
             )
             state = load_resume_state(state_path)
-        self.assertEqual(state["version"], 3)
+        self.assertEqual(state["version"], 4)
         self.assertEqual(state["pending_thumbnails"], {"Part 11": "video-11"})
+        self.assertEqual(state["pending_playlist"], {"Part 11": "video-11"})
+
+    def test_playlist_insert_failure_is_reported(self):
+        request = type("Request", (), {})()
+        request.execute = unittest.mock.Mock(side_effect=Exception("quotaExceeded"))
+        playlist_items = type("PlaylistItems", (), {
+            "insert": lambda self, **kwargs: request,
+        })()
+        youtube = type("YouTube", (), {
+            "playlistItems": lambda self: playlist_items,
+        })()
+        self.assertFalse(add_video_to_playlist(youtube, "playlist-1", "video-1", 0))
+
+    @patch("src.youtube_api_uploader.get_playlist_video_index")
+    def test_channel_upload_index_recovers_uploaded_video_ids(self, get_index):
+        get_index.return_value = {"Part 19": "video-19"}
+        request = type("Request", (), {
+            "execute": lambda self: {"items": [{"contentDetails": {
+                "relatedPlaylists": {"uploads": "uploads-1"}
+            }}]},
+        })()
+        channels = type("Channels", (), {
+            "list": lambda self, **kwargs: request,
+        })()
+        youtube = type("YouTube", (), {"channels": lambda self: channels})()
+        self.assertEqual(
+            get_channel_upload_video_index(youtube),
+            {"Part 19": "video-19"},
+        )
+        get_index.assert_called_once_with(youtube, "uploads-1")
 
     @patch("src.youtube_api_uploader.time.sleep")
     @patch("src.youtube_api_uploader.MediaFileUpload")

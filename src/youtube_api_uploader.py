@@ -80,9 +80,11 @@ def _atomic_write_json(path, data):
 
 
 def save_resume_state(path, run_id, privacy, status, reason="", retry_at=None,
-                      completed_titles=None, part_plan=None, pending_thumbnails=None, playlist_url=None):
+                      completed_titles=None, part_plan=None, pending_thumbnails=None,
+                      playlist_url=None, pending_playlist=None,
+                      pending_captions=None, pending_publish=None):
     data = {
-        "version": 3,
+        "version": 4,
         "run_id": str(run_id) if run_id else "",
         "privacy": privacy,
         "status": status,
@@ -97,6 +99,11 @@ def save_resume_state(path, run_id, privacy, status, reason="", retry_at=None,
         # thumbnails.set call is rate-limited, so resume must repair it instead
         # of uploading the same multi-hour video a second time.
         "pending_thumbnails": dict(pending_thumbnails or {}),
+        # title -> video id. A title is not complete until playlistItems.insert
+        # succeeds. Persisting the id prevents an uploaded orphan on resume.
+        "pending_playlist": dict(pending_playlist or {}),
+        "pending_captions": dict(pending_captions or {}),
+        "pending_publish": dict(pending_publish or {}),
         "playlist_url": playlist_url,
     }
     _atomic_write_json(path, data)
@@ -384,6 +391,16 @@ def get_playlist_video_index(youtube, playlist_id, attempts=5, initial_delay=2):
         if not next_page_token:
             return index
 
+
+def get_channel_upload_video_index(youtube):
+    """Return title -> video id for the authenticated channel's uploads."""
+    channels = youtube.channels().list(part="contentDetails", mine=True).execute()
+    items = channels.get("items", [])
+    if not items:
+        return {}
+    uploads_id = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+    return get_playlist_video_index(youtube, uploads_id)
+
 def set_video_thumbnail(youtube, video_id, cover_path, attempts=5):
     """Apply a custom thumbnail or raise a resumable post-upload pause."""
     if not cover_path or not os.path.exists(cover_path):
@@ -514,6 +531,20 @@ def upload_caption_file(youtube, video_id, srt_path, language="zh-TW", name="繁
     """使用 YouTube Captions API 上傳 CC 字幕軌檔 (SRT)"""
     if not srt_path or not os.path.exists(srt_path) or os.path.getsize(srt_path) < 10:
         logging.warning(f"⚠️ [Caption] 字幕檔不存在或為空: {srt_path}")
+        return False
+
+
+def set_video_privacy(youtube, video_id, privacy_status):
+    """Publish only after every required post-upload action succeeds."""
+    try:
+        youtube.videos().update(
+            part="status",
+            body={"id": video_id, "status": {"privacyStatus": privacy_status}},
+        ).execute()
+        logging.info("Video %s privacy changed to %s", video_id, privacy_status)
+        return True
+    except Exception as error:
+        logging.error("Failed to change video %s privacy to %s: %s", video_id, privacy_status, error)
         return False
 
     # 1. 清除該影片歷史舊字幕軌 (避免舊測試檔殘留)
@@ -752,10 +783,16 @@ def main():
     completed_titles = set()
     part_plan = []
     pending_thumbnails = {}
+    pending_playlist = {}
+    pending_captions = {}
+    pending_publish = {}
     if saved_state and str(saved_state.get("run_id") or "") == str(args.run_id or saved_state.get("run_id") or ""):
         completed_titles.update(saved_state.get("completed_titles") or [])
         part_plan = list(saved_state.get("part_plan") or [])
         pending_thumbnails = dict(saved_state.get("pending_thumbnails") or {})
+        pending_playlist = dict(saved_state.get("pending_playlist") or {})
+        pending_captions = dict(saved_state.get("pending_captions") or {})
+        pending_publish = dict(saved_state.get("pending_publish") or {})
     valid_resume_statuses = {"paused", "running", "planned", "incomplete"}
     if not args.run_id and saved_state and saved_state.get("status") in valid_resume_statuses:
         args.run_id = str(saved_state.get("run_id") or "")
@@ -780,7 +817,10 @@ def main():
     if args.run_id:
         save_resume_state(args.state_file, args.run_id, args.privacy, "running",
                           completed_titles=completed_titles, part_plan=part_plan,
-                          pending_thumbnails=pending_thumbnails)
+                          pending_thumbnails=pending_thumbnails,
+                          pending_playlist=pending_playlist,
+                          pending_captions=pending_captions,
+                          pending_publish=pending_publish)
 
     youtube = get_authenticated_service()
 
@@ -851,6 +891,20 @@ def main():
     existing_titles = set(existing_video_ids)
     logging.info("📋 成功獲取播放清單已有 %s 部影片。", len(existing_titles))
 
+    # Old checkpoints counted videos.insert as completion even when the later
+    # playlist insertion failed. Recover those video ids from channel uploads.
+    missing_from_playlist = completed_titles - existing_titles
+    if missing_from_playlist:
+        channel_uploads = get_channel_upload_video_index(youtube)
+        for title in list(missing_from_playlist):
+            video_id = channel_uploads.get(title)
+            if not video_id:
+                logging.error("Uploaded title is missing from the playlist and channel uploads: %s", title)
+                continue
+            pending_playlist[title] = video_id
+            completed_titles.discard(title)
+            logging.warning("Repairing orphan video playlist membership: %s (%s)", title, video_id)
+
     # Version-2 checkpoints predate pending_thumbnails.  The last completed
     # title is conservatively repaired once, which fixes the already uploaded
     # Part 11 whose five thumbnail attempts all received HTTP 429.
@@ -872,7 +926,9 @@ def main():
             save_resume_state(
                 args.state_file, args.run_id, args.privacy, "paused",
                 paused.reason, paused.retry_at, completed_titles, part_plan,
-                pending_thumbnails,
+                pending_thumbnails, pending_playlist=pending_playlist,
+                pending_captions=pending_captions,
+                pending_publish=pending_publish,
             )
             logging.error(
                 "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
@@ -885,6 +941,86 @@ def main():
             args.state_file, args.run_id, args.privacy, "running",
             completed_titles=completed_titles, part_plan=part_plan,
             pending_thumbnails=pending_thumbnails,
+            pending_playlist=pending_playlist,
+            pending_captions=pending_captions,
+            pending_publish=pending_publish,
+        )
+
+    # CC subtitles are mandatory. The SRT directory is cached between runs so
+    # a quota failure resumes this exact private video before any later upload.
+    for pending_title, caption in list(pending_captions.items()):
+        video_id = caption.get("video_id")
+        srt_path = caption.get("srt_path")
+        if not upload_caption_file(youtube, video_id, srt_path):
+            retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+            save_resume_state(
+                args.state_file, args.run_id, args.privacy, "paused",
+                "captionUploadFailed", retry_at, completed_titles, part_plan,
+                pending_thumbnails,
+                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                pending_playlist=pending_playlist,
+                pending_captions=pending_captions,
+                pending_publish=pending_publish,
+            )
+            return EXIT_RETRY_LATER
+        del pending_captions[pending_title]
+
+    # Playlist membership is a required commit. Never upload a later Part while
+    # an earlier uploaded video is still missing from the playlist.
+    for pending_title, pending_video_id in list(pending_playlist.items()):
+        planned = next((p for p in part_plan if p.get("title") == pending_title), {})
+        position = int(planned.get("part_num", 0)) - 1 if planned else None
+        if not add_video_to_playlist(youtube, playlist_id, pending_video_id, position):
+            retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+            save_resume_state(
+                args.state_file, args.run_id, args.privacy, "paused",
+                "playlistInsertFailed", retry_at, completed_titles, part_plan,
+                pending_thumbnails,
+                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                pending_playlist=pending_playlist,
+                pending_captions=pending_captions,
+                pending_publish=pending_publish,
+            )
+            logging.error("Playlist insertion is mandatory; Part remains incomplete: %s", pending_title)
+            return EXIT_RETRY_LATER
+        del pending_playlist[pending_title]
+        pending_publish[pending_title] = pending_video_id
+        existing_titles.add(pending_title)
+        save_resume_state(
+            args.state_file, args.run_id, args.privacy, "running",
+            completed_titles=completed_titles, part_plan=part_plan,
+            pending_thumbnails=pending_thumbnails,
+            pending_playlist=pending_playlist,
+            pending_captions=pending_captions,
+            pending_publish=pending_publish,
+            playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+        )
+
+    # Publishing is the final commit. Until this succeeds the video stays
+    # private even if every other YouTube resource already exists.
+    for pending_title, pending_video_id in list(pending_publish.items()):
+        if not set_video_privacy(youtube, pending_video_id, args.privacy):
+            retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+            save_resume_state(
+                args.state_file, args.run_id, args.privacy, "paused",
+                "publishFailed", retry_at, completed_titles, part_plan,
+                pending_thumbnails,
+                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                pending_playlist=pending_playlist,
+                pending_captions=pending_captions,
+                pending_publish=pending_publish,
+            )
+            return EXIT_RETRY_LATER
+        del pending_publish[pending_title]
+        completed_titles.add(pending_title)
+        save_resume_state(
+            args.state_file, args.run_id, args.privacy, "running",
+            completed_titles=completed_titles, part_plan=part_plan,
+            pending_thumbnails=pending_thumbnails,
+            pending_playlist=pending_playlist,
+            pending_captions=pending_captions,
+            pending_publish=pending_publish,
+            playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
         )
 
     from metadata_gen import generate_video_title
@@ -1070,7 +1206,10 @@ def main():
                         pending_thumbnails=pending_thumbnails,
                     )
 
-                if expected_title in existing_titles or expected_title in completed_titles:
+                # Playlist presence alone is not proof that thumbnail, CC and
+                # final publication all succeeded. Only the durable full-commit
+                # marker may skip a Part.
+                if expected_title in completed_titles:
                     logging.info(f"⏭️ 【第 {part_counter} 部】(第 {s_c}~{e_c} 章) 已存在於 YouTube 播放清單，觸發【智能斷點續傳】秒跳過！")
                     for item in sliced_items:
                         try:
@@ -1089,6 +1228,9 @@ def main():
                 out_srt_path = os.path.join(upload_subtitles_dir, out_srt_name)
 
                 srt_ok = generate_part_srt(sliced_items, out_srt_path)
+                if not srt_ok or not os.path.exists(out_srt_path):
+                    logging.error("Required Part CC subtitle file was not generated; stopping before upload")
+                    return 1
 
                 part_info = {
                     "part_num": part_counter,
@@ -1122,19 +1264,23 @@ def main():
                             video_path=out_path,
                             title=p_meta["title"],
                             description=full_desc,
-                            privacy_status=args.privacy,
+                            # A video is never user-visible until every required
+                            # post-upload action has committed successfully.
+                            privacy_status="private",
                             cover_path=p_meta["cover_file"]
                         )
                     except ThumbnailUploadPaused as paused:
                         # videos.insert already succeeded.  Persist its id before
                         # stopping so resume repairs the cover without duplicating
                         # this multi-hour video.
-                        completed_titles.add(p_meta["title"])
                         pending_thumbnails[p_meta["title"]] = paused.video_id
+                        pending_playlist[p_meta["title"]] = paused.video_id
                         save_resume_state(
                             args.state_file, args.run_id, args.privacy, "paused",
                             paused.reason, paused.retry_at, completed_titles, part_plan,
-                            pending_thumbnails,
+                            pending_thumbnails, pending_playlist=pending_playlist,
+                            pending_captions=pending_captions,
+                            pending_publish=pending_publish,
                         )
                         logging.error(
                             "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
@@ -1155,16 +1301,68 @@ def main():
 
                     if v_id:
                         total_uploaded += 1
-                        completed_titles.add(p_meta["title"])
-                        # Persist immediately after videos.insert succeeds. If captions or playlist
-                        # insertion later crashes, the next run must not upload the video twice.
+                        pending_playlist[p_meta["title"]] = v_id
+                        # Persist the video id before post-upload work so resume
+                        # repairs this exact upload instead of uploading a duplicate.
                         save_resume_state(args.state_file, args.run_id, args.privacy, "running",
                                           completed_titles=completed_titles, part_plan=part_plan,
-                                          pending_thumbnails=pending_thumbnails)
-                        if srt_ok and os.path.exists(out_srt_path):
-                            upload_caption_file(youtube, v_id, out_srt_path)
-                        if playlist_id:
-                            add_video_to_playlist(youtube, playlist_id, v_id, position=part_counter - 1)
+                                          pending_thumbnails=pending_thumbnails,
+                                          pending_playlist=pending_playlist,
+                                          pending_captions=pending_captions,
+                                          pending_publish=pending_publish)
+                        if not upload_caption_file(youtube, v_id, out_srt_path):
+                            pending_captions[p_meta["title"]] = {
+                                "video_id": v_id, "srt_path": out_srt_path,
+                            }
+                            retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                            save_resume_state(
+                                args.state_file, args.run_id, args.privacy, "paused",
+                                "captionUploadFailed", retry_at, completed_titles,
+                                part_plan, pending_thumbnails,
+                                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                                pending_playlist=pending_playlist,
+                                pending_captions=pending_captions,
+                                pending_publish=pending_publish,
+                            )
+                            logging.error("CC subtitle upload is mandatory; private video retained for retry")
+                            return EXIT_RETRY_LATER
+                        if not add_video_to_playlist(youtube, playlist_id, v_id, position=part_counter - 1):
+                            retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                            save_resume_state(
+                                args.state_file, args.run_id, args.privacy, "paused",
+                                "playlistInsertFailed", retry_at, completed_titles,
+                                part_plan, pending_thumbnails,
+                                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                                pending_playlist=pending_playlist,
+                            )
+                            logging.error("Playlist insertion failed; stopping before the next Part")
+                            return EXIT_RETRY_LATER
+                        del pending_playlist[p_meta["title"]]
+                        pending_publish[p_meta["title"]] = v_id
+                        existing_titles.add(p_meta["title"])
+                        if not set_video_privacy(youtube, v_id, args.privacy):
+                            retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                            save_resume_state(
+                                args.state_file, args.run_id, args.privacy, "paused",
+                                "publishFailed", retry_at, completed_titles, part_plan,
+                                pending_thumbnails,
+                                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                                pending_playlist=pending_playlist,
+                                pending_captions=pending_captions,
+                                pending_publish=pending_publish,
+                            )
+                            return EXIT_RETRY_LATER
+                        del pending_publish[p_meta["title"]]
+                        completed_titles.add(p_meta["title"])
+                        save_resume_state(
+                            args.state_file, args.run_id, args.privacy, "running",
+                            completed_titles=completed_titles, part_plan=part_plan,
+                            pending_thumbnails=pending_thumbnails,
+                            pending_playlist=pending_playlist,
+                            pending_captions=pending_captions,
+                            pending_publish=pending_publish,
+                            playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                        )
 
                         logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_counter} | Ch {s_c}~{e_c} | VideoID {v_id}, total {total_uploaded}")
                         logging.info(f"✅ 【第 {part_counter} 部】成功上傳並加入播放清單: {p_meta['title']}\n")
@@ -1266,7 +1464,7 @@ def main():
             v_cover = item["cover_path"]
             part_n = item["part_num"]
 
-            if v_title in existing_titles or v_title in completed_titles:
+            if v_title in completed_titles:
                 logging.info("⏭️ 已上傳，跳過：%s", v_title)
                 continue
 
@@ -1277,6 +1475,9 @@ def main():
                 v_srt = v_path.replace(".mp4", ".srt")
                 if not os.path.exists(v_srt):
                     v_srt = None
+            if not v_srt:
+                logging.error("Required CC subtitle file is missing; stopping before upload: %s", v_title)
+                return 1
 
             full_desc = f"{v_desc}\n\n播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
             logging.info(f"[API_UPLOAD_MARKER] START | Part {part_n}/{len(parts_to_upload)} | Ch {item['start_chap']}~{item['end_chap']} | {os.path.basename(v_path)}")
@@ -1286,16 +1487,18 @@ def main():
                     video_path=v_path,
                     title=v_title,
                     description=full_desc,
-                    privacy_status=args.privacy,
+                    privacy_status="private",
                     cover_path=v_cover
                 )
             except ThumbnailUploadPaused as paused:
-                completed_titles.add(v_title)
                 pending_thumbnails[v_title] = paused.video_id
+                pending_playlist[v_title] = paused.video_id
                 save_resume_state(
                     args.state_file, args.run_id, args.privacy, "paused",
                     paused.reason, paused.retry_at, completed_titles, part_plan,
-                    pending_thumbnails,
+                    pending_thumbnails, pending_playlist=pending_playlist,
+                    pending_captions=pending_captions,
+                    pending_publish=pending_publish,
                 )
                 logging.error(
                     "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
@@ -1314,28 +1517,85 @@ def main():
                 return EXIT_RETRY_LATER
             if v_id:
                 total_uploaded += 1
-                completed_titles.add(v_title)
+                pending_playlist[v_title] = v_id
                 save_resume_state(args.state_file, args.run_id, args.privacy, "running",
                                   completed_titles=completed_titles, part_plan=part_plan,
-                                  pending_thumbnails=pending_thumbnails, playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None)
-                if v_srt and os.path.exists(v_srt):
-                    upload_caption_file(youtube, v_id, v_srt)
-                if playlist_id:
-                    add_video_to_playlist(youtube, playlist_id, v_id, position=part_n - 1)
+                                  pending_thumbnails=pending_thumbnails,
+                                  pending_playlist=pending_playlist,
+                                  pending_captions=pending_captions,
+                                  pending_publish=pending_publish,
+                                  playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None)
+                if not upload_caption_file(youtube, v_id, v_srt):
+                    pending_captions[v_title] = {"video_id": v_id, "srt_path": v_srt}
+                    retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                    save_resume_state(
+                        args.state_file, args.run_id, args.privacy, "paused",
+                        "captionUploadFailed", retry_at, completed_titles,
+                        part_plan, pending_thumbnails,
+                        playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                        pending_playlist=pending_playlist,
+                        pending_captions=pending_captions,
+                        pending_publish=pending_publish,
+                    )
+                    return EXIT_RETRY_LATER
+                if not add_video_to_playlist(youtube, playlist_id, v_id, position=part_n - 1):
+                    retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                    save_resume_state(
+                        args.state_file, args.run_id, args.privacy, "paused",
+                        "playlistInsertFailed", retry_at, completed_titles,
+                        part_plan, pending_thumbnails,
+                        playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                        pending_playlist=pending_playlist,
+                    )
+                    logging.error("Playlist insertion failed; stopping before the next Part")
+                    return EXIT_RETRY_LATER
+                del pending_playlist[v_title]
+                pending_publish[v_title] = v_id
+                existing_titles.add(v_title)
+                if not set_video_privacy(youtube, v_id, args.privacy):
+                    retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                    save_resume_state(
+                        args.state_file, args.run_id, args.privacy, "paused",
+                        "publishFailed", retry_at, completed_titles, part_plan,
+                        pending_thumbnails,
+                        playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                        pending_playlist=pending_playlist,
+                        pending_captions=pending_captions,
+                        pending_publish=pending_publish,
+                    )
+                    return EXIT_RETRY_LATER
+                del pending_publish[v_title]
+                completed_titles.add(v_title)
+                save_resume_state(
+                    args.state_file, args.run_id, args.privacy, "running",
+                    completed_titles=completed_titles, part_plan=part_plan,
+                    pending_thumbnails=pending_thumbnails,
+                    pending_playlist=pending_playlist,
+                    pending_captions=pending_captions,
+                    pending_publish=pending_publish,
+                    playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                )
                 logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_n}/{len(parts_to_upload)} | Ch {item['start_chap']}~{item['end_chap']} | VideoID {v_id}, total {total_uploaded}")
 
     if pending_thumbnails:
         raise RuntimeError(f"仍有 {len(pending_thumbnails)} 部影片等待補封面，禁止標記 complete")
+    if pending_playlist:
+        raise RuntimeError(f"仍有 {len(pending_playlist)} 部影片未加入播放清單，禁止標記 complete")
+    if pending_captions:
+        raise RuntimeError(f"仍有 {len(pending_captions)} 部影片缺少 YouTube CC 字幕，禁止標記 complete")
+    if pending_publish:
+        raise RuntimeError(f"仍有 {len(pending_publish)} 部影片尚未完成最終發布，禁止標記 complete")
     if args.run_id:
         expected_titles = {str(part.get("title") or "").strip() for part in part_plan}
         expected_titles.discard("")
-        finished_titles = completed_titles | existing_titles
+        finished_titles = completed_titles
         missing_titles = sorted(expected_titles - finished_titles)
         if missing_titles:
             save_resume_state(
                 args.state_file, args.run_id, args.privacy, "running",
                 reason="incompleteParts", completed_titles=completed_titles,
                 part_plan=part_plan, pending_thumbnails=pending_thumbnails,
+                pending_playlist=pending_playlist,
                 playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None
             )
             logging.error(
@@ -1351,7 +1611,11 @@ def main():
     logging.info("="*60)
     save_resume_state(args.state_file, args.run_id, args.privacy, "complete",
                       completed_titles=completed_titles, part_plan=part_plan,
-                      pending_thumbnails=pending_thumbnails, playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None)
+                      pending_thumbnails=pending_thumbnails,
+                      pending_playlist=pending_playlist,
+                      pending_captions=pending_captions,
+                      pending_publish=pending_publish,
+                      playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None)
     logging.info(
         "[API_UPLOAD_STATUS] COMPLETE | uploaded=%s | total=%s | source_run=%s",
         len(completed_titles), len(part_plan) or len(completed_titles), args.run_id or "local",

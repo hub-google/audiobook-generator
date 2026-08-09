@@ -51,6 +51,7 @@ jobs:
           path: |
             upload_resume_state/
             Workspace/*/Cover/
+            Upload_Subtitles/
           key: youtube-upload-state-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             youtube-upload-state-
@@ -94,6 +95,9 @@ jobs:
           done = len(state.get("completed_titles", []))
           total = len(state.get("part_plan", [])) or max(done, 1)
           pending = len(state.get("pending_thumbnails", {}))
+          pending_playlist = len(state.get("pending_playlist", {}))
+          pending_captions = len(state.get("pending_captions", {}))
+          pending_publish = len(state.get("pending_publish", {}))
           status = state.get("status", "unknown")
           
           status_icon = "⏸️"
@@ -106,6 +110,9 @@ jobs:
               f.write(f"| 項目 | 狀態資訊 |\n|---|---|\n")
               f.write(f"| **任務進度** | **{done} / {total} Parts** ({done/total*100:.1f}%) |\n")
               f.write(f"| **Pending Thumbnails** | **{pending}** |\n")
+              f.write(f"| **Pending Playlist Inserts** | **{pending_playlist}** |\n")
+              f.write(f"| **Pending CC Captions** | **{pending_captions}** |\n")
+              f.write(f"| **Pending Final Publish** | **{pending_publish}** |\n")
               if "reason" in state and state["reason"]:
                   f.write(f"| **Reason** | `{state['reason']}` |\n")
               if "retry_at" in state and state["retry_at"]:
@@ -137,4 +144,5 @@ jobs:
           path: |
             upload_resume_state/
             Workspace/*/Cover/
+            Upload_Subtitles/
           key: youtube-upload-state-${{ github.run_id }}-${{ github.run_attempt }}
