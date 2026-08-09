@@ -8,6 +8,7 @@ from src.youtube_api_uploader import (
     artifact_worker_index,
     build_part_plan_from_inventory,
     get_run_artifact_names,
+    get_playlist_video_index,
     load_resume_state,
     save_resume_state,
     set_video_thumbnail,
@@ -15,6 +16,8 @@ from src.youtube_api_uploader import (
     ThumbnailUploadPaused,
     validate_chapter_inventory,
 )
+from googleapiclient.errors import HttpError
+from httplib2 import Response
 from src.worker_pipeline import (
     recover_incomplete_chapters,
     require_complete_worker,
@@ -23,6 +26,54 @@ from src.worker_pipeline import (
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
+    @patch("src.youtube_api_uploader.time.sleep")
+    def test_playlist_index_retries_until_new_playlist_is_visible(self, sleep):
+        not_found = HttpError(
+            Response({"status": "404"}),
+            b'{"error":{"errors":[{"reason":"playlistNotFound"}]}}',
+        )
+        successful = {
+            "items": [{"snippet": {
+                "title": "Part 1",
+                "resourceId": {"videoId": "video-1"},
+            }}]
+        }
+        request = type("Request", (), {})()
+        request.execute = unittest.mock.Mock(side_effect=[not_found, successful])
+        playlist_items = type("PlaylistItems", (), {
+            "list": lambda self, **kwargs: request,
+        })()
+        youtube = type("YouTube", (), {
+            "playlistItems": lambda self: playlist_items,
+        })()
+
+        self.assertEqual(
+            get_playlist_video_index(youtube, "playlist-1"),
+            {"Part 1": "video-1"},
+        )
+        sleep.assert_called_once_with(2)
+
+    @patch("src.youtube_api_uploader.time.sleep")
+    def test_playlist_index_stops_after_bounded_retries(self, sleep):
+        not_found = HttpError(
+            Response({"status": "404"}),
+            b'{"error":{"errors":[{"reason":"playlistNotFound"}]}}',
+        )
+        request = type("Request", (), {})()
+        request.execute = unittest.mock.Mock(side_effect=[not_found] * 3)
+        playlist_items = type("PlaylistItems", (), {
+            "list": lambda self, **kwargs: request,
+        })()
+        youtube = type("YouTube", (), {
+            "playlistItems": lambda self: playlist_items,
+        })()
+
+        with self.assertRaises(HttpError):
+            get_playlist_video_index(
+                youtube, "playlist-1", attempts=3, initial_delay=1
+            )
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+
     def test_checkpoint_preserves_pending_thumbnail_video_id(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = os.path.join(temp_dir, "state.json")

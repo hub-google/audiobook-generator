@@ -241,7 +241,7 @@ def parse_chapter_info(filename):
     return 999999, 999999
 
 def get_or_create_playlist(youtube, playlist_title, playlist_desc=""):
-    """搜尋已存在的同名播放清單，若無則自動建立新播放清單"""
+    """Return ``(playlist_id, created)`` for the requested playlist."""
     logging.info(f"🔍 檢查 YouTube 頻道是否存在播放清單:【{playlist_title}】...")
     try:
         request = youtube.playlists().list(
@@ -255,7 +255,7 @@ def get_or_create_playlist(youtube, playlist_title, playlist_desc=""):
             if item["snippet"]["title"].strip() == playlist_title.strip():
                 playlist_id = item["id"]
                 logging.info(f"✅ 找到已有播放清單 (ID: {playlist_id}):【{playlist_title}】")
-                return playlist_id
+                return playlist_id, False
 
         logging.info(f"➕ 正在建立全新播放清單:【{playlist_title}】...")
         body = {
@@ -274,10 +274,10 @@ def get_or_create_playlist(youtube, playlist_title, playlist_desc=""):
         ).execute()
         playlist_id = create_res["id"]
         logging.info(f"🎉 成功建立播放清單 (ID: {playlist_id}):【{playlist_title}】")
-        return playlist_id
+        return playlist_id, True
     except Exception as e:
         logging.error(f"❌ 查詢/建立播放清單失敗: {e}")
-        return None
+        return None, False
 
 def add_video_to_playlist(youtube, playlist_id, video_id, position=None):
     """將影片加到指定的播放清單中 (依呼叫順序追加)"""
@@ -332,17 +332,33 @@ def get_existing_playlist_video_titles(youtube, playlist_id):
     return titles
 
 
-def get_playlist_video_index(youtube, playlist_id):
+def get_playlist_video_index(youtube, playlist_id, attempts=5, initial_delay=2):
     """Return playlist title -> video id for checkpoint migration/repair."""
     index = {}
     if not playlist_id:
         return index
     next_page_token = None
     while True:
-        res = youtube.playlistItems().list(
-            part="snippet", playlistId=playlist_id, maxResults=50,
-            pageToken=next_page_token,
-        ).execute()
+        for attempt in range(attempts):
+            try:
+                res = youtube.playlistItems().list(
+                    part="snippet", playlistId=playlist_id, maxResults=50,
+                    pageToken=next_page_token,
+                ).execute()
+                break
+            except HttpError as error:
+                is_not_found = (
+                    getattr(getattr(error, "resp", None), "status", None) == 404
+                    or "playlistNotFound" in str(error)
+                )
+                if not is_not_found or attempt == attempts - 1:
+                    raise
+                delay = initial_delay * (2 ** attempt)
+                logging.warning(
+                    "播放清單尚未同步完成；%s 秒後重試 (%s/%s)。",
+                    delay, attempt + 1, attempts,
+                )
+                time.sleep(delay)
         for item in res.get("items", []):
             snippet = item.get("snippet", {})
             video_id = snippet.get("resourceId", {}).get("videoId")
@@ -766,8 +782,33 @@ def main():
 
     playlist_name = f"《{book_title}》有聲小說全集"
     playlist_desc = f"《{book_title}》完整版有聲書全集 (第 {start_chap} 至 {end_chap} 章)，高音質連續播映版。\n歡迎訂閱開啟小鈴鐺！"
-    playlist_id = get_or_create_playlist(youtube, playlist_name, playlist_desc)
-    existing_video_ids = get_playlist_video_index(youtube, playlist_id)
+    playlist_id, playlist_created = get_or_create_playlist(
+        youtube, playlist_name, playlist_desc
+    )
+    if not playlist_id:
+        save_resume_state(
+            args.state_file, args.run_id, args.privacy, "failed",
+            reason="playlistUnavailable", completed_titles=completed_titles,
+            part_plan=part_plan, pending_thumbnails=pending_thumbnails,
+        )
+        logging.error("無法取得或建立 YouTube 播放清單，停止上傳。")
+        return 1
+    try:
+        # A playlist returned by playlists.insert is necessarily empty. Avoid
+        # querying playlistItems immediately while the new resource is still
+        # propagating through YouTube's read path.
+        existing_video_ids = (
+            {} if playlist_created else get_playlist_video_index(youtube, playlist_id)
+        )
+    except HttpError as error:
+        save_resume_state(
+            args.state_file, args.run_id, args.privacy, "failed",
+            reason="playlistNotFound", completed_titles=completed_titles,
+            part_plan=part_plan, pending_thumbnails=pending_thumbnails,
+            playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+        )
+        logging.error("播放清單重試後仍無法讀取：%s", error)
+        return 1
     existing_titles = set(existing_video_ids)
     logging.info("📋 成功獲取播放清單已有 %s 部影片。", len(existing_titles))
 
