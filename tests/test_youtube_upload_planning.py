@@ -1,4 +1,5 @@
 import os
+import ssl
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -9,9 +10,11 @@ from src.youtube_api_uploader import (
     build_part_plan_from_inventory,
     get_run_artifact_names,
     get_playlist_video_index,
+    is_transient_upload_error,
     load_resume_state,
     save_resume_state,
     set_video_thumbnail,
+    upload_video_file,
     select_worker_artifacts,
     ThumbnailUploadPaused,
     validate_chapter_inventory,
@@ -26,6 +29,65 @@ from src.worker_pipeline import (
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
+    @patch("src.youtube_api_uploader.set_video_thumbnail")
+    @patch("src.youtube_api_uploader.time.sleep")
+    @patch("src.youtube_api_uploader.MediaFileUpload")
+    @patch("src.youtube_api_uploader.os.path.getsize", return_value=1024)
+    def test_video_upload_resumes_same_request_after_ssl_disconnect(
+        self, getsize, media, sleep, thumbnail
+    ):
+        request = type("Request", (), {})()
+        request.next_chunk = unittest.mock.Mock(side_effect=[
+            ssl.SSLEOFError(8, "connection closed"),
+            (None, {"id": "video-1"}),
+        ])
+        videos = type("Videos", (), {
+            "insert": lambda self, **kwargs: request,
+        })()
+        youtube = type("YouTube", (), {
+            "videos": lambda self: videos,
+        })()
+
+        video_id = upload_video_file(
+            youtube, "part.mp4", "Part 1", "description",
+            network_attempts=3, initial_retry_delay=1,
+        )
+
+        self.assertEqual(video_id, "video-1")
+        self.assertEqual(request.next_chunk.call_count, 2)
+        request.next_chunk.assert_called_with(num_retries=3)
+        sleep.assert_called_once_with(1)
+        thumbnail.assert_called_once_with(youtube, "video-1", None)
+
+    @patch("src.youtube_api_uploader.set_video_thumbnail")
+    @patch("src.youtube_api_uploader.time.sleep")
+    @patch("src.youtube_api_uploader.MediaFileUpload")
+    @patch("src.youtube_api_uploader.os.path.getsize", return_value=1024)
+    def test_video_upload_network_retries_are_bounded(
+        self, getsize, media, sleep, thumbnail
+    ):
+        request = type("Request", (), {})()
+        request.next_chunk = unittest.mock.Mock(
+            side_effect=[ssl.SSLEOFError(8, "connection closed")] * 3
+        )
+        videos = type("Videos", (), {
+            "insert": lambda self, **kwargs: request,
+        })()
+        youtube = type("YouTube", (), {
+            "videos": lambda self: videos,
+        })()
+
+        with self.assertRaises(ssl.SSLEOFError):
+            upload_video_file(
+                youtube, "part.mp4", "Part 1", "description",
+                network_attempts=3, initial_retry_delay=1,
+            )
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+        thumbnail.assert_not_called()
+
+    def test_ssl_eof_is_a_transient_upload_error(self):
+        self.assertTrue(is_transient_upload_error(ssl.SSLEOFError()))
+
     @patch("src.youtube_api_uploader.time.sleep")
     def test_playlist_index_retries_until_new_playlist_is_visible(self, sleep):
         not_found = HttpError(

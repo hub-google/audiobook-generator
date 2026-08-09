@@ -6,6 +6,8 @@ import os
 import sys
 import glob
 import re
+import socket
+import ssl
 import time
 import shutil
 import argparse
@@ -124,6 +126,19 @@ def classify_daily_limit(error):
         )
         return UploadPaused("quotaExceeded", next_midnight.astimezone(timezone.utc), error)
     return None
+
+
+def is_transient_upload_error(error):
+    """Return whether a resumable upload should retry the same session."""
+    if isinstance(error, (ssl.SSLError, socket.timeout, TimeoutError, ConnectionError)):
+        return True
+    if isinstance(error, HttpError):
+        return getattr(getattr(error, "resp", None), "status", None) in {
+            429, 500, 502, 503, 504,
+        }
+    # httplib2 wraps several socket/TLS failures as OSError/IOError. This is
+    # evaluated only around next_chunk(), so retrying is safe and bounded.
+    return isinstance(error, OSError)
 
 def get_authenticated_service():
     """獲取與授權 YouTube API v3 Service (支援 client_secret.json / token.json / env refresh token)"""
@@ -407,7 +422,9 @@ def set_video_thumbnail(youtube, video_id, cover_path, attempts=5):
     )
 
 
-def upload_video_file(youtube, video_path, title, description, category_id="22", privacy_status="public", cover_path=None):
+def upload_video_file(youtube, video_path, title, description, category_id="22",
+                      privacy_status="public", cover_path=None,
+                      network_attempts=8, initial_retry_delay=2):
     """使用 Resumable 上傳 MP4 到 YouTube"""
     file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
     logging.info(f"📤 開始 API 極速上傳影片: {title} (檔案大小: {file_size_mb:.1f} MB)...")
@@ -435,10 +452,32 @@ def upload_video_file(youtube, video_path, title, description, category_id="22",
     response = None
     last_logged_pct = -10
     start_time = time.time()
+    consecutive_network_failures = 0
 
     try:
         while response is None:
-            status, response = request.next_chunk()
+            try:
+                # Let googleapiclient retry short failures internally first.
+                # The outer loop preserves and resumes the same upload session
+                # when TLS/socket failures outlive those internal attempts.
+                status, response = request.next_chunk(num_retries=3)
+                consecutive_network_failures = 0
+            except Exception as error:
+                if not is_transient_upload_error(error):
+                    raise
+                consecutive_network_failures += 1
+                if consecutive_network_failures >= network_attempts:
+                    raise
+                delay = min(
+                    initial_retry_delay * (2 ** (consecutive_network_failures - 1)),
+                    60,
+                )
+                logging.warning(
+                    "上傳連線暫時中斷：%s；%s 秒後從斷點重試 (%s/%s)。",
+                    error, delay, consecutive_network_failures, network_attempts,
+                )
+                time.sleep(delay)
+                continue
             if status:
                 pct = int(status.progress() * 100)
                 if pct - last_logged_pct >= 20 or pct == 100:
