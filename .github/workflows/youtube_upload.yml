@@ -1,9 +1,6 @@
 name: Fast Upload Audiobooks & Build YouTube Playlist
 
 on:
-  schedule:
-    # GitHub cron is UTC. The uploader exits before retry_at without calling YouTube.
-    - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
       run_id:
