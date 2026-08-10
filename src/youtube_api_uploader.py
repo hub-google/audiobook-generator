@@ -118,6 +118,13 @@ def load_resume_state(path):
         return None
 
 
+def recover_completed_titles_from_playlist(completed_titles, existing_titles, planned_titles):
+    """Rebuild progress from exact planned-title matches in the target playlist."""
+    recovered = set(planned_titles) & set(existing_titles)
+    completed_titles.update(recovered)
+    return recovered
+
+
 def classify_daily_limit(error):
     """Return an UploadPaused instance for the two retryable daily limits."""
     text = str(error)
@@ -1079,12 +1086,27 @@ def main():
                 planned["part_num"], planned["start_chap"], planned["end_chap"],
                 len(planned["chapters"]), planned["duration"] / 3600,
             )
+        recovered_titles = recover_completed_titles_from_playlist(
+            completed_titles,
+            existing_titles,
+            (planned["title"] for planned in part_plan),
+        )
+        if recovered_titles:
+            logging.warning(
+                "Recovered %s/%s completed Parts from exact title matches in the target playlist; "
+                "they will not be uploaded again.",
+                len(recovered_titles), len(part_plan),
+            )
         if part_plan[0]["start_chap"] != start_chap:
             raise RuntimeError("Part 1 並非從全書第一章開始，禁止上傳")
         save_resume_state(
             args.state_file, args.run_id, args.privacy, "planned",
             completed_titles=completed_titles, part_plan=part_plan,
             pending_thumbnails=pending_thumbnails,
+            pending_playlist=pending_playlist,
+            pending_captions=pending_captions,
+            pending_publish=pending_publish,
+            playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
         )
         logging.info("✅ 全書分部規劃已鎖定；第二階段將嚴格依 Part 1 → Part %s 串行上傳。", len(part_plan))
 
@@ -1206,9 +1228,8 @@ def main():
                         pending_thumbnails=pending_thumbnails,
                     )
 
-                # Playlist presence alone is not proof that thumbnail, CC and
-                # final publication all succeeded. Only the durable full-commit
-                # marker may skip a Part.
+                # This includes durable checkpoint entries and exact-title
+                # progress recovered from the target playlist.
                 if expected_title in completed_titles:
                     logging.info(f"⏭️ 【第 {part_counter} 部】(第 {s_c}~{e_c} 章) 已存在於 YouTube 播放清單，觸發【智能斷點續傳】秒跳過！")
                     for item in sliced_items:
@@ -1456,6 +1477,18 @@ def main():
                     "start_chap": c_start,
                     "end_chap": c_end
                 })
+
+        recovered_titles = recover_completed_titles_from_playlist(
+            completed_titles,
+            existing_titles,
+            (item["title"] for item in parts_to_upload),
+        )
+        if recovered_titles:
+            logging.warning(
+                "Recovered %s/%s completed Parts from exact title matches in the target playlist; "
+                "they will not be uploaded again.",
+                len(recovered_titles), len(parts_to_upload),
+            )
 
         for idx, item in enumerate(parts_to_upload, 1):
             v_path = item["video_path"]

@@ -226,9 +226,9 @@ jobs:
             upload_resume_state/
             Workspace/*/Cover/
             Upload_Subtitles/
-          key: youtube-upload-state-${{ github.run_id }}-${{ github.run_attempt }}
+          key: youtube-upload-state-source-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            youtube-upload-state-
+            youtube-upload-state-source-${{ github.run_id }}-
 
       - name: Run YouTube API Uploader
         env:
@@ -313,4 +313,4 @@ jobs:
             upload_resume_state/
             Workspace/*/Cover/
             Upload_Subtitles/
-          key: youtube-upload-state-${{ github.run_id }}-${{ github.run_attempt }}
+          key: youtube-upload-state-source-${{ github.run_id }}-${{ github.run_attempt }}

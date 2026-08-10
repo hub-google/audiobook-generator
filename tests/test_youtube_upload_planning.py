@@ -15,6 +15,7 @@ from src.youtube_api_uploader import (
     is_transient_upload_error,
     load_resume_state,
     save_resume_state,
+    recover_completed_titles_from_playlist,
     set_video_thumbnail,
     upload_video_file,
     select_worker_artifacts,
@@ -31,6 +32,16 @@ from src.worker_pipeline import (
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
+    def test_recovers_only_exact_planned_titles_from_playlist(self):
+        completed = {"Part 1"}
+        recovered = recover_completed_titles_from_playlist(
+            completed,
+            {"Part 1", "Part 2", "unrelated video"},
+            ["Part 1", "Part 2", "Part 3"],
+        )
+        self.assertEqual(recovered, {"Part 1", "Part 2"})
+        self.assertEqual(completed, {"Part 1", "Part 2"})
+
     @patch("src.youtube_api_uploader.set_video_thumbnail")
     @patch("src.youtube_api_uploader.time.sleep")
     @patch("src.youtube_api_uploader.MediaFileUpload")
