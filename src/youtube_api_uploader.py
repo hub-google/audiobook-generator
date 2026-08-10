@@ -540,20 +540,6 @@ def upload_caption_file(youtube, video_id, srt_path, language="zh-TW", name="繁
         logging.warning(f"⚠️ [Caption] 字幕檔不存在或為空: {srt_path}")
         return False
 
-
-def set_video_privacy(youtube, video_id, privacy_status):
-    """Publish only after every required post-upload action succeeds."""
-    try:
-        youtube.videos().update(
-            part="status",
-            body={"id": video_id, "status": {"privacyStatus": privacy_status}},
-        ).execute()
-        logging.info("Video %s privacy changed to %s", video_id, privacy_status)
-        return True
-    except Exception as error:
-        logging.error("Failed to change video %s privacy to %s: %s", video_id, privacy_status, error)
-        return False
-
     # 1. 清除該影片歷史舊字幕軌 (避免舊測試檔殘留)
     try:
         cap_list = youtube.captions().list(part="snippet", videoId=video_id).execute()
@@ -589,6 +575,20 @@ def set_video_privacy(youtube, video_id, privacy_status):
         return True
     except Exception as e:
         logging.error(f"❌ 上傳 CC 字幕失敗 [Video ID: {video_id}]: {e}")
+        return False
+
+
+def set_video_privacy(youtube, video_id, privacy_status):
+    """Publish only after every required post-upload action succeeds."""
+    try:
+        youtube.videos().update(
+            part="status",
+            body={"id": video_id, "status": {"privacyStatus": privacy_status}},
+        ).execute()
+        logging.info("Video %s privacy changed to %s", video_id, privacy_status)
+        return True
+    except Exception as error:
+        logging.error("Failed to change video %s privacy to %s: %s", video_id, privacy_status, error)
         return False
 
 def generate_part_srt(sliced_items, output_srt_path):

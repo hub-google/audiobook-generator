@@ -3,7 +3,7 @@ import ssl
 import tempfile
 import unittest
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from src.youtube_api_uploader import (
     artifact_worker_index,
@@ -18,6 +18,7 @@ from src.youtube_api_uploader import (
     recover_completed_titles_from_playlist,
     set_video_thumbnail,
     upload_video_file,
+    upload_caption_file,
     select_worker_artifacts,
     ThumbnailUploadPaused,
     validate_chapter_inventory,
@@ -32,6 +33,20 @@ from src.worker_pipeline import (
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
+    @patch("src.youtube_api_uploader.MediaFileUpload")
+    def test_valid_caption_file_reaches_youtube_insert(self, media_upload):
+        youtube = MagicMock()
+        youtube.captions.return_value.list.return_value.execute.return_value = {"items": []}
+        youtube.captions.return_value.insert.return_value.execute.return_value = {"id": "caption-19"}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            srt_path = os.path.join(temp_dir, "part-19.srt")
+            with open(srt_path, "w", encoding="utf-8") as handle:
+                handle.write("1\n00:00:00,000 --> 00:00:01,000\n測試字幕\n")
+
+            self.assertTrue(upload_caption_file(youtube, "video-19", srt_path))
+
+        youtube.captions.return_value.insert.assert_called_once()
+
     def test_recovers_only_exact_planned_titles_from_playlist(self):
         completed = {"Part 1"}
         recovered = recover_completed_titles_from_playlist(
