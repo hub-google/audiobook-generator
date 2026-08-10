@@ -71,7 +71,10 @@ jobs:
             --state-file upload_resume_state/state.json
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          if [ "$code" -ne 0 ] && [ "$code" -ne 75 ]; then exit "$code"; fi
+          # Exit 75 means the uploader saved a resumable checkpoint (for
+          # example, when the daily YouTube API quota is exhausted). Keep the
+          # workflow green so the checkpoint can be resumed by a later run.
+          if [ "$code" -eq 75 ]; then exit 0; fi
           exit "$code"
 
       - name: Generate Job Summary
