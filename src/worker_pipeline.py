@@ -280,6 +280,63 @@ def run_resumable_chapter(config, checkpoint, chapter_url, chapter_num, worker_i
             raise
 
 
+def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
+                 build_parts=True, force=False):
+    """Run the strict resumable pipeline for local and Actions callers alike."""
+    chapters = list(config.get("chapters", []) if chapters is None else chapters)
+    exact_indices = list(
+        config.get("selected_indices", []) if exact_indices is None else exact_indices
+    )
+    if not chapters or not exact_indices or len(chapters) != len(exact_indices):
+        raise ValueError("chapters and selected_indices must be non-empty and have equal length")
+
+    book_title = config["book_title"]
+    workspace_dir = os.path.abspath(os.path.join(
+        SRC_DIR, "..", config["paths"]["workspace_base"], book_title
+    ))
+    checkpoint = PipelineCheckpoint(
+        workspace_dir, book_title, worker_id, exact_indices
+    )
+    logging.info("=== Worker %s resumable per-stage pipeline (%s chapters) ===",
+                 worker_id, len(exact_indices))
+
+    for position, (chapter_url, chapter_num) in enumerate(
+        zip(chapters, exact_indices), start=1
+    ):
+        try:
+            run_resumable_chapter(
+                config, checkpoint, chapter_url, chapter_num, worker_id
+            )
+            logging.info("[PROGRESS_MARKER] Worker-%s | Ch %s complete (%s/%s)",
+                         worker_id, chapter_num, position, len(exact_indices))
+        except Exception as error:
+            # Independent chapters may continue, but the worker cannot succeed
+            # while any chapter remains incomplete.
+            logging.exception("[CHECKPOINT] Worker-%s chapter %s stopped: %s",
+                              worker_id, chapter_num, error)
+
+    final_failed = set(checkpoint.incomplete_chapters())
+    complete_chapters = [
+        chapter for chapter in exact_indices if chapter not in final_failed
+    ]
+    print_final_report(complete_chapters, final_failed, worker_id)
+    require_complete_worker(final_failed, worker_id)
+
+    if build_parts:
+        logging.info(
+            "=== [Worker-%s] All stage outputs valid; building Parts (force=%s) ===",
+            worker_id, force,
+        )
+        checkpoint.mark_worker_stage_running("part_build")
+        try:
+            built_parts = stage_video_gen(config, build_parts=True)
+            checkpoint.mark_worker_stage_completed("part_build", built_parts)
+        except Exception as error:
+            checkpoint.mark_worker_stage_failed("part_build", error)
+            raise
+    return checkpoint
+
+
 # ── 主程式 ────────────────────────────────────────────────
 
 def main():
@@ -324,38 +381,10 @@ def main():
     tts_failed_chapters = set()
 
     if stage == "pipeline":
-        book_title = config['book_title']
-        workspace_dir = os.path.abspath(os.path.join(
-            SRC_DIR, "..", config['paths']['workspace_base'], book_title
-        ))
-        checkpoint = PipelineCheckpoint(workspace_dir, book_title, args.worker_id, exact_indices)
-        logging.info("=== Worker %s resumable per-stage pipeline (%s chapters) ===",
-                     args.worker_id, len(exact_indices))
-
-        for position, (chapter_url, chapter_num) in enumerate(zip(chapters, exact_indices), start=1):
-            try:
-                run_resumable_chapter(config, checkpoint, chapter_url, chapter_num, args.worker_id)
-                logging.info("[PROGRESS_MARKER] Worker-%s | Ch %s complete (%s/%s)",
-                             args.worker_id, chapter_num, position, len(exact_indices))
-            except Exception as error:
-                # Continue other chapters so one bad chapter does not hide their progress.
-                logging.exception("[CHECKPOINT] Worker-%s chapter %s stopped: %s",
-                                  args.worker_id, chapter_num, error)
-
-        final_failed = set(checkpoint.incomplete_chapters())
-        complete_chapters = [chapter for chapter in exact_indices if chapter not in final_failed]
-        print_final_report(complete_chapters, final_failed, args.worker_id)
-        require_complete_worker(final_failed, args.worker_id)
-
-        # Only a complete worker may build aggregate outputs.
-        logging.info(f"=== [Worker-{args.worker_id}] All stage outputs exist; building Parts (force={args.force}) ===")
-        checkpoint.mark_worker_stage_running("part_build")
-        try:
-            built_parts = stage_video_gen(config, build_parts=True)
-            checkpoint.mark_worker_stage_completed("part_build", built_parts)
-        except Exception as error:
-            checkpoint.mark_worker_stage_failed("part_build", error)
-            raise
+        run_pipeline(
+            config, worker_id=args.worker_id, chapters=chapters,
+            exact_indices=exact_indices, build_parts=True, force=args.force,
+        )
 
     elif stage == "crawl":
         stage_crawl(config, chapters, start_global_idx, exact_indices)

@@ -1,32 +1,57 @@
-# Environment and Credentials
+# Environment & Secret Credentials
 .env
-*.json
+.env.*
+!.env.example
 client_secret*.json
 token.json
 *.pem
 
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
 .pytest_cache/
+.coverage
+htmlcov/
 venv/
 .venv/
+env/
 
-# Project Workspaces and Outputs
+# Output & Generated Artifacts
 Workspace/
 Output/
+Upload_Subtitles/
+temp/
+tmp/
+*.log
+*.srt
+
+# Media Exclusions (with exceptions)
 *.mp4
 *.wav
 *.mp3
 *.jpg
+*.jpeg
 *.png
+# Retain TTS reference audio files
+!ReferenceAudio/*.wav
+!ReferenceAudio/*.mp3
 
-# IDE & System
+# Local Backup, Documentation & Temp Folders
+備用/
+backup/
+scratch/
+系統需求書/
+*.md
+*.MD
+*.markdown
+
+# IDE & OS System Files
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+Desktop.ini
+ehthumbs.db
 firebase-debug.log
-scratch/
+.gui-active-run.json

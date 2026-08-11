@@ -5,7 +5,7 @@ import time
 import requests
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext, simpledialog
+from tkinter import ttk, messagebox, scrolledtext
 from dotenv import load_dotenv
 import re
 import webbrowser
@@ -18,6 +18,7 @@ except ImportError:
     parse_catalog = None
 
 ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+ACTIVE_RUN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".gui-active-run.json")
 load_dotenv(ENV_PATH)
 
 class AudiobookGUIApp:
@@ -32,6 +33,7 @@ class AudiobookGUIApp:
 
         self._setup_style()
         self._build_ui()
+        self.root.after(500, self._resume_saved_run)
 
     def _setup_style(self):
         style = ttk.Style()
@@ -113,9 +115,6 @@ class AudiobookGUIApp:
         self.btn_run = ttk.Button(action_frame, text="🚀 發動 GitHub Actions 雲端製作", style="Accent.TButton", command=self.trigger_github_actions)
         self.btn_run.pack(side=tk.LEFT, padx=(0, 10))
 
-        self.btn_api_upload = ttk.Button(action_frame, text="📤 YouTube 上傳（自動續傳）", command=self.trigger_youtube_api_upload)
-        self.btn_api_upload.pack(side=tk.LEFT, padx=(0, 10))
-
         self.btn_cancel = ttk.Button(action_frame, text="🛑 取消雲端作業", command=self.cancel_github_actions, state=tk.DISABLED)
         self.btn_cancel.pack(side=tk.LEFT, padx=(0, 15))
 
@@ -159,6 +158,51 @@ class AudiobookGUIApp:
                 
         self.log_text.insert(tk.END, "\n")
         self.log_text.see(tk.END)
+
+    def _save_active_run(self, repo, run_id, workflow_name):
+        payload = {"repo": repo, "run_id": int(run_id), "workflow_name": workflow_name}
+        temp_path = ACTIVE_RUN_PATH + ".tmp"
+        with open(temp_path, "w", encoding="utf-8") as state_file:
+            json.dump(payload, state_file, ensure_ascii=False, indent=2)
+            state_file.flush()
+            os.fsync(state_file.fileno())
+        os.replace(temp_path, ACTIVE_RUN_PATH)
+
+    def _clear_active_run(self):
+        try:
+            os.remove(ACTIVE_RUN_PATH)
+        except FileNotFoundError:
+            pass
+
+    def _resume_saved_run(self):
+        if not os.path.exists(ACTIVE_RUN_PATH):
+            return
+        try:
+            with open(ACTIVE_RUN_PATH, encoding="utf-8") as state_file:
+                state = json.load(state_file)
+            load_dotenv(ENV_PATH, override=True)
+            token = os.getenv("GITHUB_TOKEN", "")
+            if not token:
+                return
+            self.current_repo = state["repo"]
+            self.current_token = token
+            self.current_run_id = int(state["run_id"])
+            self.cancel_requested = False
+            self.btn_run.config(state=tk.DISABLED)
+            self.btn_cancel.config(state=tk.NORMAL)
+            self.progress_bar.start(10)
+            self.log(f"↻ 接回上次監控的雲端 Run #{self.current_run_id}…")
+            def _resume_worker():
+                try:
+                    self._poll_workflow_runs(
+                        self.current_repo, token, state.get("workflow_name"),
+                        known_run_id=self.current_run_id,
+                    )
+                except Exception as error:
+                    self.root.after(0, lambda e=str(error): self._on_workflow_failed(e))
+            threading.Thread(target=_resume_worker, daemon=True).start()
+        except Exception as error:
+            self.log(f"⚠ 無法恢復上次 Run：{error}")
 
     # ── 解析目錄 ──
     def start_parse_catalog(self):
@@ -447,71 +491,6 @@ class AudiobookGUIApp:
         threading.Thread(target=_worker, daemon=True).start()
 
 
-    def trigger_youtube_api_upload(self):
-        load_dotenv(ENV_PATH, override=True)
-        repo = os.getenv("GITHUB_REPO", "hub-google/audiobook-generator")
-        token = os.getenv("GITHUB_TOKEN", "")
-
-        if not token:
-            messagebox.showerror("錯誤", "本地 .env 中未找到 GITHUB_TOKEN！請確認檔案。")
-            return
-
-        default_run_id = getattr(self, "current_run_id", "") or ""
-        run_id = simpledialog.askstring(
-            "YouTube 上傳（自動斷點續傳）",
-            "請輸入包含影片 Artifacts 的 GitHub Run ID：\n達到 YouTube 限額時會保存斷點，並在安全時間自動續傳。",
-            initialvalue=str(default_run_id) if default_run_id else ""
-        )
-        if not run_id or not run_id.strip():
-            return
-
-        run_id = run_id.strip()
-        self.current_repo = repo
-        self.current_token = token
-        self.current_run_id = None
-        self.cancel_requested = False
-
-        self.btn_run.config(state=tk.DISABLED)
-        if hasattr(self, 'btn_api_upload'):
-            self.btn_api_upload.config(state=tk.DISABLED)
-        if hasattr(self, 'btn_stream'):
-            self.btn_stream.config(state=tk.DISABLED)
-        self.btn_cancel.config(state=tk.NORMAL)
-        self.progress_bar.start(10)
-        self.lbl_status.config(text="啟動暴速 API 上傳中...", foreground="#e1b12c")
-        self.log(f"📤 正向 GitHub (Repo: {repo}) 發動 YouTube API 極速上傳與播放清單建置 (Target Run ID: {run_id}) ...")
-        self.log("↻ 若遇到 API 配額或頻道 24 小時上傳限制，雲端排程會自動從未上傳的分部繼續；不必再次按按鈕。")
-
-        def _worker():
-            try:
-                headers = {
-                    "Accept": "application/vnd.github+json",
-                    "Authorization": f"Bearer {token}",
-                    "X-GitHub-Api-Version": "2022-11-28"
-                }
-                dispatch_url = f"https://api.github.com/repos/{repo}/actions/workflows/youtube_upload.yml/dispatches"
-                payload = {
-                    "ref": "master",
-                    "inputs": {
-                        "run_id": run_id,
-                        "privacy": "public"
-                    }
-                }
-
-                r = requests.post(dispatch_url, headers=headers, json=payload, timeout=15)
-                if r.status_code not in (200, 204):
-                    raise Exception(f"GitHub API 回應錯誤 ({r.status_code}): {r.text}")
-
-                self.root.after(0, lambda: self.log("✓ 成功發動 YouTube API 暴速上傳 Workflow！等待雲端啟動..."))
-                time.sleep(4)
-                self._poll_workflow_runs(repo, token, target_workflow_name="Fast Upload Audiobooks & Build YouTube Playlist")
-
-            except Exception as e:
-                self.root.after(0, lambda err=str(e): self._on_workflow_failed(err))
-
-        threading.Thread(target=_worker, daemon=True).start()
-
-
     def cancel_github_actions(self):
         if not hasattr(self, 'current_run_id') or not self.current_run_id:
             messagebox.showinfo("提示", "目前沒有正在運行的任務可以取消。")
@@ -544,7 +523,7 @@ class AudiobookGUIApp:
                 
         threading.Thread(target=_cancel_worker, daemon=True).start()
 
-    def _poll_workflow_runs(self, repo, token, target_workflow_name=None):
+    def _poll_workflow_runs(self, repo, token, target_workflow_name=None, known_run_id=None):
         headers = {
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {token}",
@@ -572,6 +551,23 @@ class AudiobookGUIApp:
                         self.root.after(0, lambda: self.lbl_status.config(
                             text="網路已恢復，正在補回狀態…", foreground="#2980b9"
                         ))
+                    if response.status_code in (429, 500, 502, 503, 504):
+                        try:
+                            delay = int(response.headers.get("Retry-After", "5"))
+                        except ValueError:
+                            delay = 5
+                        delay = min(60, max(5, delay))
+                        if not connection_lost:
+                            connection_lost = True
+                            self.root.after(0, lambda c=response.status_code, d=delay: self.log(
+                                f"⚠ GitHub API 暫時無法服務 (HTTP {c})，{d} 秒後重試…"
+                            ))
+                        time.sleep(delay)
+                        continue
+                    if response.status_code in (401, 403):
+                        raise RuntimeError(
+                            f"GitHub API 拒絕存取 (HTTP {response.status_code})；請檢查 Token 權限或 API 配額。"
+                        )
                     return response
                 except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
                     if not connection_lost:
@@ -585,15 +581,13 @@ class AudiobookGUIApp:
                         ))
                     time.sleep(5)
 
-        run_id = None
+        run_id = int(known_run_id) if known_run_id else None
         max_wait = 40
-        for attempt in range(max_wait):
+        for attempt in range(max_wait if not run_id else 0):
             r = github_get(runs_url, timeout=10)
             if r.status_code == 200:
                 runs = r.json().get("workflow_runs", [])
                 for run in runs:
-                    if run.get("status") == "completed":
-                        continue
                     created_at = run.get("created_at", "")
                     try:
                         from datetime import datetime
@@ -611,6 +605,7 @@ class AudiobookGUIApp:
                             continue
                     run_id = run["id"]
                     self.current_run_id = run_id
+                    self._save_active_run(repo, run_id, target_workflow_name)
                     status = run["status"]
                     html_url = run.get("html_url", f"https://github.com/{repo}/actions/runs/{run_id}")
                     self.root.after(0, lambda s=status, url=html_url, r=repo: self.log(
@@ -635,6 +630,7 @@ class AudiobookGUIApp:
         completed_logs_checked = set()
         upload_pause = None
         upload_complete = None
+        previous_run_attempt = None
 
         while True:
             # 1. 查詢整體 Run 狀態
@@ -645,6 +641,12 @@ class AudiobookGUIApp:
                 run_data = r_run.json()
                 run_status = run_data.get("status")
                 run_conclusion = run_data.get("conclusion")
+                run_attempt = run_data.get("run_attempt", 1)
+                if run_attempt != previous_run_attempt:
+                    previous_run_attempt = run_attempt
+                    self.root.after(0, lambda a=run_attempt: self.log(
+                        f"↻ 目前雲端執行輪次：Run attempt {a}"
+                    ))
                 self.root.after(0, lambda s=run_status: self.lbl_status.config(text=f"雲端狀態: {s}", foreground="#2980b9"))
 
             # 2. 查詢並行 Jobs 狀態 (支援分頁，避免超過 30 個 Job 就印不出來)
@@ -698,7 +700,7 @@ class AudiobookGUIApp:
 
                                 # 解析標籤 [PROGRESS_MARKER]
                                 matches = re.findall(
-                                    r'\[PROGRESS_MARKER\] Worker-(\d+) \| Ch (\S+) done \((\d+/\d+)\)',
+                                    r'\[PROGRESS_MARKER\] Worker-(\d+) \| Ch (\S+) (?:complete|done) \((\d+/\d+)\)',
                                     r_log.text
                                 )
                                 for w_id, ch_range, prog in matches:
@@ -706,21 +708,6 @@ class AudiobookGUIApp:
                                     if marker_key not in seen_progress_markers[j_id]:
                                         seen_progress_markers[j_id].add(marker_key)
                                         p_msg = f"     ├─ ⚡ [Worker {w_id}] ✅ 第 {ch_range} 章一條龍合成完成 (進度: {prog})"
-                                        self.root.after(0, lambda m=p_msg: self.log(m))
-
-                                # 解析直播標籤 [STREAM_MARKER]
-                                stream_matches = re.findall(
-                                    r'\[STREAM_MARKER\] (START|DONE) \| (\S+) \| Ch (\S+) \| (\S+)(?: \| total (\d+))?',
-                                    r_log.text
-                                )
-                                for action, w_info, ch_prog, chap_name, total_cnt in stream_matches:
-                                    s_key = f"stream_{action}_{w_info}_{chap_name}"
-                                    if s_key not in seen_progress_markers[j_id]:
-                                        seen_progress_markers[j_id].add(s_key)
-                                        if action == "START":
-                                            p_msg = f"     ├─ 🎥 [直播進度] [{w_info}] ▶️ 開始推流: {chap_name} (章節進度: {ch_prog})"
-                                        else:
-                                            p_msg = f"     ├─ 🎥 [直播進度] [{w_info}] ✅ 完成推流: {chap_name} (累計已推流: {total_cnt or '?'} 章)"
                                         self.root.after(0, lambda m=p_msg: self.log(m))
 
                                 # 解析 API 上傳標籤 [API_UPLOAD_MARKER]
@@ -753,6 +740,31 @@ class AudiobookGUIApp:
                                     else:
                                         upload_complete = {"uploaded": int(uploaded), "total": int(total)}
 
+                                for summary_text in re.findall(r'\[RUN_SUMMARY\] (\{[^\r\n]+\})', r_log.text):
+                                    summary_key = "summary_" + summary_text
+                                    if summary_key in seen_progress_markers[j_id]:
+                                        continue
+                                    seen_progress_markers[j_id].add(summary_key)
+                                    try:
+                                        summary = json.loads(summary_text)
+                                        if summary.get("kind") == "worker":
+                                            incomplete = summary.get("incomplete") or []
+                                            detail = f"；未完成章節：{incomplete}" if incomplete else ""
+                                            message = (
+                                                f"     ├─ 📋 [Worker {summary['worker']} 摘要] "
+                                                f"完成 {summary['completed']}/{summary['total']} 章{detail}"
+                                            )
+                                        else:
+                                            message = (
+                                                f"     ├─ 📋 [YouTube 摘要] {summary.get('status')}，"
+                                                f"完成 {summary.get('completed')}/{summary.get('total')} Parts，"
+                                                f"待補封面 {summary.get('pending_thumbnails')}、CC {summary.get('pending_captions')}、"
+                                                f"播放清單 {summary.get('pending_playlist')}、發布 {summary.get('pending_publish')}"
+                                            )
+                                        self.root.after(0, lambda m=message: self.log(m))
+                                    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                                        pass
+
                                 # 相容備用：解析 "批次完成：第 X~Y 章"
                                 fallback_matches = re.findall(
                                     r'=== \[Worker-(\d+)\] ✅ 批次完成：第 (\S+) 章 MP4 影片已實打實寫入 Workspace/！ ===',
@@ -770,6 +782,7 @@ class AudiobookGUIApp:
             # Jobs and logs are synchronized before showing the terminal result, so
             # progress produced while the GUI was offline is not skipped.
             if run_status == "completed":
+                self._clear_active_run()
                 if upload_pause:
                     retry_text = upload_pause["retry_at"]
                     self.root.after(0, lambda p=upload_pause, t=retry_text: self._on_workflow_failed(
@@ -813,28 +826,24 @@ class AudiobookGUIApp:
     def _on_workflow_success(self, repo, run_id):
         self.progress_bar.stop()
         self.btn_run.config(state=tk.NORMAL)
-        if hasattr(self, 'btn_api_upload'):
-            self.btn_api_upload.config(state=tk.NORMAL)
-        if hasattr(self, 'btn_stream'):
-            self.btn_stream.config(state=tk.NORMAL)
         self.btn_download.config(state=tk.NORMAL)
         self.lbl_status.config(text="🎉 雲端作業完成！", foreground="#27ae60")
         
-        # 異步獲取 Release 檔案大小資訊並印出到 Log
-        def _fetch_release_info():
+        # 異步獲取 Actions Artifacts 大小資訊並印出到 Log
+        def _fetch_artifact_info():
             try:
                 headers = {
                     "Accept": "application/vnd.github+json",
                     "Authorization": f"Bearer {self.current_token}",
                     "X-GitHub-Api-Version": "2022-11-28"
                 }
-                api_url = f"https://api.github.com/repos/{repo}/releases/tags/run-{run_id}"
+                api_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100"
                 r = requests.get(api_url, headers=headers, timeout=10)
                 total_bytes = 0
                 asset_info_list = []
                 
                 if r.status_code == 200:
-                    assets = r.json().get("assets", [])
+                    assets = [item for item in r.json().get("artifacts", []) if not item.get("expired")]
                     for asset in assets:
                         import urllib.parse
                         raw_name = asset["name"]
@@ -842,7 +851,7 @@ class AudiobookGUIApp:
                         if name.startswith("default.") and hasattr(self, 'catalog_data') and self.catalog_data and self.catalog_data.get("book_title"):
                             name = name.replace("default", self.catalog_data["book_title"], 1)
                         
-                        sz_bytes = asset.get("size", 0)
+                        sz_bytes = asset.get("size_in_bytes", 0)
                         total_bytes += sz_bytes
                         sz_mb = sz_bytes / (1024 * 1024)
                         if sz_mb >= 1024:
@@ -871,7 +880,7 @@ class AudiobookGUIApp:
             except Exception as e:
                 self.root.after(0, lambda: self.log(f"🎉 雲端工作流成功執行完畢！（無法讀取檔案大小: {e}）"))
                 
-        threading.Thread(target=_fetch_release_info, daemon=True).start()
+        threading.Thread(target=_fetch_artifact_info, daemon=True).start()
 
     def start_batch_download(self):
         if not hasattr(self, 'current_run_id') or not self.current_run_id:
@@ -891,21 +900,21 @@ class AudiobookGUIApp:
                     "Authorization": f"Bearer {self.current_token}",
                     "X-GitHub-Api-Version": "2022-11-28"
                 }
-                api_url = f"https://api.github.com/repos/{repo}/releases/tags/run-{run_id}"
+                api_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100"
                 r = requests.get(api_url, headers=headers, timeout=10)
                 if r.status_code != 200:
-                    raise Exception(f"無法取得 Release 資訊: {r.text}")
+                    raise Exception(f"無法取得 Actions Artifacts: {r.text}")
                 
-                assets = r.json().get("assets", [])
+                assets = [item for item in r.json().get("artifacts", []) if not item.get("expired")]
                 if not assets:
-                    raise Exception("Release 中找不到任何檔案！")
+                    raise Exception("此 Run 找不到尚未過期的 Actions Artifact！")
                 
                 os.makedirs("Downloads", exist_ok=True)
                 total = len(assets)
                 
                 for idx, asset in enumerate(assets, 1):
                     import urllib.parse
-                    raw_name = asset["name"]
+                    raw_name = asset["name"] + ".zip"
                     name = urllib.parse.unquote(raw_name)
                     
                     # 處理舊版本 GitHub 把 % 替換成 . 的編碼檔名 (例如 E5.87.A1.E4.BA.BA...zip)
@@ -923,13 +932,13 @@ class AudiobookGUIApp:
                     if name.startswith("default.") and hasattr(self, 'catalog_data') and self.catalog_data and self.catalog_data.get("book_title"):
                         name = name.replace("default", self.catalog_data["book_title"], 1)
                         
-                    size_bytes = asset.get("size", 0)
+                    size_bytes = asset.get("size_in_bytes", 0)
                     size_mb = size_bytes / (1024 * 1024) if size_bytes else 0
                     
                     self.root.after(0, lambda n=name, i=idx, t=total, s=size_mb: self.log(f"📥 正在下載 ({i}/{t}): {n} (大小: {s:.1f} MB) ..."))
                     
-                    asset_api_url = asset["url"]
-                    headers_dl = {"Authorization": f"token {self.current_token}", "Accept": "application/octet-stream"}
+                    asset_api_url = asset["archive_download_url"]
+                    headers_dl = {"Authorization": f"Bearer {self.current_token}", "Accept": "application/vnd.github+json"}
                     r_dl = requests.get(asset_api_url, headers=headers_dl, stream=True)
                     
                     if r_dl.status_code in (200, 302):
@@ -973,10 +982,6 @@ class AudiobookGUIApp:
     def _on_workflow_failed(self, err_msg):
         self.progress_bar.stop()
         self.btn_run.config(state=tk.NORMAL)
-        if hasattr(self, 'btn_api_upload'):
-            self.btn_api_upload.config(state=tk.NORMAL)
-        if hasattr(self, 'btn_stream'):
-            self.btn_stream.config(state=tk.NORMAL)
         self.lbl_status.config(text="執行失敗", foreground="#e74c3c")
         self.log(f"✗ {err_msg}")
         messagebox.showerror("錯誤", f"發動雲端執行發生錯誤：\n{err_msg}")

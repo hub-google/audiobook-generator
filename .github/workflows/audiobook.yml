@@ -291,6 +291,12 @@ jobs:
           checkpoint = PipelineCheckpoint(
               workspace, book_title, worker_id, chapters
           )
+          incomplete = checkpoint.incomplete_chapters()
+          print("[RUN_SUMMARY] " + __import__("json").dumps({
+              "kind": "worker", "worker": worker_id,
+              "completed": len(chapters) - len(incomplete), "total": len(chapters),
+              "incomplete": incomplete,
+          }, ensure_ascii=False))
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
               summary.write(checkpoint.markdown_summary())
           PY
@@ -396,6 +402,13 @@ jobs:
           pending_captions = len(state.get("pending_captions", {}))
           pending_publish = len(state.get("pending_publish", {}))
           status = state.get("status", "unknown")
+          print("[RUN_SUMMARY] " + json.dumps({
+              "kind": "youtube", "status": status, "completed": done, "total": total,
+              "pending_thumbnails": pending, "pending_playlist": pending_playlist,
+              "pending_captions": pending_captions, "pending_publish": pending_publish,
+              "reason": state.get("reason"), "retry_at": state.get("retry_at"),
+              "playlist_url": state.get("playlist_url"),
+          }, ensure_ascii=False))
           
           status_icon = "⏸️"
           if status == "complete": status_icon = "🎉"
