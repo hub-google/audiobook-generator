@@ -2,7 +2,7 @@
 setlocal EnableExtensions DisableDelayedExpansion
 
 rem Deploy every tracked/untracked workspace change to the current Git branch.
-rem Usage: deloy.bat "Optional commit message"
+rem Usage: deploy.bat "Optional commit message"
 
 cd /d "%~dp0"
 

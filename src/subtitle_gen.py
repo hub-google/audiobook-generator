@@ -85,6 +85,7 @@ def generate_chapter_srt(part_wav_paths, lines, srt_output_path):
         logging.warning(f"[Subtitle] Mismatch: {len(part_wav_paths)} wavs vs {len(lines)} lines")
     
     current_time = 0.0
+    cue_index = 1
     
     partial_path = srt_output_path + ".tmp"
     with open(partial_path, "w", encoding="utf-8") as f:
@@ -107,10 +108,17 @@ def generate_chapter_srt(part_wav_paths, lines, srt_output_path):
             formatted_text = split_long_subtitle_text(text, max_len=22)
             clean_srt_text = strip_subtitle_punctuation(formatted_text)
             
-            f.write(f"{idx + 1}\n")
+            # Punctuation-only chunks can become empty after subtitle cleanup.
+            # They still occupy time in the audio, but must not create a
+            # two-line (invalid) SRT cue.
+            if not clean_srt_text.strip():
+                current_time = end_time
+                continue
+
+            f.write(f"{cue_index}\n")
             f.write(f"{start_ts} --> {end_ts}\n")
             f.write(f"{clean_srt_text}\n\n")
-            
+            cue_index += 1
             current_time = end_time
         f.flush()
         os.fsync(f.fileno())

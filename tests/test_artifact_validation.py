@@ -14,6 +14,25 @@ from src.artifact_validation import (
 
 
 class ArtifactValidationTests(unittest.TestCase):
+    def test_allows_verification_code_in_normal_novel_text(self):
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".txt", delete=False) as handle:
+            path = handle.name
+            handle.write("第一章\n\n他收到手機驗證碼後，輸入六位數字並繼續登入帳戶，隨後走進了安靜的走廊。")
+        try:
+            self.assertIn("sha256", validate_text(path))
+        finally:
+            os.remove(path)
+
+    def test_rejects_text_with_multiple_anti_bot_signals(self):
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".txt", delete=False) as handle:
+            path = handle.name
+            handle.write("Access denied\n\nCloudflare captcha verification is required to continue.")
+        try:
+            with self.assertRaises(ArtifactValidationError):
+                validate_text(path)
+        finally:
+            os.remove(path)
+
     def test_validates_real_text_wav_srt_and_image_artifacts(self):
         with tempfile.TemporaryDirectory() as directory:
             raw = os.path.join(directory, "raw.txt")

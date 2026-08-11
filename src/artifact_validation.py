@@ -49,8 +49,12 @@ def validate_text(path, clean=False):
     if len(meaningful) < minimum:
         raise ArtifactValidationError(f"text is too short ({len(meaningful)} characters)")
     lowered = meaningful.lower()
+    # A single word such as "驗證碼" can be legitimate novel dialogue.
+    # Require corroborating anti-bot/error-page signals instead of rejecting
+    # an entire chapter for one incidental word.
     blocked = ("captcha", "cloudflare", "accessdenied", "驗證碼", "存取遭拒")
-    if any(marker in lowered for marker in blocked):
+    matched = {marker for marker in blocked if marker in lowered}
+    if len(matched) >= 2:
         raise ArtifactValidationError("text resembles an anti-bot or error page")
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not clean and len(lines) < 2:

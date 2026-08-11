@@ -628,7 +628,10 @@ def verify_published_part(youtube, video_id, playlist_id, privacy_status, attemp
 
 def generate_part_srt(sliced_items, output_srt_path):
     """從 sliced_items 中的單章 srt 檔與 dur，無縫動態合併生成整個 Part 的完整 SRT"""
-    from subtitle_gen import parse_timestamp_to_seconds, format_timestamp
+    try:
+        from .subtitle_gen import parse_timestamp_to_seconds, format_timestamp
+    except ImportError:
+        from subtitle_gen import parse_timestamp_to_seconds, format_timestamp
 
     current_offset = 0.0
     global_index = 1
