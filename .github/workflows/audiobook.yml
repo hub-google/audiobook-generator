@@ -105,19 +105,32 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          for attempt in 1 2 3; do
+            echo "Python dependency install attempt $attempt/3"
+            if python -m pip install --upgrade pip && pip install -r requirements.txt; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep 30
+          done
 
       - name: Parse Catalog & Generate config.yaml + matrix.json
         run: |
-          python src/catalog_parser.py \
-            --url "${{ github.event.inputs.catalog_url }}" \
-            --start ${{ github.event.inputs.start_chap }} \
-            --end   ${{ github.event.inputs.end_chap }} \
-            --output config.yaml \
-            --workers ${{ github.event.inputs.chapters_per_worker }} \
-            --matrix-output matrix.json \
-            --exclude-chapters "${{ github.event.inputs.exclude_chapters }}"
+          for attempt in 1 2 3; do
+            echo "Catalog parsing attempt $attempt/3"
+            if python src/catalog_parser.py \
+              --url "${{ github.event.inputs.catalog_url }}" \
+              --start ${{ github.event.inputs.start_chap }} \
+              --end   ${{ github.event.inputs.end_chap }} \
+              --output config.yaml \
+              --workers ${{ github.event.inputs.chapters_per_worker }} \
+              --matrix-output matrix.json \
+              --exclude-chapters "${{ github.event.inputs.exclude_chapters }}"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep 60
+          done
 
       - name: Export matrix to GitHub Actions output
         id: gen_matrix
@@ -163,11 +176,24 @@ jobs:
 
       - name: Install System Deps (FFmpeg + CJK Fonts)
         run: |
-          sudo env DEBIAN_FRONTEND=noninteractive timeout 10m apt-get update -qq -o Acquire::Retries=3
-          sudo env DEBIAN_FRONTEND=noninteractive timeout 15m apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o DPkg::Lock::Timeout=60 ffmpeg fonts-noto-cjk fonts-wqy-zenhei
+          for attempt in 1 2 3; do
+            echo "System dependency install attempt $attempt/3"
+            if sudo env DEBIAN_FRONTEND=noninteractive timeout 10m apt-get update -qq -o Acquire::Retries=3 && \
+              sudo env DEBIAN_FRONTEND=noninteractive timeout 15m apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o DPkg::Lock::Timeout=60 ffmpeg fonts-noto-cjk fonts-wqy-zenhei; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep 30
+          done
 
       - name: Install Python Dependencies
-        run: pip install -r requirements.txt
+        run: |
+          for attempt in 1 2 3; do
+            echo "Python dependency install attempt $attempt/3"
+            if pip install -r requirements.txt; then break; fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep 30
+          done
 
       - name: Download shared config
         uses: actions/download-artifact@v4
@@ -195,7 +221,18 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          python src/worker_pipeline.py --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1
+          for attempt in 1 2 3; do
+            echo "Worker pipeline attempt $attempt/3"
+            if python src/worker_pipeline.py --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "❌ Worker failed after 3 attempts. The checkpoint will be saved and this run will remain failed." >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            echo "⚠️ Worker attempt $attempt failed; retrying in 60 seconds. Existing Workspace files will be reused." >> "$GITHUB_STEP_SUMMARY"
+            sleep 60
+          done
 
       - name: Save Worker Workspace Checkpoint
         if: always()
@@ -254,12 +291,25 @@ jobs:
           python-version: '3.11'
 
       - name: Install Python Dependencies
-        run: pip install -r requirements.txt
+        run: |
+          for attempt in 1 2 3; do
+            echo "Python dependency install attempt $attempt/3"
+            if pip install -r requirements.txt; then break; fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep 30
+          done
 
       - name: Install FFmpeg
         run: |
-          sudo env DEBIAN_FRONTEND=noninteractive timeout 10m apt-get update -qq -o Acquire::Retries=3
-          sudo env DEBIAN_FRONTEND=noninteractive timeout 10m apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o DPkg::Lock::Timeout=60 ffmpeg
+          for attempt in 1 2 3; do
+            echo "FFmpeg install attempt $attempt/3"
+            if sudo env DEBIAN_FRONTEND=noninteractive timeout 10m apt-get update -qq -o Acquire::Retries=3 && \
+              sudo env DEBIAN_FRONTEND=noninteractive timeout 10m apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o DPkg::Lock::Timeout=60 ffmpeg; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep 30
+          done
 
       - name: Restore latest YouTube upload checkpoint
         uses: actions/cache/restore@v4
@@ -281,11 +331,25 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          set +e
-          python src/youtube_api_uploader.py --run-id "${{ github.run_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
-          code=$?
-          if [ "$code" -ne 0 ] && [ "$code" -ne 75 ]; then exit "$code"; fi
-          exit "$code"
+          for attempt in 1 2 3; do
+            echo "YouTube uploader attempt $attempt/3"
+            set +e
+            python src/youtube_api_uploader.py --run-id "${{ github.run_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
+            code=$?
+            set -e
+
+            if [ "$code" -eq 0 ]; then exit 0; fi
+            if [ "$code" -eq 75 ]; then
+              echo "⏸️ YouTube uploader requested a safe pause. The checkpoint is preserved; this run will retry after 30 minutes." >> "$GITHUB_STEP_SUMMARY"
+              exit 75
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "❌ YouTube upload failed after 3 attempts. The checkpoint will be saved and this run will remain failed." >> "$GITHUB_STEP_SUMMARY"
+              exit "$code"
+            fi
+            echo "⚠️ YouTube upload attempt $attempt failed; retrying in 60 seconds from its saved state." >> "$GITHUB_STEP_SUMMARY"
+            sleep 60
+          done
 
       - name: Generate Job Summary
         if: always()
