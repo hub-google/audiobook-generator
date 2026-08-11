@@ -86,7 +86,8 @@ def generate_chapter_srt(part_wav_paths, lines, srt_output_path):
     
     current_time = 0.0
     
-    with open(srt_output_path, "w", encoding="utf-8") as f:
+    partial_path = srt_output_path + ".tmp"
+    with open(partial_path, "w", encoding="utf-8") as f:
         for idx, (wav_path, text) in enumerate(zip(part_wav_paths, lines)):
             text = text.strip()
             if not text:
@@ -111,6 +112,9 @@ def generate_chapter_srt(part_wav_paths, lines, srt_output_path):
             f.write(f"{clean_srt_text}\n\n")
             
             current_time = end_time
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(partial_path, srt_output_path)
             
     logging.info(f"[Subtitle] ✓ Generated SRT: {os.path.basename(srt_output_path)}")
 

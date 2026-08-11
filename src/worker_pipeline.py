@@ -264,6 +264,7 @@ def run_resumable_chapter(config, checkpoint, chapter_url, chapter_num, worker_i
 
         # Some operations (currently TTS + subtitle) regenerate all outputs in
         # their group, so record the attempt against every stage they execute.
+        checkpoint.prepare_for_run(chapter_num, stage_names)
         for stage in stage_names:
             checkpoint.mark_running(chapter_num, stage)
         try:

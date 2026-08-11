@@ -2,6 +2,8 @@ import json
 import os
 import tempfile
 import unittest
+import hashlib
+from unittest.mock import patch
 
 from src.pipeline_checkpoint import PipelineCheckpoint, STAGES
 
@@ -11,9 +13,25 @@ class PipelineCheckpointTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.workspace = self.temp_dir.name
         self.book = "test-book"
+        self.validator = patch("src.pipeline_checkpoint.validate_stage", side_effect=self._validate_fixture)
+        self.validator.start()
 
     def tearDown(self):
+        self.validator.stop()
         self.temp_dir.cleanup()
+
+    @staticmethod
+    def _validate_fixture(stage, path, **kwargs):
+        if not os.path.exists(path):
+            from src.artifact_validation import ArtifactValidationError
+            raise ArtifactValidationError("missing fixture")
+        with open(path, "rb") as handle:
+            payload = handle.read()
+        minimum = {"crawler": 10, "cleaner": 10, "tts": 100, "subtitle": 10, "image": 100, "video": 1000}[stage]
+        if len(payload) <= minimum:
+            from src.artifact_validation import ArtifactValidationError
+            raise ArtifactValidationError("fixture too short")
+        return {"bytes": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
 
     def _write_output(self, checkpoint, chapter, stage):
         path = checkpoint.output_path(chapter, stage)
@@ -97,6 +115,21 @@ class PipelineCheckpointTests(unittest.TestCase):
 
         self.assertIn("Overall: **FAILED**", summary)
         self.assertIn("**part_build**: no part produced", summary)
+
+    def test_upstream_hash_change_invalidates_downstream_outputs(self):
+        checkpoint = PipelineCheckpoint(self.workspace, self.book, 0, [1])
+        for stage in STAGES:
+            self._write_output(checkpoint, 1, stage)
+        checkpoint.reconcile()
+        clean_path = checkpoint.output_path(1, "cleaner")
+        with open(clean_path, "a", encoding="utf-8") as handle:
+            handle.write("changed")
+
+        restored = PipelineCheckpoint(self.workspace, self.book, 0, [1])
+
+        self.assertEqual(restored.data["chapters"]["1"]["stages"]["cleaner"]["status"], "completed")
+        self.assertEqual(restored.data["chapters"]["1"]["stages"]["tts"]["status"], "pending")
+        self.assertIn("upstream artifact changed", restored.data["chapters"]["1"]["stages"]["tts"]["validation_error"])
 
 
 if __name__ == "__main__":

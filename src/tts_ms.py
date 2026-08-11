@@ -316,9 +316,13 @@ def run_tts_ms(target_indices=None):
 
             # ── Step 3: 合併 WAV ──
             merge_ok = False
+            partial_wav_path = wav_path + ".tmp.wav"
+            if os.path.exists(partial_wav_path):
+                os.remove(partial_wav_path)
             if len(generated_parts) == 1:
-                shutil.move(generated_parts[0], wav_path)
-                if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
+                shutil.move(generated_parts[0], partial_wav_path)
+                if os.path.exists(partial_wav_path) and os.path.getsize(partial_wav_path) > 100:
+                    os.replace(partial_wav_path, wav_path)
                     logging.info(f"[TTS_MS] ✓ 第 {chap_num} 章 WAV 完成 (單段直接使用)")
                     merge_ok = True
             else:
@@ -330,10 +334,11 @@ def run_tts_ms(target_indices=None):
                 try:
                     subprocess.run(
                         [ffmpeg_path, "-y", "-f", "concat", "-safe", "0",
-                         "-i", concat_list_path, "-c", "copy", wav_path],
+                         "-i", concat_list_path, "-c", "copy", partial_wav_path],
                         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                     )
-                    if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
+                    if os.path.exists(partial_wav_path) and os.path.getsize(partial_wav_path) > 100:
+                        os.replace(partial_wav_path, wav_path)
                         logging.info(
                             f"[TTS_MS] ✓ 第 {chap_num} 章 WAV 合併完成 ({len(generated_parts)} 段)"
                         )
@@ -357,6 +362,11 @@ def run_tts_ms(target_indices=None):
                             pass
 
             if not merge_ok:
+                if os.path.exists(partial_wav_path):
+                    try:
+                        os.remove(partial_wav_path)
+                    except Exception:
+                        pass
                 # 清除殘留，等待下次重試
                 for p in generated_parts:
                     if os.path.exists(p):

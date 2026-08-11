@@ -378,6 +378,7 @@ jobs:
         run: |
           python - <<'PY'
           import json, os
+          from src.publication_checkpoint import PublicationCheckpoint
           
           state_file = "upload_resume_state/state.json"
           if not os.path.exists(state_file):
@@ -417,6 +418,8 @@ jobs:
               playlist_url = state.get("playlist_url")
               if playlist_url and playlist_url.startswith("http"):
                   f.write(f"| **播放清單** | [點此開啟 YouTube 播放清單]({playlist_url}) |\n")
+              f.write("\n")
+              f.write(PublicationCheckpoint(state_file).markdown_summary())
           PY
 
       - name: Save YouTube upload checkpoint

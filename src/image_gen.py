@@ -134,7 +134,9 @@ def generate_title_card(book_title, chap_num, chapter_title, output_path):
     draw.text((chapter_x, 305), chapter_text, font=chapter_font, fill=gold)
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-    image.save(output_path, "JPEG", quality=92, optimize=True)
+    partial_path = output_path + ".tmp"
+    image.save(partial_path, "JPEG", quality=92, optimize=True)
+    os.replace(partial_path, output_path)
     logging.info("[ImageGen] 已生成無摘要章節標題卡: %s", os.path.basename(output_path))
     return True
 
