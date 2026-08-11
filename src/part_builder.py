@@ -248,6 +248,11 @@ def build_all_parts(book_title, workspace_dir=None, output_dir=None, min_hours=1
 
         # 1. 無損合併影片
         merge_ok = merge_part_videos(p, part_video_path)
+        if not merge_ok or not os.path.isfile(part_video_path):
+            raise RuntimeError(
+                f"[PartBuilder] Failed to create merged video for part {part_num}: "
+                f"{part_video_path}"
+            )
 
         # 2. 生成對應 Part 的獨立 Metadata (標題, 簡介, 2K 封面)
         part_ws_dir = os.path.join(workspace_dir, f"Part_{part_num:02d}")
@@ -273,7 +278,7 @@ def build_all_parts(book_title, workspace_dir=None, output_dir=None, min_hours=1
                 curr_time += item["dur"]
             f.write("\n")
 
-        p["merged_video"] = part_video_path if merge_ok else None
+        p["merged_video"] = part_video_path
         p["metadata"] = meta
         p["timestamps_file"] = ts_file
         built_parts.append(p)

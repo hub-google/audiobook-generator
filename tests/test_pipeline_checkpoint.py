@@ -116,6 +116,27 @@ class PipelineCheckpointTests(unittest.TestCase):
         self.assertIn("Overall: **FAILED**", summary)
         self.assertIn("**part_build**: no part produced", summary)
 
+    def test_worker_stage_accepts_one_path_without_splitting_characters(self):
+        checkpoint = PipelineCheckpoint(self.workspace, self.book, 0, [1])
+        output = os.path.join(self.workspace, "part-1.mp4")
+        with open(output, "wb") as part_file:
+            part_file.write(b"video")
+
+        checkpoint.mark_worker_stage_completed("part_build", output)
+
+        self.assertEqual(
+            checkpoint.data["worker_stages"]["part_build"]["outputs"],
+            [os.path.abspath(output)],
+        )
+
+    def test_worker_stage_rejects_non_path_outputs_clearly(self):
+        checkpoint = PipelineCheckpoint(self.workspace, self.book, 0, [1])
+
+        with self.assertRaisesRegex(TypeError, "outputs must be file paths"):
+            checkpoint.mark_worker_stage_completed(
+                "part_build", [{"merged_video": "part-1.mp4"}]
+            )
+
     def test_upstream_hash_change_invalidates_downstream_outputs(self):
         checkpoint = PipelineCheckpoint(self.workspace, self.book, 0, [1])
         for stage in STAGES:

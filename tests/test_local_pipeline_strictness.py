@@ -26,7 +26,10 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
 
         self.assertEqual(run_chapter.call_count, 2)
 
-    @patch("src.worker_pipeline.stage_video_gen", return_value=["part-1.mp4"])
+    @patch(
+        "src.worker_pipeline.stage_video_gen",
+        return_value=[{"merged_video": "part-1.mp4", "part_num": 1}],
+    )
     @patch("src.worker_pipeline.PipelineCheckpoint")
     @patch("src.worker_pipeline.run_resumable_chapter")
     def test_part_build_only_runs_after_every_chapter_passes(
@@ -44,6 +47,10 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
         checkpoint.mark_worker_stage_completed.assert_called_once_with(
             "part_build", ["part-1.mp4"]
         )
+
+    def test_part_output_paths_rejects_missing_merged_video(self):
+        with self.assertRaisesRegex(RuntimeError, "no merged video path"):
+            worker_pipeline.part_output_paths([{"part_num": 1, "merged_video": None}])
 
 
 if __name__ == "__main__":

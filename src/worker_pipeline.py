@@ -234,6 +234,26 @@ def stage_video_gen(config, build_parts=True, target_indices=None):
     return run_video_gen(build_parts=build_parts, target_indices=target_indices)
 
 
+def part_output_paths(built_parts):
+    """Return the merged video path from each part-builder result."""
+    paths = []
+    for position, part in enumerate(built_parts, start=1):
+        if not isinstance(part, dict):
+            raise TypeError(
+                f"part builder result #{position} must be a mapping, "
+                f"got {type(part).__name__}"
+            )
+        path = part.get("merged_video")
+        if not isinstance(path, (str, os.PathLike)) or not os.fspath(path):
+            raise RuntimeError(
+                f"part builder result #{position} has no merged video path"
+            )
+        paths.append(os.fspath(path))
+    if not paths:
+        raise RuntimeError("part builder produced no merged videos")
+    return paths
+
+
 def run_resumable_chapter(config, checkpoint, chapter_url, chapter_num, worker_id):
     """Run one chapter from its first missing output and persist every result."""
     chapter_num = int(chapter_num)
@@ -330,7 +350,9 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
         checkpoint.mark_worker_stage_running("part_build")
         try:
             built_parts = stage_video_gen(config, build_parts=True)
-            checkpoint.mark_worker_stage_completed("part_build", built_parts)
+            checkpoint.mark_worker_stage_completed(
+                "part_build", part_output_paths(built_parts)
+            )
         except Exception as error:
             checkpoint.mark_worker_stage_failed("part_build", error)
             raise
@@ -383,7 +405,10 @@ def main():
     if stage == "pipeline":
         run_pipeline(
             config, worker_id=args.worker_id, chapters=chapters,
-            exact_indices=exact_indices, build_parts=True, force=args.force,
+            # Matrix workers only publish per-chapter artifacts. The uploader
+            # downloads every worker artifact and builds globally contiguous
+            # 10-11 hour Parts once, after all workers have succeeded.
+            exact_indices=exact_indices, build_parts=False, force=args.force,
         )
 
     elif stage == "crawl":

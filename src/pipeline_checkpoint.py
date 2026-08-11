@@ -254,6 +254,16 @@ class PipelineCheckpoint:
         self.save()
 
     def mark_worker_stage_completed(self, stage, outputs):
+        if isinstance(outputs, (str, os.PathLike)):
+            outputs = [outputs]
+        else:
+            outputs = list(outputs)
+        invalid = [path for path in outputs if not isinstance(path, (str, os.PathLike))]
+        if invalid:
+            raise TypeError(
+                f"worker stage {stage} outputs must be file paths; "
+                f"got {type(invalid[0]).__name__}"
+            )
         outputs = [os.path.abspath(path) for path in outputs]
         if not outputs or not all(os.path.exists(path) for path in outputs):
             raise RuntimeError(f"worker stage {stage} has missing output files")
