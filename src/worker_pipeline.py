@@ -23,6 +23,11 @@ import yaml
 import logging
 import argparse
 
+try:
+    from pipeline_checkpoint import PipelineCheckpoint, STAGES
+except ImportError:  # Allow importing as src.worker_pipeline in tests/tools.
+    from src.pipeline_checkpoint import PipelineCheckpoint, STAGES
+
 # 確保 src/ 下的模組可被 import
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SRC_DIR)
@@ -226,7 +231,52 @@ def stage_image_gen(config, target_indices=None):
 
 def stage_video_gen(config, build_parts=True, target_indices=None):
     from video_gen import run_video_gen
-    run_video_gen(build_parts=build_parts, target_indices=target_indices)
+    return run_video_gen(build_parts=build_parts, target_indices=target_indices)
+
+
+def run_resumable_chapter(config, checkpoint, chapter_url, chapter_num, worker_id):
+    """Run one chapter from its first missing output and persist every result."""
+    chapter_num = int(chapter_num)
+    operations = (
+        ("crawler", lambda: stage_crawl(config, [chapter_url], chapter_num, [chapter_num])),
+        ("cleaner", lambda: stage_clean(config, target_indices=[chapter_num])),
+        (("tts", "subtitle"), lambda: stage_tts(config, target_indices=[chapter_num])),
+        ("image", lambda: stage_image_gen(config, target_indices=[chapter_num])),
+        ("video", lambda: stage_video_gen(config, build_parts=False, target_indices=[chapter_num])),
+    )
+
+    for stage_names, operation in operations:
+        stage_names = (stage_names,) if isinstance(stage_names, str) else stage_names
+        missing = [stage for stage in stage_names if not checkpoint.is_completed(chapter_num, stage)]
+        if not missing:
+            logging.info("[CHECKPOINT] Worker-%s chapter %s %s already complete; skipping",
+                         worker_id, chapter_num, ",".join(stage_names))
+            continue
+
+        first_stage_index = STAGES.index(stage_names[0])
+        missing_upstream = [stage for stage in STAGES[:first_stage_index]
+                            if not checkpoint.is_completed(chapter_num, stage)]
+        if missing_upstream:
+            raise RuntimeError(
+                f"chapter {chapter_num} cannot run {stage_names[0]}; "
+                f"missing upstream output(s): {missing_upstream}"
+            )
+
+        # Some operations (currently TTS + subtitle) regenerate all outputs in
+        # their group, so record the attempt against every stage they execute.
+        for stage in stage_names:
+            checkpoint.mark_running(chapter_num, stage)
+        try:
+            operation()
+            for stage in stage_names:
+                checkpoint.mark_completed(chapter_num, stage)
+        except Exception as error:
+            for stage in stage_names:
+                if checkpoint.is_completed(chapter_num, stage):
+                    checkpoint.mark_completed(chapter_num, stage)
+                else:
+                    checkpoint.mark_failed(chapter_num, stage, error)
+            raise
 
 
 # ── 主程式 ────────────────────────────────────────────────
@@ -273,73 +323,38 @@ def main():
     tts_failed_chapters = set()
 
     if stage == "pipeline":
-        batch_size = args.batch_size if args.batch_size > 0 else 1
-        total_in_worker = len(exact_indices)
         book_title = config['book_title']
         workspace_dir = os.path.abspath(os.path.join(
             SRC_DIR, "..", config['paths']['workspace_base'], book_title
         ))
-        video_dir = os.path.join(workspace_dir, "Video")
+        checkpoint = PipelineCheckpoint(workspace_dir, book_title, args.worker_id, exact_indices)
+        logging.info("=== Worker %s resumable per-stage pipeline (%s chapters) ===",
+                     args.worker_id, len(exact_indices))
 
-        logging.info(f"=== Worker {args.worker_id} 啟動逐章一條龍即時合成與存檔模式 (共 {total_in_worker} 章) ===")
+        for position, (chapter_url, chapter_num) in enumerate(zip(chapters, exact_indices), start=1):
+            try:
+                run_resumable_chapter(config, checkpoint, chapter_url, chapter_num, args.worker_id)
+                logging.info("[PROGRESS_MARKER] Worker-%s | Ch %s complete (%s/%s)",
+                             args.worker_id, chapter_num, position, len(exact_indices))
+            except Exception as error:
+                # Continue other chapters so one bad chapter does not hide their progress.
+                logging.exception("[CHECKPOINT] Worker-%s chapter %s stopped: %s",
+                                  args.worker_id, chapter_num, error)
 
-        for i in range(0, total_in_worker, batch_size):
-            sub_chapters = chapters[i:i + batch_size]
-            sub_indices = exact_indices[i:i + batch_size]
-
-            # ── 第一道防線：MP4 已存在 → 無條件跳過整個 batch，不跑任何 stage ──
-            missing_mp4s = []
-            for c_idx in sub_indices:
-                mp4_file = os.path.join(video_dir, f"{book_title}_chapter_{c_idx}.mp4")
-                if not (os.path.exists(mp4_file) and os.path.getsize(mp4_file) > 1000):
-                    missing_mp4s.append(c_idx)
-
-            if not missing_mp4s:
-                logging.info(f"=== [Worker-{args.worker_id}] ⚡ 第 {sub_indices[0]}~{sub_indices[-1]} 章 MP4 已存在，跳過 ===")
-                logging.info(f"[PROGRESS_MARKER] Worker-{args.worker_id} | Ch {sub_indices[0]}~{sub_indices[-1]} done ({i + len(sub_indices)}/{total_in_worker})")
-                continue
-
-            logging.info(f"=== [Worker-{args.worker_id}] ▶️ 開始執行批次：第 {sub_indices[0]}~{sub_indices[-1]} 章（缺 MP4: {missing_mp4s}）===")
-            stage_crawl(config, sub_chapters, sub_indices[0], sub_indices)
-            stage_clean(config, target_indices=sub_indices)
-            _, failed_in_batch = stage_tts(config, target_indices=sub_indices)
-            if failed_in_batch:
-                tts_failed_chapters.update(failed_in_batch)
-            stage_image_gen(config, target_indices=sub_indices)
-            stage_video_gen(config, build_parts=False, target_indices=sub_indices)
-            still_missing_mp4s = []
-            for c_idx in sub_indices:
-                mp4_file = os.path.join(video_dir, f"{book_title}_chapter_{c_idx}.mp4")
-                if not (os.path.exists(mp4_file) and os.path.getsize(mp4_file) > 1000):
-                    still_missing_mp4s.append(c_idx)
-            if still_missing_mp4s:
-                logging.error(
-                    "[Worker-%s] 批次未產生必要 MP4：%s；將交由缺章修復流程重試",
-                    args.worker_id, still_missing_mp4s,
-                )
-            else:
-                logging.info(f"=== [Worker-{args.worker_id}] ✅ 批次完成：第 {sub_indices[0]}~{sub_indices[-1]} 章 MP4 已寫入 ===")
-                logging.info(f"[PROGRESS_MARKER] Worker-{args.worker_id} | Ch {sub_indices[0]}~{sub_indices[-1]} done ({i + len(sub_indices)}/{total_in_worker})")
-
-        # Validate before packaging. Any missing chapter is retried through the
-        # complete pipeline, then validated again before artifacts may publish.
-        logging.info(f"=== [Worker-{args.worker_id}] 執行最終完成度驗收 ===")
-        complete_chapters, final_failed = validate_chapter_completeness(
-            config, exact_indices, tts_failed_chapters
-        )
-        if final_failed:
-            final_failed = recover_incomplete_chapters(
-                config, chapters, exact_indices, final_failed, args.worker_id
-            )
-            complete_chapters, final_failed = validate_chapter_completeness(
-                config, exact_indices
-            )
+        final_failed = set(checkpoint.incomplete_chapters())
+        complete_chapters = [chapter for chapter in exact_indices if chapter not in final_failed]
         print_final_report(complete_chapters, final_failed, args.worker_id)
         require_complete_worker(final_failed, args.worker_id)
 
         # Only a complete worker may build aggregate outputs.
-        logging.info(f"=== [Worker-{args.worker_id}] 驗收完成，開始執行 Part 大影片打包（force={args.force}）===")
-        stage_video_gen(config, build_parts=True)
+        logging.info(f"=== [Worker-{args.worker_id}] All stage outputs exist; building Parts (force={args.force}) ===")
+        checkpoint.mark_worker_stage_running("part_build")
+        try:
+            built_parts = stage_video_gen(config, build_parts=True)
+            checkpoint.mark_worker_stage_completed("part_build", built_parts)
+        except Exception as error:
+            checkpoint.mark_worker_stage_failed("part_build", error)
+            raise
 
     elif stage == "crawl":
         stage_crawl(config, chapters, start_global_idx, exact_indices)

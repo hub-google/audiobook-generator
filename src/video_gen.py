@@ -291,15 +291,20 @@ def run_video_gen(build_parts=True, target_indices=None):
         merge_srts(chapter_srt_paths, chapter_duration_list, full_srt_path)
     except Exception as e:
         logging.error(f"[VideoGen] ✗ Full SRT merge failed: {e}")
+        raise RuntimeError("Full SRT merge did not complete") from e
 
     # ── 自動進行 10~11 小時無縫分部 (Part) 影片與 Metadata 切分打包 ──
     try:
         from part_builder import build_all_parts
         logging.info("[VideoGen] 正在執行 10~11 小時影片自動無縫分部 (Part) 打包...")
         built_parts = build_all_parts(book_title, workspace_dir=workspace_dir, output_dir=output_dir, min_hours=10.0, max_hours=11.0)
+        if not built_parts:
+            raise RuntimeError("Part builder produced no MP4 files")
         logging.info(f"[VideoGen] 🎉 成功生成 {len(built_parts)} 部 10~11 小時分部影片！")
+        return built_parts
     except Exception as e:
         logging.error(f"[VideoGen] ✗ 分部打包失敗: {e}")
+        raise
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

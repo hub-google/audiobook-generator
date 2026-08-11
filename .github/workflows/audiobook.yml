@@ -260,18 +260,40 @@ jobs:
 
       - name: Worker Job Summary
         if: always()
+        env:
+          WORKER_ID: ${{ matrix.worker_id }}
+          START_CHAP: ${{ matrix.start_chap }}
+          END_CHAP: ${{ matrix.end_chap }}
+          JOB_STATUS: ${{ job.status }}
         run: |
-          echo "## ⚡ Worker ${{ matrix.worker_id }} Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "📦 **Chapters:** ${{ matrix.start_chap }} ~ ${{ matrix.end_chap }}" >> "$GITHUB_STEP_SUMMARY"
-          
-          if [ -d "Workspace" ]; then
-            audio_count=$(find Workspace/*/Audio/ -name "*.wav" 2>/dev/null | wc -l || echo 0)
-            video_count=$(find Workspace/*/Video/ -name "*.mp4" 2>/dev/null | wc -l || echo 0)
-            echo "📊 **Audio Generated:** $audio_count" >> "$GITHUB_STEP_SUMMARY"
-            echo "🎥 **Video Generated:** $video_count" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "⚠️ Workspace directory not found. Worker might have failed early." >> "$GITHUB_STEP_SUMMARY"
+          if [ ! -f "config.yaml" ]; then
+            echo "## Worker $WORKER_ID Pipeline Status" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Overall: **FAILED**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Job status: **$JOB_STATUS**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Resume point: **setup/download config**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Reason: config.yaml is unavailable; inspect the first failed setup step." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+          python - <<'PY'
+          import os
+          import yaml
+          from src.pipeline_checkpoint import PipelineCheckpoint
+
+          with open("config.yaml", encoding="utf-8") as config_file:
+              config = yaml.safe_load(config_file)
+          book_title = config["book_title"]
+          workspace = os.path.abspath(os.path.join(config["paths"]["workspace_base"], book_title))
+          worker_id = int(os.environ["WORKER_ID"])
+          per_worker = int(config["chapters_per_worker"])
+          start = worker_id * per_worker
+          chapters = config["selected_indices"][start:start + per_worker]
+          checkpoint = PipelineCheckpoint(
+              workspace, book_title, worker_id, chapters
+          )
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(checkpoint.markdown_summary())
+          PY
 
 # ─────────────────────────────────────────────────────────────
 # Automatic YouTube API Upload & Playlist Builder (無直播，純 API 暴速上傳)
