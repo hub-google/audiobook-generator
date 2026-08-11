@@ -67,21 +67,32 @@ jobs:
           conclusion=$(jq -r '.conclusion // empty' <<< "$latest_run")
           updated_at=$(jq -r '.updatedAt // empty' <<< "$latest_run")
 
+          # Fetch run_attempt to prevent infinite retry loops
+          run_attempt=""
+          if [ -n "$run_id" ]; then
+            run_attempt=$(gh run view "$run_id" --repo "$REPOSITORY" --json attempt --jq '.attempt // 1' 2>/dev/null || echo "1")
+          fi
+
           echo "## Automatic retry check" >> "$GITHUB_STEP_SUMMARY"
           if [ -z "$run_id" ]; then
             echo "No manually-started audiobook run was found." >> "$GITHUB_STEP_SUMMARY"
           elif [ "$status" != "completed" ]; then
             echo "Run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) is still $status; no duplicate run was started." >> "$GITHUB_STEP_SUMMARY"
           elif [ "$conclusion" = "failure" ]; then
-            updated_epoch=$(date -d "$updated_at" +%s)
-            now_epoch=$(date -u +%s)
-            age_seconds=$((now_epoch - updated_epoch))
-            if [ "$age_seconds" -lt 1800 ]; then
-              remaining_minutes=$(((1800 - age_seconds + 59) / 60))
-              echo "Run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) failed less than 30 minutes ago. It will be eligible in about $remaining_minutes minute(s)." >> "$GITHUB_STEP_SUMMARY"
+            # Stop retrying after 4 attempts to prevent infinite cron loops
+            if [ "${run_attempt:-1}" -ge 4 ]; then
+              echo "⛔ Run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) has already been retried $run_attempt times. **Max retries (4) exceeded — manual intervention required.**" >> "$GITHUB_STEP_SUMMARY"
             else
-              gh run rerun "$run_id" --failed --repo "$REPOSITORY"
-              echo "Re-running failed jobs from [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id). Existing chapter and YouTube checkpoints will be reused." >> "$GITHUB_STEP_SUMMARY"
+              updated_epoch=$(date -d "$updated_at" +%s)
+              now_epoch=$(date -u +%s)
+              age_seconds=$((now_epoch - updated_epoch))
+              if [ "$age_seconds" -lt 1800 ]; then
+                remaining_minutes=$(((1800 - age_seconds + 59) / 60))
+                echo "Run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) failed less than 30 minutes ago (attempt $run_attempt). It will be eligible in about $remaining_minutes minute(s)." >> "$GITHUB_STEP_SUMMARY"
+              else
+                gh run rerun "$run_id" --failed --repo "$REPOSITORY"
+                echo "Re-running failed jobs from [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) (attempt $run_attempt → $((run_attempt+1))). Existing chapter and YouTube checkpoints will be reused." >> "$GITHUB_STEP_SUMMARY"
+              fi
             fi
           else
             echo "Latest manual run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) concluded with **$conclusion**; no retry is needed." >> "$GITHUB_STEP_SUMMARY"
@@ -260,6 +271,7 @@ jobs:
 
       - name: Worker Job Summary
         if: always()
+        timeout-minutes: 5
         env:
           WORKER_ID: ${{ matrix.worker_id }}
           START_CHAP: ${{ matrix.start_chap }}
@@ -307,6 +319,10 @@ jobs:
   upload_to_youtube:
     name: "📤 Automatic YouTube API Upload (Video + Subtitles + Playlist)"
     needs: process_chapters
+    # Run even if some workers failed — the uploader will work with
+    # whatever chapter artifacts are available.  Only skip if the entire
+    # matrix was cancelled (no artifacts at all).
+    if: always() && needs.process_chapters.result != 'cancelled'
     runs-on: ubuntu-latest
 
     steps:

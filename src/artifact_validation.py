@@ -144,7 +144,7 @@ def _ffprobe(path):
     executable = shutil.which("ffprobe") or "ffprobe"
     result = subprocess.run(
         [executable, "-v", "error", "-show_streams", "-show_format", "-of", "json", path],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15,
     )
     if result.returncode != 0:
         raise ArtifactValidationError(f"ffprobe failed: {result.stderr.strip()[-500:]}")

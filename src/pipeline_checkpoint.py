@@ -284,7 +284,11 @@ class PipelineCheckpoint:
         self.save()
 
     def incomplete_chapters(self):
-        self.reconcile()
+        # NOTE: callers who need fresh data should call reconcile() first.
+        # Removed the automatic reconcile() here because __init__ already
+        # calls it, and the triple-reconcile (init + incomplete + summary)
+        # caused Worker Job Summary to hang for 10+ minutes on 62-chapter
+        # workers due to repeated ffprobe + sha256 on every artifact.
         return [chapter for chapter in self.chapter_numbers if any(
             self._stage_record(chapter, stage).get("status") != "completed" for stage in STAGES
         )]
@@ -299,7 +303,8 @@ class PipelineCheckpoint:
         os.replace(temp_path, self.path)
 
     def markdown_summary(self):
-        self.reconcile()
+        # NOTE: reconcile() is NOT called here; the caller or __init__
+        # should have already called it.  See incomplete_chapters() note.
         total = len(self.chapter_numbers)
         completed_chapters = total - len(self.incomplete_chapters())
         worker_failures = [
