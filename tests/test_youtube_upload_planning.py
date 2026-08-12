@@ -19,6 +19,7 @@ from src.youtube_api_uploader import (
     set_video_thumbnail,
     upload_video_file,
     upload_caption_file,
+    verify_published_part,
     select_worker_artifacts,
     ThumbnailUploadPaused,
     validate_chapter_inventory,
@@ -33,6 +34,58 @@ from src.worker_pipeline import (
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
+    @patch("src.youtube_api_uploader.get_playlist_video_index", return_value={"Part 1": "video-1"})
+    def test_final_readback_requires_video_thumbnail_caption_and_playlist(self, playlist_index):
+        youtube = MagicMock()
+        youtube.videos.return_value.list.return_value.execute.return_value = {
+            "items": [{
+                "status": {"privacyStatus": "public"},
+                "snippet": {"thumbnails": {"high": {"url": "https://example/cover.jpg"}}},
+            }]
+        }
+        youtube.captions.return_value.list.return_value.execute.return_value = {
+            "items": [{"snippet": {"language": "zh-TW", "status": "serving"}}]
+        }
+
+        result = verify_published_part(
+            youtube, "video-1", "playlist-1", "public", attempts=1
+        )
+
+        self.assertEqual(result["youtube_video_id"], "video-1")
+        playlist_index.assert_called_once_with(youtube, "playlist-1")
+
+    @patch("src.youtube_api_uploader.get_playlist_video_index", return_value={"Part 1": "video-1"})
+    def test_final_readback_rejects_missing_thumbnail(self, playlist_index):
+        youtube = MagicMock()
+        youtube.videos.return_value.list.return_value.execute.return_value = {
+            "items": [{"status": {"privacyStatus": "public"}, "snippet": {}}]
+        }
+        with self.assertRaisesRegex(RuntimeError, "thumbnail cannot be read back"):
+            verify_published_part(
+                youtube, "video-1", "playlist-1", "public", attempts=1
+            )
+
+    @patch("src.youtube_api_uploader.get_playlist_video_index", return_value={"Part 1": "video-1"})
+    def test_final_readback_rejects_failed_caption_processing(self, playlist_index):
+        youtube = MagicMock()
+        youtube.videos.return_value.list.return_value.execute.return_value = {
+            "items": [{
+                "status": {"privacyStatus": "public"},
+                "snippet": {"thumbnails": {"high": {"url": "https://example/cover.jpg"}}},
+            }]
+        }
+        youtube.captions.return_value.list.return_value.execute.return_value = {
+            "items": [{"snippet": {
+                "language": "zh-TW",
+                "status": "failed",
+                "failureReason": "processingFailed",
+            }}]
+        }
+        with self.assertRaisesRegex(RuntimeError, "caption processing failed"):
+            verify_published_part(
+                youtube, "video-1", "playlist-1", "public", attempts=1
+            )
+
     @patch("src.youtube_api_uploader.MediaFileUpload")
     def test_valid_caption_file_reaches_youtube_insert(self, media_upload):
         youtube = MagicMock()

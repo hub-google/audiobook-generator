@@ -25,12 +25,12 @@ from googleapiclient.http import MediaFileUpload, HttpError
 
 try:
     from .part_builder import parse_chapter_num, get_media_duration, merge_part_videos
-    from .publication_checkpoint import PublicationCheckpoint
+    from .publication_checkpoint import PART_STEPS, PublicationCheckpoint
     from .artifact_validation import validate_image, validate_srt, validate_video
 except ImportError:
     # Support running this file directly as ``python src/youtube_api_uploader.py``.
     from part_builder import parse_chapter_num, get_media_duration, merge_part_videos
-    from publication_checkpoint import PublicationCheckpoint
+    from publication_checkpoint import PART_STEPS, PublicationCheckpoint
     from artifact_validation import validate_image, validate_srt, validate_video
 
 if sys.platform == "win32":
@@ -606,16 +606,35 @@ def verify_published_part(youtube, video_id, playlist_id, privacy_status, attemp
     last_error = None
     for attempt in range(1, attempts + 1):
         try:
-            response = youtube.videos().list(part="status", id=video_id).execute()
+            response = youtube.videos().list(part="status,snippet", id=video_id).execute()
             items = response.get("items") or []
             if not items:
                 raise RuntimeError(f"uploaded video cannot be read back: {video_id}")
             actual_privacy = (items[0].get("status") or {}).get("privacyStatus")
             if actual_privacy != privacy_status:
                 raise RuntimeError(f"privacy mismatch: expected {privacy_status}, got {actual_privacy}")
+            thumbnails = (items[0].get("snippet") or {}).get("thumbnails") or {}
+            if not thumbnails:
+                raise RuntimeError("video thumbnail cannot be read back")
             captions = youtube.captions().list(part="id,snippet", videoId=video_id).execute().get("items") or []
-            if not any((item.get("snippet") or {}).get("language") == "zh-TW" for item in captions):
+            matching_captions = [
+                item.get("snippet") or {}
+                for item in captions
+                if (item.get("snippet") or {}).get("language") == "zh-TW"
+            ]
+            if not matching_captions:
                 raise RuntimeError("zh-TW caption track cannot be read back")
+            failed_captions = [
+                caption for caption in matching_captions
+                if caption.get("status") == "failed"
+            ]
+            if failed_captions:
+                raise RuntimeError(
+                    "zh-TW caption processing failed: "
+                    + ", ".join(str(item.get("failureReason") or "unknown") for item in failed_captions)
+                )
+            if not any(caption.get("status") == "serving" for caption in matching_captions):
+                raise RuntimeError("zh-TW caption track is not serving yet")
             playlist_index = get_playlist_video_index(youtube, playlist_id)
             if video_id not in set(playlist_index.values()):
                 raise RuntimeError("video cannot be read back from the target playlist")
@@ -857,8 +876,8 @@ def main():
             args.run_id = latest_run_id
             logging.info("💡 自動鎖定最新產檔 Run ID: %s", args.run_id)
         else:
-            logging.info("✅ 沒有待續傳的 YouTube 工作。")
-            return 0
+            logging.error("Strict success gate: no source run or local input was found")
+            return 1
 
     if args.run_id:
         save_resume_state(args.state_file, args.run_id, args.privacy, "running",
@@ -887,7 +906,9 @@ def main():
                 config_path = downloaded_config
                 logging.info("已載入來源 Run 的 shared-config：%s", config_path)
         else:
-            logging.warning("無法下載 shared-config，改用 repository config.yaml。")
+            raise RuntimeError(
+                f"Strict success gate: source Run #{args.run_id} has no downloadable shared-config artifact"
+            )
     if os.path.exists(config_path):
         try:
             import yaml
@@ -1787,6 +1808,30 @@ def main():
                 len(expected_titles) - len(missing_titles), len(expected_titles), missing_titles[:3],
             )
             return EXIT_RETRY_LATER
+
+        # Check every planned Part against YouTube again at the very end. A
+        # restored checkpoint or an exact-title recovery is not success by
+        # itself; the public video, CC track, thumbnail and playlist entry must
+        # all still be readable.
+        final_playlist_index = get_playlist_video_index(youtube, playlist_id)
+        for planned in part_plan:
+            title = str(planned.get("title") or "").strip()
+            video_id = final_playlist_index.get(title)
+            if not video_id:
+                raise RuntimeError(f"final YouTube validation cannot find planned Part in playlist: {title}")
+            evidence = verify_published_part(youtube, video_id, playlist_id, args.privacy)
+            part_num = int(planned["part_num"])
+            record = publication.data.get("parts", {}).get(str(part_num), {})
+            steps = record.get("steps") or {}
+            for step in PART_STEPS:
+                if (steps.get(step) or {}).get("status") != "completed":
+                    publication.complete(
+                        part_num,
+                        step,
+                        recovered_from_youtube=True,
+                        youtube_video_id=video_id,
+                    )
+            publication.complete(part_num, "final_validation", **evidence)
 
     logging.info("="*60)
     logging.info(f"🎉 全部影片極速上傳完畢！共上傳 {total_uploaded} 部分部影片至 YouTube 播放清單！")

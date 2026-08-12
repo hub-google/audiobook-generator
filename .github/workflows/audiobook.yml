@@ -74,14 +74,18 @@ jobs:
           fi
 
           echo "## Automatic retry check" >> "$GITHUB_STEP_SUMMARY"
+          gate_message=""
           if [ -z "$run_id" ]; then
             echo "No manually-started audiobook run was found." >> "$GITHUB_STEP_SUMMARY"
+            gate_message="No manually-started audiobook run exists."
           elif [ "$status" != "completed" ]; then
             echo "Run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) is still $status; no duplicate run was started." >> "$GITHUB_STEP_SUMMARY"
+            gate_message="The latest manual run is still $status."
           elif [ "$conclusion" = "failure" ]; then
             # Stop retrying after 4 attempts to prevent infinite cron loops
             if [ "${run_attempt:-1}" -ge 4 ]; then
               echo "⛔ Run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) has already been retried $run_attempt times. **Max retries (4) exceeded — manual intervention required.**" >> "$GITHUB_STEP_SUMMARY"
+              gate_message="The latest manual run failed and exceeded the retry limit."
             else
               updated_epoch=$(date -d "$updated_at" +%s)
               now_epoch=$(date -u +%s)
@@ -89,13 +93,26 @@ jobs:
               if [ "$age_seconds" -lt 1800 ]; then
                 remaining_minutes=$(((1800 - age_seconds + 59) / 60))
                 echo "Run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) failed less than 30 minutes ago (attempt $run_attempt). It will be eligible in about $remaining_minutes minute(s)." >> "$GITHUB_STEP_SUMMARY"
+                gate_message="The latest manual run failed and is waiting for its retry window."
               else
                 gh run rerun "$run_id" --failed --repo "$REPOSITORY"
                 echo "Re-running failed jobs from [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) (attempt $run_attempt → $((run_attempt+1))). Existing chapter and YouTube checkpoints will be reused." >> "$GITHUB_STEP_SUMMARY"
+                gate_message="A retry was started, but the audiobook is not complete yet."
               fi
             fi
+          elif [ "$conclusion" = "success" ]; then
+            echo "Latest manual run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) satisfied the strict success gate." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "Latest manual run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) concluded with **$conclusion**; no retry is needed." >> "$GITHUB_STEP_SUMMARY"
+            echo "Latest manual run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) concluded with **$conclusion**." >> "$GITHUB_STEP_SUMMARY"
+            gate_message="The latest manual run did not conclude successfully ($conclusion)."
+          fi
+
+          # A scheduled check is green only when the production run itself is
+          # fully successful. Starting or deferring a retry is not success.
+          if [ -n "$gate_message" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "❌ **STRICT SUCCESS GATE FAILED:** $gate_message" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
 
   setup:
@@ -150,6 +167,29 @@ jobs:
           cat matrix.json >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo 'EOF' >> $GITHUB_OUTPUT
+
+      - name: Validate non-empty chapter matrix
+        run: |
+          jq -e 'type == "array" and length > 0' matrix.json >/dev/null
+          python - <<'PY'
+          import json
+          import yaml
+
+          with open("config.yaml", encoding="utf-8") as handle:
+              config = yaml.safe_load(handle) or {}
+          with open("matrix.json", encoding="utf-8") as handle:
+              matrix = json.load(handle)
+          selected = [int(value) for value in config.get("selected_indices") or []]
+          if not selected:
+              raise SystemExit("Strict success gate: no chapters were selected")
+          if not matrix:
+              raise SystemExit("Strict success gate: no workers were generated")
+          worker_total = sum(int(item["end_chap"]) - int(item["start_chap"]) + 1 for item in matrix)
+          if worker_total < len(selected):
+              raise SystemExit(
+                  f"Strict success gate: matrix covers {worker_total} slots for {len(selected)} selected chapters"
+              )
+          PY
 
       - name: Generate Setup Summary
         run: |
@@ -260,14 +300,14 @@ jobs:
             Workspace/*/Video/
             Workspace/*/Subtitles/
             Upload_Subtitles/
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Upload full worker workspace artifact (Heavyweight for Inspection)
         uses: actions/upload-artifact@v4
         with:
           name: video-worker-${{ matrix.worker_id }}
           path: Workspace/
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Worker Job Summary
         if: always()
@@ -285,7 +325,7 @@ jobs:
             echo "- Job status: **$JOB_STATUS**" >> "$GITHUB_STEP_SUMMARY"
             echo "- Resume point: **setup/download config**" >> "$GITHUB_STEP_SUMMARY"
             echo "- Reason: config.yaml is unavailable; inspect the first failed setup step." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            exit 1
           fi
           python - <<'PY'
           import os
@@ -311,6 +351,10 @@ jobs:
           }, ensure_ascii=False))
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
               summary.write(checkpoint.markdown_summary())
+          if incomplete:
+              raise SystemExit(
+                  f"Strict success gate: worker {worker_id} still has incomplete chapters: {incomplete}"
+              )
           PY
 
 # ─────────────────────────────────────────────────────────────
@@ -319,15 +363,21 @@ jobs:
   upload_to_youtube:
     name: "📤 Automatic YouTube API Upload (Video + Subtitles + Playlist)"
     needs: process_chapters
-    # Run even if some workers failed — the uploader will work with
-    # whatever chapter artifacts are available.  Only skip if the entire
-    # matrix was cancelled (no artifacts at all).
     # Scheduled runs only check whether the latest manual run needs a retry.
     # They do not create worker artifacts, so never start the uploader for them.
-    if: always() && github.event_name == 'workflow_dispatch' && needs.process_chapters.result != 'cancelled'
+    if: always() && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     steps:
+      - name: Require every worker to succeed before publishing
+        env:
+          WORKER_RESULT: ${{ needs.process_chapters.result }}
+        run: |
+          if [ "$WORKER_RESULT" != "success" ]; then
+            echo "❌ Strict success gate: worker matrix result is $WORKER_RESULT; partial publication is forbidden." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
       - name: Checkout Code
         uses: actions/checkout@v4
 
@@ -397,6 +447,24 @@ jobs:
             sleep 60
           done
 
+      - name: Enforce strict publication evidence
+        env:
+          SOURCE_RUN_ID: ${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import os
+          from src.success_criteria import validate_upload_success
+
+          result = validate_upload_success(
+              "upload_resume_state/state.json",
+              expected_run_id=os.environ["SOURCE_RUN_ID"],
+          )
+          print(
+              "Strict success gate passed: "
+              f"{result['parts']} Parts published to {result['playlist_url']}"
+          )
+          PY
+
       - name: Generate Job Summary
         if: always()
         run: |
@@ -462,3 +530,29 @@ jobs:
             Workspace/*/Cover/
             Upload_Subtitles/
           key: youtube-upload-state-source-${{ github.run_id }}-${{ github.run_attempt }}
+
+  strict_success_gate:
+    name: "Strict final success gate"
+    if: always() && github.event_name == 'workflow_dispatch'
+    needs: [setup, process_chapters, upload_to_youtube]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every production job to succeed
+        env:
+          SETUP_RESULT: ${{ needs.setup.result }}
+          WORKERS_RESULT: ${{ needs.process_chapters.result }}
+          YOUTUBE_RESULT: ${{ needs.upload_to_youtube.result }}
+        run: |
+          echo "## Strict final success gate" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Setup: **$SETUP_RESULT**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- All chapter workers: **$WORKERS_RESULT**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- YouTube video/subtitle/playlist publication: **$YOUTUBE_RESULT**" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$SETUP_RESULT" != "success" ] || \
+             [ "$WORKERS_RESULT" != "success" ] || \
+             [ "$YOUTUBE_RESULT" != "success" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "❌ The audiobook is incomplete. This run must remain failed." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ Every chapter and every required YouTube publication step completed." >> "$GITHUB_STEP_SUMMARY"
