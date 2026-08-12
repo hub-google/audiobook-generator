@@ -322,7 +322,9 @@ jobs:
     # Run even if some workers failed — the uploader will work with
     # whatever chapter artifacts are available.  Only skip if the entire
     # matrix was cancelled (no artifacts at all).
-    if: always() && needs.process_chapters.result != 'cancelled'
+    # Scheduled runs only check whether the latest manual run needs a retry.
+    # They do not create worker artifacts, so never start the uploader for them.
+    if: always() && github.event_name == 'workflow_dispatch' && needs.process_chapters.result != 'cancelled'
     runs-on: ubuntu-latest
 
     steps:
