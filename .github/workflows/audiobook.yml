@@ -168,6 +168,7 @@ jobs:
           python - <<'PY'
           import json
           import yaml
+          import yaml
 
           with open("config.yaml", encoding="utf-8") as handle:
               config = yaml.safe_load(handle) or {}
@@ -359,10 +360,10 @@ jobs:
 # ─────────────────────────────────────────────────────────────
   upload_to_youtube:
     name: "📤 Automatic YouTube API Upload (Video + Subtitles + Playlist)"
-    needs: process_chapters
+    needs: [setup, process_chapters]
     # Scheduled runs only check whether the latest manual run needs a retry.
     # They do not create worker artifacts, so never start the uploader for them.
-    if: always() && github.event_name == 'workflow_dispatch'
+    if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success'
     runs-on: ubuntu-latest
 
     steps:

@@ -43,6 +43,18 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
     def test_youtube_job_can_inspect_partial_worker_artifacts(self):
         steps = self.jobs["upload_to_youtube"]["steps"]
         self.assertFalse(any("WORKER_RESULT" in str(step) for step in steps))
+        self.assertEqual(
+            set(self.jobs["upload_to_youtube"]["needs"]),
+            {"setup", "process_chapters"},
+        )
+        self.assertIn("needs.setup.result == 'success'", self.jobs["upload_to_youtube"]["if"])
+
+    def test_matrix_validation_imports_yaml(self):
+        step = next(
+            item for item in self.jobs["setup"]["steps"]
+            if item.get("name") == "Validate non-empty chapter matrix"
+        )
+        self.assertIn("import yaml", step["run"])
 
     def test_scheduled_retry_has_no_attempt_limit(self):
         command = self.jobs["retry_failed_run"]["steps"][0]["run"]
