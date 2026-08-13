@@ -18,6 +18,7 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
     def test_partial_local_run_is_never_reported_as_success(self, run_chapter, checkpoint_type):
         checkpoint = Mock()
         checkpoint.incomplete_chapters.return_value = [2]
+        checkpoint.source_missing_chapters.return_value = []
         checkpoint_type.return_value = checkpoint
         run_chapter.side_effect = [None, RuntimeError("tts failed")]
 
@@ -37,6 +38,7 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
     ):
         checkpoint = Mock()
         checkpoint.incomplete_chapters.return_value = []
+        checkpoint.source_missing_chapters.return_value = []
         checkpoint_type.return_value = checkpoint
 
         result = worker_pipeline.run_pipeline(self.config, build_parts=True)

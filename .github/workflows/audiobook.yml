@@ -67,7 +67,7 @@ jobs:
           conclusion=$(jq -r '.conclusion // empty' <<< "$latest_run")
           updated_at=$(jq -r '.updatedAt // empty' <<< "$latest_run")
 
-          # Fetch run_attempt to prevent infinite retry loops
+          # Fetch run_attempt for retry status reporting.
           run_attempt=""
           if [ -n "$run_id" ]; then
             run_attempt=$(gh run view "$run_id" --repo "$REPOSITORY" --json attempt --jq '.attempt // 1' 2>/dev/null || echo "1")
@@ -82,23 +82,17 @@ jobs:
             echo "Run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) is still $status; no duplicate run was started." >> "$GITHUB_STEP_SUMMARY"
             gate_message="The latest manual run is still $status."
           elif [ "$conclusion" = "failure" ]; then
-            # Stop retrying after 4 attempts to prevent infinite cron loops
-            if [ "${run_attempt:-1}" -ge 4 ]; then
-              echo "⛔ Run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) has already been retried $run_attempt times. **Max retries (4) exceeded — manual intervention required.**" >> "$GITHUB_STEP_SUMMARY"
-              gate_message="The latest manual run failed and exceeded the retry limit."
+            updated_epoch=$(date -d "$updated_at" +%s)
+            now_epoch=$(date -u +%s)
+            age_seconds=$((now_epoch - updated_epoch))
+            if [ "$age_seconds" -lt 1800 ]; then
+              remaining_minutes=$(((1800 - age_seconds + 59) / 60))
+              echo "Run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) failed less than 30 minutes ago (attempt $run_attempt). It will be eligible in about $remaining_minutes minute(s)." >> "$GITHUB_STEP_SUMMARY"
+              gate_message="The latest manual run failed and is waiting for its retry window."
             else
-              updated_epoch=$(date -d "$updated_at" +%s)
-              now_epoch=$(date -u +%s)
-              age_seconds=$((now_epoch - updated_epoch))
-              if [ "$age_seconds" -lt 1800 ]; then
-                remaining_minutes=$(((1800 - age_seconds + 59) / 60))
-                echo "Run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) failed less than 30 minutes ago (attempt $run_attempt). It will be eligible in about $remaining_minutes minute(s)." >> "$GITHUB_STEP_SUMMARY"
-                gate_message="The latest manual run failed and is waiting for its retry window."
-              else
-                gh run rerun "$run_id" --failed --repo "$REPOSITORY"
-                echo "Re-running failed jobs from [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) (attempt $run_attempt → $((run_attempt+1))). Existing chapter and YouTube checkpoints will be reused." >> "$GITHUB_STEP_SUMMARY"
-                gate_message="A retry was started, but the audiobook is not complete yet."
-              fi
+              gh run rerun "$run_id" --failed --repo "$REPOSITORY"
+              echo "Re-running failed jobs from [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) (attempt $run_attempt → $((run_attempt+1))). Existing chapter and YouTube checkpoints will be reused." >> "$GITHUB_STEP_SUMMARY"
+              gate_message="A retry was started, but the audiobook is not complete yet."
             fi
           elif [ "$conclusion" = "success" ]; then
             echo "Latest manual run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) satisfied the strict success gate." >> "$GITHUB_STEP_SUMMARY"
@@ -293,16 +287,19 @@ jobs:
           key: ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload MP4 Videos & Subtitles Only (Lightweight Artifact for YouTube Upload)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: mp4-worker-${{ matrix.worker_id }}
           path: |
             Workspace/*/Video/
             Workspace/*/Subtitles/
+            Workspace/*/SourceStatus/
             Upload_Subtitles/
           if-no-files-found: error
 
       - name: Upload full worker workspace artifact (Heavyweight for Inspection)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: video-worker-${{ matrix.worker_id }}
@@ -369,15 +366,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Require every worker to succeed before publishing
-        env:
-          WORKER_RESULT: ${{ needs.process_chapters.result }}
-        run: |
-          if [ "$WORKER_RESULT" != "success" ]; then
-            echo "❌ Strict success gate: worker matrix result is $WORKER_RESULT; partial publication is forbidden." >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-
       - name: Checkout Code
         uses: actions/checkout@v4
 

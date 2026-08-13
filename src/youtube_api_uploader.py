@@ -27,11 +27,13 @@ try:
     from .part_builder import parse_chapter_num, get_media_duration, merge_part_videos
     from .publication_checkpoint import PART_STEPS, PublicationCheckpoint
     from .artifact_validation import validate_image, validate_srt, validate_video
+    from .source_status import confirmed_missing_from_directory
 except ImportError:
     # Support running this file directly as ``python src/youtube_api_uploader.py``.
     from part_builder import parse_chapter_num, get_media_duration, merge_part_videos
     from publication_checkpoint import PART_STEPS, PublicationCheckpoint
     from artifact_validation import validate_image, validate_srt, validate_video
+    from source_status import confirmed_missing_from_directory
 
 if sys.platform == "win32":
     try:
@@ -750,7 +752,7 @@ def scan_artifact_chapters(artifact_dir, artifact_name):
     return sorted(chapters, key=lambda item: item["chap_num"])
 
 
-def validate_chapter_inventory(chapters, expected_start, expected_end):
+def _validate_complete_chapter_inventory(chapters, expected_start, expected_end):
     """Refuse to upload unless the complete book is present exactly once."""
     numbers = [int(item["chap_num"]) for item in chapters]
     duplicates = sorted({number for number in numbers if numbers.count(number) > 1})
@@ -764,7 +766,26 @@ def validate_chapter_inventory(chapters, expected_start, expected_end):
         )
 
 
-def build_part_plan_from_inventory(chapters, min_seconds=10 * 3600, max_seconds=11 * 3600):
+def validate_chapter_inventory(chapters, expected_start, expected_end, confirmed_missing=None):
+    """Accept absent chapters only when worker artifacts prove origin omission."""
+    confirmed_missing = {int(value) for value in (confirmed_missing or set())}
+    numbers = [int(item["chap_num"]) for item in chapters]
+    duplicates = sorted({number for number in numbers if numbers.count(number) > 1})
+    expected = set(range(int(expected_start), int(expected_end) + 1))
+    missing = sorted(expected - set(numbers))
+    unresolved = sorted(set(missing) - confirmed_missing)
+    unexpected = sorted(set(numbers) - expected)
+    if duplicates or unresolved or unexpected or numbers != sorted(numbers):
+        raise RuntimeError(
+            "chapter inventory is not publishable: "
+            f"duplicates={duplicates[:10]}, unresolved_missing={unresolved[:10]}, "
+            f"unexpected={unexpected[:10]}"
+        )
+    return {"missing": missing, "confirmed_missing": sorted(set(missing) & confirmed_missing)}
+
+
+def build_part_plan_from_inventory(chapters, min_seconds=10 * 3600, max_seconds=11 * 3600,
+                                   confirmed_missing=None):
     """Plan every Part globally before any merge or YouTube API upload."""
     if not chapters:
         raise RuntimeError("沒有可供分部的章節")
@@ -785,9 +806,18 @@ def build_part_plan_from_inventory(chapters, min_seconds=10 * 3600, max_seconds=
     if current:
         plan.append(_make_planned_part(len(plan) + 1, current, current_duration))
 
+    confirmed_missing = {int(value) for value in (confirmed_missing or set())}
     for previous, following in zip(plan, plan[1:]):
-        if following["start_chap"] != previous["end_chap"] + 1:
+        gap = set(range(previous["end_chap"] + 1, following["start_chap"]))
+        if gap and not gap.issubset(confirmed_missing):
             raise RuntimeError(f"分部不連續：Part {previous['part_num']} 後接 Part {following['part_num']}")
+    unassigned_missing = set(confirmed_missing)
+    for part in plan:
+        assigned = {chapter for chapter in unassigned_missing if chapter <= part["end_chap"]}
+        part["source_missing_chapters"] = sorted(assigned)
+        unassigned_missing.difference_update(assigned)
+    if plan and unassigned_missing:
+        plan[-1]["source_missing_chapters"].extend(sorted(unassigned_missing))
     for part in plan[:-1]:
         if part["duration"] < min_seconds:
             logging.warning("Part %s 只有 %.2f 小時；受 11 小時硬上限約束。", part["part_num"], part["duration"] / 3600)
@@ -1148,6 +1178,7 @@ def main():
         # Phase 1: inventory every chapter before creating or uploading Part 1.
         # Probe one artifact at a time so the runner never stores the full book.
         inventory = []
+        confirmed_source_missing = set()
         publication.mark_global("download_artifacts", "running")
         logging.info("🔎 第一階段：盤點全部 Worker Artifacts；此階段不會上傳任何影片。")
         for inventory_index, artifact_name in enumerate(artifact_names, 1):
@@ -1155,8 +1186,10 @@ def main():
             logging.info("📦 盤點 [%s/%s]：%s", inventory_index, len(artifact_names), artifact_name)
             if not download_artifact_task(args.run_id, args.repo, artifact_name, inventory_dir):
                 raise RuntimeError(f"Artifact 下載失敗，禁止上傳：{artifact_name}")
+            artifact_missing = confirmed_missing_from_directory(inventory_dir)
+            confirmed_source_missing.update(artifact_missing)
             scanned = scan_artifact_chapters(inventory_dir, artifact_name)
-            if not scanned:
+            if not scanned and not artifact_missing:
                 raise RuntimeError(f"Artifact 沒有章節 MP4，禁止上傳：{artifact_name}")
             inventory.extend(scanned)
             shutil.rmtree(inventory_dir, ignore_errors=True)
@@ -1166,9 +1199,16 @@ def main():
 
         inventory.sort(key=lambda item: int(item["chap_num"]))
         publication.mark_global("validate_inventory", "running")
-        validate_chapter_inventory(inventory, start_chap, end_chap)
-        publication.mark_global("validate_inventory", "completed", chapter_count=len(inventory))
-        candidate_plan = build_part_plan_from_inventory(inventory, min_seconds, max_seconds)
+        inventory_result = validate_chapter_inventory(
+            inventory, start_chap, end_chap, confirmed_source_missing
+        )
+        publication.mark_global(
+            "validate_inventory", "completed", chapter_count=len(inventory),
+            source_missing_chapters=inventory_result["confirmed_missing"],
+        )
+        candidate_plan = build_part_plan_from_inventory(
+            inventory, min_seconds, max_seconds, confirmed_source_missing
+        )
         for planned in candidate_plan:
             planned["title"] = generate_video_title(
                 book_title,
@@ -1195,7 +1235,8 @@ def main():
                 "they will not be uploaded again.",
                 len(recovered_titles), len(part_plan),
             )
-        if part_plan[0]["start_chap"] != start_chap:
+        leading_gap = set(range(start_chap, part_plan[0]["start_chap"]))
+        if leading_gap and not leading_gap.issubset(confirmed_source_missing):
             raise RuntimeError("Part 1 並非從全書第一章開始，禁止上傳")
         save_resume_state(
             args.state_file, args.run_id, args.privacy, "planned",
@@ -1394,6 +1435,13 @@ def main():
                         f"{p_meta['description']}\n\n"
                         f"播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
                     )
+
+                    omitted = [int(value) for value in locked_part.get("source_missing_chapters", [])]
+                    if omitted:
+                        full_desc += (
+                            "\n\n來源網站缺失章節（原頁面無文章，故未製作）："
+                            + "、".join(str(value) for value in omitted)
+                        )
 
                     logging.info(f"[API_UPLOAD_MARKER] START | Part {part_counter} | Ch {s_c}~{e_c} | {out_name}")
                     sys.stdout.flush()

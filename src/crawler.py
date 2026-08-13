@@ -7,6 +7,15 @@ import requests
 from bs4 import BeautifulSoup
 import yaml
 
+try:
+    from .source_status import (
+        SourceMissingError, SourceStatusStore, looks_like_anti_bot_page,
+    )
+except ImportError:
+    from source_status import (
+        SourceMissingError, SourceStatusStore, looks_like_anti_bot_page,
+    )
+
 def load_config():
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.yaml")
     with open(config_path, "r", encoding="utf-8") as f:
@@ -108,6 +117,7 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
     ))
     raw_text_dir = os.path.join(workspace_dir, "RawText")
     os.makedirs(raw_text_dir, exist_ok=True)
+    source_status = SourceStatusStore(workspace_dir)
 
     progress_file = os.path.join(workspace_dir, "progress.json")
     scraped_chapters = []
@@ -133,8 +143,14 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
         # progress.json is only an index. The actual output file is the source of
         # truth, otherwise a stale progress entry can permanently skip a chapter.
         if os.path.exists(raw_path) and os.path.getsize(raw_path) > 10:
+            source_status.mark_available(global_idx)
             logging.info(f"[Crawler Worker] Skipping already scraped chapter {global_idx}: {chap_url}")
             continue
+
+        if source_status.is_confirmed_missing(global_idx):
+            raise SourceMissingError(
+                f"chapter {global_idx} is confirmed missing from the origin website: {base_url + chap_url}"
+            )
 
         url = base_url + chap_url
         logging.info(f"[Crawler Worker] Scraping chapter {global_idx}: {url}")
@@ -156,11 +172,20 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
                 raw_text    = content_div.get_text(separator='\n') if content_div else ""
 
                 if not raw_text:
-                    # The site occasionally returns a 200 anti-bot/empty page.
-                    # Treat that as a transient fetch failure and use the same
-                    # retry/backoff path as HTTP and network errors.
+                    page_text = soup.get_text(" ", strip=True)
+                    if looks_like_anti_bot_page(page_text):
+                        raise RuntimeError("anti-bot or rate-limit page returned by origin")
+                    evidence = source_status.record_empty_page(
+                        global_idx, url, resp.status_code, resp.url, title, resp.content,
+                    )
+                    if evidence.get("status") == "source_missing":
+                        raise SourceMissingError(
+                            f"chapter {global_idx} is confirmed missing from the origin website "
+                            f"after {evidence.get('confirmation_count', 3)} matching HTTP 200 empty responses"
+                        )
                     raise ValueError(
-                        f"No chapter content in response (title={title!r})"
+                        f"No chapter content in response (title={title!r}); "
+                        "recorded as source_missing_candidate"
                     )
 
                 raw_filename = f"{book_title}_chapter_{global_idx}_raw.txt"
@@ -171,6 +196,7 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
                     f.flush()
                     os.fsync(f.fileno())
                 os.replace(raw_tmp, raw_path)
+                source_status.mark_available(global_idx)
                 logging.info(f"[Crawler Worker] Saved: {raw_filename}")
 
                 scraped_chapters.append(chap_url)
@@ -182,6 +208,8 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
                 os.replace(progress_tmp, progress_file)
                 break
 
+            except SourceMissingError:
+                raise
             except Exception as e:
                 logging.error(f"[Crawler Worker] Attempt {attempt+1}/{max_retries} failed for chapter {global_idx}: {e}")
                 if attempt < max_retries - 1:

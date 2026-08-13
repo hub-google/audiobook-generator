@@ -25,8 +25,10 @@ import argparse
 
 try:
     from pipeline_checkpoint import PipelineCheckpoint, STAGES
+    from source_status import SourceMissingError, SourceStatusStore
 except ImportError:  # Allow importing as src.worker_pipeline in tests/tools.
     from src.pipeline_checkpoint import PipelineCheckpoint, STAGES
+    from src.source_status import SourceMissingError, SourceStatusStore
 
 # 確保 src/ 下的模組可被 import
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -151,7 +153,7 @@ def validate_chapter_completeness(config, exact_indices, tts_failed_chapters=Non
     return complete_chapters, final_failed
 
 
-def print_final_report(complete_chapters, failed_chapters, worker_id):
+def print_final_report(complete_chapters, failed_chapters, worker_id, source_missing=None):
     """在 GitHub Actions 日誌中印出最終章節完成狀態。"""
     logging.info("")
     logging.info("=" * 60)
@@ -169,6 +171,12 @@ def print_final_report(complete_chapters, failed_chapters, worker_id):
     else:
         logging.info("  🎉 所有章節均成功，無任何失敗！")
     logging.info("=" * 60)
+    source_missing = sorted(int(chapter) for chapter in (source_missing or []))
+    if source_missing:
+        logging.warning(
+            "⚠️ Origin website missing chapters (%s): %s",
+            len(source_missing), source_missing,
+        )
     logging.info("")
 
 
@@ -291,6 +299,16 @@ def run_resumable_chapter(config, checkpoint, chapter_url, chapter_num, worker_i
             operation()
             for stage in stage_names:
                 checkpoint.mark_completed(chapter_num, stage)
+        except SourceMissingError as error:
+            if stage_names[0] != "crawler":
+                raise
+            evidence = SourceStatusStore(checkpoint.workspace_dir).load(chapter_num)
+            checkpoint.mark_source_missing(chapter_num, error, evidence=evidence)
+            logging.warning(
+                "::warning title=Origin website missing chapter::Chapter %s has no article "
+                "after repeated successful HTTP responses and was skipped.", chapter_num,
+            )
+            return
         except Exception as error:
             for stage in stage_names:
                 if checkpoint.is_completed(chapter_num, stage):
@@ -336,10 +354,12 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
                               worker_id, chapter_num, error)
 
     final_failed = set(checkpoint.incomplete_chapters())
+    missing_chapters = set(checkpoint.source_missing_chapters())
     complete_chapters = [
         chapter for chapter in exact_indices if chapter not in final_failed
+        and chapter not in missing_chapters
     ]
-    print_final_report(complete_chapters, final_failed, worker_id)
+    print_final_report(complete_chapters, final_failed, worker_id, missing_chapters)
     require_complete_worker(final_failed, worker_id)
 
     if build_parts:

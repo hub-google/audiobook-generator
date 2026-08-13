@@ -49,6 +49,9 @@ def normalized_plan(plan):
         "start_chap": int(part["start_chap"]),
         "end_chap": int(part["end_chap"]),
         "chapters": [int(value) for value in part["chapters"]],
+        "source_missing_chapters": [
+            int(value) for value in part.get("source_missing_chapters", [])
+        ],
         "duration": round(float(part.get("duration") or 0), 3),
         "title": str(part.get("title") or ""),
     } for part in plan]

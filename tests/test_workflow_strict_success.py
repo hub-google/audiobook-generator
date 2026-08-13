@@ -37,11 +37,17 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         upload_steps = [step for step in steps if step.get("uses") == "actions/upload-artifact@v4"]
         self.assertEqual(len(upload_steps), 2)
         self.assertTrue(all(step["with"]["if-no-files-found"] == "error" for step in upload_steps))
+        self.assertTrue(all(step.get("if") == "always()" for step in upload_steps))
+        self.assertIn("Workspace/*/SourceStatus/", upload_steps[0]["with"]["path"])
 
-    def test_youtube_job_rejects_partial_worker_matrix(self):
-        first_step = self.jobs["upload_to_youtube"]["steps"][0]
-        self.assertIn('"$WORKER_RESULT" != "success"', first_step["run"])
-        self.assertIn("partial publication is forbidden", first_step["run"])
+    def test_youtube_job_can_inspect_partial_worker_artifacts(self):
+        steps = self.jobs["upload_to_youtube"]["steps"]
+        self.assertFalse(any("WORKER_RESULT" in str(step) for step in steps))
+
+    def test_scheduled_retry_has_no_attempt_limit(self):
+        command = self.jobs["retry_failed_run"]["steps"][0]["run"]
+        self.assertNotIn("Max retries", command)
+        self.assertNotIn('run_attempt:-1}" -ge', command)
 
 
 if __name__ == "__main__":

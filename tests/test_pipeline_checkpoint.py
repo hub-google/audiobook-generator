@@ -103,6 +103,17 @@ class PipelineCheckpointTests(unittest.TestCase):
         self.assertEqual(chapter["stages"]["crawler"]["attempts"], 1)
         self.assertIn("network stopped", checkpoint.markdown_summary())
 
+    def test_confirmed_source_missing_is_terminal_success_with_warning(self):
+        checkpoint = PipelineCheckpoint(self.workspace, self.book, 11, [721])
+        checkpoint.mark_source_missing(721, "origin returned three matching empty pages")
+
+        restored = PipelineCheckpoint(self.workspace, self.book, 11, [721])
+
+        self.assertEqual(restored.incomplete_chapters(), [])
+        self.assertEqual(restored.source_missing_chapters(), [721])
+        self.assertEqual(restored.data["chapters"]["721"]["overall_status"], "source_missing")
+        self.assertIn("Origin website missing: **1**", restored.markdown_summary())
+
     def test_worker_level_failure_prevents_completed_summary(self):
         checkpoint = PipelineCheckpoint(self.workspace, self.book, 0, [1])
         for stage in STAGES:

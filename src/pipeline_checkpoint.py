@@ -122,6 +122,16 @@ class PipelineCheckpoint:
     def reconcile(self):
         """Rebuild completion from files and invalidate downstream false success."""
         for chapter in self.chapter_numbers:
+            chapter_record = self.data["chapters"].setdefault(
+                str(int(chapter)), {"overall_status": "pending", "stages": {}}
+            )
+            if (chapter_record.get("source") or {}).get("status") == "source_missing":
+                for stage in STAGES:
+                    record = self._stage_record(chapter, stage)
+                    record["status"] = "skipped"
+                    record["reason"] = "source_missing"
+                self._refresh_chapter(chapter)
+                continue
             upstream_complete = True
             for stage in STAGES:
                 record = self._stage_record(chapter, stage)
@@ -165,6 +175,10 @@ class PipelineCheckpoint:
 
     def _refresh_chapter(self, chapter):
         chapter_record = self.data["chapters"][str(int(chapter))]
+        if (chapter_record.get("source") or {}).get("status") == "source_missing":
+            chapter_record["overall_status"] = "source_missing"
+            chapter_record["resume_from"] = None
+            return
         statuses = [chapter_record["stages"][stage]["status"] for stage in STAGES]
         if all(status == "completed" for status in statuses):
             chapter_record["overall_status"] = "completed"
@@ -233,6 +247,25 @@ class PipelineCheckpoint:
         self._refresh_chapter(chapter)
         self.save()
 
+    def mark_source_missing(self, chapter, error, evidence=None):
+        """Accept a confirmed origin omission as a terminal warning, not a failure."""
+        chapter_record = self.data["chapters"].setdefault(
+            str(int(chapter)), {"overall_status": "pending", "stages": {}}
+        )
+        chapter_record["source"] = {
+            "status": "source_missing",
+            "reason": str(error)[:2000],
+            "confirmed_at": _utc_now(),
+            "evidence": evidence or {},
+        }
+        for stage in STAGES:
+            record = self._stage_record(chapter, stage)
+            record.update({"status": "skipped", "reason": "source_missing"})
+            record.pop("error", None)
+            record.pop("validation_error", None)
+        self._refresh_chapter(chapter)
+        self.save()
+
     def is_completed(self, chapter, stage):
         if not self.output_exists(chapter, stage):
             return False
@@ -289,8 +322,14 @@ class PipelineCheckpoint:
         # calls it, and the triple-reconcile (init + incomplete + summary)
         # caused Worker Job Summary to hang for 10+ minutes on 62-chapter
         # workers due to repeated ffprobe + sha256 on every artifact.
-        return [chapter for chapter in self.chapter_numbers if any(
-            self._stage_record(chapter, stage).get("status") != "completed" for stage in STAGES
+        return [chapter for chapter in self.chapter_numbers if (
+            self.data["chapters"].get(str(chapter), {}).get("overall_status") != "source_missing"
+            and any(self._stage_record(chapter, stage).get("status") != "completed" for stage in STAGES)
+        )]
+
+    def source_missing_chapters(self):
+        return [chapter for chapter in self.chapter_numbers if (
+            self.data["chapters"].get(str(chapter), {}).get("overall_status") == "source_missing"
         )]
 
     def save(self):
@@ -306,17 +345,19 @@ class PipelineCheckpoint:
         # NOTE: reconcile() is NOT called here; the caller or __init__
         # should have already called it.  See incomplete_chapters() note.
         total = len(self.chapter_numbers)
-        completed_chapters = total - len(self.incomplete_chapters())
+        missing_chapters = self.source_missing_chapters()
+        completed_chapters = total - len(self.incomplete_chapters()) - len(missing_chapters)
         worker_failures = [
             (stage, record) for stage, record in self.data.get("worker_stages", {}).items()
             if record.get("status") != "completed"
         ]
-        all_complete = completed_chapters == total and not worker_failures
+        all_complete = completed_chapters + len(missing_chapters) == total and not worker_failures
         lines = [
             f"## Worker {self.worker_id} Pipeline Status",
             "",
             f"- Overall: **{'COMPLETED' if all_complete else 'FAILED'}**",
             f"- Complete chapters: **{completed_chapters} / {total}**",
+            f"- Origin website missing: **{len(missing_chapters)}**",
             "",
             "| 章節 | 來源／抓文 | 清理切段 | 語音 | 字幕 | 章節圖 | 影片 | 最終驗收 |",
             "|---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|",
@@ -325,12 +366,21 @@ class PipelineCheckpoint:
         for chapter in self.chapter_numbers:
             chapter_record = self.data["chapters"][str(chapter)]
             cells = [icons.get(chapter_record["stages"][stage].get("status"), "⏳") for stage in STAGES]
-            final = "✅ 通過" if chapter_record.get("overall_status") == "completed" else "❌ 未通過"
+            if chapter_record.get("overall_status") == "source_missing":
+                final = "⚠️ 來源缺章"
+            else:
+                final = "✅ 通過" if chapter_record.get("overall_status") == "completed" else "❌ 未通過"
             lines.append(f"| 第 {chapter} 章 | {' | '.join(cells)} | {final} |")
+        if missing_chapters:
+            lines.extend([
+                "", "### Confirmed origin omissions", "",
+                "These chapter URLs repeatedly returned HTTP 200 but no article content.", "",
+                "- Chapters: " + ", ".join(str(chapter) for chapter in missing_chapters),
+            ])
         failures = []
         for chapter in self.chapter_numbers:
             chapter_record = self.data["chapters"][str(chapter)]
-            if chapter_record["overall_status"] == "completed":
+            if chapter_record["overall_status"] in ("completed", "source_missing"):
                 continue
             resume_from = chapter_record.get("resume_from") or "unknown"
             stage_record = chapter_record["stages"].get(resume_from, {})

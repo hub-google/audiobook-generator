@@ -405,8 +405,21 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
             {"artifact": "mp4-worker-0", "chap_num": 1, "dur": 10.0},
             {"artifact": "mp4-worker-0", "chap_num": 3, "dur": 10.0},
         ]
-        with self.assertRaisesRegex(RuntimeError, "缺少"):
+        with self.assertRaisesRegex(RuntimeError, "unresolved_missing"):
             validate_chapter_inventory(inventory, 1, 3)
+
+    def test_confirmed_origin_missing_chapter_is_skipped_in_part_plan(self):
+        inventory = [
+            {"artifact": "mp4-worker-0", "chap_num": 1, "dur": 10.0},
+            {"artifact": "mp4-worker-0", "chap_num": 3, "dur": 10.0},
+        ]
+        result = validate_chapter_inventory(inventory, 1, 3, confirmed_missing={2})
+        plan = build_part_plan_from_inventory(
+            inventory, min_seconds=8, max_seconds=25, confirmed_missing={2}
+        )
+        self.assertEqual(result["confirmed_missing"], [2])
+        self.assertEqual(plan[0]["chapters"], [1, 3])
+        self.assertEqual(plan[0]["source_missing_chapters"], [2])
 
 
 if __name__ == "__main__":
