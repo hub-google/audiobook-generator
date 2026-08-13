@@ -55,6 +55,8 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
             if item.get("name") == "Validate non-empty chapter matrix"
         )
         self.assertIn("import yaml", step["run"])
+        self.assertIn('.include | type == "array"', step["run"])
+        self.assertIn('.get("include")', step["run"])
 
     def test_scheduled_retry_has_no_attempt_limit(self):
         command = self.jobs["retry_failed_run"]["steps"][0]["run"]

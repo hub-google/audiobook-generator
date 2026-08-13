@@ -164,16 +164,15 @@ jobs:
 
       - name: Validate non-empty chapter matrix
         run: |
-          jq -e 'type == "array" and length > 0' matrix.json >/dev/null
+          jq -e 'type == "object" and (.include | type == "array" and length > 0)' matrix.json >/dev/null
           python - <<'PY'
           import json
-          import yaml
           import yaml
 
           with open("config.yaml", encoding="utf-8") as handle:
               config = yaml.safe_load(handle) or {}
           with open("matrix.json", encoding="utf-8") as handle:
-              matrix = json.load(handle)
+              matrix = (json.load(handle) or {}).get("include") or []
           selected = [int(value) for value in config.get("selected_indices") or []]
           if not selected:
               raise SystemExit("Strict success gate: no chapters were selected")
