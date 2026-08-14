@@ -22,6 +22,7 @@ from src.youtube_api_uploader import (
     verify_published_part,
     select_worker_artifacts,
     ThumbnailUploadPaused,
+    UploadPaused,
     validate_chapter_inventory,
 )
 from googleapiclient.errors import HttpError
@@ -99,6 +100,24 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
             self.assertTrue(upload_caption_file(youtube, "video-19", srt_path))
 
         youtube.captions.return_value.insert.assert_called_once()
+
+    @patch("src.youtube_api_uploader.MediaFileUpload")
+    def test_caption_daily_quota_requests_safe_pause(self, media_upload):
+        youtube = MagicMock()
+        youtube.captions.return_value.list.return_value.execute.return_value = {"items": []}
+        youtube.captions.return_value.insert.return_value.execute.side_effect = Exception(
+            "quotaExceeded"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            srt_path = os.path.join(temp_dir, "part-19.srt")
+            with open(srt_path, "w", encoding="utf-8") as handle:
+                handle.write("1\n00:00:00,000 --> 00:00:01,000\ncaption\n")
+
+            with self.assertRaises(UploadPaused) as raised:
+                upload_caption_file(youtube, "video-19", srt_path)
+
+        self.assertEqual(raised.exception.reason, "quotaExceeded")
+        self.assertGreater(raised.exception.retry_at, datetime.now(timezone.utc))
 
     def test_recovers_only_exact_planned_titles_from_playlist(self):
         completed = {"Part 1"}

@@ -586,6 +586,9 @@ def upload_caption_file(youtube, video_id, srt_path, language="zh-TW", name="繁
         return True
     except Exception as e:
         logging.error(f"❌ 上傳 CC 字幕失敗 [Video ID: {video_id}]: {e}")
+        paused = classify_daily_limit(e)
+        if paused:
+            raise paused from e
         return False
 
 
@@ -1060,7 +1063,23 @@ def main():
         pending_part_num = part_number_for_title(part_plan, pending_title)
         video_id = caption.get("video_id")
         srt_path = caption.get("srt_path")
-        if not upload_caption_file(youtube, video_id, srt_path):
+        try:
+            caption_uploaded = upload_caption_file(youtube, video_id, srt_path)
+        except UploadPaused as paused:
+            if pending_part_num:
+                publication.fail(pending_part_num, "upload_caption", paused, paused=True, youtube_video_id=video_id)
+            save_resume_state(
+                args.state_file, args.run_id, args.privacy, "paused",
+                paused.reason, paused.retry_at, completed_titles, part_plan,
+                pending_thumbnails,
+                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                pending_playlist=pending_playlist,
+                pending_captions=pending_captions,
+                pending_publish=pending_publish,
+            )
+            logging.error("Caption quota exhausted; retry after %s", paused.retry_at.isoformat())
+            return EXIT_RETRY_LATER
+        if not caption_uploaded:
             if pending_part_num:
                 publication.fail(pending_part_num, "upload_caption", RuntimeError("caption upload failed"), paused=True, youtube_video_id=video_id)
             retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
