@@ -1424,7 +1424,7 @@ def main():
                         is_completed=True,
                         part_num=part_counter
                     )
-                    cover_validation = validate_image(p_meta["cover_file"], expected_size=(2560, 1440))
+                    cover_validation = validate_image(p_meta["cover_file"], expected_size=(1280, 720))
                     if cover_validation["bytes"] >= 2 * 1024 * 1024:
                         raise RuntimeError("YouTube cover exceeds the 2 MB limit")
                     publication.complete(
@@ -1712,7 +1712,7 @@ def main():
             publication.complete(part_n, "generate_subtitle", **validate_srt(v_srt, get_media_duration(v_path)))
             publication.complete(part_n, "merge_video", output=v_path, reused_existing=True)
             publication.complete(part_n, "validate_video", **validate_video(v_path))
-            cover_validation = validate_image(v_cover, expected_size=(2560, 1440))
+            cover_validation = validate_image(v_cover, expected_size=(1280, 720))
             publication.complete(part_n, "generate_metadata_cover", title=v_title, cover_sha256=cover_validation["sha256"])
 
             full_desc = f"{v_desc}\n\n播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"

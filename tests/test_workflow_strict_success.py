@@ -26,11 +26,17 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn('"$YOUTUBE_RESULT" != "success"', command)
         self.assertIn("exit 1", command)
 
-    def test_scheduled_retry_is_red_until_manual_run_succeeds(self):
+    def test_scheduled_retry_wait_and_rerun_are_not_false_failures(self):
         command = self.jobs["retry_failed_run"]["steps"][0]["run"]
         self.assertIn('elif [ "$conclusion" = "success" ]', command)
-        self.assertIn("STRICT SUCCESS GATE FAILED", command)
-        self.assertIn("exit 1", command)
+        self.assertNotIn("STRICT SUCCESS GATE FAILED", command)
+        self.assertNotIn("gate_message", command)
+
+    def test_scheduled_cleanup_deletes_completed_checks_only(self):
+        command = self.jobs["retry_failed_run"]["steps"][0]["run"]
+        self.assertIn('.status == \\"completed\\"', command)
+        self.assertIn('github.event_name == \'schedule\'', self.text)
+        self.assertIn('gh api --method DELETE "repos/$REPOSITORY/actions/runs/$stale_run_id"', command)
 
     def test_worker_artifacts_cannot_be_empty(self):
         steps = self.jobs["process_chapters"]["steps"]

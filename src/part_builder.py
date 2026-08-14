@@ -254,7 +254,7 @@ def build_all_parts(book_title, workspace_dir=None, output_dir=None, min_hours=1
                 f"{part_video_path}"
             )
 
-        # 2. 生成對應 Part 的獨立 Metadata (標題, 簡介, 2K 封面)
+        # 2. 生成對應 Part 的獨立 Metadata (標題、簡介、1280x720 封面)
         part_ws_dir = os.path.join(workspace_dir, f"Part_{part_num:02d}")
         meta = save_book_metadata(
             book_title=book_title,

@@ -26,6 +26,8 @@ LIGHT_PAINTING_STYLE = (
 )
 
 COVER_OUTPUT_RULES = "No text, no letters, no logo, no watermark, no signature."
+YOUTUBE_COVER_SIZE = (1280, 720)
+YOUTUBE_COVER_MAX_BYTES = 2 * 1024 * 1024
 
 
 def finalize_cover_prompt(prompt):
@@ -292,7 +294,7 @@ def auto_generate_prompt_from_summary(book_title, workspace_dir=None, analyzer=N
 def download_ai_image(prompt, width=1280, height=720):
     import time
     import io
-    logging.info(f"🖼️ 連線 Hugging Face AI 繪圖伺服器 (FLUX.1-schnell) 生成 2K 高畫質封面底圖 ({width}x{height})...")
+    logging.info(f"🖼️ 連線 Hugging Face AI 繪圖伺服器 (FLUX.1-schnell) 生成 HD 封面底圖 ({width}x{height})...")
     
     hf_token = os.getenv("HF_TOKEN")
     if not hf_token or not hf_token.startswith("hf_"):
@@ -357,12 +359,12 @@ def _create_youtube_cover_legacy(
     part_num=None
 ):
     """
-    自適應商業級 2K 封面合成引擎 (2560x1440)
+    自適應商業級 HD 封面合成引擎 (1280x720)
     1. 支援 3~20 字任意長度小說書名，自動計算最佳字型大小與分行對齊 (右對齊排版)。
     2. 100% 繁體無缺字 (使用 FZSTK / 微軟正黑體)。
     3. 只保留書名與左上角集數徽章，無任何廢話標語或膠囊底板。
     """
-    logging.info("正在合成 2K 自適應大氣小說封面 (動態字號 + 右對齊排版)...")
+    logging.info("正在合成 1280x720 自適應大氣小說封面 (動態字號 + 右對齊排版)...")
     
     W, H = bg_img.size
     scale = W / 1920.0
@@ -549,7 +551,7 @@ def _create_youtube_cover_legacy(
         img.save(output_filename, quality=q, optimize=True)
 
     size_mb = os.path.getsize(output_filename) / (1024 * 1024)
-    logging.info(f"✅ 2K 自適應大氣封面合成完成: {output_filename} (品質 quality={q}, 大小 {size_mb:.2f} MB)")
+    logging.info(f"✅ 1280x720 自適應大氣封面合成完成: {output_filename} (品質 quality={q}, 大小 {size_mb:.2f} MB)")
     return output_filename
 
 
@@ -576,7 +578,7 @@ def _create_youtube_cover_redesign(
     part_num=None,
 ):
     """在固定無文字主視覺上疊加一致的 Part 資訊版型。"""
-    width, height = 2560, 1440
+    width, height = YOUTUBE_COVER_SIZE
     img = bg_img.convert("RGB").resize((width, height), Image.LANCZOS)
     overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     shade = ImageDraw.Draw(overlay)
@@ -642,7 +644,7 @@ def create_youtube_cover(bg_img, book_title, start_chap, end_chap, is_completed=
         part_num=part_num,
     )
 
-def save_process_log(output_dir, book_title, pure_plot, english_plot, final_prompt, img_width=2560, img_height=1440):
+def save_process_log(output_dir, book_title, pure_plot, english_plot, final_prompt, img_width=1280, img_height=720):
     log_filename = os.path.join(output_dir, f"{book_title}_process_log.txt")
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
@@ -650,7 +652,7 @@ def save_process_log(output_dir, book_title, pure_plot, english_plot, final_prom
 AI 封面全自動生成過程記錄 Log
 生成時間: {timestamp}
 小說名稱: 《{book_title}》
-輸出解析度: {img_width} x {img_height} (2K QHD 超高畫質)
+輸出解析度: {img_width} x {img_height} (HD)
 ======================================================================
 
 1️⃣ 從可靠來源取得的【小說簡介】
@@ -711,7 +713,19 @@ def _valid_master_cover(path):
         return False
 
 
-def _neutral_master_image(width=2560, height=1440):
+def _valid_youtube_cover(path):
+    if not os.path.exists(path) or os.path.getsize(path) >= YOUTUBE_COVER_MAX_BYTES:
+        return False
+    try:
+        with Image.open(path) as image:
+            image.verify()
+        with Image.open(path) as image:
+            return tuple(image.size) == YOUTUBE_COVER_SIZE and image.format in {"JPEG", "PNG"}
+    except (OSError, ValueError):
+        return False
+
+
+def _neutral_master_image(width=1280, height=720):
     """生圖服務不可用時的無文字、中性高品質本地備援。"""
     image = Image.new("RGB", (width, height))
     draw = ImageDraw.Draw(image)
@@ -793,10 +807,17 @@ def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=No
     with open(desc_file, "w", encoding="utf-8") as f:
         f.write(desc)
 
-    # 每一部只在同一張無文字 master cover 上疊加可變資訊。
-    with Image.open(master_cover) as cached_master:
-        bg_img = cached_master.convert("RGB").copy()
-    create_youtube_cover(bg_img, book_title, start_chap, end_chap, is_completed=is_completed, output_filename=cover_file, part_num=part_num)
+    # Reuse a completed Part cover. The unique AI master is also reused unless
+    # the caller explicitly requests regeneration.
+    if _valid_youtube_cover(cover_file):
+        logging.info("♻️ 重用已完成的 1280x720 Part 封面: %s", cover_file)
+    else:
+        with Image.open(master_cover) as cached_master:
+            bg_img = cached_master.convert("RGB").copy()
+        create_youtube_cover(
+            bg_img, book_title, start_chap, end_chap,
+            is_completed=is_completed, output_filename=cover_file, part_num=part_num,
+        )
 
     log_file = os.path.join(book_workspace_dir, "Cover", f"{book_title}_process_log.txt")
 
