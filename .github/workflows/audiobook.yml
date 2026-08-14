@@ -450,8 +450,11 @@ jobs:
 
             if [ "$code" -eq 0 ]; then exit 0; fi
             if [ "$code" -eq 75 ]; then
-              echo "⏸️ YouTube uploader requested a safe pause. The checkpoint is preserved; this run will retry after 30 minutes." >> "$GITHUB_STEP_SUMMARY"
-              exit 75
+              reason=$(python -c 'import json; print(json.load(open("upload_resume_state/state.json", encoding="utf-8")).get("reason") or "retryable YouTube API failure")' 2>/dev/null || echo "retryable YouTube API failure")
+              retry_at=$(python -c 'import json; print(json.load(open("upload_resume_state/state.json", encoding="utf-8")).get("retry_at") or "unknown")' 2>/dev/null || echo "unknown")
+              echo "::error title=YouTube upload failed::$reason; checkpoint preserved; retry after $retry_at"
+              echo "❌ YouTube upload failed: **$reason**. Checkpoint preserved; retry after **$retry_at**." >> "$GITHUB_STEP_SUMMARY"
+              exit 1
             fi
             if [ "$attempt" -eq 3 ]; then
               echo "❌ YouTube upload failed after 3 attempts. The checkpoint will be saved and this run will remain failed." >> "$GITHUB_STEP_SUMMARY"
