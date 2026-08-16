@@ -29,6 +29,9 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
     def test_scheduled_retry_wait_and_rerun_are_not_false_failures(self):
         command = self.jobs["retry_failed_run"]["steps"][0]["run"]
         self.assertIn('elif [ "$conclusion" = "success" ]', command)
+        self.assertIn("eligible_epoch=$((updated_epoch + 7200))", command)
+        self.assertIn("retry_at=", command)
+        self.assertIn("No YouTube request was made", command)
         self.assertNotIn("STRICT SUCCESS GATE FAILED", command)
         self.assertNotIn("gate_message", command)
 

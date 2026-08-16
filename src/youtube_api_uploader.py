@@ -317,6 +317,9 @@ def get_or_create_playlist(youtube, playlist_title, playlist_desc=""):
         return playlist_id, True
     except Exception as e:
         logging.error(f"❌ 查詢/建立播放清單失敗: {e}")
+        paused = classify_daily_limit(e)
+        if paused:
+            raise paused from e
         return None, False
 
 def add_video_to_playlist(youtube, playlist_id, video_id, position=None):
@@ -423,7 +426,7 @@ def set_video_thumbnail(youtube, video_id, cover_path, attempts=5):
     """Apply a custom thumbnail or raise a resumable post-upload pause."""
     if not cover_path or not os.path.exists(cover_path):
         raise ThumbnailUploadPaused(
-            video_id, datetime.now(timezone.utc) + timedelta(hours=1),
+            video_id, datetime.now(timezone.utc) + timedelta(hours=2),
             RuntimeError(f"封面檔不存在：{cover_path}"),
         )
 
@@ -447,12 +450,12 @@ def set_video_thumbnail(youtube, video_id, cover_path, attempts=5):
                 time.sleep(wait_sec)
                 continue
             raise ThumbnailUploadPaused(
-                video_id, datetime.now(timezone.utc) + timedelta(hours=1), e,
+                video_id, datetime.now(timezone.utc) + timedelta(hours=2), e,
             ) from e
 
     raise ThumbnailUploadPaused(
         video_id,
-        datetime.now(timezone.utc) + timedelta(hours=1),
+        datetime.now(timezone.utc) + timedelta(hours=2),
         last_error,
     )
 
@@ -884,7 +887,12 @@ def main():
     pending_playlist = {}
     pending_captions = {}
     pending_publish = {}
-    if saved_state and str(saved_state.get("run_id") or "") == str(args.run_id or saved_state.get("run_id") or ""):
+    resume_state_matches = bool(
+        saved_state
+        and str(saved_state.get("run_id") or "")
+        == str(args.run_id or saved_state.get("run_id") or "")
+    )
+    if resume_state_matches:
         completed_titles.update(saved_state.get("completed_titles") or [])
         part_plan = list(saved_state.get("part_plan") or [])
         pending_thumbnails = dict(saved_state.get("pending_thumbnails") or {})
@@ -892,9 +900,10 @@ def main():
         pending_captions = dict(saved_state.get("pending_captions") or {})
         pending_publish = dict(saved_state.get("pending_publish") or {})
     valid_resume_statuses = {"paused", "running", "planned", "incomplete"}
-    if not args.run_id and saved_state and saved_state.get("status") in valid_resume_statuses:
-        args.run_id = str(saved_state.get("run_id") or "")
-        args.privacy = saved_state.get("privacy") or args.privacy
+    if resume_state_matches and saved_state.get("status") in valid_resume_statuses:
+        if not args.run_id:
+            args.run_id = str(saved_state.get("run_id") or "")
+            args.privacy = saved_state.get("privacy") or args.privacy
         retry_text = saved_state.get("retry_at")
         if saved_state.get("status") == "paused" and retry_text:
             retry_at = datetime.fromisoformat(retry_text.replace("Z", "+00:00"))
@@ -964,9 +973,27 @@ def main():
     playlist_name = f"《{book_title}》有聲小說全集"
     playlist_desc = f"《{book_title}》完整版有聲書全集 (第 {start_chap} 至 {end_chap} 章)，高音質連續播映版。\n歡迎訂閱開啟小鈴鐺！"
     publication.mark_global("playlist", "running")
-    playlist_id, playlist_created = get_or_create_playlist(
-        youtube, playlist_name, playlist_desc
-    )
+    try:
+        playlist_id, playlist_created = get_or_create_playlist(
+            youtube, playlist_name, playlist_desc
+        )
+    except UploadPaused as paused:
+        publication.mark_global("playlist", "paused", error=paused.reason)
+        save_resume_state(
+            args.state_file, args.run_id, args.privacy, "paused",
+            reason=paused.reason, retry_at=paused.retry_at,
+            completed_titles=completed_titles, part_plan=part_plan,
+            pending_thumbnails=pending_thumbnails,
+            pending_playlist=pending_playlist,
+            pending_captions=pending_captions,
+            pending_publish=pending_publish,
+        )
+        logging.error(
+            "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
+            len(completed_titles), len(part_plan), paused.retry_at.isoformat(),
+            args.run_id, paused.reason,
+        )
+        return EXIT_RETRY_LATER
     if not playlist_id:
         publication.mark_global("playlist", "failed", error="playlistUnavailable")
         save_resume_state(
@@ -1082,7 +1109,7 @@ def main():
         if not caption_uploaded:
             if pending_part_num:
                 publication.fail(pending_part_num, "upload_caption", RuntimeError("caption upload failed"), paused=True, youtube_video_id=video_id)
-            retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+            retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
             save_resume_state(
                 args.state_file, args.run_id, args.privacy, "paused",
                 "captionUploadFailed", retry_at, completed_titles, part_plan,
@@ -1106,7 +1133,7 @@ def main():
         if not add_video_to_playlist(youtube, playlist_id, pending_video_id, position):
             if pending_part_num:
                 publication.fail(pending_part_num, "add_playlist", RuntimeError("playlist insertion failed"), paused=True, youtube_video_id=pending_video_id)
-            retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+            retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
             save_resume_state(
                 args.state_file, args.run_id, args.privacy, "paused",
                 "playlistInsertFailed", retry_at, completed_titles, part_plan,
@@ -1140,7 +1167,7 @@ def main():
         if not set_video_privacy(youtube, pending_video_id, args.privacy):
             if pending_part_num:
                 publication.fail(pending_part_num, "publish", RuntimeError("final publish failed"), paused=True, youtube_video_id=pending_video_id)
-            retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+            retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
             save_resume_state(
                 args.state_file, args.run_id, args.privacy, "paused",
                 "publishFailed", retry_at, completed_titles, part_plan,
@@ -1528,7 +1555,7 @@ def main():
                             pending_captions[p_meta["title"]] = {
                                 "video_id": v_id, "srt_path": out_srt_path,
                             }
-                            retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                            retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
                             save_resume_state(
                                 args.state_file, args.run_id, args.privacy, "paused",
                                 "captionUploadFailed", retry_at, completed_titles,
@@ -1544,7 +1571,7 @@ def main():
                         publication.complete(part_counter, "upload_caption", youtube_video_id=v_id)
                         publication.mark(part_counter, "add_playlist", "running")
                         if not add_video_to_playlist(youtube, playlist_id, v_id, position=part_counter - 1):
-                            retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                            retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
                             save_resume_state(
                                 args.state_file, args.run_id, args.privacy, "paused",
                                 "playlistInsertFailed", retry_at, completed_titles,
@@ -1561,7 +1588,7 @@ def main():
                         existing_titles.add(p_meta["title"])
                         publication.mark(part_counter, "publish", "running")
                         if not set_video_privacy(youtube, v_id, args.privacy):
-                            retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                            retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
                             save_resume_state(
                                 args.state_file, args.run_id, args.privacy, "paused",
                                 "publishFailed", retry_at, completed_titles, part_plan,
@@ -1789,7 +1816,7 @@ def main():
                 publication.mark(part_n, "upload_caption", "running")
                 if not upload_caption_file(youtube, v_id, v_srt):
                     pending_captions[v_title] = {"video_id": v_id, "srt_path": v_srt}
-                    retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                    retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
                     save_resume_state(
                         args.state_file, args.run_id, args.privacy, "paused",
                         "captionUploadFailed", retry_at, completed_titles,
@@ -1804,7 +1831,7 @@ def main():
                 publication.complete(part_n, "upload_caption", youtube_video_id=v_id)
                 publication.mark(part_n, "add_playlist", "running")
                 if not add_video_to_playlist(youtube, playlist_id, v_id, position=part_n - 1):
-                    retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                    retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
                     save_resume_state(
                         args.state_file, args.run_id, args.privacy, "paused",
                         "playlistInsertFailed", retry_at, completed_titles,
@@ -1821,7 +1848,7 @@ def main():
                 existing_titles.add(v_title)
                 publication.mark(part_n, "publish", "running")
                 if not set_video_privacy(youtube, v_id, args.privacy):
-                    retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                    retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
                     save_resume_state(
                         args.state_file, args.run_id, args.privacy, "paused",
                         "publishFailed", retry_at, completed_titles, part_plan,

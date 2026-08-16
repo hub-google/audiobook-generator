@@ -2,14 +2,16 @@ import os
 import ssl
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from src.youtube_api_uploader import (
     artifact_worker_index,
     build_part_plan_from_inventory,
+    classify_daily_limit,
     get_run_artifact_names,
     get_playlist_video_index,
+    get_or_create_playlist,
     get_channel_upload_video_index,
     add_video_to_playlist,
     is_transient_upload_error,
@@ -118,6 +120,23 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.reason, "quotaExceeded")
         self.assertGreater(raised.exception.retry_at, datetime.now(timezone.utc))
+
+    def test_playlist_daily_quota_requests_safe_pause(self):
+        youtube = MagicMock()
+        youtube.playlists.return_value.list.return_value.execute.side_effect = Exception(
+            "quotaExceeded"
+        )
+        with self.assertRaises(UploadPaused) as raised:
+            get_or_create_playlist(youtube, "Test playlist")
+        self.assertEqual(raised.exception.reason, "quotaExceeded")
+
+    def test_channel_upload_limit_waits_24_hours_and_15_minutes(self):
+        before = datetime.now(timezone.utc)
+        paused = classify_daily_limit(Exception("uploadLimitExceeded"))
+        after = datetime.now(timezone.utc)
+        self.assertEqual(paused.reason, "uploadLimitExceeded")
+        self.assertGreaterEqual(paused.retry_at, before + timedelta(hours=24, minutes=15))
+        self.assertLessEqual(paused.retry_at, after + timedelta(hours=24, minutes=15))
 
     def test_recovers_only_exact_planned_titles_from_playlist(self):
         completed = {"Part 1"}
