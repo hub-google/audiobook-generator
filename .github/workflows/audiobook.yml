@@ -148,7 +148,11 @@ jobs:
               echo "Re-running failed jobs from [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) (attempt $run_attempt → $((run_attempt+1))). Existing chapter and YouTube checkpoints will be reused." >> "$GITHUB_STEP_SUMMARY"
             fi
           elif [ "$conclusion" = "success" ]; then
-            echo "Latest manual run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) satisfied the strict success gate." >> "$GITHUB_STEP_SUMMARY"
+            echo "### ✅ Upload success confirmed" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "The latest manual run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) passed the strict success gate, including all required YouTube video, subtitle, and playlist publication steps." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Result:** Upload is complete. This scheduled check ended immediately; no retry was started and no YouTube API request was made." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Latest manual run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) concluded with **$conclusion**." >> "$GITHUB_STEP_SUMMARY"
           fi

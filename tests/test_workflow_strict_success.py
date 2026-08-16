@@ -35,6 +35,13 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertNotIn("STRICT SUCCESS GATE FAILED", command)
         self.assertNotIn("gate_message", command)
 
+    def test_scheduled_success_check_writes_explicit_summary(self):
+        command = self.jobs["retry_failed_run"]["steps"][0]["run"]
+        self.assertIn("✅ Upload success confirmed", command)
+        self.assertIn("Upload is complete", command)
+        self.assertIn("no retry was started", command)
+        self.assertIn("no YouTube API request was made", command)
+
     def test_scheduled_cleanup_deletes_completed_checks_only(self):
         command = self.jobs["retry_failed_run"]["steps"][0]["run"]
         self.assertIn('.status == \\"completed\\"', command)

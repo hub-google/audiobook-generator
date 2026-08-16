@@ -788,7 +788,7 @@ class AudiobookGUIApp:
                     self.root.after(0, lambda p=upload_pause, t=retry_text: self._on_workflow_failed(
                         f"YouTube 上傳尚未完成：{p['uploaded']}/{p['total']} 部。"
                         f" 原因：{p['reason']}。安全重試時間：{t}。"
-                        " 系統會每 30 分鐘檢查並自動斷點續傳。"
+                        " 系統會每 15 分鐘檢查；到達安全重試時間後自動斷點續傳。"
                     ))
                 elif run_conclusion == "success" and upload_complete:
                     self.root.after(0, lambda: self._on_workflow_success(repo, run_id))
@@ -827,7 +827,7 @@ class AudiobookGUIApp:
         self.progress_bar.stop()
         self.btn_run.config(state=tk.NORMAL)
         self.btn_download.config(state=tk.NORMAL)
-        self.lbl_status.config(text="🎉 雲端作業完成！", foreground="#27ae60")
+        self.lbl_status.config(text="✅ 已確認 YouTube 上傳全部成功！", foreground="#27ae60")
         
         # 異步獲取 Actions Artifacts 大小資訊並印出到 Log
         def _fetch_artifact_info():
@@ -868,7 +868,8 @@ class AudiobookGUIApp:
                 
                 def _update_log():
                     self.log("==========================================")
-                    self.log("🎉 恭喜！GitHub Actions 雲端工作流成功執行完畢。")
+                    self.log("✅ 已確認所有影片、字幕與播放清單均成功發布到 YouTube。")
+                    self.log("🛑 完整成功檢查已通過，不需要再啟動重試。")
                     if asset_info_list:
                         self.log(f"📦 雲端產物總大小：【{total_str}】(共 {len(asset_info_list)} 個檔案)")
                         for item in asset_info_list:
@@ -878,7 +879,9 @@ class AudiobookGUIApp:
                 
                 self.root.after(0, _update_log)
             except Exception as e:
-                self.root.after(0, lambda: self.log(f"🎉 雲端工作流成功執行完畢！（無法讀取檔案大小: {e}）"))
+                self.root.after(0, lambda: self.log(
+                    f"✅ 已確認 YouTube 上傳全部成功！（無法讀取檔案大小: {e}）"
+                ))
                 
         threading.Thread(target=_fetch_artifact_info, daemon=True).start()
 
