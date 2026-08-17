@@ -5,6 +5,7 @@ import yaml
 
 
 WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "audiobook.yml"
+RETRY_WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "youtube-retry.yml"
 
 
 class WorkflowStrictSuccessTests(unittest.TestCase):
@@ -13,6 +14,8 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         cls.text = WORKFLOW_PATH.read_text(encoding="utf-8")
         parsed = yaml.safe_load(cls.text)
         cls.jobs = parsed["jobs"]
+        cls.retry_text = RETRY_WORKFLOW_PATH.read_text(encoding="utf-8")
+        cls.retry_jobs = yaml.safe_load(cls.retry_text)["jobs"]
 
     def test_final_gate_depends_on_every_production_job(self):
         gate = self.jobs["strict_success_gate"]
@@ -27,7 +30,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("exit 1", command)
 
     def test_scheduled_retry_wait_and_rerun_are_not_false_failures(self):
-        command = self.jobs["retry_failed_run"]["steps"][0]["run"]
+        command = self.retry_jobs["retry_failed_run"]["steps"][0]["run"]
         self.assertIn('elif [ "$conclusion" = "success" ]', command)
         self.assertIn("eligible_epoch=$((updated_epoch + 7200))", command)
         self.assertIn("retry_at=", command)
@@ -36,17 +39,20 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertNotIn("gate_message", command)
 
     def test_scheduled_success_check_writes_explicit_summary(self):
-        command = self.jobs["retry_failed_run"]["steps"][0]["run"]
+        command = self.retry_jobs["retry_failed_run"]["steps"][0]["run"]
         self.assertIn("✅ Upload success confirmed", command)
-        self.assertIn("Upload is complete", command)
-        self.assertIn("no retry was started", command)
+        self.assertIn('gh workflow disable "$RETRY_WORKFLOW"', command)
+        self.assertIn("No retry was started", command)
         self.assertIn("no YouTube API request was made", command)
+        self.assertIn("no future scheduled check will be created", command)
 
-    def test_scheduled_cleanup_deletes_completed_checks_only(self):
-        command = self.jobs["retry_failed_run"]["steps"][0]["run"]
-        self.assertIn('.status == \\"completed\\"', command)
-        self.assertIn('github.event_name == \'schedule\'', self.text)
-        self.assertIn('gh api --method DELETE "repos/$REPOSITORY/actions/runs/$stale_run_id"', command)
+    def test_schedule_is_isolated_from_manual_production_workflow(self):
+        self.assertNotIn("schedule:", self.text)
+        self.assertIn("schedule:", self.retry_text)
+        setup_command = self.jobs["setup"]["steps"][0]["run"]
+        self.assertIn("gh workflow enable youtube-retry.yml", setup_command)
+        gate_command = self.jobs["strict_success_gate"]["steps"][1]["run"]
+        self.assertIn("gh workflow disable youtube-retry.yml", gate_command)
 
     def test_worker_artifacts_cannot_be_empty(self):
         steps = self.jobs["process_chapters"]["steps"]
@@ -75,7 +81,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn('.get("include")', step["run"])
 
     def test_scheduled_retry_has_no_attempt_limit(self):
-        command = self.jobs["retry_failed_run"]["steps"][0]["run"]
+        command = self.retry_jobs["retry_failed_run"]["steps"][0]["run"]
         self.assertNotIn("Max retries", command)
         self.assertNotIn('run_attempt:-1}" -ge', command)
 

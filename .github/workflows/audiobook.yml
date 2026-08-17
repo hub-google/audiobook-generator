@@ -27,20 +27,13 @@ on:
         description: 'ZIP 解密密碼 (可選，從 GUI 或 Secrets 傳入)'
         required: false
         default: ''
-  schedule:
-    # The lightweight checker runs every 15 minutes so a saved YouTube retry_at
-    # can be honored promptly. It only re-runs jobs when they are eligible:
-    # daily limits use their exact retry_at; all other failures wait two hours.
-    - cron: '*/15 * * * *'
 
 permissions:
   contents: write
   actions: write
 
-# Production runs share one lock. Scheduled checks use their own run-specific
-# group so they can inspect and clean up stale queued checks immediately.
 concurrency:
-  group: ${{ github.event_name == 'schedule' && format('scheduled-retry-check-{0}', github.run_id) || 'youtube-resumable-upload' }}
+  group: youtube-resumable-upload
   cancel-in-progress: false
 
 jobs:
@@ -165,6 +158,11 @@ jobs:
       matrix: ${{ steps.gen_matrix.outputs.matrix }}
 
     steps:
+      - name: Enable automatic retry checks for this production run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow enable youtube-retry.yml --repo "${{ github.repository }}"
+
       - name: Checkout Code
         uses: actions/checkout@v4
 
@@ -604,3 +602,10 @@ jobs:
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "✅ Every chapter and every required YouTube publication step completed." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop all future retry checks after strict success
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow disable youtube-retry.yml --repo "${{ github.repository }}"
+          echo "Automatic retry scheduling is now disabled; no further check runs will be created." >> "$GITHUB_STEP_SUMMARY"
