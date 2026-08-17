@@ -124,20 +124,49 @@ class Pipeline:
         config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         title = normalize_book_title(config.get("book_title", ""))
 
-        if not cover_artifact:
-            raise RuntimeError(
-                "Source run has no source-book-metadata artifact with its original cover. "
-                "This is an older run whose cover was not preserved; refusing to generate a replacement."
-            )
-        self.download_artifact(cover_artifact, metadata_dir / "cover")
-        covers = sorted((metadata_dir / "cover").rglob("youtube_cover.jpg"), key=lambda p: str(p).lower())
-        if not covers:
-            raise RuntimeError("source-book-metadata contains no original youtube_cover.jpg; refusing to generate a replacement")
         cover = self.work / "metadata" / "youtube_cover.jpg"
         cover.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(covers[0], cover)
-        self.save(source_book_title=title, source_cover_artifact=cover_artifact["name"], source_cover_file=str(covers[0]))
+        if cover_artifact:
+            self.download_artifact(cover_artifact, metadata_dir / "cover")
+            covers = sorted((metadata_dir / "cover").rglob("youtube_cover.jpg"), key=lambda p: str(p).lower())
+            if not covers:
+                raise RuntimeError("source-book-metadata contains no original youtube_cover.jpg; refusing to generate a replacement")
+            shutil.copy2(covers[0], cover)
+            source = {"source_cover_artifact": cover_artifact["name"], "source_cover_file": str(covers[0])}
+        else:
+            # Runs created before source-book-metadata existed can still reuse
+            # the exact thumbnail already uploaded on the owner's YouTube
+            # channel.  This downloads pixels from YouTube; it does not invoke
+            # any image generator or compose a replacement.
+            self.download_existing_youtube_cover(title, cover)
+            source = {"source_cover_artifact": None, "source_cover_file": "owner YouTube video thumbnail"}
+        self.save(source_book_title=title, **source)
         return title, cover
+
+    @staticmethod
+    def download_existing_youtube_cover(book_title, destination):
+        from src.youtube_api_uploader import get_authenticated_service
+        youtube = get_authenticated_service()
+        response = youtube.search().list(
+            part="snippet", forMine=True, type="video", q=f"《{book_title}》", maxResults=50
+        ).execute()
+        exact = [
+            item for item in response.get("items", [])
+            if f"《{book_title}》" in item.get("snippet", {}).get("title", "")
+        ]
+        if not exact:
+            raise RuntimeError(
+                "Legacy source run has no preserved cover artifact and no exact-title video "
+                "was found on the authenticated YouTube channel; refusing to generate a replacement"
+            )
+        thumbnails = exact[0]["snippet"].get("thumbnails", {})
+        for quality in ("maxres", "standard", "high", "medium", "default"):
+            url = thumbnails.get(quality, {}).get("url")
+            if not url: continue
+            response = requests.get(url, timeout=60); response.raise_for_status()
+            Path(destination).write_bytes(response.content)
+            return
+        raise RuntimeError("Exact-title YouTube video has no downloadable thumbnail")
 
     def stage_workers(self, artifacts):
         manifests = []

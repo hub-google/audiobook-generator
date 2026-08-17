@@ -102,6 +102,27 @@ class MetadataAndCoverTests(unittest.TestCase):
             privacy_status="public", cover_path="youtube_cover.jpg",
         )
 
+    def test_legacy_cover_reuses_exact_title_youtube_thumbnail(self):
+        destination = Path("youtube_cover.jpg")
+        search_call = Mock()
+        search_call.execute.return_value = {"items": [{"snippet": {
+            "title": "《仙逆》第 0001~0100 章【第 1 部】",
+            "thumbnails": {"high": {"url": "https://img.example/original.jpg"}},
+        }}]}
+        youtube = Mock()
+        youtube.search.return_value.list.return_value = search_call
+        uploader = types.ModuleType("src.youtube_api_uploader")
+        uploader.get_authenticated_service = Mock(return_value=youtube)
+        image_response = Mock(content=b"original-cover")
+        image_response.raise_for_status = Mock()
+        with tempfile.TemporaryDirectory() as directory, patch.dict(sys.modules, {"src.youtube_api_uploader": uploader}), patch.object(merge_upload.requests, "get", return_value=image_response):
+            destination = Path(directory) / "youtube_cover.jpg"
+            merge_upload.Pipeline.download_existing_youtube_cover("仙逆", destination)
+            self.assertEqual(destination.read_bytes(), b"original-cover")
+        youtube.search.return_value.list.assert_called_once_with(
+            part="snippet", forMine=True, type="video", q="《仙逆》", maxResults=50
+        )
+
 class HuggingFaceCompatibilityTests(unittest.TestCase):
     def test_all_upload_file_calls_use_keyword_arguments(self):
         tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
