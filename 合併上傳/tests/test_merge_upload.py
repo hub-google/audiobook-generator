@@ -1,8 +1,11 @@
 import ast
 import importlib.util
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 MODULE_PATH = Path(__file__).parents[1] / "merge_upload.py"
 SPEC = importlib.util.spec_from_file_location("merge_upload", MODULE_PATH)
@@ -47,6 +50,58 @@ class RunIdParsingTests(unittest.TestCase):
     def test_rejects_unrecognized_value(self):
         with self.assertRaises(merge_upload.argparse.ArgumentTypeError):
             merge_upload.normalize_run_id("not-a-run")
+
+    def test_normalizes_book_title_from_gui_style(self):
+        self.assertEqual(merge_upload.normalize_book_title("仙逆(已完結)"), "仙逆")
+
+    def test_preserves_plain_book_title(self):
+        self.assertEqual(merge_upload.normalize_book_title("仙逆"), "仙逆")
+
+class MetadataAndCoverTests(unittest.TestCase):
+    def pipeline(self):
+        pipeline = merge_upload.Pipeline.__new__(merge_upload.Pipeline)
+        pipeline.args = types.SimpleNamespace(
+            title="仙逆", description="", privacy="public", run_id="31962500241"
+        )
+        pipeline.work = Path("merge-upload-state")
+        pipeline.state = {}
+        pipeline.save = Mock()
+        return pipeline
+
+    def test_metadata_uses_existing_full_book_format_generator(self):
+        pipeline = self.pipeline()
+        generated = {
+            "title": "《仙逆》| 已完結 | 第 1~2066 章 (超長有聲小說全集)",
+            "description": "原本分部上傳使用的介紹格式",
+            "cover_file": "merge-upload-state/metadata/youtube_cover.jpg",
+        }
+        save_book_metadata = Mock(return_value=generated.copy())
+        module = types.ModuleType("src.metadata_gen")
+        module.save_book_metadata = save_book_metadata
+        with patch.dict(sys.modules, {"src.metadata_gen": module}):
+            result = pipeline.metadata([{"chapters": [1, 2]}, {"chapters": [2065, 2066]}])
+        self.assertEqual(result, generated)
+        save_book_metadata.assert_called_once_with(
+            book_title="仙逆", start_chap=1, end_chap=2066,
+            workspace_dir=str(pipeline.work / "metadata"), is_completed=True, part_num=None,
+        )
+
+    def test_upload_passes_generated_description_and_cover(self):
+        pipeline = self.pipeline()
+        metadata = {
+            "title": "generated title", "description": "generated description",
+            "cover_file": "youtube_cover.jpg",
+        }
+        pipeline.metadata = Mock(return_value=metadata)
+        uploader = types.ModuleType("src.youtube_api_uploader")
+        uploader.get_authenticated_service = Mock(return_value="youtube")
+        uploader.upload_video_file = Mock(return_value="video-id")
+        with patch.dict(sys.modules, {"src.youtube_api_uploader": uploader}):
+            pipeline.upload(Path("merged.mp4"), [{"chapters": [1]}])
+        uploader.upload_video_file.assert_called_once_with(
+            "youtube", "merged.mp4", "generated title", "generated description",
+            privacy_status="public", cover_path="youtube_cover.jpg",
+        )
 
 class HuggingFaceCompatibilityTests(unittest.TestCase):
     def test_all_upload_file_calls_use_keyword_arguments(self):

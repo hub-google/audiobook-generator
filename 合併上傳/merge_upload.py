@@ -26,6 +26,13 @@ def normalize_run_id(value):
         "run ID must be digits or a GitHub Actions URL ending in /actions/runs/<ID>"
     )
 
+def normalize_book_title(value):
+    title = str(value).strip().strip("《》")
+    title = re.sub(r"\s*[\(（]\s*已完結\s*[\)）]\s*$", "", title)
+    if not title:
+        raise argparse.ArgumentTypeError("book title cannot be empty")
+    return title
+
 def chapter_number(path):
     match = CHAPTER_RE.search(Path(path).name)
     if not match: raise ValueError(f"Cannot determine chapter number from {Path(path).name!r}")
@@ -124,10 +131,30 @@ class Pipeline:
         self.hf.upload_file(path_or_fileobj=str(output), path_in_repo=remote, repo_id=self.repo_id, repo_type="dataset"); self.remote_files.add(remote)
         self.save(merged_remote_file=remote); return output
 
+    def metadata(self, manifests):
+        from src.metadata_gen import save_book_metadata
+        chapters = [chapter for item in manifests for chapter in item["chapters"]]
+        self.save(current_stage="generate_metadata_cover")
+        metadata = save_book_metadata(
+            book_title=self.args.title,
+            start_chap=min(chapters),
+            end_chap=max(chapters),
+            workspace_dir=str(self.work / "metadata"),
+            is_completed=True,
+            part_num=None,
+        )
+        if self.args.description:
+            metadata["description"] = f"{metadata['description']}\n\n{self.args.description.strip()}"
+        return metadata
+
     def upload(self, output, manifests):
-        self.save(current_stage="youtube_upload")
+        metadata = self.metadata(manifests)
+        self.save(current_stage="youtube_upload", youtube_title=metadata["title"], cover_file=metadata["cover_file"])
         from src.youtube_api_uploader import get_authenticated_service, upload_video_file
-        video_id = upload_video_file(get_authenticated_service(), str(output), self.args.title, self.args.description or f"Merged from GitHub Actions run {self.args.run_id}.", privacy_status=self.args.privacy)
+        video_id = upload_video_file(
+            get_authenticated_service(), str(output), metadata["title"], metadata["description"],
+            privacy_status=self.args.privacy, cover_path=metadata["cover_file"],
+        )
         self.save(current_stage="complete", status="complete", video_id=video_id, video_url=f"https://www.youtube.com/watch?v={video_id}", chapters=sum(len(x["chapters"]) for x in manifests), error=None, completed_at=now())
 
     def run(self):
@@ -136,7 +163,7 @@ class Pipeline:
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--repository", required=True); p.add_argument("--run-id", required=True, type=normalize_run_id); p.add_argument("--title", required=True)
+    p.add_argument("--repository", required=True); p.add_argument("--run-id", required=True, type=normalize_run_id); p.add_argument("--title", required=True, type=normalize_book_title)
     p.add_argument("--description", default=""); p.add_argument("--privacy", choices=("private", "unlisted", "public"), default="private")
     p.add_argument("--checkpoint-repo", default=""); p.add_argument("--work-dir", default=Path("merge-upload-state"), type=Path)
     return p.parse_args()
