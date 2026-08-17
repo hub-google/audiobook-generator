@@ -8,6 +8,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 MODULE_PATH = Path(__file__).parents[1] / "merge_upload.py"
+BUCKET_MODULE_PATH = Path(__file__).parents[1] / "bucket_pipeline.py"
+WORKFLOW_PATH = Path(__file__).parents[2] / ".github" / "workflows" / "merge-run-upload.yml"
 SPEC = importlib.util.spec_from_file_location("merge_upload", MODULE_PATH)
 merge_upload = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(merge_upload)
@@ -140,5 +142,18 @@ class HuggingFaceCompatibilityTests(unittest.TestCase):
                 {"path_or_fileobj", "path_in_repo", "repo_id"}.issubset(keyword_names),
                 f"upload_file call on line {call.lineno} is missing required keyword arguments",
             )
+
+class BucketPipelineTests(unittest.TestCase):
+    def test_bucket_pipeline_uses_object_api_not_repo_commits(self):
+        source = BUCKET_MODULE_PATH.read_text(encoding="utf-8")
+        self.assertIn("batch_bucket_files", source)
+        self.assertNotIn("upload_file(", source)
+        self.assertNotIn("create_repo(", source)
+
+    def test_workflow_stages_with_15_runners_then_launches_hf_job(self):
+        source = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("max-parallel: 15", source)
+        self.assertIn("hf jobs run", source)
+        self.assertIn("hf://buckets/", source)
 
 if __name__ == "__main__": unittest.main()

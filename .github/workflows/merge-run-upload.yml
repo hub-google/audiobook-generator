@@ -12,12 +12,9 @@ on:
         required: true
         default: private
         type: choice
-        options:
-          - private
-          - unlisted
-          - public
+        options: [private, unlisted, public]
       checkpoint_repo:
-        description: "HF dataset repo for checkpoints (blank = auto-create)"
+        description: "HF Storage Bucket (blank = auto-create)"
         required: false
         type: string
 
@@ -30,180 +27,108 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  discover_workers:
-    name: Discover source worker artifacts
+  discover:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.workers.outputs.matrix }}
       count: ${{ steps.workers.outputs.count }}
+      run_id: ${{ steps.workers.outputs.run_id }}
+      first_worker: ${{ steps.workers.outputs.first_worker }}
+      bucket: ${{ steps.bucket.outputs.bucket }}
     steps:
-      - name: Build numeric worker matrix
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install "huggingface_hub>=1.6.0"
+      - name: Create or reuse public HF Storage Bucket
+        id: bucket
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          REQUESTED_BUCKET: ${{ inputs.checkpoint_repo }}
+        run: |
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi, create_bucket
+          requested = os.environ.get("REQUESTED_BUCKET", "").strip()
+          bucket = requested or f"{HfApi().whoami()['name']}/audiobook-merge-artifacts"
+          create_bucket(bucket, exist_ok=True)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"bucket={bucket}\n")
+          print(f"Using HF Storage Bucket: {bucket}")
+          PY
+      - name: Discover worker artifacts
         id: workers
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
         run: |
           run_id=$(printf '%s' "$SOURCE_RUN_ID" | sed -E 's#^.*/actions/runs/([0-9]+)/?.*$#\1#')
-          if ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
-            echo "Invalid source run ID or URL: $SOURCE_RUN_ID" >&2
-            exit 1
-          fi
-          names=$(gh api --paginate \
-            "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" \
-            --jq '.artifacts[] | select(.expired == false) | .name' \
-            | grep -E '^mp4-worker-[0-9]+$' \
-            | sort -t- -k3,3n)
-          if [ -z "$names" ]; then
-            echo "No non-expired mp4-worker-* artifacts found in source run $run_id" >&2
-            exit 1
-          fi
-          matrix=$(printf '%s\n' "$names" | jq -Rsc 'split("\n") | map(select(length > 0) | {worker_name: .}) | {include: .}')
-          count=$(printf '%s\n' "$names" | grep -c .)
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-          echo "count=$count" >> "$GITHUB_OUTPUT"
-          echo "## Parallel worker plan" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Workers discovered: **$count**" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Maximum simultaneous runners: **15**" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Worker order: **$(printf '%s' "$names" | paste -sd ', ' -)**" >> "$GITHUB_STEP_SUMMARY"
+          [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "Invalid source run: $SOURCE_RUN_ID" >&2; exit 1; }
+          names=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false) | .name' | grep -E '^mp4-worker-[0-9]+$' | sort -t- -k3,3n)
+          [[ -n "$names" ]] || { echo "No live mp4-worker artifacts" >&2; exit 1; }
+          echo "matrix=$(printf '%s\n' "$names" | jq -Rsc 'split("\n") | map(select(length > 0) | {worker_name: .}) | {include: .}')" >> "$GITHUB_OUTPUT"
+          echo "count=$(printf '%s\n' "$names" | grep -c .)" >> "$GITHUB_OUTPUT"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "first_worker=$(printf '%s\n' "$names" | head -n 1)" >> "$GITHUB_OUTPUT"
 
   stage_workers:
-    name: "Stage ${{ matrix.worker_name }}"
-    needs: discover_workers
+    needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
       fail-fast: false
       max-parallel: 15
-      matrix: ${{ fromJSON(needs.discover_workers.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install worker dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Download, merge, and checkpoint this worker
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_HUB_DISABLE_PROGRESS_BARS: "1"
-          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
-          CHECKPOINT_REPO: ${{ inputs.checkpoint_repo }}
-          WORKER_NAME: ${{ matrix.worker_name }}
-        run: |
-          python "合併上傳/merge_upload.py" \
-            --work-dir "merge-worker-state/$WORKER_NAME" \
-            --repository "$GITHUB_REPOSITORY" \
-            --run-id "$SOURCE_RUN_ID" \
-            --checkpoint-repo "$CHECKPOINT_REPO" \
-            --worker-name "$WORKER_NAME"
-
-      - name: Write worker summary
-        if: always()
-        env:
-          WORKER_NAME: ${{ matrix.worker_name }}
-        run: |
-          state="merge-worker-state/$WORKER_NAME/state.json"
-          echo "## $WORKER_NAME" >> "$GITHUB_STEP_SUMMARY"
-          if [ -f "$state" ]; then
-            echo "- Status: **$(jq -r '.status' "$state")**" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Last stage: **$(jq -r '.current_stage' "$state")**" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "- Status: **FAILED before state initialization**" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-  merge_and_upload:
-    name: Final merge and one YouTube upload
-    needs: [discover_workers, stage_workers]
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk
-          python -m pip install --upgrade pip
+          sudo apt-get install -y --no-install-recommends ffmpeg
           pip install -r requirements.txt
-
-      - name: Checkpoint, merge in chapter order, and upload one video
+      - name: Download artifact and upload HF Bucket objects
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_XET_HIGH_PERFORMANCE: "1"
+        run: |
+          python "合併上傳/bucket_pipeline.py" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "${{ needs.discover.outputs.run_id }}" \
+            --bucket "${{ needs.discover.outputs.bucket }}" \
+            --worker-name "${{ matrix.worker_name }}" \
+            ${{ matrix.worker_name == needs.discover.outputs.first_worker && '--stage-metadata' || '' }}
+
+  launch_hf_job:
+    needs: [discover, stage_workers]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install "huggingface_hub>=1.6.0"
+      - name: Launch final merge and YouTube upload on HF Jobs
+        env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          HF_HUB_DISABLE_PROGRESS_BARS: "1"
-          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
-          YOUTUBE_PRIVACY: ${{ inputs.privacy }}
-          CHECKPOINT_REPO: ${{ inputs.checkpoint_repo }}
         run: |
-          python "合併上傳/merge_upload.py" \
-            --work-dir merge-upload-state \
-            --repository "$GITHUB_REPOSITORY" \
-            --run-id "$SOURCE_RUN_ID" \
-            --privacy "$YOUTUBE_PRIVACY" \
-            --checkpoint-repo "$CHECKPOINT_REPO"
-
-      - name: Write result summary
-        if: always()
-        run: |
-          echo "## Single-file merge/upload attempt" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Source run: **${{ inputs.source_run_id }}**" >> "$GITHUB_STEP_SUMMARY"
-          if [ -f merge-upload-state/state.json ]; then
-            status=$(jq -r '.status' merge-upload-state/state.json)
-            stage=$(jq -r '.current_stage' merge-upload-state/state.json)
-            workers=$(jq -r '(.completed_workers // []) | length' merge-upload-state/state.json)
-            total=$(jq -r '.artifact_count // "unknown"' merge-upload-state/state.json)
-            worker_names=$(jq -r '(.completed_workers // []) | if length == 0 then "none" else join(", ") end' merge-upload-state/state.json)
-            downloaded_names=$(jq -r '(.downloaded_worker_chunks // []) | if length == 0 then "none" else join(", ") end' merge-upload-state/state.json)
-            merged=$(jq -r 'if .final_merge_complete == true then "YES" else "NO" end' merge-upload-state/state.json)
-            cleanup=$(jq -r '.cleanup_status // "not started (video upload did not complete)"' merge-upload-state/state.json)
-            echo "- Status: **$status**" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Last stage: **$stage**" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Worker checkpoints: **$workers / $total**" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Worker checkpoints completed: **$worker_names**" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Worker chunks downloaded for final merge: **$downloaded_names**" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Final merge completed and saved: **$merged**" >> "$GITHUB_STEP_SUMMARY"
-            echo "- HF large-file cleanup: **$cleanup**" >> "$GITHUB_STEP_SUMMARY"
-            echo "- HF video checkpoints deleted: **$(jq -r '.cleanup_deleted_count // 0' merge-upload-state/state.json)**" >> "$GITHUB_STEP_SUMMARY"
-            echo "- HF LFS objects submitted for permanent reclamation: **$(jq -r '.cleanup_reclaimed_lfs_count // 0' merge-upload-state/state.json)**" >> "$GITHUB_STEP_SUMMARY"
-            echo "- HF checkpoint repo: **$(jq -r '.checkpoint_repo' merge-upload-state/state.json)**" >> "$GITHUB_STEP_SUMMARY"
-            if [ "$status" = complete ]; then
-              url=$(jq -r '.video_url' merge-upload-state/state.json)
-              echo "- YouTube: [$url]($url)" >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "" >> "$GITHUB_STEP_SUMMARY"
-              echo "### Failure detail" >> "$GITHUB_STEP_SUMMARY"
-              echo "- Failed stage: **$stage**" >> "$GITHUB_STEP_SUMMARY"
-              echo "- Error type: **$(jq -r '.error.type // "UnknownError"' merge-upload-state/state.json)**" >> "$GITHUB_STEP_SUMMARY"
-              echo "- Message: $(jq -r '.error.message // "No error detail was recorded"' merge-upload-state/state.json)" >> "$GITHUB_STEP_SUMMARY"
-              echo "- Resume: rerun with the same source run ID and checkpoint repo." >> "$GITHUB_STEP_SUMMARY"
-            fi
-          else
-            echo "- Status file missing: failure occurred before checkpoint initialization." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Preserve manifest and result
-        if: always() && hashFiles('merge-upload-state/**') != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: merge-upload-state-${{ inputs.source_run_id }}
-          path: merge-upload-state/
-          if-no-files-found: ignore
+          secrets_file="$RUNNER_TEMP/hf-job-secrets.env"
+          {
+            printf 'HF_TOKEN=%s\n' "$HF_TOKEN"
+            printf 'YOUTUBE_REFRESH_TOKEN=%s\n' "$YOUTUBE_REFRESH_TOKEN"
+            printf 'YOUTUBE_CLIENT_ID=%s\n' "$YOUTUBE_CLIENT_ID"
+            printf 'YOUTUBE_CLIENT_SECRET=%s\n' "$YOUTUBE_CLIENT_SECRET"
+          } > "$secrets_file"
+          hf jobs run \
+            --name "audiobook-${{ needs.discover.outputs.run_id }}" \
+            --secrets-file "$secrets_file" \
+            -e HF_XET_HIGH_PERFORMANCE=1 \
+            -v "hf://buckets/${{ needs.discover.outputs.bucket }}:/bucket:rw" \
+            python:3.11-bookworm \
+            bash -lc 'apt-get update -qq && apt-get install -y --no-install-recommends ffmpeg git fonts-noto-cjk && git clone --depth 1 https://github.com/${{ github.repository }}.git /app && cd /app && git fetch --depth 1 origin ${{ github.sha }} && git checkout ${{ github.sha }} && pip install -r requirements.txt && python "合併上傳/bucket_pipeline.py" --repository "${{ github.repository }}" --run-id "${{ needs.discover.outputs.run_id }}" --bucket-mount /bucket --expected-workers "${{ needs.discover.outputs.count }}" --privacy "${{ inputs.privacy }}"'

@@ -1,8 +1,8 @@
 # Run artifacts 合併上傳
 
-這是與原本有聲書產製流程分開的工具。它從指定 GitHub Actions run 下載
-`mp4-worker-*` artifacts，根據檔名中的 `chapter_N` 數字升冪排序，無重新編碼合併成
-一個 MP4，然後透過 YouTube Data API resumable upload 上傳。
+這是與原本有聲書產製流程分開的工具。最多 15 台 GitHub runner 從指定 run 平行下載
+`mp4-worker-*` artifacts，合併各自章節後直接寫入 HF Storage Bucket。全部完成後啟動
+HF Job，掛載 Bucket、依章節排序合併成一個 MP4，再 resumable upload 到 YouTube。
 
 ## GUI 操作
 
@@ -14,8 +14,8 @@
 GUI 只是雲端控制面板；關閉 GUI 不會取消已送出的 Actions run，
 也不會把 MP4 下載到本機。
 
-`checkpoint_repo` 可留空，系統會在 `HF_TOKEN` 所屬帳號建立私有
-`audiobook-merge-checkpoints` dataset repo。
+`checkpoint_repo` 現在代表 Storage Bucket ID；可留空，自動建立公開的
+`audiobook-merge-artifacts` Bucket。流程不使用 HF dataset repo，也不產生 HF Git commit。
 
 工作流只下載 `mp4-worker-*`，不會下載重複的 `video-worker-*`。它不主動切卷，
 也不會預先因為影片超過 YouTube 公開限制而中止；最終是否接受由 YouTube API
@@ -30,17 +30,14 @@ GUI 只是雲端控制面板；關閉 GUI 不會取消已送出的 Actions run�
 
 ## 輸出與狀態
 
-- HF `runs/<run-id>/workers/`：每個 worker 的合併中間檔與排序 manifest。
-- HF `runs/<run-id>/merged/merged-audiobook.mp4`：完整合併 checkpoint。
-- `merge-upload-state/state.json`：階段、進度、YouTube URL 或失敗細節。
-- `merge-upload-state` Actions artifact：不包含巨大 MP4，只保存狀態。
+- Bucket `runs/<run-id>/workers/`：worker 合併檔與排序 manifest。
+- Bucket `runs/<run-id>/merged/merged-audiobook.mp4`：完整合併檔。
+- Bucket `runs/<run-id>/state.json`：完成狀態與 YouTube URL。
 
 GitHub 只會辨識 `.github/workflows/*.yml`，所以 repository 根目錄會有一個很薄的
 `.github/workflows/merge-run-upload.yml`；實作程式與說明都在本資料夾。
 
 ## 中斷續做
 
-- 每完成一個 worker 就上傳 HF checkpoint。
-- 重跑時略過已完成 worker，不重複下載該來源 artifact。
-- 完整合併檔在 YouTube 上傳前先存入 HF。
-- YouTube 失敗後重跑會略過 artifact 處理與合併，直接取用合併 checkpoint。
+- 每個 worker 寫入獨立 Bucket object，不存在 commit 競爭或每小時 commit 限制。
+- HF Job 直接掛載 Bucket；合併檔和狀態寫回同一個 run prefix。
