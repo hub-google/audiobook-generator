@@ -73,8 +73,19 @@ def source_metadata_from_github(artifacts, temp):
     end_chapter = int(config.get("end_chapter") or len(config.get("selected_indices") or config.get("chapters") or []))
     if not cover_path:
         cover_path = metadata_root / "youtube_cover.jpg"
-        from merge_upload import Pipeline
-        Pipeline.download_existing_youtube_cover(title, cover_path)
+        master_cover = Path("Workspace") / title / "Cover" / "master_cover.jpg"
+        if master_cover.is_file():
+            from PIL import Image
+            from src.metadata_gen import create_youtube_cover
+            with Image.open(master_cover) as source:
+                background = source.convert("RGB").copy()
+            create_youtube_cover(
+                background, title, int(config.get("start_chapter") or 1), end_chapter,
+                is_completed=True, output_filename=str(cover_path),
+            )
+        else:
+            from merge_upload import Pipeline
+            Pipeline.download_existing_youtube_cover(title, cover_path)
     return title, cover_path, end_chapter, config
 
 

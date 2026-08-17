@@ -1,5 +1,6 @@
 import ast
 import importlib.util
+import os
 import sys
 import tempfile
 import types
@@ -149,6 +150,34 @@ class HuggingFaceCompatibilityTests(unittest.TestCase):
             )
 
 class BucketPipelineTests(unittest.TestCase):
+    def test_legacy_run_prefers_restored_master_cover_over_youtube(self):
+        artifacts = [{"name": "shared-config"}]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            master = root / "Workspace" / "仙逆" / "Cover" / "master_cover.jpg"
+            master.parent.mkdir(parents=True)
+            from PIL import Image
+            Image.new("RGB", (1280, 720), "navy").save(master)
+
+            def download_config(_artifact, destination):
+                destination.mkdir(parents=True, exist_ok=True)
+                (destination / "config.yaml").write_text(
+                    "book_title: 仙逆\nstart_chapter: 1\nend_chapter: 2025\n", encoding="utf-8"
+                )
+
+            previous = Path.cwd()
+            try:
+                os.chdir(root)
+                with patch.object(bucket_pipeline, "download_artifact", side_effect=download_config), \
+                     patch.object(merge_upload.Pipeline, "download_existing_youtube_cover") as youtube_cover:
+                    title, cover, end_chapter, _ = bucket_pipeline.source_metadata_from_github(artifacts, root / "temp")
+            finally:
+                os.chdir(previous)
+
+            self.assertEqual((title, end_chapter), ("仙逆", 2025))
+            self.assertTrue(cover.is_file())
+            youtube_cover.assert_not_called()
+
     def test_expected_worker_chapters_uses_the_same_config_slice_as_worker_pipeline(self):
         config = {"selected_indices": [1, 2, 4, 5, 8], "chapters_per_worker": 2}
         self.assertEqual(bucket_pipeline.expected_worker_chapters(config, 0), [1, 2])
