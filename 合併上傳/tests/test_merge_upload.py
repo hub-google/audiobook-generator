@@ -169,10 +169,14 @@ class HuggingFaceCompatibilityTests(unittest.TestCase):
             )
 
 class BucketPipelineTests(unittest.TestCase):
-    def test_legacy_source_run_reuses_exact_title_youtube_thumbnail(self):
+    def test_legacy_source_run_uses_restored_worker_master_cover(self):
         artifacts = [{"name": "shared-config"}]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            master = root / "Workspace" / "仙逆" / "Cover" / "master_cover.jpg"
+            master.parent.mkdir(parents=True)
+            from PIL import Image
+            Image.new("RGB", (1024, 1024), "navy").save(master)
 
             def download_config(_artifact, destination):
                 destination.mkdir(parents=True, exist_ok=True)
@@ -184,8 +188,8 @@ class BucketPipelineTests(unittest.TestCase):
             try:
                 os.chdir(root)
                 with patch.object(bucket_pipeline, "download_artifact", side_effect=download_config), \
-                     patch.object(bucket_pipeline.Pipeline, "download_existing_youtube_cover") as youtube_cover:
-                    youtube_cover.side_effect = lambda _title, destination: Path(destination).write_bytes(b"existing-cover")
+                     patch("src.metadata_gen.create_youtube_cover") as create_cover:
+                    create_cover.side_effect = lambda _bg, _title, _start, _end, **kwargs: Path(kwargs["output_filename"]).write_bytes(b"worker-cover")
                     title, cover, end_chapter, _ = bucket_pipeline.source_metadata_from_github(
                         artifacts, root / "temp"
                     )
@@ -193,8 +197,8 @@ class BucketPipelineTests(unittest.TestCase):
                 os.chdir(previous)
 
             self.assertEqual((title, end_chapter), ("仙逆", 2025))
-            self.assertEqual(cover.read_bytes(), b"existing-cover")
-            youtube_cover.assert_called_once_with("仙逆", root / "temp" / "metadata" / "youtube_cover.jpg")
+            self.assertEqual(cover.read_bytes(), b"worker-cover")
+            create_cover.assert_called_once()
 
     def test_present_but_broken_cover_artifact_does_not_hide_new_run_failure(self):
         artifacts = [{"name": "shared-config"}, {"name": "source-book-metadata"}]
@@ -209,11 +213,8 @@ class BucketPipelineTests(unittest.TestCase):
                     )
 
             with patch.object(bucket_pipeline, "download_artifact", side_effect=download_metadata), \
-                 patch.object(bucket_pipeline.Pipeline, "download_existing_youtube_cover") as youtube_cover, \
                  self.assertRaisesRegex(RuntimeError, "contains no preserved youtube_cover.jpg"):
                 bucket_pipeline.source_metadata_from_github(artifacts, root / "temp")
-
-            youtube_cover.assert_not_called()
 
     def test_preflight_persists_title_cover_and_config_before_shards(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -247,6 +248,8 @@ class BucketPipelineTests(unittest.TestCase):
         self.assertIn("needs: [discover, metadata_preflight]", source)
         self.assertIn("needs: [discover, metadata_preflight, merge_shards]", source)
         self.assertIn("--mode preflight", source)
+        self.assertIn("Restore source worker cover cache", source)
+        self.assertIn("youtube-upload-state-source-${{ needs.discover.outputs.run_id }}-", source)
         finalizer = source.split("  finalize_and_upload:", 1)[1]
         self.assertNotIn("if: always()\n    needs:", finalizer)
 

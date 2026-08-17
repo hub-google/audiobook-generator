@@ -22,7 +22,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from merge_upload import Pipeline, chapter_number, merge, normalize_book_title, normalize_run_id, now, ordered_chapter_videos
+from merge_upload import chapter_number, merge, normalize_book_title, normalize_run_id, now, ordered_chapter_videos
 from src.part_builder import merge_part_videos
 from src.source_status import confirmed_missing_from_directory
 
@@ -76,11 +76,22 @@ def source_metadata_from_github(artifacts, temp):
             "source-book-metadata contains no preserved youtube_cover.jpg; refusing to continue"
         )
     if not cover_path:
-        # Runs created before source-book-metadata was introduced have no
-        # preserved cover artifact. Reuse the exact thumbnail already present
-        # on the authenticated owner's YouTube channel; never generate one.
+        # Legacy runs preserved the worker-generated master cover in the
+        # source run's GitHub Actions cache. The preflight job restores it.
+        master_cover = Path("Workspace") / title / "Cover" / "master_cover.jpg"
+        if not master_cover.is_file():
+            raise RuntimeError(
+                f"Source worker cover cache has no {master_cover}; refusing to continue"
+            )
+        from PIL import Image
+        from src.metadata_gen import create_youtube_cover
         cover_path = metadata_root / "youtube_cover.jpg"
-        Pipeline.download_existing_youtube_cover(title, cover_path)
+        with Image.open(master_cover) as source:
+            background = source.convert("RGB").copy()
+        create_youtube_cover(
+            background, title, int(config.get("start_chapter") or 1), end_chapter,
+            is_completed=True, output_filename=str(cover_path),
+        )
     return title, cover_path, end_chapter, config
 
 
