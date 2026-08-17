@@ -198,6 +198,26 @@ class BucketPipelineTests(unittest.TestCase):
             self.assertEqual(cover.read_bytes(), master.read_bytes())
             youtube_cover.assert_not_called()
 
+    def test_legacy_run_stops_when_original_cover_is_missing(self):
+        artifacts = [{"name": "shared-config"}]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def download_config(_artifact, destination):
+                destination.mkdir(parents=True, exist_ok=True)
+                (destination / "config.yaml").write_text(
+                    "book_title: 仙逆\nstart_chapter: 1\nend_chapter: 2025\n", encoding="utf-8"
+                )
+
+            previous = Path.cwd()
+            try:
+                os.chdir(root)
+                with patch.object(bucket_pipeline, "download_artifact", side_effect=download_config), \
+                     self.assertRaisesRegex(RuntimeError, "no original cover"):
+                    bucket_pipeline.source_metadata_from_github(artifacts, root / "temp")
+            finally:
+                os.chdir(previous)
+
     def test_expected_worker_chapters_uses_the_same_config_slice_as_worker_pipeline(self):
         config = {"selected_indices": [1, 2, 4, 5, 8], "chapters_per_worker": 2}
         self.assertEqual(bucket_pipeline.expected_worker_chapters(config, 0), [1, 2])
