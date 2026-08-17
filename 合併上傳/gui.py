@@ -1,6 +1,7 @@
 """Local control-panel GUI for the cloud merge/upload workflow."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
@@ -79,7 +80,7 @@ class MergeUploadGUI(tk.Tk):
     def start(self):
         try:
             run_id = normalize_run_id(self.vars["source_run_id"].get())
-        except (TypeError, ValueError):
+        except (argparse.ArgumentTypeError, TypeError, ValueError):
             messagebox.showerror(
                 "輸入錯誤",
                 "請貼上 Run ID 數字，或完整的 GitHub Actions Run 網址。",
