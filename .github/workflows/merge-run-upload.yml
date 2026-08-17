@@ -1,0 +1,118 @@
+name: Merge one run into one YouTube video
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Source Actions run ID"
+        required: true
+        type: string
+      youtube_title:
+        description: "YouTube video title"
+        required: true
+        type: string
+      youtube_description:
+        description: "YouTube description (optional)"
+        required: false
+        type: string
+      privacy:
+        description: "Initial YouTube privacy"
+        required: true
+        default: private
+        type: choice
+        options:
+          - private
+          - unlisted
+          - public
+      checkpoint_repo:
+        description: "HF dataset repo for checkpoints (blank = auto-create)"
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: merge-run-upload-${{ inputs.source_run_id }}
+  cancel-in-progress: false
+
+jobs:
+  merge_and_upload:
+    name: Merge artifacts and attempt one YouTube upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Checkpoint, merge in chapter order, and upload one video
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          YOUTUBE_TITLE: ${{ inputs.youtube_title }}
+          YOUTUBE_DESCRIPTION: ${{ inputs.youtube_description }}
+          YOUTUBE_PRIVACY: ${{ inputs.privacy }}
+          CHECKPOINT_REPO: ${{ inputs.checkpoint_repo }}
+        run: |
+          python "合併上傳/merge_upload.py" \
+            --work-dir merge-upload-state \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$SOURCE_RUN_ID" \
+            --title "$YOUTUBE_TITLE" \
+            --description "$YOUTUBE_DESCRIPTION" \
+            --privacy "$YOUTUBE_PRIVACY" \
+            --checkpoint-repo "$CHECKPOINT_REPO"
+
+      - name: Write result summary
+        if: always()
+        run: |
+          echo "## Single-file merge/upload attempt" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Source run: **${{ inputs.source_run_id }}**" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f merge-upload-state/state.json ]; then
+            status=$(jq -r '.status' merge-upload-state/state.json)
+            stage=$(jq -r '.current_stage' merge-upload-state/state.json)
+            workers=$(jq -r '(.completed_workers // []) | length' merge-upload-state/state.json)
+            total=$(jq -r '.artifact_count // "unknown"' merge-upload-state/state.json)
+            echo "- Status: **$status**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Last stage: **$stage**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Worker checkpoints: **$workers / $total**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- HF checkpoint repo: **$(jq -r '.checkpoint_repo' merge-upload-state/state.json)**" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$status" = complete ]; then
+              url=$(jq -r '.video_url' merge-upload-state/state.json)
+              echo "- YouTube: [$url]($url)" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "### Failure detail" >> "$GITHUB_STEP_SUMMARY"
+              echo "- Failed stage: **$stage**" >> "$GITHUB_STEP_SUMMARY"
+              echo "- Error type: **$(jq -r '.error.type // "UnknownError"' merge-upload-state/state.json)**" >> "$GITHUB_STEP_SUMMARY"
+              echo "- Message: $(jq -r '.error.message // "No error detail was recorded"' merge-upload-state/state.json)" >> "$GITHUB_STEP_SUMMARY"
+              echo "- Resume: rerun with the same source run ID and checkpoint repo." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo "- Status file missing: failure occurred before checkpoint initialization." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Preserve manifest and result
+        if: always() && hashFiles('merge-upload-state/**') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: merge-upload-state-${{ inputs.source_run_id }}
+          path: merge-upload-state/
+          if-no-files-found: ignore
