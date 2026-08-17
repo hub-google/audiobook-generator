@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tkinter import messagebox, ttk
 
+from merge_upload import normalize_run_id
+
 REPOSITORY = "hub-google/audiobook-generator"
 WORKFLOW = "merge-run-upload.yml"
 
@@ -67,7 +69,7 @@ class MergeUploadGUI(tk.Tk):
         ttk.Label(buttons, textvariable=self.status_var).pack(side="right")
         self.progress = ttk.Progressbar(self, mode="indeterminate"); self.progress.pack(fill="x", padx=16)
         self.log = tk.Text(self, wrap="word", font=("Consolas", 10)); self.log.pack(fill="both", expand=True, padx=16, pady=12)
-        self.log.insert("end", "只要貼上來源 Run ID；書名與原始封面會從該 Run 自動讀取。影片處理在雲端進行，本機不下載 MP4。\n")
+        self.log.insert("end", "貼上完整的 GitHub Actions Run 網址或純數字 Run ID；書名與原始封面會從該 Run 自動讀取。影片處理在雲端進行，本機不下載 MP4。\n")
 
     def append(self, message: str):
         self.after(0, lambda: (self.log.insert("end", message.rstrip() + "\n"), self.log.see("end")))
@@ -75,10 +77,16 @@ class MergeUploadGUI(tk.Tk):
     def set_status(self, value: str): self.after(0, self.status_var.set, value)
 
     def start(self):
-        run_id = self.vars["source_run_id"].get().strip()
-        if not run_id.isdigit():
-            messagebox.showerror("輸入錯誤", "Run ID 必須是數字。"); return
+        try:
+            run_id = normalize_run_id(self.vars["source_run_id"].get())
+        except (TypeError, ValueError):
+            messagebox.showerror(
+                "輸入錯誤",
+                "請貼上 Run ID 數字，或完整的 GitHub Actions Run 網址。",
+            )
+            return
         self.payload = {key: variable.get().strip() for key, variable in self.vars.items()}
+        self.payload["source_run_id"] = run_id
         self.stop_event.clear(); self.start_button.configure(state="disabled"); self.progress.start(12)
         self.log.delete("1.0", "end")
         threading.Thread(target=self._dispatch_and_monitor, daemon=True).start()
