@@ -632,7 +632,7 @@ def parse_args():
     parser.add_argument("--worker-start", type=int, default=0)
     parser.add_argument("--worker-end", type=int, default=0)
     parser.add_argument("--report", type=Path)
-    parser.add_argument("--privacy", choices=("private", "unlisted", "public"), default="private")
+    parser.add_argument("--privacy", choices=("private", "unlisted", "public"), default="public")
     return parser.parse_args()
 
 

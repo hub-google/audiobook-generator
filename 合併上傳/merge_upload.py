@@ -336,7 +336,7 @@ class Pipeline:
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--repository", required=True); p.add_argument("--run-id", required=True, type=normalize_run_id)
-    p.add_argument("--privacy", choices=("private", "unlisted", "public"), default="private")
+    p.add_argument("--privacy", choices=("private", "unlisted", "public"), default="public")
     p.add_argument("--checkpoint-repo", default=""); p.add_argument("--work-dir", default=Path("merge-upload-state"), type=Path)
     p.add_argument("--worker-name", default="", help="stage only this mp4-worker-* artifact (matrix mode)")
     return p.parse_args()

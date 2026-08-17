@@ -10,7 +10,7 @@ on:
       privacy:
         description: "Initial YouTube privacy"
         required: true
-        default: private
+        default: public
         type: choice
         options: [private, unlisted, public]
       checkpoint_repo:

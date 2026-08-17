@@ -50,7 +50,7 @@ class MergeUploadGUI(tk.Tk):
     def _build(self):
         form = ttk.Frame(self, padding=16); form.pack(fill="x")
         self.vars = {
-            "source_run_id": tk.StringVar(), "privacy": tk.StringVar(value="private"),
+            "source_run_id": tk.StringVar(), "privacy": tk.StringVar(value="public"),
             "checkpoint_repo": tk.StringVar(),
         }
         labels = [("來源 Run ID", "source_run_id"),
