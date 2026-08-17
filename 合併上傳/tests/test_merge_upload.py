@@ -13,6 +13,11 @@ WORKFLOW_PATH = Path(__file__).parents[2] / ".github" / "workflows" / "merge-run
 SPEC = importlib.util.spec_from_file_location("merge_upload", MODULE_PATH)
 merge_upload = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(merge_upload)
+sys.modules["merge_upload"] = merge_upload
+
+BUCKET_SPEC = importlib.util.spec_from_file_location("bucket_pipeline", BUCKET_MODULE_PATH)
+bucket_pipeline = importlib.util.module_from_spec(BUCKET_SPEC)
+BUCKET_SPEC.loader.exec_module(bucket_pipeline)
 
 class MergeUploadOrderingTests(unittest.TestCase):
     def test_orders_by_chapter_number_not_worker_or_lexical_order(self):
@@ -144,6 +149,68 @@ class HuggingFaceCompatibilityTests(unittest.TestCase):
             )
 
 class BucketPipelineTests(unittest.TestCase):
+    def test_expected_worker_chapters_uses_the_same_config_slice_as_worker_pipeline(self):
+        config = {"selected_indices": [1, 2, 4, 5, 8], "chapters_per_worker": 2}
+        self.assertEqual(bucket_pipeline.expected_worker_chapters(config, 0), [1, 2])
+        self.assertEqual(bucket_pipeline.expected_worker_chapters(config, 1), [4, 5])
+        self.assertEqual(bucket_pipeline.expected_worker_chapters(config, 2), [8])
+
+    def test_worker_inventory_accepts_only_proven_source_missing_chapters(self):
+        result = bucket_pipeline.validate_worker_inventory(
+            "mp4-worker-0", [1, 2, 3], [1, 3], {2}
+        )
+        self.assertEqual(result["mp4_chapters"], [1, 3])
+        self.assertEqual(result["source_missing_chapters"], [2])
+
+    def test_worker_inventory_rejects_unexplained_missing_chapter(self):
+        with self.assertRaisesRegex(RuntimeError, r"unresolved_missing=\[2\]"):
+            bucket_pipeline.validate_worker_inventory(
+                "mp4-worker-0", [1, 2, 3], [1, 3], set()
+            )
+
+    def test_worker_inventory_rejects_duplicate_chapter_mp4(self):
+        with self.assertRaisesRegex(RuntimeError, r"duplicates=\[2\]"):
+            bucket_pipeline.validate_worker_inventory(
+                "mp4-worker-0", [1, 2], [1, 2, 2], set()
+            )
+
+    def test_final_manifest_validation_requires_exact_worker_and_chapter_coverage(self):
+        manifests = [
+            {
+                "worker_ids": [0], "merged_chapters": [1, 3],
+                "worker_inventory": [{
+                    "worker_id": 0, "expected": [1, 2, 3],
+                    "mp4_chapters": [1, 3], "source_missing_chapters": [2],
+                }],
+            },
+            {
+                "worker_ids": [1], "merged_chapters": [4],
+                "worker_inventory": [{
+                    "worker_id": 1, "expected": [4],
+                    "mp4_chapters": [4], "source_missing_chapters": [],
+                }],
+            },
+        ]
+        inventory, merged, missing = bucket_pipeline.validate_final_manifests(
+            manifests, {"selected_indices": [1, 2, 3, 4]}, 2
+        )
+        self.assertEqual([item["worker_id"] for item in inventory], [0, 1])
+        self.assertEqual(merged, [1, 3, 4])
+        self.assertEqual(missing, [2])
+
+    def test_final_manifest_validation_rejects_missing_shard_chapter(self):
+        manifests = [{
+            "worker_ids": [0], "merged_chapters": [1],
+            "worker_inventory": [{
+                "worker_id": 0, "expected": [1, 2],
+                "mp4_chapters": [1], "source_missing_chapters": [],
+            }],
+        }]
+        with self.assertRaisesRegex(RuntimeError, "final chapter coverage mismatch"):
+            bucket_pipeline.validate_final_manifests(
+                manifests, {"selected_indices": [1, 2]}, 1
+            )
+
     def test_bucket_pipeline_adds_repository_root_for_src_imports(self):
         source = BUCKET_MODULE_PATH.read_text(encoding="utf-8")
         self.assertIn("Path(__file__).resolve().parent.parent", source)
@@ -156,14 +223,17 @@ class BucketPipelineTests(unittest.TestCase):
         self.assertIn("ArtifactVideoProvider", source)
         self.assertIn("provider.cleanup()", source)
 
-    def test_workflow_uses_one_github_runner_and_no_hf_job(self):
+    def test_workflow_uses_parallel_shards_and_one_finalizer(self):
         source = WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertNotIn("stage_workers:", source)
         self.assertNotIn("hf jobs run", source)
         self.assertIn("hf-mount", source)
         self.assertIn("--no-disk-cache", source)
+        self.assertIn("merge_shards:", source)
+        self.assertIn("max-parallel: 15", source)
+        self.assertIn("--mode shard", source)
+        self.assertIn("--mode finalize", source)
         self.assertIn("finalize_and_upload:", source)
-        self.assertIn("Remove legacy HF worker checkpoints", source)
 
     def test_bucket_final_merge_uses_forward_only_fragmented_mp4(self):
         source = BUCKET_MODULE_PATH.read_text(encoding="utf-8")
