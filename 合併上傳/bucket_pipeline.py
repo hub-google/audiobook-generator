@@ -75,14 +75,9 @@ def source_metadata_from_github(artifacts, temp):
         cover_path = metadata_root / "youtube_cover.jpg"
         master_cover = Path("Workspace") / title / "Cover" / "master_cover.jpg"
         if master_cover.is_file():
-            from PIL import Image
-            from src.metadata_gen import create_youtube_cover
-            with Image.open(master_cover) as source:
-                background = source.convert("RGB").copy()
-            create_youtube_cover(
-                background, title, int(config.get("start_chapter") or 1), end_chapter,
-                is_completed=True, output_filename=str(cover_path),
-            )
+            # This is the exact cover preserved by the completed source run's
+            # uploader cache.  Reuse its bytes; never regenerate or fetch one.
+            shutil.copy2(master_cover, cover_path)
         else:
             from merge_upload import Pipeline
             Pipeline.download_existing_youtube_cover(title, cover_path)

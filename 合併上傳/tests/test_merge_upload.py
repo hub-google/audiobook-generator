@@ -195,6 +195,7 @@ class BucketPipelineTests(unittest.TestCase):
 
             self.assertEqual((title, end_chapter), ("仙逆", 2025))
             self.assertTrue(cover.is_file())
+            self.assertEqual(cover.read_bytes(), master.read_bytes())
             youtube_cover.assert_not_called()
 
     def test_expected_worker_chapters_uses_the_same_config_slice_as_worker_pipeline(self):
@@ -282,6 +283,8 @@ class BucketPipelineTests(unittest.TestCase):
         self.assertIn("--mode shard", source)
         self.assertIn("--mode finalize", source)
         self.assertIn("finalize_and_upload:", source)
+        self.assertIn("actions/cache/restore@v4", source)
+        self.assertIn("youtube-upload-state-source-${{ needs.discover.outputs.run_id }}-", source)
 
     def test_workflow_labels_inclusive_worker_range(self):
         source = WORKFLOW_PATH.read_text(encoding="utf-8")
