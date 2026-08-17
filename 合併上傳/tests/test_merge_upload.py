@@ -169,7 +169,7 @@ class HuggingFaceCompatibilityTests(unittest.TestCase):
             )
 
 class BucketPipelineTests(unittest.TestCase):
-    def test_source_run_stops_when_youtube_cover_is_missing(self):
+    def test_legacy_source_run_reuses_exact_title_youtube_thumbnail(self):
         artifacts = [{"name": "shared-config"}]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -184,10 +184,71 @@ class BucketPipelineTests(unittest.TestCase):
             try:
                 os.chdir(root)
                 with patch.object(bucket_pipeline, "download_artifact", side_effect=download_config), \
-                     self.assertRaisesRegex(RuntimeError, "no preserved youtube_cover.jpg"):
-                    bucket_pipeline.source_metadata_from_github(artifacts, root / "temp")
+                     patch.object(bucket_pipeline.Pipeline, "download_existing_youtube_cover") as youtube_cover:
+                    youtube_cover.side_effect = lambda _title, destination: Path(destination).write_bytes(b"existing-cover")
+                    title, cover, end_chapter, _ = bucket_pipeline.source_metadata_from_github(
+                        artifacts, root / "temp"
+                    )
             finally:
                 os.chdir(previous)
+
+            self.assertEqual((title, end_chapter), ("仙逆", 2025))
+            self.assertEqual(cover.read_bytes(), b"existing-cover")
+            youtube_cover.assert_called_once_with("仙逆", root / "temp" / "metadata" / "youtube_cover.jpg")
+
+    def test_present_but_broken_cover_artifact_does_not_hide_new_run_failure(self):
+        artifacts = [{"name": "shared-config"}, {"name": "source-book-metadata"}]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def download_metadata(artifact, destination):
+                destination.mkdir(parents=True, exist_ok=True)
+                if artifact["name"] == "shared-config":
+                    (destination / "config.yaml").write_text(
+                        "book_title: 仙逆\nstart_chapter: 1\nend_chapter: 2025\n", encoding="utf-8"
+                    )
+
+            with patch.object(bucket_pipeline, "download_artifact", side_effect=download_metadata), \
+                 patch.object(bucket_pipeline.Pipeline, "download_existing_youtube_cover") as youtube_cover, \
+                 self.assertRaisesRegex(RuntimeError, "contains no preserved youtube_cover.jpg"):
+                bucket_pipeline.source_metadata_from_github(artifacts, root / "temp")
+
+            youtube_cover.assert_not_called()
+
+    def test_preflight_persists_title_cover_and_config_before_shards(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = types.SimpleNamespace(
+                bucket_mount=root / "bucket", run_id="31962500241", repository="owner/repo"
+            )
+            source_cover = root / "source-cover.jpg"
+            source_cover.write_bytes(b"verified-cover")
+            config = {"book_title": "仙逆", "end_chapter": 2025, "selected_indices": [1, 2]}
+            with patch.object(bucket_pipeline, "all_artifacts", return_value=[]), \
+                 patch.object(
+                     bucket_pipeline, "source_metadata_from_github",
+                     return_value=("仙逆", source_cover, 2025, config),
+                 ), \
+                 patch("src.metadata_gen.generate_video_title", return_value="《仙逆》全集"), \
+                 patch("src.metadata_gen.generate_video_description", return_value="完整說明"):
+                    bucket_pipeline.run_preflight(args)
+
+            title, cover, end_chapter, loaded, youtube_title, description = bucket_pipeline.load_preflight_metadata(
+                args.bucket_mount / "runs" / args.run_id
+            )
+            self.assertEqual((title, end_chapter), ("仙逆", 2025))
+            self.assertEqual(cover.read_bytes(), b"verified-cover")
+            self.assertEqual(loaded["selected_indices"], [1, 2])
+            self.assertEqual((youtube_title, description), ("《仙逆》全集", "完整說明"))
+
+    def test_shards_and_finalizer_are_blocked_on_metadata_preflight(self):
+        source = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("metadata_preflight:", source)
+        self.assertIn("needs: [discover, metadata_preflight]", source)
+        self.assertIn("needs: [discover, metadata_preflight, merge_shards]", source)
+        self.assertIn("--mode preflight", source)
+        finalizer = source.split("  finalize_and_upload:", 1)[1]
+        self.assertNotIn("if: always()\n    needs:", finalizer)
 
     def test_expected_worker_chapters_uses_the_same_config_slice_as_worker_pipeline(self):
         config = {"selected_indices": [1, 2, 4, 5, 8], "chapters_per_worker": 2}

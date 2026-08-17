@@ -89,8 +89,50 @@ jobs:
           print(json.dumps(include, ensure_ascii=False))
           PY
 
-  merge_shards:
+  metadata_preflight:
     needs: discover
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install metadata and HF Bucket dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends nfs-common
+          pip install -r requirements.txt
+          curl --fail --location --retry 5 https://github.com/huggingface/hf-mount/releases/download/v0.9.2/hf-mount-x86_64-linux --output "$RUNNER_TEMP/hf-mount"
+          curl --fail --location --retry 5 https://github.com/huggingface/hf-mount/releases/download/v0.9.2/hf-mount-nfs-x86_64-linux --output "$RUNNER_TEMP/hf-mount-nfs"
+          chmod +x "$RUNNER_TEMP/hf-mount" "$RUNNER_TEMP/hf-mount-nfs"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Mount HF Bucket
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/hf-bucket"
+          "$RUNNER_TEMP/hf-mount" start --hf-token "$HF_TOKEN" --no-disk-cache bucket "${{ needs.discover.outputs.bucket }}" "$RUNNER_TEMP/hf-bucket"
+          ls "$RUNNER_TEMP/hf-bucket" >/dev/null
+      - name: Validate and preserve source title and YouTube cover
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+        run: |
+          python "合併上傳/bucket_pipeline.py" \
+            --mode preflight \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "${{ needs.discover.outputs.run_id }}" \
+            --bucket-mount "$RUNNER_TEMP/hf-bucket"
+      - name: Stop HF Bucket mount
+        if: always()
+        run: |
+          "$RUNNER_TEMP/hf-mount" stop "$RUNNER_TEMP/hf-bucket" || true
+
+  merge_shards:
+    needs: [discover, metadata_preflight]
     name: "Merge shard ${{ matrix.shard_id }} (${{ matrix.worker_label }})"
     strategy:
       fail-fast: false
@@ -159,8 +201,7 @@ jobs:
           "$RUNNER_TEMP/hf-mount" stop "$RUNNER_TEMP/hf-bucket" || true
 
   finalize_and_upload:
-    if: always()
-    needs: [discover, merge_shards]
+    needs: [discover, metadata_preflight, merge_shards]
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:

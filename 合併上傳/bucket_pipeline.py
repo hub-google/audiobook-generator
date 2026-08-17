@@ -22,7 +22,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from merge_upload import chapter_number, merge, normalize_book_title, normalize_run_id, now, ordered_chapter_videos
+from merge_upload import Pipeline, chapter_number, merge, normalize_book_title, normalize_run_id, now, ordered_chapter_videos
 from src.part_builder import merge_part_videos
 from src.source_status import confirmed_missing_from_directory
 
@@ -71,10 +71,16 @@ def source_metadata_from_github(artifacts, temp):
     config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     title = normalize_book_title(config.get("book_title", ""))
     end_chapter = int(config.get("end_chapter") or len(config.get("selected_indices") or config.get("chapters") or []))
-    if not cover_path:
+    if cover_artifact and not cover_path:
         raise RuntimeError(
-            "Source run has no preserved youtube_cover.jpg in source-book-metadata; refusing to continue"
+            "source-book-metadata contains no preserved youtube_cover.jpg; refusing to continue"
         )
+    if not cover_path:
+        # Runs created before source-book-metadata was introduced have no
+        # preserved cover artifact. Reuse the exact thumbnail already present
+        # on the authenticated owner's YouTube channel; never generate one.
+        cover_path = metadata_root / "youtube_cover.jpg"
+        Pipeline.download_existing_youtube_cover(title, cover_path)
     return title, cover_path, end_chapter, config
 
 
@@ -89,6 +95,84 @@ def source_config_from_github(artifacts, temp):
         raise RuntimeError("Source metadata has no config.yaml")
     import yaml
     return yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+
+
+def run_preflight(args):
+    """Resolve and persist cheap mandatory inputs before any shard work starts."""
+    run_root = args.bucket_mount / "runs" / args.run_id
+    metadata_root = run_root / "metadata"
+    report_path = metadata_root / "report.json"
+    report = {
+        "status": "running", "stage": "validating_source_metadata",
+        "source_run_id": args.run_id, "started_at": now(),
+    }
+    write_report(report_path, report)
+    try:
+        artifacts = all_artifacts(args.repository, args.run_id)
+        with tempfile.TemporaryDirectory() as temp_name:
+            title, cover, end_chapter, config = source_metadata_from_github(
+                artifacts, Path(temp_name)
+            )
+            if not title:
+                raise RuntimeError("Source config has no usable book_title")
+            if not cover.is_file() or cover.stat().st_size <= 0:
+                raise RuntimeError("Resolved YouTube cover is empty")
+            from src.metadata_gen import generate_video_description, generate_video_title
+            youtube_title = generate_video_title(title, 1, end_chapter)
+            description = generate_video_description(title, 1, end_chapter)
+            if not youtube_title.strip() or not description.strip():
+                raise RuntimeError("Generated YouTube title or description is empty")
+            metadata_root.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(cover, metadata_root / "youtube_cover.jpg")
+            (metadata_root / "config.yaml").write_text(
+                __import__("yaml").safe_dump(config, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+            metadata = {
+                "status": "complete", "source_run_id": args.run_id,
+                "book_title": title, "end_chapter": end_chapter,
+                "youtube_title": youtube_title, "description": description,
+                "cover_bytes": (metadata_root / "youtube_cover.jpg").stat().st_size,
+                "completed_at": now(),
+            }
+            write_report(metadata_root / "metadata.json", metadata)
+            report.update(metadata)
+            report["stage"] = "metadata_ready"
+            write_report(report_path, report)
+    except Exception as error:
+        report.update({
+            "status": "failed", "failed_at": now(),
+            "error_type": type(error).__name__, "error": str(error),
+        })
+        write_report(report_path, report)
+        raise
+
+
+def load_preflight_metadata(run_root):
+    metadata_root = Path(run_root) / "metadata"
+    metadata_path = metadata_root / "metadata.json"
+    config_path = metadata_root / "config.yaml"
+    cover_path = metadata_root / "youtube_cover.jpg"
+    if not metadata_path.is_file():
+        raise RuntimeError("metadata preflight did not complete")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if metadata.get("status") != "complete":
+        raise RuntimeError("metadata preflight is not complete")
+    if not config_path.is_file():
+        raise RuntimeError("metadata preflight config.yaml is missing")
+    if not cover_path.is_file() or cover_path.stat().st_size <= 0:
+        raise RuntimeError("metadata preflight YouTube cover is missing or empty")
+    import yaml
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    title = normalize_book_title(config.get("book_title", ""))
+    end_chapter = int(config.get("end_chapter") or len(config.get("selected_indices") or config.get("chapters") or []))
+    if title != metadata.get("book_title") or end_chapter != int(metadata.get("end_chapter") or 0):
+        raise RuntimeError("metadata preflight files are inconsistent")
+    youtube_title = str(metadata.get("youtube_title") or "")
+    description = str(metadata.get("description") or "")
+    if not youtube_title.strip() or not description.strip():
+        raise RuntimeError("metadata preflight title or description is missing")
+    return title, cover_path, end_chapter, config, youtube_title, description
 
 
 def expected_worker_chapters(config, worker_id):
@@ -215,7 +299,7 @@ def run_shard(args):
 
         with tempfile.TemporaryDirectory() as temp_name:
             temp = Path(temp_name)
-            config = source_config_from_github(artifacts, temp / "metadata")
+            _title, _cover, _end_chapter, config, _youtube_title, _description = load_preflight_metadata(run_root)
             report["stage"] = "inventory"
             write_report(report_path, report)
             records, all_videos = [], []
@@ -352,10 +436,9 @@ def run_finalize(args):
                 write_report(report_path, report)
                 return
         manifests = load_shard_manifests(run_root, args.expected_shards)
-        artifacts = all_artifacts(args.repository, args.run_id)
         with tempfile.TemporaryDirectory() as temp_name:
             temp = Path(temp_name)
-            title, cover, end_chapter, config = source_metadata_from_github(artifacts, temp)
+            title, cover, end_chapter, config, youtube_title, description = load_preflight_metadata(run_root)
             inventory, planned, source_missing = validate_final_manifests(
                 manifests, config, args.expected_workers
             )
@@ -377,10 +460,7 @@ def run_finalize(args):
                 "output_bytes": output.stat().st_size,
             })
             write_report(report_path, report)
-            from src.metadata_gen import generate_video_description, generate_video_title
             from src.youtube_api_uploader import get_authenticated_service, upload_video_file
-            youtube_title = generate_video_title(title, 1, end_chapter)
-            description = generate_video_description(title, 1, end_chapter)
             video_id = upload_video_file(
                 get_authenticated_service(), str(output), youtube_title, description,
                 privacy_status=args.privacy, cover_path=str(cover),
@@ -611,7 +691,7 @@ def finalize_direct(args):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("shard", "finalize", "summary", "legacy"), default="legacy")
+    parser.add_argument("--mode", choices=("preflight", "shard", "finalize", "summary", "legacy"), default="legacy")
     parser.add_argument("--repository")
     parser.add_argument("--run-id", type=normalize_run_id)
     parser.add_argument("--bucket-mount", type=Path)
@@ -634,10 +714,12 @@ def main():
         return 0
     if not args.repository or not args.run_id or not args.bucket_mount:
         raise RuntimeError("--repository, --run-id and --bucket-mount are required")
-    if shutil.which("ffmpeg") is None:
+    if args.mode != "preflight" and shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg is required")
     try:
-        if args.mode == "shard":
+        if args.mode == "preflight":
+            run_preflight(args)
+        elif args.mode == "shard":
             run_shard(args)
         elif args.mode == "finalize":
             run_finalize(args)
@@ -645,7 +727,7 @@ def main():
             finalize_direct(args)
         return 0
     except Exception as error:
-        if args.mode in ("shard", "finalize"):
+        if args.mode in ("preflight", "shard", "finalize"):
             print(json.dumps({"type": type(error).__name__, "message": str(error), "traceback": traceback.format_exc()}, ensure_ascii=False, indent=2), file=sys.stderr)
             return 1
         report_path = args.bucket_mount / "runs" / args.run_id / "merge-report.json"
