@@ -342,6 +342,16 @@ def parse_args():
     return p.parse_args()
 
 def main():
+    # Running this file directly from an IDE (for example Spyder's ``%runfile``)
+    # does not provide the CI-only command-line arguments.  In that case open
+    # the local control panel, which collects the source run ID and dispatches
+    # the merge/upload workflow with the repository and credentials configured
+    # on GitHub.
+    if len(sys.argv) == 1:
+        from gui import MergeUploadGUI
+        MergeUploadGUI().mainloop()
+        return 0
+
     args = parse_args()
     if shutil.which("ffmpeg") is None: raise RuntimeError("ffmpeg is required")
     pipeline = Pipeline(args)
