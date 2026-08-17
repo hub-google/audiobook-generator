@@ -81,6 +81,7 @@ jobs:
                   "shard_id": shard_id,
                   "worker_start": start,
                   "worker_end": end,
+                  "worker_label": (f"worker {start}" if end == start + 1 else f"workers {start}-{end - 1}"),
               })
           with open(output, "a", encoding="utf-8") as handle:
               handle.write(f"shard_count={len(include)}\n")
@@ -90,7 +91,7 @@ jobs:
 
   merge_shards:
     needs: discover
-    name: "Merge shard ${{ matrix.shard_id }} (workers ${{ matrix.worker_start }}-${{ matrix.worker_end }})"
+    name: "Merge shard ${{ matrix.shard_id }} (${{ matrix.worker_label }})"
     strategy:
       fail-fast: false
       max-parallel: 15

@@ -37,6 +37,22 @@ def run_gh(*args: str, check: bool = True) -> str:
         raise RuntimeError((result.stderr or result.stdout).strip())
     return result.stdout
 
+def run_gh_json(*args: str, attempts: int = 4, retry_delay: float = 1.0):
+    """Run a gh command and tolerate short-lived empty/invalid API responses."""
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            output = run_gh(*args)
+            if not output.strip():
+                raise RuntimeError("GitHub CLI 回傳空白內容")
+            return json.loads(output)
+        except (RuntimeError, json.JSONDecodeError) as error:
+            last_error = error
+            if attempt + 1 < attempts:
+                time.sleep(retry_delay)
+    command = "gh " + " ".join(args)
+    raise RuntimeError(f"{command} 連續 {attempts} 次未回傳有效 JSON：{last_error}") from last_error
+
 class MergeUploadGUI(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -44,6 +60,8 @@ class MergeUploadGUI(tk.Tk):
         self.geometry("900x680")
         self.minsize(760, 560)
         self.run_url = ""
+        self.pending_dispatch_after = None
+        self.active_run_id = ""
         self.stop_event = threading.Event()
         self._build()
 
@@ -78,6 +96,11 @@ class MergeUploadGUI(tk.Tk):
     def set_status(self, value: str): self.after(0, self.status_var.set, value)
 
     def start(self):
+        if self.pending_dispatch_after is not None or self.active_run_id:
+            self.stop_event.clear(); self.start_button.configure(state="disabled"); self.progress.start(12)
+            self.append("\n重新連接已送出的 Actions run；不會再次送出 workflow。")
+            threading.Thread(target=self._resume_monitoring, daemon=True).start()
+            return
         try:
             run_id = normalize_run_id(self.vars["source_run_id"].get())
         except (argparse.ArgumentTypeError, TypeError, ValueError):
@@ -101,19 +124,53 @@ class MergeUploadGUI(tk.Tk):
                 fields.extend(("-f", f"{key}={self.payload[key]}"))
             self.set_status("正在送出 workflow…"); self.append("正在送出 GitHub Actions workflow…")
             run_gh("workflow", "run", WORKFLOW, "--repo", REPOSITORY, *fields)
-            action_run = self._find_new_run(before)
-            database_id = str(action_run["databaseId"]); self.run_url = action_run["url"]
-            self.after(0, lambda: self.open_button.configure(state="normal"))
-            self.append(f"已建立 Actions run #{database_id}\n{self.run_url}")
-            self._monitor(database_id)
+            self.pending_dispatch_after = before
+            self.set_status("已送出，正在尋找 Run…")
+            self.append("workflow 已成功送出；正在取得新 Run，請勿重複送出。")
+            self._connect_and_monitor()
         except Exception as error:
-            self.set_status("失敗"); self.append(f"\n失敗：{type(error).__name__}: {error}")
+            if self.pending_dispatch_after is not None or self.active_run_id:
+                self.set_status("已送出；監看暫時中斷")
+                self.append(
+                    f"\nworkflow 已送出，但目前無法取得或監看 Run：{type(error).__name__}: {error}\n"
+                    "可按「重新連接已送出的 Run」繼續；不會建立重複 Run。"
+                )
+            else:
+                self.set_status("送出失敗"); self.append(f"\n送出失敗：{type(error).__name__}: {error}")
         finally:
-            self.after(0, lambda: (self.progress.stop(), self.start_button.configure(state="normal")))
+            self.after(0, self._finish_background_work)
+
+    def _finish_background_work(self):
+        self.progress.stop()
+        self.start_button.configure(
+            state="normal",
+            text=("重新連接已送出的 Run" if self.pending_dispatch_after is not None or self.active_run_id
+                  else "開始雲端合併上傳"),
+        )
+
+    def _resume_monitoring(self):
+        try:
+            run_gh("auth", "status")
+            self._connect_and_monitor()
+        except Exception as error:
+            self.set_status("已送出；監看暫時中斷")
+            self.append(f"\n重新連接失敗：{type(error).__name__}: {error}")
+        finally:
+            self.after(0, self._finish_background_work)
+
+    def _connect_and_monitor(self):
+        if not self.active_run_id:
+            action_run = self._find_new_run(self.pending_dispatch_after)
+            self.active_run_id = str(action_run["databaseId"])
+            self.run_url = action_run["url"]
+            self.pending_dispatch_after = None
+            self.after(0, lambda: self.open_button.configure(state="normal"))
+            self.append(f"已建立 Actions run #{self.active_run_id}\n{self.run_url}")
+        self._monitor(self.active_run_id)
 
     def _find_new_run(self, before):
         for _ in range(30):
-            runs = json.loads(run_gh("run", "list", "--repo", REPOSITORY, "--workflow", WORKFLOW, "--event", "workflow_dispatch", "--limit", "10", "--json", "databaseId,createdAt,status,conclusion,url"))
+            runs = run_gh_json("run", "list", "--repo", REPOSITORY, "--workflow", WORKFLOW, "--event", "workflow_dispatch", "--limit", "10", "--json", "databaseId,createdAt,status,conclusion,url")
             for item in runs:
                 created = datetime.fromisoformat(item["createdAt"].replace("Z", "+00:00"))
                 if created >= before:
@@ -124,7 +181,7 @@ class MergeUploadGUI(tk.Tk):
     def _monitor(self, database_id: str):
         previous = ""
         while not self.stop_event.is_set():
-            data = json.loads(run_gh("run", "view", database_id, "--repo", REPOSITORY, "--json", "status,conclusion,url,jobs"))
+            data = run_gh_json("run", "view", database_id, "--repo", REPOSITORY, "--json", "status,conclusion,url,jobs")
             jobs = data.get("jobs") or []
             active = []
             for job in jobs:
@@ -138,6 +195,7 @@ class MergeUploadGUI(tk.Tk):
                 else:
                     failed = run_gh("run", "view", database_id, "--repo", REPOSITORY, "--log-failed", check=False)
                     self.append(f"\n執行失敗，以下是 failed step log：\n{failed or '沒有取得 failed log，請開啟 Actions run 查看 Summary。'}")
+                self.active_run_id = ""
                 return
             time.sleep(15)
         self.set_status("已停止監看（雲端作業仍繼續）")

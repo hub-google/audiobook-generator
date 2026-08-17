@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 
 MODULE_PATH = Path(__file__).parents[1] / "merge_upload.py"
 BUCKET_MODULE_PATH = Path(__file__).parents[1] / "bucket_pipeline.py"
+GUI_MODULE_PATH = Path(__file__).parents[1] / "gui.py"
 WORKFLOW_PATH = Path(__file__).parents[2] / ".github" / "workflows" / "merge-run-upload.yml"
 SPEC = importlib.util.spec_from_file_location("merge_upload", MODULE_PATH)
 merge_upload = importlib.util.module_from_spec(SPEC)
@@ -19,6 +20,24 @@ sys.modules["merge_upload"] = merge_upload
 BUCKET_SPEC = importlib.util.spec_from_file_location("bucket_pipeline", BUCKET_MODULE_PATH)
 bucket_pipeline = importlib.util.module_from_spec(BUCKET_SPEC)
 BUCKET_SPEC.loader.exec_module(bucket_pipeline)
+
+GUI_SPEC = importlib.util.spec_from_file_location("merge_upload_gui", GUI_MODULE_PATH)
+merge_upload_gui = importlib.util.module_from_spec(GUI_SPEC)
+GUI_SPEC.loader.exec_module(merge_upload_gui)
+
+class GuiGitHubJsonTests(unittest.TestCase):
+    def test_retries_empty_json_response(self):
+        with patch.object(merge_upload_gui, "run_gh", side_effect=["", '[{"databaseId": 123}]']), \
+             patch.object(merge_upload_gui.time, "sleep") as sleep:
+            result = merge_upload_gui.run_gh_json("run", "list", attempts=2)
+        self.assertEqual(result, [{"databaseId": 123}])
+        sleep.assert_called_once_with(1.0)
+
+    def test_reports_repeated_invalid_json_as_runtime_error(self):
+        with patch.object(merge_upload_gui, "run_gh", return_value="not json"), \
+             patch.object(merge_upload_gui.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "連續 2 次未回傳有效 JSON"):
+                merge_upload_gui.run_gh_json("run", "view", attempts=2)
 
 class MergeUploadOrderingTests(unittest.TestCase):
     def test_orders_by_chapter_number_not_worker_or_lexical_order(self):
@@ -263,6 +282,13 @@ class BucketPipelineTests(unittest.TestCase):
         self.assertIn("--mode shard", source)
         self.assertIn("--mode finalize", source)
         self.assertIn("finalize_and_upload:", source)
+
+    def test_workflow_labels_inclusive_worker_range(self):
+        source = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn('f"worker {start}" if end == start + 1', source)
+        self.assertIn('f"workers {start}-{end - 1}"', source)
+        self.assertIn("(${{ matrix.worker_label }})", source)
+        self.assertNotIn("workers ${{ matrix.worker_start }}-${{ matrix.worker_end }}", source)
 
     def test_bucket_final_merge_uses_forward_only_fragmented_mp4(self):
         source = BUCKET_MODULE_PATH.read_text(encoding="utf-8")
