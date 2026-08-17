@@ -79,7 +79,7 @@ jobs:
       - name: Install dependencies and HF Bucket mount
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          sudo apt-get install -y --no-install-recommends ffmpeg nfs-common
           pip install -r requirements.txt
           curl --fail --location --retry 5 \
             https://github.com/huggingface/hf-mount/releases/download/v0.9.2/hf-mount-x86_64-linux \
