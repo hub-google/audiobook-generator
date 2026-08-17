@@ -69,22 +69,33 @@ class Pipeline:
         self.hf = HfApi(token=os.environ["HF_TOKEN"])
         self.repo_id = args.checkpoint_repo or f"{self.hf.whoami()['name']}/audiobook-merge-checkpoints"
         self.prefix, self.remote_files = f"runs/{args.run_id}", set()
+        self.state_remote = f"{self.prefix}/state.json"
         self.state = {"source_run_id": str(args.run_id), "status": "running", "current_stage": "initializing", "completed_workers": [], "started_at": now(), "checkpoint_repo": self.repo_id}
 
     def save(self, **updates):
         self.state.update(updates); self.state["updated_at"] = now()
         self.state_path.write_text(json.dumps(self.state, ensure_ascii=False, indent=2), encoding="utf-8")
-        try: self.hf.upload_file(path_or_fileobj=str(self.state_path), path_in_repo=f"{self.prefix}/state.json", repo_id=self.repo_id, repo_type="dataset", commit_message=f"Run {self.args.run_id}: {self.state['current_stage']}")
+        try: self.hf.upload_file(path_or_fileobj=str(self.state_path), path_in_repo=self.state_remote, repo_id=self.repo_id, repo_type="dataset", commit_message=f"Run {self.args.run_id}: {self.state['current_stage']}")
         except Exception as error: print(f"Warning: state checkpoint upload failed: {error}", flush=True)
 
     def prepare(self):
         self.hf.create_repo(self.repo_id, repo_type="dataset", private=True, exist_ok=True)
         self.remote_files = set(self.hf.list_repo_files(self.repo_id, repo_type="dataset"))
-        remote_state = f"{self.prefix}/state.json"
+        remote_state = self.state_remote
         if remote_state in self.remote_files:
             cached = hf_hub_download(self.repo_id, remote_state, repo_type="dataset", token=os.environ["HF_TOKEN"])
             self.state.update(json.loads(Path(cached).read_text(encoding="utf-8")))
         self.save(status="running", current_stage="discover_artifacts", error=None)
+
+    def prepare_worker(self, worker_name):
+        """Prepare isolated state for one matrix worker without state-file races."""
+        self.hf.create_repo(self.repo_id, repo_type="dataset", private=True, exist_ok=True)
+        self.remote_files = set(self.hf.list_repo_files(self.repo_id, repo_type="dataset"))
+        self.state_remote = f"{self.prefix}/worker-state/{worker_name}.json"
+        if self.state_remote in self.remote_files:
+            cached = hf_hub_download(self.repo_id, self.state_remote, repo_type="dataset", token=os.environ["HF_TOKEN"])
+            self.state.update(json.loads(Path(cached).read_text(encoding="utf-8")))
+        self.save(status="running", current_stage="discover_worker_artifact", current_worker=worker_name, error=None)
 
     @staticmethod
     def gh_headers(): return {"Authorization": f"Bearer {os.environ['GH_TOKEN']}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
@@ -186,6 +197,8 @@ class Pipeline:
                 print(f"[{index}/{len(artifacts)}] {name}: loading existing checkpoint manifest (source download and merge skipped).", flush=True)
                 cached = hf_hub_download(self.repo_id, manifest_remote, repo_type="dataset", token=os.environ["HF_TOKEN"])
                 manifests.append(json.loads(Path(cached).read_text(encoding="utf-8")))
+                completed = set(self.state.get("completed_workers", [])) | {name}
+                self.save(completed_workers=sorted(completed, key=worker_sort_key))
                 continue
             print(f"[{index}/{len(artifacts)}] {name}: downloading source GitHub artifact.", flush=True)
             with tempfile.TemporaryDirectory(dir=self.work) as temp_name:
@@ -256,15 +269,76 @@ class Pipeline:
         )
         self.save(current_stage="complete", status="complete", video_id=video_id, video_url=f"https://www.youtube.com/watch?v={video_id}", chapters=sum(len(x["chapters"]) for x in manifests), error=None, completed_at=now())
 
+    def cleanup_large_checkpoints(self):
+        """Delete run MP4s only after YouTube success; retain small JSON audit data."""
+        large_files = sorted(
+            path for path in self.remote_files
+            if path.startswith(f"{self.prefix}/") and path.lower().endswith(".mp4")
+        )
+        self.save(current_stage="cleanup_hf_video_checkpoints", cleanup_status="running", cleanup_files=large_files)
+        failures = []
+        deleted_count = 0
+        for position, remote_path in enumerate(large_files, 1):
+            print(f"[{position}/{len(large_files)}] HF cleanup: deleting {remote_path}.", flush=True)
+            try:
+                self.hf.delete_file(
+                    path_in_repo=remote_path, repo_id=self.repo_id,
+                    repo_type="dataset", commit_message=f"Run {self.args.run_id}: remove uploaded video checkpoint",
+                )
+                self.remote_files.discard(remote_path)
+                deleted_count += 1
+            except Exception as error:
+                failures.append({"file": remote_path, "error": str(error)})
+        reclaimed_lfs_count = 0
+        if not failures and large_files:
+            try:
+                # Removing Git pointers alone does not release LFS quota. Purge
+                # only LFS objects belonging to this source-run prefix and
+                # rewrite their history so the storage can actually be reclaimed.
+                run_lfs_files = [
+                    item for item in self.hf.list_lfs_files(self.repo_id, repo_type="dataset")
+                    if item.filename.startswith(f"{self.prefix}/") and item.filename.lower().endswith(".mp4")
+                ]
+                if run_lfs_files:
+                    self.hf.permanently_delete_lfs_files(
+                        repo_id=self.repo_id, lfs_files=run_lfs_files,
+                        rewrite_history=True, repo_type="dataset",
+                    )
+                    reclaimed_lfs_count = len(run_lfs_files)
+            except Exception as error:
+                failures.append({"file": "HF LFS history", "error": str(error)})
+        cleanup_status = "complete" if not failures else "partial_failure"
+        self.save(
+            current_stage="complete", cleanup_status=cleanup_status,
+            cleanup_deleted_count=deleted_count, cleanup_reclaimed_lfs_count=reclaimed_lfs_count,
+            cleanup_failures=failures,
+        )
+        if failures:
+            print(f"Warning: HF cleanup left {len(failures)} large checkpoint(s); see state.json.", flush=True)
+        else:
+            print(f"HF cleanup: removed {len(large_files)} large checkpoint(s); JSON audit files retained.", flush=True)
+
     def run(self):
+        if self.args.worker_name:
+            self.prepare_worker(self.args.worker_name)
+            artifacts = [item for item in self.artifacts() if item["name"] == self.args.worker_name]
+            if not artifacts:
+                raise RuntimeError(f"Worker artifact {self.args.worker_name!r} was not found or has expired")
+            self.save(artifact_count=1)
+            self.stage_workers(artifacts)
+            self.save(status="complete", current_stage="worker_complete", completed_at=now())
+            return
         self.prepare(); artifacts = self.artifacts(); self.save(artifact_count=len(artifacts))
-        manifests = self.stage_workers(artifacts); self.upload(self.build_final(manifests), manifests)
+        manifests = self.stage_workers(artifacts)
+        self.upload(self.build_final(manifests), manifests)
+        self.cleanup_large_checkpoints()
 
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--repository", required=True); p.add_argument("--run-id", required=True, type=normalize_run_id)
     p.add_argument("--privacy", choices=("private", "unlisted", "public"), default="private")
     p.add_argument("--checkpoint-repo", default=""); p.add_argument("--work-dir", default=Path("merge-upload-state"), type=Path)
+    p.add_argument("--worker-name", default="", help="stage only this mp4-worker-* artifact (matrix mode)")
     return p.parse_args()
 
 def main():

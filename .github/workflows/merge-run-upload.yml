@@ -30,8 +30,100 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  discover_workers:
+    name: Discover source worker artifacts
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.workers.outputs.matrix }}
+      count: ${{ steps.workers.outputs.count }}
+    steps:
+      - name: Build numeric worker matrix
+        id: workers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          run_id=$(printf '%s' "$SOURCE_RUN_ID" | sed -E 's#^.*/actions/runs/([0-9]+)/?.*$#\1#')
+          if ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
+            echo "Invalid source run ID or URL: $SOURCE_RUN_ID" >&2
+            exit 1
+          fi
+          names=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | .name' \
+            | grep -E '^mp4-worker-[0-9]+$' \
+            | sort -t- -k3,3n)
+          if [ -z "$names" ]; then
+            echo "No non-expired mp4-worker-* artifacts found in source run $run_id" >&2
+            exit 1
+          fi
+          matrix=$(printf '%s\n' "$names" | jq -Rsc 'split("\n") | map(select(length > 0) | {worker_name: .}) | {include: .}')
+          count=$(printf '%s\n' "$names" | grep -c .)
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "## Parallel worker plan" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Workers discovered: **$count**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Maximum simultaneous runners: **15**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Worker order: **$(printf '%s' "$names" | paste -sd ', ' -)**" >> "$GITHUB_STEP_SUMMARY"
+
+  stage_workers:
+    name: "Stage ${{ matrix.worker_name }}"
+    needs: discover_workers
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix: ${{ fromJSON(needs.discover_workers.outputs.matrix) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install worker dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download, merge, and checkpoint this worker
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_HUB_DISABLE_PROGRESS_BARS: "1"
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          CHECKPOINT_REPO: ${{ inputs.checkpoint_repo }}
+          WORKER_NAME: ${{ matrix.worker_name }}
+        run: |
+          python "合併上傳/merge_upload.py" \
+            --work-dir "merge-worker-state/$WORKER_NAME" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$SOURCE_RUN_ID" \
+            --checkpoint-repo "$CHECKPOINT_REPO" \
+            --worker-name "$WORKER_NAME"
+
+      - name: Write worker summary
+        if: always()
+        env:
+          WORKER_NAME: ${{ matrix.worker_name }}
+        run: |
+          state="merge-worker-state/$WORKER_NAME/state.json"
+          echo "## $WORKER_NAME" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$state" ]; then
+            echo "- Status: **$(jq -r '.status' "$state")**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Last stage: **$(jq -r '.current_stage' "$state")**" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Status: **FAILED before state initialization**" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   merge_and_upload:
-    name: Merge artifacts and attempt one YouTube upload
+    name: Final merge and one YouTube upload
+    needs: [discover_workers, stage_workers]
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
@@ -82,12 +174,16 @@ jobs:
             worker_names=$(jq -r '(.completed_workers // []) | if length == 0 then "none" else join(", ") end' merge-upload-state/state.json)
             downloaded_names=$(jq -r '(.downloaded_worker_chunks // []) | if length == 0 then "none" else join(", ") end' merge-upload-state/state.json)
             merged=$(jq -r 'if .final_merge_complete == true then "YES" else "NO" end' merge-upload-state/state.json)
+            cleanup=$(jq -r '.cleanup_status // "not started (video upload did not complete)"' merge-upload-state/state.json)
             echo "- Status: **$status**" >> "$GITHUB_STEP_SUMMARY"
             echo "- Last stage: **$stage**" >> "$GITHUB_STEP_SUMMARY"
             echo "- Worker checkpoints: **$workers / $total**" >> "$GITHUB_STEP_SUMMARY"
             echo "- Worker checkpoints completed: **$worker_names**" >> "$GITHUB_STEP_SUMMARY"
             echo "- Worker chunks downloaded for final merge: **$downloaded_names**" >> "$GITHUB_STEP_SUMMARY"
             echo "- Final merge completed and saved: **$merged**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- HF large-file cleanup: **$cleanup**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- HF video checkpoints deleted: **$(jq -r '.cleanup_deleted_count // 0' merge-upload-state/state.json)**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- HF LFS objects submitted for permanent reclamation: **$(jq -r '.cleanup_reclaimed_lfs_count // 0' merge-upload-state/state.json)**" >> "$GITHUB_STEP_SUMMARY"
             echo "- HF checkpoint repo: **$(jq -r '.checkpoint_repo' merge-upload-state/state.json)**" >> "$GITHUB_STEP_SUMMARY"
             if [ "$status" = complete ]; then
               url=$(jq -r '.video_url' merge-upload-state/state.json)
