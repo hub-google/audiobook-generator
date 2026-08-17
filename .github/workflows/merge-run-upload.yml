@@ -84,7 +84,11 @@ jobs:
           curl --fail --location --retry 5 \
             https://github.com/huggingface/hf-mount/releases/download/v0.9.2/hf-mount-x86_64-linux \
             --output "$RUNNER_TEMP/hf-mount"
-          chmod +x "$RUNNER_TEMP/hf-mount"
+          curl --fail --location --retry 5 \
+            https://github.com/huggingface/hf-mount/releases/download/v0.9.2/hf-mount-nfs-x86_64-linux \
+            --output "$RUNNER_TEMP/hf-mount-nfs"
+          chmod +x "$RUNNER_TEMP/hf-mount" "$RUNNER_TEMP/hf-mount-nfs"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Mount HF Bucket without local file cache
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
