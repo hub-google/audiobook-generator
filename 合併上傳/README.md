@@ -6,10 +6,13 @@
 
 ## GUI 操作
 
-1. 開啟 repository 的 **Actions** 頁面。
-2. 選擇 **Merge one run into one YouTube video**。
-3. 按 **Run workflow**。
-4. 填入來源 run ID 與 YouTube 標題。
+1. 雙擊 `啟動GUI.bat`。
+2. 輸入來源 run ID 與 YouTube 標題。
+3. 按「開始雲端合併上傳」。
+4. GUI 會顯示 Actions run、目前步驟、成功結果或 failed step log。
+
+GUI 只是雲端控制面板；關閉 GUI 不會取消已送出的 Actions run，
+也不會把 MP4 下載到本機。
 
 `checkpoint_repo` 可留空，系統會在 `HF_TOKEN` 所屬帳號建立私有
 `audiobook-merge-checkpoints` dataset repo。
