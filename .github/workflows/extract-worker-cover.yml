@@ -21,8 +21,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
         run: |
-          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name video-worker-0 --dir "$RUNNER_TEMP/worker"
-          cover=$(find "$RUNNER_TEMP/worker" -type f -path '*/Cover/master_cover.jpg' -print -quit)
+          artifact_id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" --jq '.artifacts[] | select(.name == "video-worker-0") | .id')
+          test -n "$artifact_id"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/worker.zip"
+          mkdir "$RUNNER_TEMP/worker"
+          unzip -j "$RUNNER_TEMP/worker.zip" '*/Cover/master_cover.jpg' -d "$RUNNER_TEMP/worker"
+          cover=$(find "$RUNNER_TEMP/worker" -type f -name 'master_cover.jpg' -print -quit)
           test -n "$cover"
           cp "$cover" "$RUNNER_TEMP/master_cover.jpg"
           git config user.name github-actions
