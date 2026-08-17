@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: "Source Actions run ID"
+        description: "Source Actions run URL or numeric ID"
         required: true
         type: string
       youtube_title:

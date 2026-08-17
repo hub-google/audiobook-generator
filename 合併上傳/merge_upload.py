@@ -13,6 +13,18 @@ except ImportError:  # Allows ordering/unit tests before optional CI deps are in
 
 CHAPTER_RE = re.compile(r"chapter_(\d+)", re.I)
 WORKER_RE = re.compile(r"mp4-worker-(\d+)$", re.I)
+RUN_URL_RE = re.compile(r"^https?://github\.com/[^/]+/[^/]+/actions/runs/(\d+)/?(?:[?#].*)?$", re.I)
+
+def normalize_run_id(value):
+    value = str(value).strip()
+    if value.isdigit():
+        return value
+    match = RUN_URL_RE.fullmatch(value)
+    if match:
+        return match.group(1)
+    raise argparse.ArgumentTypeError(
+        "run ID must be digits or a GitHub Actions URL ending in /actions/runs/<ID>"
+    )
 
 def chapter_number(path):
     match = CHAPTER_RE.search(Path(path).name)
@@ -46,7 +58,7 @@ class Pipeline:
     def save(self, **updates):
         self.state.update(updates); self.state["updated_at"] = now()
         self.state_path.write_text(json.dumps(self.state, ensure_ascii=False, indent=2), encoding="utf-8")
-        try: self.hf.upload_file(str(self.state_path), f"{self.prefix}/state.json", self.repo_id, repo_type="dataset", commit_message=f"Run {self.args.run_id}: {self.state['current_stage']}")
+        try: self.hf.upload_file(path_or_fileobj=str(self.state_path), path_in_repo=f"{self.prefix}/state.json", repo_id=self.repo_id, repo_type="dataset", commit_message=f"Run {self.args.run_id}: {self.state['current_stage']}")
         except Exception as error: print(f"Warning: state checkpoint upload failed: {error}", flush=True)
 
     def prepare(self):
@@ -91,8 +103,8 @@ class Pipeline:
                 merge(videos, chunk, temp / "chapters.ffconcat")
                 manifest = {"worker": name, "first_chapter": chapter_number(videos[0]), "last_chapter": chapter_number(videos[-1]), "chapters": [chapter_number(p) for p in videos], "remote_file": chunk_remote}
                 manifest_path = temp / f"{name}.json"; manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-                self.hf.upload_file(str(chunk), chunk_remote, self.repo_id, repo_type="dataset")
-                self.hf.upload_file(str(manifest_path), manifest_remote, self.repo_id, repo_type="dataset")
+                self.hf.upload_file(path_or_fileobj=str(chunk), path_in_repo=chunk_remote, repo_id=self.repo_id, repo_type="dataset")
+                self.hf.upload_file(path_or_fileobj=str(manifest_path), path_in_repo=manifest_remote, repo_id=self.repo_id, repo_type="dataset")
                 self.remote_files.update((chunk_remote, manifest_remote)); manifests.append(manifest)
                 self.save(completed_workers=sorted(set(self.state.get("completed_workers", [])) | {name}))
         return sorted(manifests, key=lambda item: item["first_chapter"])
@@ -109,7 +121,7 @@ class Pipeline:
             self.save(current_stage="download_worker_chunks", chunk_progress=f"{position}/{len(manifests)}")
         merge(local, output, self.work / "workers.ffconcat")
         self.save(current_stage="save_merged_checkpoint")
-        self.hf.upload_file(str(output), remote, self.repo_id, repo_type="dataset"); self.remote_files.add(remote)
+        self.hf.upload_file(path_or_fileobj=str(output), path_in_repo=remote, repo_id=self.repo_id, repo_type="dataset"); self.remote_files.add(remote)
         self.save(merged_remote_file=remote); return output
 
     def upload(self, output, manifests):
@@ -124,7 +136,7 @@ class Pipeline:
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--repository", required=True); p.add_argument("--run-id", required=True); p.add_argument("--title", required=True)
+    p.add_argument("--repository", required=True); p.add_argument("--run-id", required=True, type=normalize_run_id); p.add_argument("--title", required=True)
     p.add_argument("--description", default=""); p.add_argument("--privacy", choices=("private", "unlisted", "public"), default="private")
     p.add_argument("--checkpoint-repo", default=""); p.add_argument("--work-dir", default=Path("merge-upload-state"), type=Path)
     return p.parse_args()
