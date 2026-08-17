@@ -15,6 +15,13 @@ import zipfile
 from pathlib import Path
 
 import requests
+
+# GitHub Actions invokes this file by path, which otherwise puts only this
+# directory (not the repository root containing ``src``) on sys.path.
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
 from merge_upload import merge, normalize_book_title, normalize_run_id, now, ordered_chapter_videos
 
 WORKER_RE = re.compile(r"mp4-worker-(\d+)$")

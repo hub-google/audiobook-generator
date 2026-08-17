@@ -144,6 +144,11 @@ class HuggingFaceCompatibilityTests(unittest.TestCase):
             )
 
 class BucketPipelineTests(unittest.TestCase):
+    def test_bucket_pipeline_adds_repository_root_for_src_imports(self):
+        source = BUCKET_MODULE_PATH.read_text(encoding="utf-8")
+        self.assertIn("Path(__file__).resolve().parent.parent", source)
+        self.assertIn("sys.path.insert(0, str(REPOSITORY_ROOT))", source)
+
     def test_bucket_pipeline_never_stages_worker_mp4s_in_hf(self):
         source = BUCKET_MODULE_PATH.read_text(encoding="utf-8")
         self.assertNotIn("batch_bucket_files", source)
