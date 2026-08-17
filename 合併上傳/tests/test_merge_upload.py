@@ -144,16 +144,25 @@ class HuggingFaceCompatibilityTests(unittest.TestCase):
             )
 
 class BucketPipelineTests(unittest.TestCase):
-    def test_bucket_pipeline_uses_object_api_not_repo_commits(self):
+    def test_bucket_pipeline_never_stages_worker_mp4s_in_hf(self):
         source = BUCKET_MODULE_PATH.read_text(encoding="utf-8")
-        self.assertIn("batch_bucket_files", source)
-        self.assertNotIn("upload_file(", source)
-        self.assertNotIn("create_repo(", source)
+        self.assertNotIn("batch_bucket_files", source)
+        self.assertNotIn("stage_worker", source)
+        self.assertIn("ArtifactVideoProvider", source)
+        self.assertIn("provider.cleanup()", source)
 
-    def test_workflow_stages_with_15_runners_then_launches_hf_job(self):
+    def test_workflow_uses_one_github_runner_and_no_hf_job(self):
         source = WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertIn("max-parallel: 15", source)
-        self.assertIn("hf jobs run", source)
-        self.assertIn("hf://buckets/", source)
+        self.assertNotIn("stage_workers:", source)
+        self.assertNotIn("hf jobs run", source)
+        self.assertIn("hf-mount", source)
+        self.assertIn("--no-disk-cache", source)
+        self.assertIn("finalize_and_upload:", source)
+        self.assertIn("Remove legacy HF worker checkpoints", source)
+
+    def test_bucket_final_merge_uses_forward_only_fragmented_mp4(self):
+        source = BUCKET_MODULE_PATH.read_text(encoding="utf-8")
+        self.assertIn("+frag_keyframe+empty_moov+default_base_moof", source)
+        self.assertIn("output.unlink()", source)
 
 if __name__ == "__main__": unittest.main()
