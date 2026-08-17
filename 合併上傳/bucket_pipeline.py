@@ -72,27 +72,9 @@ def source_metadata_from_github(artifacts, temp):
     title = normalize_book_title(config.get("book_title", ""))
     end_chapter = int(config.get("end_chapter") or len(config.get("selected_indices") or config.get("chapters") or []))
     if not cover_path:
-        cover_path = metadata_root / "youtube_cover.jpg"
-        master_cover = Path("Workspace") / title / "Cover" / "master_cover.jpg"
-        if not master_cover.is_file():
-            raise RuntimeError(
-                "Source run has no preserved youtube_cover.jpg artifact and its completed "
-                f"uploader cache has no original cover at {master_cover}; refusing to continue"
-            )
-        # This is the exact cover preserved by the completed source run's
-        # uploader cache.  Reuse its bytes; never regenerate or fetch one.
-        shutil.copy2(master_cover, cover_path)
-    from PIL import Image
-    try:
-        with Image.open(cover_path) as image:
-            image.verify()
-        with Image.open(cover_path) as image:
-            if image.size != (1280, 720):
-                raise RuntimeError(f"Preserved source cover must be 1280x720, got {image.size[0]}x{image.size[1]}")
-    except RuntimeError:
-        raise
-    except Exception as error:
-        raise RuntimeError(f"Preserved source cover is not a valid image: {cover_path}") from error
+        raise RuntimeError(
+            "Source run has no preserved youtube_cover.jpg in source-book-metadata; refusing to continue"
+        )
     return title, cover_path, end_chapter, config
 
 

@@ -168,13 +168,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Restore source cover cache for legacy runs
-        uses: actions/cache/restore@v4
-        with:
-          path: Workspace/*/Cover/
-          key: merge-source-cover-${{ needs.discover.outputs.run_id }}
-          restore-keys: |
-            youtube-upload-state-source-${{ needs.discover.outputs.run_id }}-
       - name: Install dependencies and HF Bucket mount
         run: |
           sudo apt-get update -qq
