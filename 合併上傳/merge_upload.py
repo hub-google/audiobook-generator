@@ -81,12 +81,63 @@ class Pipeline:
     def gh_headers(): return {"Authorization": f"Bearer {os.environ['GH_TOKEN']}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
 
     def artifacts(self):
-        url = f"https://api.github.com/repos/{self.args.repository}/actions/runs/{self.args.run_id}/artifacts?per_page=100"
-        response = requests.get(url, headers=self.gh_headers(), timeout=60); response.raise_for_status()
-        result = [a for a in response.json().get("artifacts", []) if WORKER_RE.fullmatch(a["name"]) and not a.get("expired")]
+        result = [a for a in self.all_artifacts() if WORKER_RE.fullmatch(a["name"])]
         result.sort(key=lambda a: int(WORKER_RE.fullmatch(a["name"]).group(1)))
         if not result: raise RuntimeError("No non-expired mp4-worker-* artifacts found in the source run")
         return result
+
+    def all_artifacts(self):
+        artifacts, page = [], 1
+        while True:
+            url = f"https://api.github.com/repos/{self.args.repository}/actions/runs/{self.args.run_id}/artifacts?per_page=100&page={page}"
+            response = requests.get(url, headers=self.gh_headers(), timeout=60); response.raise_for_status()
+            batch = response.json().get("artifacts", [])
+            artifacts.extend(a for a in batch if not a.get("expired"))
+            if len(batch) < 100: return artifacts
+            page += 1
+
+    def download_artifact(self, artifact, destination):
+        destination = Path(destination); destination.mkdir(parents=True, exist_ok=True)
+        archive = destination / "artifact.zip"
+        with requests.get(artifact["archive_download_url"], headers=self.gh_headers(), stream=True, timeout=(30, 300)) as response:
+            response.raise_for_status()
+            with archive.open("wb") as handle:
+                for block in response.iter_content(1024 * 1024):
+                    if block: handle.write(block)
+        with zipfile.ZipFile(archive) as source: source.extractall(destination)
+        archive.unlink()
+
+    def source_metadata(self):
+        """Read the source run's own name and cover; never generate replacements."""
+        candidates = self.all_artifacts()
+        config_artifact = next((a for a in candidates if a["name"] == "shared-config"), None)
+        cover_artifact = next((a for a in candidates if a["name"] == "source-book-metadata"), None)
+        if not config_artifact:
+            raise RuntimeError("Source run has no shared-config artifact; cannot determine its original book name")
+
+        metadata_dir = self.work / "source-metadata"
+        self.download_artifact(config_artifact, metadata_dir / "config")
+        config_path = next((p for p in (metadata_dir / "config").rglob("config.yaml")), None)
+        if not config_path:
+            raise RuntimeError("shared-config artifact does not contain config.yaml")
+        import yaml
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        title = normalize_book_title(config.get("book_title", ""))
+
+        if not cover_artifact:
+            raise RuntimeError(
+                "Source run has no source-book-metadata artifact with its original cover. "
+                "This is an older run whose cover was not preserved; refusing to generate a replacement."
+            )
+        self.download_artifact(cover_artifact, metadata_dir / "cover")
+        covers = sorted((metadata_dir / "cover").rglob("youtube_cover.jpg"), key=lambda p: str(p).lower())
+        if not covers:
+            raise RuntimeError("source-book-metadata contains no original youtube_cover.jpg; refusing to generate a replacement")
+        cover = self.work / "metadata" / "youtube_cover.jpg"
+        cover.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(covers[0], cover)
+        self.save(source_book_title=title, source_cover_artifact=cover_artifact["name"], source_cover_file=str(covers[0]))
+        return title, cover
 
     def stage_workers(self, artifacts):
         manifests = []
@@ -132,20 +183,15 @@ class Pipeline:
         self.save(merged_remote_file=remote); return output
 
     def metadata(self, manifests):
-        from src.metadata_gen import save_book_metadata
+        from src.metadata_gen import generate_video_description, generate_video_title
         chapters = [chapter for item in manifests for chapter in item["chapters"]]
-        self.save(current_stage="generate_metadata_cover")
-        metadata = save_book_metadata(
-            book_title=self.args.title,
-            start_chap=min(chapters),
-            end_chap=max(chapters),
-            workspace_dir=str(self.work / "metadata"),
-            is_completed=True,
-            part_num=None,
-        )
-        if self.args.description:
-            metadata["description"] = f"{metadata['description']}\n\n{self.args.description.strip()}"
-        return metadata
+        self.save(current_stage="reuse_source_metadata_cover")
+        title, cover = self.source_metadata()
+        return {
+            "title": generate_video_title(title, min(chapters), max(chapters)),
+            "description": generate_video_description(title, min(chapters), max(chapters)),
+            "cover_file": str(cover),
+        }
 
     def upload(self, output, manifests):
         metadata = self.metadata(manifests)
@@ -163,8 +209,8 @@ class Pipeline:
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--repository", required=True); p.add_argument("--run-id", required=True, type=normalize_run_id); p.add_argument("--title", required=True, type=normalize_book_title)
-    p.add_argument("--description", default=""); p.add_argument("--privacy", choices=("private", "unlisted", "public"), default="private")
+    p.add_argument("--repository", required=True); p.add_argument("--run-id", required=True, type=normalize_run_id)
+    p.add_argument("--privacy", choices=("private", "unlisted", "public"), default="private")
     p.add_argument("--checkpoint-repo", default=""); p.add_argument("--work-dir", default=Path("merge-upload-state"), type=Path)
     return p.parse_args()
 

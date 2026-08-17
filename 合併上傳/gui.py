@@ -47,17 +47,16 @@ class MergeUploadGUI(tk.Tk):
     def _build(self):
         form = ttk.Frame(self, padding=16); form.pack(fill="x")
         self.vars = {
-            "source_run_id": tk.StringVar(), "youtube_title": tk.StringVar(),
-            "youtube_description": tk.StringVar(), "privacy": tk.StringVar(value="private"),
+            "source_run_id": tk.StringVar(), "privacy": tk.StringVar(value="private"),
             "checkpoint_repo": tk.StringVar(),
         }
-        labels = [("來源 Run ID", "source_run_id"), ("YouTube 標題", "youtube_title"),
-                  ("YouTube 說明", "youtube_description"), ("HF checkpoint repo（可留空）", "checkpoint_repo")]
+        labels = [("來源 Run ID", "source_run_id"),
+                  ("HF checkpoint repo（可留空）", "checkpoint_repo")]
         for row, (label, key) in enumerate(labels):
             ttk.Label(form, text=label).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=6)
             ttk.Entry(form, textvariable=self.vars[key]).grid(row=row, column=1, sticky="ew", pady=6)
-        ttk.Label(form, text="YouTube 隱私").grid(row=4, column=0, sticky="w", padx=(0, 12), pady=6)
-        ttk.Combobox(form, textvariable=self.vars["privacy"], values=("private", "unlisted", "public"), state="readonly").grid(row=4, column=1, sticky="w", pady=6)
+        ttk.Label(form, text="YouTube 隱私").grid(row=2, column=0, sticky="w", padx=(0, 12), pady=6)
+        ttk.Combobox(form, textvariable=self.vars["privacy"], values=("private", "unlisted", "public"), state="readonly").grid(row=2, column=1, sticky="w", pady=6)
         form.columnconfigure(1, weight=1)
 
         buttons = ttk.Frame(self, padding=(16, 0, 16, 10)); buttons.pack(fill="x")
@@ -68,7 +67,7 @@ class MergeUploadGUI(tk.Tk):
         ttk.Label(buttons, textvariable=self.status_var).pack(side="right")
         self.progress = ttk.Progressbar(self, mode="indeterminate"); self.progress.pack(fill="x", padx=16)
         self.log = tk.Text(self, wrap="word", font=("Consolas", 10)); self.log.pack(fill="both", expand=True, padx=16, pady=12)
-        self.log.insert("end", "請輸入來源 Run ID 與 YouTube 標題。影片處理在雲端進行，本機不下載 MP4。\n")
+        self.log.insert("end", "只要貼上來源 Run ID；書名與原始封面會從該 Run 自動讀取。影片處理在雲端進行，本機不下載 MP4。\n")
 
     def append(self, message: str):
         self.after(0, lambda: (self.log.insert("end", message.rstrip() + "\n"), self.log.see("end")))
@@ -76,9 +75,9 @@ class MergeUploadGUI(tk.Tk):
     def set_status(self, value: str): self.after(0, self.status_var.set, value)
 
     def start(self):
-        run_id, title = self.vars["source_run_id"].get().strip(), self.vars["youtube_title"].get().strip()
-        if not run_id.isdigit() or not title:
-            messagebox.showerror("輸入錯誤", "Run ID 必須是數字，且 YouTube 標題不能留空。"); return
+        run_id = self.vars["source_run_id"].get().strip()
+        if not run_id.isdigit():
+            messagebox.showerror("輸入錯誤", "Run ID 必須是數字。"); return
         self.payload = {key: variable.get().strip() for key, variable in self.vars.items()}
         self.stop_event.clear(); self.start_button.configure(state="disabled"); self.progress.start(12)
         self.log.delete("1.0", "end")
@@ -89,7 +88,7 @@ class MergeUploadGUI(tk.Tk):
             run_gh("auth", "status")
             before = datetime.now(timezone.utc)
             fields = []
-            for key in ("source_run_id", "youtube_title", "youtube_description", "privacy", "checkpoint_repo"):
+            for key in ("source_run_id", "privacy", "checkpoint_repo"):
                 fields.extend(("-f", f"{key}={self.payload[key]}"))
             self.set_status("正在送出 workflow…"); self.append("正在送出 GitHub Actions workflow…")
             run_gh("workflow", "run", WORKFLOW, "--repo", REPOSITORY, *fields)

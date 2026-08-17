@@ -61,30 +61,29 @@ class MetadataAndCoverTests(unittest.TestCase):
     def pipeline(self):
         pipeline = merge_upload.Pipeline.__new__(merge_upload.Pipeline)
         pipeline.args = types.SimpleNamespace(
-            title="仙逆", description="", privacy="public", run_id="31962500241"
+            privacy="public", run_id="31962500241"
         )
         pipeline.work = Path("merge-upload-state")
         pipeline.state = {}
         pipeline.save = Mock()
         return pipeline
 
-    def test_metadata_uses_existing_full_book_format_generator(self):
+    def test_metadata_uses_run_title_and_run_cover_without_generating_a_cover(self):
         pipeline = self.pipeline()
-        generated = {
-            "title": "《仙逆》| 已完結 | 第 1~2066 章 (超長有聲小說全集)",
-            "description": "原本分部上傳使用的介紹格式",
-            "cover_file": "merge-upload-state/metadata/youtube_cover.jpg",
-        }
-        save_book_metadata = Mock(return_value=generated.copy())
+        source_cover = pipeline.work / "metadata" / "youtube_cover.jpg"
+        pipeline.source_metadata = Mock(return_value=("仙逆", source_cover))
         module = types.ModuleType("src.metadata_gen")
-        module.save_book_metadata = save_book_metadata
+        module.generate_video_title = Mock(return_value="《仙逆》全集")
+        module.generate_video_description = Mock(return_value="原本介紹格式")
         with patch.dict(sys.modules, {"src.metadata_gen": module}):
             result = pipeline.metadata([{"chapters": [1, 2]}, {"chapters": [2065, 2066]}])
-        self.assertEqual(result, generated)
-        save_book_metadata.assert_called_once_with(
-            book_title="仙逆", start_chap=1, end_chap=2066,
-            workspace_dir=str(pipeline.work / "metadata"), is_completed=True, part_num=None,
-        )
+        self.assertEqual(result, {
+            "title": "《仙逆》全集", "description": "原本介紹格式",
+            "cover_file": str(source_cover),
+        })
+        pipeline.source_metadata.assert_called_once_with()
+        module.generate_video_title.assert_called_once_with("仙逆", 1, 2066)
+        module.generate_video_description.assert_called_once_with("仙逆", 1, 2066)
 
     def test_upload_passes_generated_description_and_cover(self):
         pipeline = self.pipeline()

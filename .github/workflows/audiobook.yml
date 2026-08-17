@@ -565,6 +565,20 @@ jobs:
             Upload_Subtitles/
           key: youtube-upload-state-source-${{ github.run_id }}-${{ github.run_attempt }}
 
+      # The merge GUI must reuse the exact title source and thumbnail that this
+      # run used.  Keep them as a normal Actions artifact (not only a cache), so
+      # another workflow can retrieve them by source Run ID.
+      - name: Preserve original book name and YouTube covers for merging
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-book-metadata
+          path: |
+            config.yaml
+            Workspace/*/Part_*/youtube_cover.jpg
+            Workspace/*/youtube_cover.jpg
+          if-no-files-found: warn
+
   strict_success_gate:
     name: "Strict final success gate"
     if: always() && github.event_name == 'workflow_dispatch'

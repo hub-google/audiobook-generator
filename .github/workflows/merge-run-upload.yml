@@ -7,14 +7,6 @@ on:
         description: "Source Actions run URL or numeric ID"
         required: true
         type: string
-      youtube_title:
-        description: "Book title (metadata title is generated automatically)"
-        required: true
-        type: string
-      youtube_description:
-        description: "YouTube description (optional)"
-        required: false
-        type: string
       privacy:
         description: "Initial YouTube privacy"
         required: true
@@ -66,8 +58,6 @@ jobs:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
-          YOUTUBE_TITLE: ${{ inputs.youtube_title }}
-          YOUTUBE_DESCRIPTION: ${{ inputs.youtube_description }}
           YOUTUBE_PRIVACY: ${{ inputs.privacy }}
           CHECKPOINT_REPO: ${{ inputs.checkpoint_repo }}
         run: |
@@ -75,8 +65,6 @@ jobs:
             --work-dir merge-upload-state \
             --repository "$GITHUB_REPOSITORY" \
             --run-id "$SOURCE_RUN_ID" \
-            --title "$YOUTUBE_TITLE" \
-            --description "$YOUTUBE_DESCRIPTION" \
             --privacy "$YOUTUBE_PRIVACY" \
             --checkpoint-repo "$CHECKPOINT_REPO"
 
