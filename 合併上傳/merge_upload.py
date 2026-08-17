@@ -5,6 +5,11 @@ import argparse, json, os, re, shutil, subprocess, sys, tempfile, traceback, zip
 from datetime import datetime, timezone
 from pathlib import Path
 import requests
+
+# GitHub Actions turns carriage-return progress redraws into thousands of log
+# lines.  Keep third-party transfer bars disabled and emit one meaningful line
+# per pipeline operation below instead.
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 try:
     from huggingface_hub import HfApi, hf_hub_download
 except ImportError:  # Allows ordering/unit tests before optional CI deps are installed.
@@ -50,6 +55,10 @@ def merge(videos, output, concat_file):
     subprocess.run(["ffmpeg", "-hide_banner", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_file), "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-movflags", "+faststart", str(output)], check=True)
 
 def now(): return datetime.now(timezone.utc).isoformat()
+
+def worker_sort_key(name):
+    match = WORKER_RE.fullmatch(str(name))
+    return int(match.group(1)) if match else sys.maxsize
 
 class Pipeline:
     def __init__(self, args):
@@ -174,9 +183,11 @@ class Pipeline:
             name = artifact["name"]; chunk_remote = f"{self.prefix}/workers/{name}.mp4"; manifest_remote = f"{self.prefix}/workers/{name}.json"
             self.save(current_stage="stage_worker", current_worker=name, worker_progress=f"{index}/{len(artifacts)}")
             if chunk_remote in self.remote_files and manifest_remote in self.remote_files:
+                print(f"[{index}/{len(artifacts)}] {name}: loading existing checkpoint manifest (source download and merge skipped).", flush=True)
                 cached = hf_hub_download(self.repo_id, manifest_remote, repo_type="dataset", token=os.environ["HF_TOKEN"])
                 manifests.append(json.loads(Path(cached).read_text(encoding="utf-8")))
-                print(f"Checkpoint hit: {name}; source artifact download skipped.", flush=True); continue
+                continue
+            print(f"[{index}/{len(artifacts)}] {name}: downloading source GitHub artifact.", flush=True)
             with tempfile.TemporaryDirectory(dir=self.work) as temp_name:
                 temp = Path(temp_name); archive = temp / f"{name}.zip"
                 with requests.get(artifact["archive_download_url"], headers=self.gh_headers(), stream=True, timeout=(30, 300)) as response:
@@ -187,29 +198,42 @@ class Pipeline:
                 extracted = temp / "files"
                 with zipfile.ZipFile(archive) as source: source.extractall(extracted)
                 videos = ordered_chapter_videos(extracted); chunk = temp / f"{name}.mp4"
+                print(f"[{index}/{len(artifacts)}] {name}: merging chapters {chapter_number(videos[0])}-{chapter_number(videos[-1])}.", flush=True)
                 merge(videos, chunk, temp / "chapters.ffconcat")
                 manifest = {"worker": name, "first_chapter": chapter_number(videos[0]), "last_chapter": chapter_number(videos[-1]), "chapters": [chapter_number(p) for p in videos], "remote_file": chunk_remote}
                 manifest_path = temp / f"{name}.json"; manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+                print(f"[{index}/{len(artifacts)}] {name}: uploading merged worker checkpoint.", flush=True)
                 self.hf.upload_file(path_or_fileobj=str(chunk), path_in_repo=chunk_remote, repo_id=self.repo_id, repo_type="dataset")
                 self.hf.upload_file(path_or_fileobj=str(manifest_path), path_in_repo=manifest_remote, repo_id=self.repo_id, repo_type="dataset")
                 self.remote_files.update((chunk_remote, manifest_remote)); manifests.append(manifest)
-                self.save(completed_workers=sorted(set(self.state.get("completed_workers", [])) | {name}))
+                completed = set(self.state.get("completed_workers", [])) | {name}
+                self.save(completed_workers=sorted(completed, key=worker_sort_key))
+                print(f"[{index}/{len(artifacts)}] {name}: worker checkpoint complete.", flush=True)
         return sorted(manifests, key=lambda item: item["first_chapter"])
 
     def build_final(self, manifests):
         remote, output = f"{self.prefix}/merged/merged-audiobook.mp4", self.work / "merged-audiobook.mp4"
         self.save(current_stage="merge_final", current_worker=None)
         if remote in self.remote_files:
-            print("Checkpoint hit: final merged video; merge skipped.", flush=True)
+            print("Final merge: existing merged checkpoint found; merge skipped.", flush=True)
+            self.save(final_merge_complete=True, merged_remote_file=remote)
             return Path(hf_hub_download(self.repo_id, remote, repo_type="dataset", token=os.environ["HF_TOKEN"]))
         chunks = self.work / "chunks"; chunks.mkdir(exist_ok=True); local = []
         for position, item in enumerate(manifests, 1):
+            worker = item["worker"]
+            print(f"[{position}/{len(manifests)}] {worker}: downloading worker checkpoint for final merge.", flush=True)
             local.append(Path(hf_hub_download(self.repo_id, item["remote_file"], repo_type="dataset", token=os.environ["HF_TOKEN"], local_dir=chunks)))
-            self.save(current_stage="download_worker_chunks", chunk_progress=f"{position}/{len(manifests)}")
+            downloaded = set(self.state.get("downloaded_worker_chunks", [])) | {worker}
+            self.save(current_stage="download_worker_chunks", chunk_progress=f"{position}/{len(manifests)}", downloaded_worker_chunks=sorted(downloaded, key=worker_sort_key))
+            print(f"[{position}/{len(manifests)}] {worker}: worker checkpoint download complete.", flush=True)
+        print(f"Final merge: combining {len(local)} worker checkpoints in chapter order.", flush=True)
         merge(local, output, self.work / "workers.ffconcat")
         self.save(current_stage="save_merged_checkpoint")
+        print("Final merge: uploading merged audiobook checkpoint.", flush=True)
         self.hf.upload_file(path_or_fileobj=str(output), path_in_repo=remote, repo_id=self.repo_id, repo_type="dataset"); self.remote_files.add(remote)
-        self.save(merged_remote_file=remote); return output
+        self.save(merged_remote_file=remote, final_merge_complete=True)
+        print("Final merge: complete and checkpoint saved.", flush=True)
+        return output
 
     def metadata(self, manifests):
         from src.metadata_gen import generate_video_description, generate_video_title

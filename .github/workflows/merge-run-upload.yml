@@ -57,6 +57,7 @@ jobs:
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          HF_HUB_DISABLE_PROGRESS_BARS: "1"
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
           YOUTUBE_PRIVACY: ${{ inputs.privacy }}
           CHECKPOINT_REPO: ${{ inputs.checkpoint_repo }}
@@ -78,9 +79,15 @@ jobs:
             stage=$(jq -r '.current_stage' merge-upload-state/state.json)
             workers=$(jq -r '(.completed_workers // []) | length' merge-upload-state/state.json)
             total=$(jq -r '.artifact_count // "unknown"' merge-upload-state/state.json)
+            worker_names=$(jq -r '(.completed_workers // []) | if length == 0 then "none" else join(", ") end' merge-upload-state/state.json)
+            downloaded_names=$(jq -r '(.downloaded_worker_chunks // []) | if length == 0 then "none" else join(", ") end' merge-upload-state/state.json)
+            merged=$(jq -r 'if .final_merge_complete == true then "YES" else "NO" end' merge-upload-state/state.json)
             echo "- Status: **$status**" >> "$GITHUB_STEP_SUMMARY"
             echo "- Last stage: **$stage**" >> "$GITHUB_STEP_SUMMARY"
             echo "- Worker checkpoints: **$workers / $total**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Worker checkpoints completed: **$worker_names**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Worker chunks downloaded for final merge: **$downloaded_names**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Final merge completed and saved: **$merged**" >> "$GITHUB_STEP_SUMMARY"
             echo "- HF checkpoint repo: **$(jq -r '.checkpoint_repo' merge-upload-state/state.json)**" >> "$GITHUB_STEP_SUMMARY"
             if [ "$status" = complete ]; then
               url=$(jq -r '.video_url' merge-upload-state/state.json)
