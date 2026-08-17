@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
 
-rem Deploy every tracked/untracked workspace change to the current Git branch.
+rem Deploy every non-ignored tracked/untracked workspace change to master.
 rem Usage: deploy.bat "Optional commit message"
 
 cd /d "%~dp0"
@@ -12,11 +12,18 @@ if errorlevel 1 (
     exit /b 1
 )
 
-for /f "delims=" %%B in ('git branch --show-current') do set "DEPLOY_BRANCH=%%B"
-if not defined DEPLOY_BRANCH (
+for /f "delims=" %%B in ('git branch --show-current') do set "CURRENT_BRANCH=%%B"
+if not defined CURRENT_BRANCH (
     echo [ERROR] Git is in detached HEAD state. Switch to a branch first.
     exit /b 1
 )
+if /i not "%CURRENT_BRANCH%"=="master" (
+    echo [ERROR] Current branch is %CURRENT_BRANCH%, not master.
+    echo [ERROR] Switch to master before running deploy.bat.
+    exit /b 1
+)
+
+set "DEPLOY_BRANCH=master"
 
 set "DEPLOY_MESSAGE=%~1"
 if not defined DEPLOY_MESSAGE set "DEPLOY_MESSAGE=Deploy all workspace changes"
@@ -39,8 +46,11 @@ git push -u origin "%DEPLOY_BRANCH%"
 if errorlevel 1 goto :failed
 
 echo [4/4] Verifying clean deployment state...
-git status --short
-if errorlevel 1 goto :failed
+for /f "delims=" %%S in ('git status --porcelain') do (
+    echo [ERROR] Workspace is still dirty after deployment:
+    git status --short
+    exit /b 1
+)
 
 echo [SUCCESS] All workspace contents were deployed to origin/%DEPLOY_BRANCH%.
 exit /b 0
