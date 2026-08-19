@@ -10,6 +10,11 @@ import logging
 import shutil
 import time
 
+try:
+    from .artifact_validation import ArtifactValidationError, validate_video
+except ImportError:
+    from artifact_validation import ArtifactValidationError, validate_video
+
 def get_ffmpeg_path():
     cmd = shutil.which("ffmpeg")
     if cmd:
@@ -113,14 +118,23 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
     wav_name = os.path.basename(wav_path)
     chap_num = parse_chapter_num(wav_name)
     output_video = os.path.join(output_dir, f"{book_title}_chapter_{chap_num}.mp4")
+    duration = get_wav_duration(wav_path)
 
     if os.path.exists(output_video) and os.path.getsize(output_video) > 1000:
-        logging.info(f"[VideoGen] Skipping existing: {os.path.basename(output_video)}")
-        return output_video, get_wav_duration(wav_path)
+        try:
+            validate_video(output_video, duration)
+        except ArtifactValidationError as error:
+            logging.warning(
+                "[VideoGen] Existing MP4 is invalid and will be rebuilt: %s (%s)",
+                os.path.basename(output_video), error,
+            )
+            os.remove(output_video)
+        else:
+            logging.info(f"[VideoGen] Skipping validated existing: {os.path.basename(output_video)}")
+            return output_video, duration
     if os.path.exists(output_video):
         os.remove(output_video)
 
-    duration = get_wav_duration(wav_path)
     logging.info(f"[VideoGen] Generating chapter {chap_num} video (audio: {duration:.1f}s) ...")
 
     # ── 取得章節標題並產生標題卡（下方保留硬字幕安全區）──
