@@ -955,7 +955,10 @@ def main():
     book_title = "有聲小說全集"
     start_chap, end_chap = 1, 2400
     config_path = os.path.join(SRC_DIR, "..", "config.yaml")
-    if args.run_id:
+    if args.input_dir and os.path.exists(os.path.join(args.input_dir, "config.yaml")):
+        config_path = os.path.join(args.input_dir, "config.yaml")
+        logging.info("已載入 prepared Parts 內鎖定的來源 config：%s", config_path)
+    elif args.run_id:
         # Use the source run's generated config. The repository copy may belong
         # to an older book and would create/cache a cover under the wrong title.
         shared_config_dir = os.path.abspath("temp_source_run_config")
@@ -1224,8 +1227,8 @@ def main():
     part_counter = 1
     total_uploaded = 0
 
-    if args.run_id:
-        logging.info(f"📥 啟動【即時下載 ➔ 流水線打包 (10~11小時) ➔ 暴速上傳 ➔ 精準硬碟清理 ➔ 智能斷點續傳】模式...")
+    if args.run_id and not args.input_dir:
+        logging.info(f"📥 啟動【相容模式：下載 ➔ 合併 ➔ 發布】...")
         logging.info(f"Target Run ID #{args.run_id}")
 
         artifact_names = get_run_artifact_names(args.run_id, args.repo)
@@ -1310,7 +1313,7 @@ def main():
             pending_publish=pending_publish,
             playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
         )
-        logging.info("✅ 全書分部規劃已鎖定；第二階段將嚴格依 Part 1 → Part %s 串行上傳。", len(part_plan))
+        logging.info("✅ 全書分部規劃已鎖定；相容模式將依 Part 1 → Part %s 發布。", len(part_plan))
 
         chapter_pool = []
 
@@ -1735,6 +1738,14 @@ def main():
                 prefetch_thread.join()
 
     elif args.input_dir and os.path.exists(args.input_dir):
+        prepared_plan = {}
+        prepared_plan_path = os.path.join(args.input_dir, "parts-plan.json")
+        if os.path.exists(prepared_plan_path):
+            with open(prepared_plan_path, "r", encoding="utf-8") as handle:
+                prepared_plan = json.load(handle)
+        locked_parts = {
+            int(part["part_num"]): part for part in prepared_plan.get("parts") or []
+        }
         files_to_upload = sorted(glob.glob(os.path.join(args.input_dir, "**", "*.mp4"), recursive=True), key=lambda p: parse_chapter_info(os.path.basename(p)))
         if not files_to_upload:
             logging.error("❌ 未找到任何可供上傳的 MP4 影片檔案！")
@@ -1765,6 +1776,7 @@ def main():
                         "title": p_meta["title"],
                         "description": p_meta["description"],
                         "cover_path": p_meta["cover_file"],
+                        "master_cover_path": p_meta["master_cover_file"],
                         "part_num": part_num,
                         "start_chap": s_c,
                         "end_chap": e_c
@@ -1772,29 +1784,39 @@ def main():
         else:
             for idx, vp in enumerate(files_to_upload, 1):
                 c_start, c_end = parse_chapter_info(os.path.basename(vp))
+                number_match = re.search(r"_Part_(\d+)_", os.path.basename(vp))
+                part_number = int(number_match.group(1)) if number_match else idx
+                locked = locked_parts.get(part_number, {})
+                if locked and (int(locked["start_chap"]), int(locked["end_chap"])) != (c_start, c_end):
+                    raise RuntimeError(f"prepared Part {part_number} filename disagrees with locked plan")
                 p_meta = save_book_metadata(
                     book_title=book_title,
                     start_chap=c_start,
                     end_chap=c_end,
                     is_completed=True,
-                    part_num=idx
+                    part_num=part_number
                 )
                 parts_to_upload.append({
                     "video_path": vp,
                     "title": p_meta["title"],
                     "description": p_meta["description"],
                     "cover_path": p_meta["cover_file"],
-                    "part_num": idx,
+                    "master_cover_path": p_meta["master_cover_file"],
+                    "part_num": part_number,
                     "start_chap": c_start,
-                    "end_chap": c_end
+                    "end_chap": c_end,
+                    "chapters": [int(value) for value in locked.get("chapters") or range(c_start, c_end + 1)],
+                    "source_missing_chapters": [int(value) for value in locked.get("source_missing_chapters") or []],
                 })
 
         local_plan = []
+        if locked_parts and {int(item["part_num"]) for item in parts_to_upload} != set(locked_parts):
+            raise RuntimeError("HF prepared Parts do not exactly cover the locked Part plan")
         for item in parts_to_upload:
             local_plan.append({
                 "part_num": item["part_num"], "start_chap": item["start_chap"],
                 "end_chap": item["end_chap"],
-                "chapters": list(range(item["start_chap"], item["end_chap"] + 1)),
+                "chapters": item.get("chapters") or list(range(item["start_chap"], item["end_chap"] + 1)),
                 "duration": get_media_duration(item["video_path"]), "title": item["title"],
             })
         publication.lock_plan(local_plan, run_id=args.run_id, book_title=book_title)
@@ -1842,6 +1864,26 @@ def main():
             publication.complete(part_n, "generate_metadata_cover", title=v_title, cover_sha256=cover_validation["sha256"])
 
             full_desc = f"{v_desc}\n\n播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
+            if item.get("source_missing_chapters"):
+                full_desc += "\n\n來源網站缺失章節（原頁面無文章，故未製作）：" + "、".join(
+                    str(value) for value in item["source_missing_chapters"]
+                )
+            publication.mark(part_n, "archive_hf", "running")
+            archive_method = (
+                hf_archiver.register_preuploaded_part
+                if os.environ.get("HF_MEDIA_PREUPLOADED", "").lower() in {"1", "true", "yes"}
+                else hf_archiver.archive_part
+            )
+            archive_record = archive_method(
+                book_title=book_title, part_num=part_n,
+                start_chap=item["start_chap"], end_chap=item["end_chap"],
+                chapters=item.get("chapters") or list(range(item["start_chap"], item["end_chap"] + 1)),
+                video_path=v_path, subtitle_path=v_srt,
+                master_cover_path=item["master_cover_path"],
+                source_config_path=config_path, run_id=args.run_id,
+                task_id=args.task_id,
+                source_missing_chapters=item.get("source_missing_chapters") or [],
+            )
             logging.info(f"[API_UPLOAD_MARKER] START | Part {part_n}/{len(parts_to_upload)} | Ch {item['start_chap']}~{item['end_chap']} | {os.path.basename(v_path)}")
             try:
                 publication.mark(part_n, "upload_video", "running")
@@ -1945,6 +1987,17 @@ def main():
                 completed_titles.add(v_title)
                 publication.mark(part_n, "final_validation", "running")
                 publication.complete(part_n, "final_validation", **verify_published_part(youtube, v_id, playlist_id, args.privacy))
+                archive_record = hf_archiver.finalize_part(
+                    book_title=book_title, part_num=part_n,
+                    youtube_video_id=v_id, playlist_id=playlist_id,
+                    title=v_title, description=full_desc, privacy=args.privacy,
+                    playlist_position=part_n - 1,
+                )
+                publication.complete(part_n, "archive_hf", hf_repo=hf_repo, path=archive_record["root"])
+                logging.info(
+                    "[HF_ARCHIVE_MARKER] DONE | Part %s | Ch %s~%s | %s",
+                    part_n, item["start_chap"], item["end_chap"], archive_record["root"],
+                )
                 save_resume_state(
                     args.state_file, args.run_id, args.privacy, "running",
                     completed_titles=completed_titles, part_plan=part_plan,

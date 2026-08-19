@@ -52,7 +52,7 @@ SRT 必須是實際送交 YouTube Caption API 的同一檔案。`master_cover.jp
 
 ## 6. 並行與清理閘門
 
-Part 合併與驗證後，用背景工作開始 HF archive，同時由主流程進行 YouTube 上傳。兩邊各自保存 checkpoint。YouTube 完成而 HF 失敗時，重跑只重建／補 HF，不得新增相同 YouTube 影片；HF 完成而 YouTube 失敗時只續作 YouTube。只有兩邊均完成遠端驗證後，才可刪除 Runner 上的 Part MP4 與單章暫存。
+全書 Part plan 鎖定後，由最多 17 個 merge workers 平行合併各自負責的 Part。每個 worker 驗證 MP4/SRT 後必須立即上傳 HF，並以最後寫入的 `merge_manifest.json` 作為原子完成標記；HF 上傳不受 Part 次序限制。大型媒體不得再複製到 GitHub artifact。全部 merge/HF workers 成功後，唯一 YouTube publisher 才能依 Part 編號從 HF 取回、驗證並串行發布。YouTube 失敗時沿用 HF 成品與 Video ID 續傳，不得重做合併或新增相同影片。
 
 ## 7. GUI 契約
 
@@ -60,4 +60,4 @@ GUI 主表顯示順位、小說、章節、狀態、HF、YouTube 與 Run ID；�
 
 ## 8. 完成定義與 Summary
 
-`archive_hf` 是每 Part publication ledger 的必要 step。Actions Summary 必須列出 HF completed/total、repo、逐 Part HF 狀態以及 YouTube 狀態。所有 worker、HF MP4/SRT/總封面/索引、YouTube 影片/字幕/播放清單/公開狀態均完成且回讀成功後，strict gate 才可成功。
+`archive_hf` 是每 Part publication ledger 的必要 step。HF media progress 由 merge worker 的 `[HF_MEDIA_MARKER]` 回報；YouTube metadata finalize 後再以 `[HF_ARCHIVE_MARKER]` 確認完整 archive。Actions Summary 必須列出 HF completed/total、repo、逐 Part HF 狀態以及 YouTube 狀態。所有 chapter workers、Part plan、merge/HF workers、HF MP4/SRT/總封面/索引、YouTube 影片/字幕/播放清單/公開狀態均完成且回讀成功後，strict gate 才可成功。

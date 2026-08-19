@@ -93,7 +93,7 @@ class Dispatcher:
         except (OSError, subprocess.SubprocessError):
             return None
         yt_parts = {int(value) for value in re.findall(r"\[API_UPLOAD_MARKER\] DONE \| Part (\d+)", text)}
-        hf_parts = {int(value) for value in re.findall(r"\[HF_ARCHIVE_MARKER\] DONE \| Part (\d+)", text)}
+        hf_parts = {int(value) for value in re.findall(r"\[HF_(?:MEDIA|ARCHIVE)_MARKER\] DONE \| Part (\d+)", text)}
         planned = {int(value) for value in re.findall(r"Part (\d+)(?:/\d+)? \| Ch", text)}
         total = max(planned | yt_parts | hf_parts, default=0)
         return {

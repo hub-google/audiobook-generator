@@ -21,11 +21,13 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         gate = self.jobs["strict_success_gate"]
         self.assertEqual(
             set(gate["needs"]),
-            {"setup", "process_chapters", "upload_to_youtube"},
+            {"setup", "process_chapters", "plan_parts", "merge_parts", "upload_to_youtube"},
         )
         command = gate["steps"][0]["run"]
         self.assertIn('"$SETUP_RESULT" != "success"', command)
         self.assertIn('"$WORKERS_RESULT" != "success"', command)
+        self.assertIn('"$PLAN_RESULT" != "success"', command)
+        self.assertIn('"$MERGE_RESULT" != "success"', command)
         self.assertIn('"$YOUTUBE_RESULT" != "success"', command)
         self.assertIn("exit 1", command)
 
@@ -66,14 +68,16 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertTrue(all(step.get("if") == "always()" for step in upload_steps))
         self.assertIn("Workspace/*/SourceStatus/", upload_steps[0]["with"]["path"])
 
-    def test_youtube_job_can_inspect_partial_worker_artifacts(self):
+    def test_youtube_job_waits_for_plan_and_every_merge_worker(self):
         steps = self.jobs["upload_to_youtube"]["steps"]
         self.assertFalse(any("WORKER_RESULT" in str(step) for step in steps))
         self.assertEqual(
             set(self.jobs["upload_to_youtube"]["needs"]),
-            {"setup", "process_chapters"},
+            {"setup", "process_chapters", "plan_parts", "merge_parts"},
         )
         self.assertIn("needs.setup.result == 'success'", self.jobs["upload_to_youtube"]["if"])
+        self.assertIn("needs.merge_parts.result == 'success'", self.jobs["upload_to_youtube"]["if"])
+        self.assertEqual(self.jobs["merge_parts"]["strategy"]["max-parallel"], 17)
 
     def test_matrix_validation_imports_yaml(self):
         step = next(

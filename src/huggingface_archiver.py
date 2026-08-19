@@ -138,6 +138,47 @@ class HuggingFaceArchiver:
         self._save()
         return record
 
+    def register_preuploaded_part(self, *, book_title, part_num, start_chap, end_chap,
+                                  chapters, video_path, subtitle_path, master_cover_path,
+                                  source_config_path=None, run_id="", task_id="",
+                                  source_missing_chapters=None):
+        """Adopt media uploaded independently by a merge worker.
+
+        Matrix workers write to the final unique Part paths, so the ordered
+        publisher only verifies and records them; it never uploads large media.
+        """
+        video, subtitle, cover = Path(video_path), Path(subtitle_path), Path(master_cover_path)
+        part_root = self._part_root(book_title, part_num, start_chap, end_chap)
+        root = self._book_root(book_title)
+        video_remote, subtitle_remote = f"{part_root}/{video.name}", f"{part_root}/{subtitle.name}"
+        remote = set(self.api.list_repo_files(self.repo_id, repo_type="dataset"))
+        missing = {video_remote, subtitle_remote} - remote
+        if missing:
+            raise RuntimeError(f"merge worker HF upload is missing: {sorted(missing)}")
+        fingerprint = {
+            "video": {"path": video_remote, "bytes": video.stat().st_size, "sha256": sha256_file(video)},
+            "subtitle": {"path": subtitle_remote, "bytes": subtitle.stat().st_size, "sha256": sha256_file(subtitle)},
+            "master_cover": {"path": f"{root}/master_cover.jpg", "bytes": cover.stat().st_size, "sha256": sha256_file(cover)},
+        }
+        manifest = {
+            "project": self.project, "book_title": book_title, "part_number": int(part_num),
+            "start_chapter": int(start_chap), "end_chapter": int(end_chap),
+            "chapters": [int(value) for value in chapters],
+            "source_missing_chapters": [int(value) for value in (source_missing_chapters or [])],
+            "source_run_id": str(run_id or ""), "queue_task_id": str(task_id or ""),
+            "files": fingerprint, "archived_at": _now(), "status": "uploaded_pending_youtube_metadata",
+        }
+        self._upload(cover, f"{root}/master_cover.jpg", f"Archive {book_title} master cover")
+        if source_config_path and Path(source_config_path).is_file():
+            self._upload(source_config_path, f"{root}/source_config.yaml", f"Archive {book_title} source config")
+        self._upload_json(manifest, f"{part_root}/part_manifest.json", f"Register {book_title} Part {int(part_num):02d}")
+        self._upload_json(media_info(video), f"{part_root}/media_info.json", f"Register {book_title} Part {int(part_num):02d}")
+        record = {"status": "uploaded_pending_youtube_metadata", "root": part_root, "files": fingerprint, "manifest": manifest}
+        book = self.state["books"].setdefault(book_title, {"parts": {}, "root": root})
+        book["parts"][str(int(part_num))] = record
+        self._save()
+        return record
+
     def finalize_part(self, *, book_title, part_num, youtube_video_id, playlist_id,
                       title, description, privacy, playlist_position):
         book = self.state["books"][book_title]
