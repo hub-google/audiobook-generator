@@ -1,44 +1,11 @@
 {
   "schema_version": 1,
-  "revision": 12,
-  "updated_at": "2026-08-19T04:21:23.241432+00:00",
+  "revision": 13,
+  "updated_at": "2026-08-19T04:23:27.255526+00:00",
   "tasks": [
     {
-      "task_id": "book-20260819-630acc92",
-      "position": 1,
-      "book_title": "修真聊天群",
-      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/35728",
-      "start_chapter": 1,
-      "end_chapter": 3300,
-      "excluded_chapters": [],
-      "status": "interrupted",
-      "run_id": 32214245540,
-      "run_attempt": 1,
-      "retry_at": null,
-      "reason": "run_cancelled",
-      "hf_progress": {
-        "completed": 0,
-        "total": 0
-      },
-      "youtube_progress": {
-        "completed": 0,
-        "total": 0
-      },
-      "created_at": "2026-08-19T02:46:39.148885+00:00",
-      "updated_at": "2026-08-19T04:20:55.285348+00:00",
-      "run_conclusion": "cancelled",
-      "run_completed_at": "2026-08-19T04:20:37Z",
-      "run_history": [
-        {
-          "run_id": 32214245540,
-          "conclusion": "cancelled",
-          "ended_at": "2026-08-19T04:20:37Z"
-        }
-      ]
-    },
-    {
       "task_id": "book-20260819-cfdccaa4",
-      "position": 2,
+      "position": 1,
       "book_title": "吞噬星空",
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/2263",
       "start_chapter": 1,
@@ -75,6 +42,41 @@
       ],
       "retry_requested_at": "2026-08-19T04:04:23.690361+00:00",
       "execution_generation": 3
+    },
+    {
+      "task_id": "book-20260819-630acc92",
+      "position": 2,
+      "book_title": "修真聊天群",
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/35728",
+      "start_chapter": 1,
+      "end_chapter": 3300,
+      "excluded_chapters": [],
+      "status": "queued",
+      "run_id": null,
+      "run_attempt": 0,
+      "retry_at": null,
+      "reason": null,
+      "hf_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "youtube_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "created_at": "2026-08-19T02:46:39.148885+00:00",
+      "updated_at": "2026-08-19T04:20:55.285348+00:00",
+      "run_conclusion": null,
+      "run_completed_at": null,
+      "run_history": [
+        {
+          "run_id": 32214245540,
+          "conclusion": "cancelled",
+          "ended_at": "2026-08-19T04:20:37Z"
+        }
+      ],
+      "retry_requested_at": "2026-08-19T04:23:27.255526+00:00",
+      "execution_generation": 2
     }
   ]
 }
