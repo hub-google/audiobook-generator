@@ -8,6 +8,9 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
+
+MAX_PARALLEL_WORKERS = 17
+
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
@@ -172,14 +175,17 @@ def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=
     if not selected_with_idx:
         raise ValueError(f"設定範圍內沒有任何可處理的章節（可能全部被排除）！")
 
-    # 自動調整 chapters_per_worker 避免超過 GitHub Actions 的 20 台並行上限 (避免排隊與重裝開銷)
-    MAX_WORKERS = 20
+    # Matrix 的總 worker 數必須與 workflow 的 max-parallel 一致，避免多出的
+    # worker 排隊，等前一批完成後才啟動。
     total_selected = len(selected_with_idx)
     if total_selected > 0:
         required_workers = math.ceil(total_selected / chapters_per_worker)
-        if required_workers > MAX_WORKERS:
-            chapters_per_worker = math.ceil(total_selected / MAX_WORKERS)
-            print(f"[CatalogParser] 提示：章節數較多，自動調整每台機器處理章節數為 {chapters_per_worker} 章 (保持最多 20 台同時併行，0 排隊)")
+        if required_workers > MAX_PARALLEL_WORKERS:
+            chapters_per_worker = math.ceil(total_selected / MAX_PARALLEL_WORKERS)
+            print(
+                f"[CatalogParser] 提示：章節數較多，自動調整每台機器處理章節數為 "
+                f"{chapters_per_worker} 章 (總共最多 {MAX_PARALLEL_WORKERS} 台，0 排隊)"
+            )
 
     includes = []
     for i in range(0, len(selected_with_idx), chapters_per_worker):
