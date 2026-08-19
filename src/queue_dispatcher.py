@@ -197,6 +197,7 @@ class Dispatcher:
             "start_chap": str(task.get("start_chapter") or 1),
             "end_chap": str(task.get("end_chapter") or 999999),
             "exclude_chapters": ",".join(str(value) for value in task.get("excluded_chapters") or []),
+            "renumber_selected": "true" if task.get("renumber_selected") else "false",
             "zip_password": "",
         }
         try:

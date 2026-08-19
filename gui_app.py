@@ -50,6 +50,7 @@ class AudiobookGUIApp:
         self.github_observations = {}
         self.editing_task_id = None
         self.catalog_load_token = 0
+        self.renumber_selected_chapters = False
 
         self._setup_style()
         self._build_ui()
@@ -457,6 +458,7 @@ class AudiobookGUIApp:
         self.editing_task_id = None
         self.catalog_data = None
         self.excluded_chapters.clear()
+        self.renumber_selected_chapters = False
         self.queue_tree.selection_remove(*self.queue_tree.selection())
         self.edit_mode_var.set("新增小說")
         self.url_entry.delete(0, tk.END)
@@ -507,6 +509,7 @@ class AudiobookGUIApp:
         self.entry_end.delete(0, tk.END)
         self.entry_end.insert(0, str(end))
         self.excluded_chapters = {int(value) for value in task.get("excluded_chapters") or []}
+        self.renumber_selected_chapters = bool(task.get("renumber_selected"))
         self._update_chapter_selection_summary(start, end)
         self.btn_update_queue.config(state=tk.NORMAL)
 
@@ -519,7 +522,8 @@ class AudiobookGUIApp:
         excluded = sorted(value for value in self.excluded_chapters if start <= value <= end)
         selected = max(0, end - start + 1 - len(excluded))
         excluded_text = "無" if not excluded else "、".join(map(str, excluded[:12])) + ("…" if len(excluded) > 12 else "")
-        self.chapter_selection_var.set(f"已選擇：{selected} 章　｜　已排除：{excluded_text}")
+        numbering = "　｜　輸出章號：依已選順序重新編號" if self.renumber_selected_chapters else ""
+        self.chapter_selection_var.set(f"已選擇：{selected} 章　｜　已排除：{excluded_text}{numbering}")
 
     def open_selected_task_progress(self, _event=None):
         task = self._selected_task()
@@ -868,7 +872,7 @@ class AudiobookGUIApp:
             return
         task = new_task(
             self.url_entry.get().strip(), self.catalog_data.get("book_title", ""), start, end,
-            sorted(self.excluded_chapters),
+            sorted(self.excluded_chapters), self.renumber_selected_chapters,
         )
         self._mutate_queue_async(
             lambda queue: add_tasks(queue, [task]),
@@ -925,7 +929,10 @@ class AudiobookGUIApp:
                     if response.status_code not in (200, 202, 409):
                         raise RuntimeError(f"取消舊 Run 失敗 ({response.status_code}): {response.text}")
                 queue = store.mutate(
-                    lambda value: update_task_chapters(value, task_id, start, end, excluded, active),
+                    lambda value: update_task_chapters(
+                        value, task_id, start, end, excluded, active,
+                        self.renumber_selected_chapters,
+                    ),
                     f"Update chapter plan for audiobook task {task_id}",
                 )
                 self.cloud_queue = queue
@@ -1103,6 +1110,7 @@ class AudiobookGUIApp:
             
             self.btn_filter.config(state=tk.NORMAL)
             self.excluded_chapters.clear()
+            self.renumber_selected_chapters = False
             self._update_chapter_selection_summary(1, total)
 
             self.lbl_status.config(text="解析完成", foreground="#27ae60")
@@ -1195,6 +1203,21 @@ class AudiobookGUIApp:
         # 紀錄目前 Listbox 顯示的章節編號列表 (對應 Listbox index)
         visible_indices = []
 
+        def _output_numbers():
+            selected = [
+                idx for idx in range(cur_start, cur_end + 1)
+                if chapter_state.get(idx, True)
+            ]
+            return {source_idx: output_idx for output_idx, source_idx in enumerate(selected, 1)}
+
+        def _display_text(global_idx):
+            title = titles[global_idx - 1]
+            if self.renumber_selected_chapters and cur_start <= global_idx <= cur_end:
+                output_idx = _output_numbers().get(global_idx)
+                if output_idx is not None:
+                    return f"製作第 {output_idx} 章｜網站原章：{title}"
+            return f"網站第 {global_idx} 筆｜{title}"
+
         def _update_listbox():
             listbox.delete(0, tk.END)
             visible_indices.clear()
@@ -1207,8 +1230,7 @@ class AudiobookGUIApp:
 
             for i in range(s_idx, e_idx + 1):
                 global_idx = i
-                title = titles[i - 1]
-                display_text = f"第 {global_idx} 章: {title}"
+                display_text = _display_text(global_idx)
 
                 if filter_text and filter_text not in display_text.lower():
                     continue
@@ -1231,14 +1253,12 @@ class AudiobookGUIApp:
             if 0 <= index < len(visible_indices):
                 g_idx = visible_indices[index]
                 chapter_state[g_idx] = not chapter_state[g_idx]
-                
-                # 更新 Listbox 單行顯示
-                mark = "[✓]" if chapter_state[g_idx] else "[  ]"
-                display_text = f"第 {g_idx} 章: {titles[g_idx - 1]}"
-                listbox.delete(index)
-                listbox.insert(index, f"{mark}  {display_text}")
-                listbox.selection_set(index)
-                listbox.activate(index)
+                # 勾選變更可能讓後面所有製作章號前移或後移。
+                _update_listbox()
+                if g_idx in visible_indices:
+                    new_index = visible_indices.index(g_idx)
+                    listbox.selection_set(new_index)
+                    listbox.activate(new_index)
 
         # 單擊選取或按空白鍵切換狀態
         listbox.bind("<ButtonRelease-1>", lambda e: _toggle_item())
@@ -1265,6 +1285,13 @@ class AudiobookGUIApp:
                 chapter_state[g_idx] = not chapter_state[g_idx]
             _update_listbox()
 
+        def _renumber_selected():
+            self.renumber_selected_chapters = True
+            _update_listbox()
+            info_lbl.config(
+                text=f"已依勾選順序重新編號｜網站索引仍保留供下載定位"
+            )
+
         def _close_dialog():
             self.excluded_chapters.clear()
             for g_idx, is_checked in chapter_state.items():
@@ -1278,6 +1305,7 @@ class AudiobookGUIApp:
         ttk.Button(btn_frame, text="全選", command=_select_all).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="全不選", command=_deselect_all).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="反選", command=_invert_select).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="重新排序已選章節", command=_renumber_selected).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="確定", style="Accent.TButton", command=_close_dialog).pack(side=tk.RIGHT, padx=5)
 
     # ── 觸發 GitHub Actions ──
@@ -1338,6 +1366,7 @@ class AudiobookGUIApp:
                         "start_chap": start_chap,
                         "end_chap": end_chap,
                         "exclude_chapters": ",".join(map(str, sorted(list(self.excluded_chapters)))) if hasattr(self, 'excluded_chapters') and self.excluded_chapters else "",
+                        "renumber_selected": "true" if self.renumber_selected_chapters else "false",
                         "zip_password": os.getenv("ZIP_PASSWORD", "Qw000000")
                     }
                 }
