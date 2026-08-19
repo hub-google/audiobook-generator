@@ -4,11 +4,33 @@ from unittest.mock import Mock, patch
 from src.cloud_queue import (
     add_tasks, current_task, empty_queue, move_task, new_task, next_task,
     mark_task_interrupted, requeue_task_after_active, update_task,
+    update_task_chapters,
 )
 from src.queue_dispatcher import Dispatcher
 
 
 class CloudQueueTests(unittest.TestCase):
+    def test_chapter_plan_update_normalizes_exclusions(self):
+        task = new_task("https://example/1", "第一部", 1, 100)
+        queue = add_tasks(empty_queue(), [task])
+
+        queue = update_task_chapters(queue, task["task_id"], 10, 20, [1, 10, 12, 12, 30])
+
+        edited = queue["tasks"][0]
+        self.assertEqual((edited["start_chapter"], edited["end_chapter"]), (10, 20))
+        self.assertEqual(edited["excluded_chapters"], [10, 12])
+
+    def test_active_chapter_plan_update_waits_for_cancel_before_requeue(self):
+        task = new_task("https://example/1", "第一部", 1, 100)
+        queue = add_tasks(empty_queue(), [task])
+        queue = update_task(queue, task["task_id"], status="running", run_id=123)
+
+        queue = update_task_chapters(queue, task["task_id"], 20, 80, [], requeue_after_cancel=True)
+
+        edited = queue["tasks"][0]
+        self.assertEqual(edited["status"], "canceling")
+        self.assertTrue(edited["requeue_after_edit"])
+
     def test_order_and_active_task_gate(self):
         first = new_task("https://example/1", "第一部", 1, 100)
         second = new_task("https://example/2", "第二部", 1, 200)
@@ -72,6 +94,25 @@ class CloudQueueTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(queue["tasks"][0]["status"], "interrupted")
         self.assertEqual(next_task(queue)["task_id"], second["task_id"])
+
+    def test_cancelled_edited_run_is_automatically_requeued(self):
+        task = new_task("https://example/1", "第一部", 1, 100)
+        queue = add_tasks(empty_queue(), [task])
+        queue = update_task(queue, task["task_id"], status="canceling", run_id=123, requeue_after_edit=True)
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.runs = Mock(return_value=[{
+            "id": 123, "status": "completed", "conclusion": "cancelled",
+            "created_at": "2026-08-19T01:00:00Z", "updated_at": "2026-08-19T02:00:00Z",
+            "display_title": f"有聲小說｜{task['task_id']}｜Ch1-100",
+        }])
+
+        queue, changed = dispatcher.reconcile(queue)
+
+        self.assertTrue(changed)
+        edited = queue["tasks"][0]
+        self.assertEqual(edited["status"], "queued")
+        self.assertFalse(edited["requeue_after_edit"])
+        self.assertIsNone(edited["run_id"])
 
     def test_dispatcher_starts_next_book_after_cancelled_run(self):
         first = new_task("https://example/1", "第一部")

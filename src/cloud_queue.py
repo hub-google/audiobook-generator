@@ -94,6 +94,20 @@ def update_task(queue, task_id, **changes):
     return touch(queue)
 
 
+def update_task_chapters(queue, task_id, start_chapter, end_chapter, excluded_chapters=None,
+                         requeue_after_cancel=False):
+    """Persist an edited chapter plan and optionally restart after cancellation."""
+    start = int(start_chapter)
+    end = int(end_chapter)
+    if start < 1 or end < start:
+        raise ValueError("章節範圍無效")
+    excluded = sorted({int(value) for value in (excluded_chapters or []) if start <= int(value) <= end})
+    changes = {"start_chapter": start, "end_chapter": end, "excluded_chapters": excluded}
+    if requeue_after_cancel:
+        changes.update({"status": "canceling", "reason": "chapter_plan_updated", "requeue_after_edit": True})
+    return update_task(queue, task_id, **changes)
+
+
 def mark_task_interrupted(queue, task_id, reason="run_cancelled", conclusion="cancelled", ended_at=None):
     """Keep a book task but release its cancelled or missing Actions run."""
     queue = normalize_queue(queue)

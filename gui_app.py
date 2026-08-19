@@ -19,7 +19,7 @@ try:
     from cloud_queue import (
         BLOCKING_STATES, GitHubQueueStore, add_tasks, delete_task,
         mark_task_interrupted, move_task, new_task, requeue_task_after_active,
-        update_task,
+        update_task, update_task_chapters,
     )
     from github_run_status import (
         error_observation, missing_observation, observation_text,
@@ -35,7 +35,7 @@ load_dotenv(ENV_PATH)
 class AudiobookGUIApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("📚 GITHUB ACTION控制台")
+        self.root.title("📚 有聲小說雲端控制台")
         self.root.geometry("1100x850")
         self.root.minsize(820, 700)
 
@@ -48,6 +48,8 @@ class AudiobookGUIApp:
         self.task_progress_windows = {}
         self.queue_status_cache = {}
         self.github_observations = {}
+        self.editing_task_id = None
+        self.catalog_load_token = 0
 
         self._setup_style()
         self._build_ui()
@@ -75,10 +77,6 @@ class AudiobookGUIApp:
         main_frame = ttk.Frame(self.root, padding="15")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # 標題列
-        title_lbl = ttk.Label(main_frame, text="📚 GITHUB ACTION控制台", style="Title.TLabel")
-        title_lbl.pack(anchor=tk.W, pady=(0, 15))
-
         self._build_queue_ui(main_frame)
 
         notebook = ttk.Notebook(main_frame)
@@ -88,9 +86,21 @@ class AudiobookGUIApp:
         notebook.add(cloud_tab, text="雲端執行日誌")
         notebook.add(settings_tab, text="新增小說／章節設定")
 
+        self.selected_status_frame = ttk.LabelFrame(cloud_tab, text="選取小說目前狀態")
+        self.selected_status_frame.pack(fill=tk.X, pady=(0, 10))
+        self.selected_status_var = tk.StringVar(value="請從上方雲端小說佇列選取一本小說。")
+        ttk.Label(self.selected_status_frame, textvariable=self.selected_status_var, justify=tk.LEFT).pack(anchor=tk.W)
+
         # ── 區塊 1: 目錄網址與章節解析 ──
         section1 = ttk.LabelFrame(settings_tab, text="1. 目錄解析與範圍選取")
         section1.pack(fill=tk.X, pady=(0, 15))
+
+        mode_frame = ttk.Frame(section1)
+        mode_frame.pack(fill=tk.X, pady=(0, 5))
+        self.edit_mode_var = tk.StringVar(value="新增小說")
+        ttk.Label(mode_frame, text="編輯模式：", style="Header.TLabel").pack(side=tk.LEFT)
+        ttk.Label(mode_frame, textvariable=self.edit_mode_var, style="Status.TLabel").pack(side=tk.LEFT)
+        ttk.Button(mode_frame, text="清除選取／改為新增小說", command=self.reset_chapter_editor).pack(side=tk.RIGHT)
 
         url_frame = ttk.Frame(section1)
         url_frame.pack(fill=tk.X, pady=5)
@@ -126,6 +136,16 @@ class AudiobookGUIApp:
 
         self.btn_filter = ttk.Button(range_frame, text="篩選章節", command=self._open_chapter_filter_dialog, state=tk.DISABLED)
         self.btn_filter.pack(side=tk.LEFT, padx=(0, 15))
+
+        self.chapter_selection_var = tk.StringVar(value="尚未解析章節")
+        ttk.Label(section1, textvariable=self.chapter_selection_var).pack(anchor=tk.W, pady=(3, 5))
+
+        editor_actions = ttk.Frame(section1)
+        editor_actions.pack(fill=tk.X, pady=(5, 0))
+        self.btn_add_queue = ttk.Button(editor_actions, text="➕ 新增至雲端小說佇列", style="Accent.TButton", command=self.enqueue_current_task)
+        self.btn_add_queue.pack(side=tk.RIGHT)
+        self.btn_run = self.btn_add_queue
+        self.btn_update_queue = ttk.Button(editor_actions, text="💾 更新選取小說章節設定", style="Accent.TButton", command=self.update_selected_task_chapters, state=tk.DISABLED)
         
         self.excluded_chapters = set()
 
@@ -137,9 +157,6 @@ class AudiobookGUIApp:
         # Google Drive inputs removed
         action_frame = ttk.Frame(section2)
         action_frame.pack(fill=tk.X, pady=5)
-
-        self.btn_run = ttk.Button(action_frame, text="➕ 加入雲端製作佇列", style="Accent.TButton", command=self.enqueue_current_task)
-        self.btn_run.pack(side=tk.LEFT, padx=(0, 10))
 
         self.btn_cancel = ttk.Button(action_frame, text="🛑 取消雲端作業", command=self.cancel_github_actions, state=tk.DISABLED)
         self.btn_cancel.pack(side=tk.LEFT, padx=(0, 15))
@@ -249,6 +266,9 @@ class AudiobookGUIApp:
             self.queue_status_cache[task["task_id"]] = current
         if selected_id and self.queue_tree.exists(selected_id):
             self.queue_tree.selection_set(selected_id)
+            selected_task = next((item for item in queue.get("tasks", []) if item.get("task_id") == selected_id), None)
+            if selected_task:
+                self._update_selected_task_status(selected_task)
 
     def _queue_status_text(self, task):
         if task.get("run_id"):
@@ -419,6 +439,91 @@ class AudiobookGUIApp:
         else:
             self.current_run_id = None
             self.btn_cancel.config(state=tk.DISABLED)
+        self._update_selected_task_status(task)
+        if task.get("task_id") != self.editing_task_id:
+            self._load_queue_task_for_edit(task)
+
+    def _update_selected_task_status(self, task):
+        hf = task.get("hf_progress") or {}
+        yt = task.get("youtube_progress") or {}
+        run_text = task.get("run_id") or "尚未建立"
+        extra = ""
+        if task.get("requeue_after_edit"):
+            extra = "\n章節設定已更新；正在停止舊 Run，確認停止後會自動重新排程。"
+        self.selected_status_var.set(
+            f"《{task.get('book_title') or '待解析'}》｜第 {task.get('start_chapter') or 1}～{task.get('end_chapter') or '最後'} 章\n"
+            f"狀態：{self._queue_status_text(task)}　｜　GitHub Run：{run_text}\n"
+            f"HF：{hf.get('completed', 0)}/{hf.get('total', 0)}　｜　YouTube：{yt.get('completed', 0)}/{yt.get('total', 0)}{extra}"
+        )
+
+    def reset_chapter_editor(self):
+        self.catalog_load_token += 1
+        self.editing_task_id = None
+        self.catalog_data = None
+        self.excluded_chapters.clear()
+        self.queue_tree.selection_remove(*self.queue_tree.selection())
+        self.edit_mode_var.set("新增小說")
+        self.url_entry.delete(0, tk.END)
+        self.lbl_book_info.config(text="書名: 尚未解析 | 總章節: 0 章")
+        self.entry_start.delete(0, tk.END)
+        self.entry_start.insert(0, "1")
+        self.entry_end.delete(0, tk.END)
+        self.entry_end.insert(0, "10")
+        self.chapter_selection_var.set("尚未解析章節")
+        self.btn_filter.config(state=tk.DISABLED)
+        self.btn_update_queue.pack_forget()
+        self.btn_add_queue.pack(side=tk.RIGHT)
+
+    def _load_queue_task_for_edit(self, task):
+        self.catalog_load_token += 1
+        token = self.catalog_load_token
+        self.editing_task_id = task["task_id"]
+        self.edit_mode_var.set(f"正在編輯：《{task.get('book_title') or '待解析'}》")
+        self.btn_add_queue.pack_forget()
+        self.btn_update_queue.pack(side=tk.RIGHT)
+        self.btn_update_queue.config(state=tk.DISABLED)
+        self.url_entry.delete(0, tk.END)
+        self.url_entry.insert(0, task.get("catalog_url") or "")
+        self.lbl_book_info.config(text=f"書名: {task.get('book_title') or '待解析'} | 正在載入章節…")
+
+        def worker():
+            try:
+                result = parse_catalog(task.get("catalog_url") or "")
+                self.root.after(0, lambda: self._finish_queue_task_load(token, task["task_id"], result))
+            except Exception as error:
+                self.root.after(0, lambda detail=str(error): self._on_parse_failed(detail))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_queue_task_load(self, token, task_id, result):
+        if token != self.catalog_load_token or task_id != self.editing_task_id:
+            return
+        task = self._selected_task()
+        if not task or task.get("task_id") != task_id:
+            return
+        self._on_parse_success(result)
+        if not result or not result.get("success"):
+            return
+        total = int(result.get("total_chapters") or 0)
+        start = max(1, min(int(task.get("start_chapter") or 1), total))
+        end = max(start, min(int(task.get("end_chapter") or total), total))
+        self.entry_start.delete(0, tk.END)
+        self.entry_start.insert(0, str(start))
+        self.entry_end.delete(0, tk.END)
+        self.entry_end.insert(0, str(end))
+        self.excluded_chapters = {int(value) for value in task.get("excluded_chapters") or []}
+        self._update_chapter_selection_summary(start, end)
+        self.btn_update_queue.config(state=tk.NORMAL)
+
+    def _update_chapter_selection_summary(self, start=None, end=None):
+        try:
+            start = int(start if start is not None else self.entry_start.get())
+            end = int(end if end is not None else self.entry_end.get())
+        except ValueError:
+            return
+        excluded = sorted(value for value in self.excluded_chapters if start <= value <= end)
+        selected = max(0, end - start + 1 - len(excluded))
+        excluded_text = "無" if not excluded else "、".join(map(str, excluded[:12])) + ("…" if len(excluded) > 12 else "")
+        self.chapter_selection_var.set(f"已選擇：{selected} 章　｜　已排除：{excluded_text}")
 
     def open_selected_task_progress(self, _event=None):
         task = self._selected_task()
@@ -775,6 +880,46 @@ class AudiobookGUIApp:
             f"✓ 已加入任務：{task['book_title']}（第 {start}～{end} 章）",
         )
 
+    def update_selected_task_chapters(self):
+        task = self._selected_task()
+        if not task or task.get("task_id") != self.editing_task_id:
+            messagebox.showinfo("更新章節", "請先從上方雲端小說佇列選取要編輯的小說。")
+            return
+        try:
+            start, end = int(self.entry_start.get()), int(self.entry_end.get())
+            total = int((self.catalog_data or {}).get("total_chapters") or 0)
+            if start < 1 or end < start or (total and end > total):
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning("更新章節", "請輸入有效且不超過全書章數的章節範圍。")
+            return
+        active = task.get("status") in {"running", "dispatching", "canceling"}
+        task_id, run_id = task["task_id"], task.get("run_id")
+        excluded = sorted(value for value in self.excluded_chapters if start <= value <= end)
+
+        def worker():
+            try:
+                store, repo, token = self._queue_store()
+                if active and run_id:
+                    response = requests.post(
+                        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel",
+                        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}, timeout=15,
+                    )
+                    if response.status_code not in (200, 202, 409):
+                        raise RuntimeError(f"取消舊 Run 失敗 ({response.status_code}): {response.text}")
+                queue = store.mutate(
+                    lambda value: update_task_chapters(value, task_id, start, end, excluded, active),
+                    f"Update chapter plan for audiobook task {task_id}",
+                )
+                self.cloud_queue = queue
+                self.root.after(0, lambda: self._render_queue(queue))
+                self._dispatch_queue_workflow()
+                result = "已停止舊 Run，確認取消後自動重新排程" if active else "已直接更新雲端佇列"
+                self.root.after(0, lambda: self.log(f"✓ {task.get('book_title')}：第 {start}～{end} 章；{result}"))
+            except Exception as error:
+                self.root.after(0, lambda detail=str(error): messagebox.showerror("更新章節失敗", detail))
+        threading.Thread(target=worker, daemon=True).start()
+
     def open_batch_queue_dialog(self):
         top = tk.Toplevel(self.root)
         top.title("批量加入小說網址")
@@ -939,6 +1084,7 @@ class AudiobookGUIApp:
             
             self.btn_filter.config(state=tk.NORMAL)
             self.excluded_chapters.clear()
+            self._update_chapter_selection_summary(1, total)
 
             self.lbl_status.config(text="解析完成", foreground="#27ae60")
             self.log(f"✓ 解析成功！書名:【{book_title}】，共找到 {total} 章節。")
@@ -1105,6 +1251,7 @@ class AudiobookGUIApp:
             for g_idx, is_checked in chapter_state.items():
                 if not is_checked:
                     self.excluded_chapters.add(g_idx)
+            self._update_chapter_selection_summary(cur_start, cur_end)
             top.destroy()
 
         top.protocol("WM_DELETE_WINDOW", _close_dialog)

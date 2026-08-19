@@ -12,9 +12,9 @@ from zoneinfo import ZoneInfo
 import requests
 
 try:
-    from .cloud_queue import BLOCKING_STATES, GitHubQueueStore, current_task, mark_task_interrupted, next_task, task_id_from_run_name, update_task
+    from .cloud_queue import BLOCKING_STATES, GitHubQueueStore, current_task, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
 except ImportError:
-    from cloud_queue import BLOCKING_STATES, GitHubQueueStore, current_task, mark_task_interrupted, next_task, task_id_from_run_name, update_task
+    from cloud_queue import BLOCKING_STATES, GitHubQueueStore, current_task, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
 
 
 TRANSIENT_REASONS = {
@@ -120,10 +120,14 @@ class Dispatcher:
                 if bound_run_id and task.get("status") in BLOCKING_STATES:
                     run = self.run_by_id(bound_run_id)
                     if run is None:
+                        restart = bool(task.get("requeue_after_edit"))
                         queue = mark_task_interrupted(
                             queue, task["task_id"], reason="run_not_found",
                             conclusion="missing", ended_at=datetime.now(timezone.utc).isoformat(),
                         )
+                        if restart:
+                            queue = requeue_task_after_active(queue, task["task_id"])
+                            queue = update_task(queue, task["task_id"], requeue_after_edit=False)
                         changed = True
                         continue
                 if not run:
@@ -134,6 +138,19 @@ class Dispatcher:
             if task.get("run_id") != run_id:
                 task["run_id"] = run_id
                 changed = True
+            if task.get("requeue_after_edit") and status != "completed":
+                cancel_response = requests.post(
+                    f"{self.api}/actions/runs/{run_id}/cancel", headers=self.headers, timeout=30,
+                )
+                if cancel_response.status_code not in (200, 202, 409):
+                    raise RuntimeError(
+                        f"GitHub API POST /actions/runs/{run_id}/cancel failed "
+                        f"({cancel_response.status_code}): {cancel_response.text}"
+                    )
+                if task.get("status") != "canceling":
+                    task["status"] = "canceling"
+                    changed = True
+                continue
             progress = None if status == "completed" and conclusion == "cancelled" else self.progress_markers(run_id)
             if progress:
                 for key, value in progress.items():
@@ -155,10 +172,14 @@ class Dispatcher:
                 })
                 changed = True
             elif status == "completed" and conclusion == "cancelled" and task.get("status") not in {"interrupted", "paused"}:
+                restart = bool(task.get("requeue_after_edit"))
                 queue = mark_task_interrupted(
                     queue, task["task_id"], reason="run_cancelled",
                     conclusion="cancelled", ended_at=run.get("updated_at"),
                 )
+                if restart:
+                    queue = requeue_task_after_active(queue, task["task_id"])
+                    queue = update_task(queue, task["task_id"], requeue_after_edit=False)
                 changed = True
         return queue, changed
 
