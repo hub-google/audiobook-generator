@@ -1,0 +1,11 @@
+.git
+.github
+.venv
+Workspace
+Output
+__pycache__
+*.pyc
+*.pyo
+*.log
+.env
+

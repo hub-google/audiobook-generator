@@ -45,6 +45,7 @@ on:
 permissions:
   contents: write
   actions: write
+  packages: read
 
 concurrency:
   group: youtube-resumable-upload
@@ -168,28 +169,17 @@ jobs:
     name: "🔍 Setup — Parse Catalog & Build Matrix"
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/hub-google/audiobook-worker:v1
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     outputs:
       matrix: ${{ steps.gen_matrix.outputs.matrix }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install Python Dependencies
-        run: |
-          for attempt in 1 2 3; do
-            echo "Python dependency install attempt $attempt/3"
-            if python -m pip install --upgrade pip && pip install -r requirements.txt; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then exit 1; fi
-            sleep 30
-          done
 
       - name: Parse Catalog & Generate config.yaml + matrix.json
         run: |
@@ -268,6 +258,11 @@ jobs:
     name: "⚡ Worker ${{ matrix.worker_id }} (Ch ${{ matrix.start_chap }}~${{ matrix.end_chap }})"
     needs: setup
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/hub-google/audiobook-worker:v1
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
       max-parallel: 17
@@ -275,31 +270,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install System Deps (FFmpeg + CJK Fonts)
-        run: |
-          for attempt in 1 2 3; do
-            echo "System dependency install attempt $attempt/3"
-            if sudo env DEBIAN_FRONTEND=noninteractive timeout 10m apt-get update -qq -o Acquire::Retries=3 && \
-              sudo env DEBIAN_FRONTEND=noninteractive timeout 15m apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o DPkg::Lock::Timeout=60 ffmpeg fonts-noto-cjk fonts-wqy-zenhei; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then exit 1; fi
-            sleep 30
-          done
-
-      - name: Install Python Dependencies
-        run: |
-          for attempt in 1 2 3; do
-            echo "Python dependency install attempt $attempt/3"
-            if pip install -r requirements.txt; then break; fi
-            if [ "$attempt" -eq 3 ]; then exit 1; fi
-            sleep 30
-          done
-
       - name: Download shared config
         uses: actions/download-artifact@v4
         with:
@@ -422,20 +392,17 @@ jobs:
     needs: [setup, process_chapters]
     if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.process_chapters.result == 'success'
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/hub-google/audiobook-worker:v1
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       part_count: ${{ steps.plan.outputs.part_count }}
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install merge dependencies
-        run: |
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg
-          pip install -r requirements.txt
       - name: Download locked source configuration
         uses: actions/download-artifact@v4
         with:
@@ -470,17 +437,14 @@ jobs:
       max-parallel: 17
       matrix: ${{ fromJSON(needs.plan_parts.outputs.matrix) }}
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/hub-google/audiobook-worker:v1
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install merge dependencies
-        run: |
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg
-          pip install -r requirements.txt
       - uses: actions/download-artifact@v4
         with:
           name: prepared-plan
@@ -509,36 +473,15 @@ jobs:
     # They do not create worker artifacts, so never start the uploader for them.
     if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.merge_parts.result == 'success'
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/hub-google/audiobook-worker:v1
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install Python Dependencies
-        run: |
-          for attempt in 1 2 3; do
-            echo "Python dependency install attempt $attempt/3"
-            if pip install -r requirements.txt; then break; fi
-            if [ "$attempt" -eq 3 ]; then exit 1; fi
-            sleep 30
-          done
-
-      - name: Install FFmpeg
-        run: |
-          for attempt in 1 2 3; do
-            echo "FFmpeg install attempt $attempt/3"
-            if sudo env DEBIAN_FRONTEND=noninteractive timeout 10m apt-get update -qq -o Acquire::Retries=3 && \
-              sudo env DEBIAN_FRONTEND=noninteractive timeout 10m apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o DPkg::Lock::Timeout=60 ffmpeg; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then exit 1; fi
-            sleep 30
-          done
 
       - name: Restore latest YouTube upload checkpoint
         uses: actions/cache/restore@v4

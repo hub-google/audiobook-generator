@@ -1,0 +1,38 @@
+FROM python:3.11-slim-bookworm
+
+LABEL org.opencontainers.image.source="https://github.com/hub-google/audiobook-generator"
+LABEL org.opencontainers.image.description="Pinned runtime for the audiobook production pipeline"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        ffmpeg \
+        fontconfig \
+        fonts-noto-cjk \
+        fonts-wqy-zenhei \
+        gh \
+        git \
+        gzip \
+        jq \
+        tar \
+        unzip \
+        zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /tmp/audiobook-requirements.txt
+RUN python -m pip install --upgrade pip \
+    && python -m pip install -r /tmp/audiobook-requirements.txt \
+    && rm /tmp/audiobook-requirements.txt \
+    && ffmpeg -version | head -n 1 \
+    && fc-match :lang=zh \
+    && gh --version
+
+WORKDIR /__w/audiobook-generator/audiobook-generator
+
