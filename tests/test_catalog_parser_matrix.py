@@ -12,8 +12,10 @@ from src.catalog_parser import (
     generate_config_yaml,
     generate_matrix,
     normalize_chapter_title,
+    normalize_chapter_name_for_comparison,
     parse_catalog,
     parse_chapter_number,
+    split_chapter_title,
 )
 
 
@@ -55,7 +57,7 @@ class CatalogParserMatrixTests(unittest.TestCase):
         self.assertEqual(result["duplicate_indices"], [2])
         self.assertEqual(result["duplicate_chapter_count"], 1)
 
-    def test_duplicate_analysis_uses_chapter_number_or_normalized_full_title(self):
+    def test_duplicate_analysis_defaults_to_number_and_whitespace_free_name(self):
         titles = [
             "第243章 正常章節",
             "第244章 車神老呂",
@@ -67,19 +69,42 @@ class CatalogParserMatrixTests(unittest.TestCase):
 
         result = analyze_duplicate_chapters(titles, urls)
 
-        self.assertEqual(result["duplicate_indices"], [3, 5])
-        self.assertEqual(result["duplicate_chapter_count"], 2)
-        self.assertEqual(result["duplicate_chapters"][0]["reasons"], ["chapter_number"])
-        self.assertEqual(
-            result["duplicate_chapters"][1]["reasons"],
-            ["chapter_number", "chapter_title"],
+        self.assertEqual(result["duplicate_indices"], [5])
+        self.assertEqual(result["duplicate_chapter_count"], 1)
+        self.assertEqual(result["duplicate_chapters"][0]["reasons"], [
+            "normalized_chapter_number", "chapter_name_without_whitespace",
+        ])
+
+        number_only = analyze_duplicate_chapters(
+            titles, urls, use_normalized_number=True, use_chapter_name=False,
         )
+        self.assertEqual(number_only["duplicate_indices"], [3, 5])
 
     def test_chinese_and_arabic_chapter_numbers_compare_equally(self):
         self.assertEqual(parse_chapter_number("第一百三十五章 喋血藍原谷"), 135)
         self.assertEqual(parse_chapter_number("第135章 喋血藍原谷"), 135)
         self.assertEqual(parse_chapter_number("第二〇一章"), 201)
         self.assertIsNone(parse_chapter_number("番外篇 喋血藍原谷"))
+
+    def test_chapter_identifier_normalization_does_not_touch_name_numbers(self):
+        cases = {
+            "第 十二 章 2026年的約定": ("第 十二 章", "12", "2026年的約定"),
+            "第 １２ 三 章 2026年的約定": ("第 12 三 章", "123", "2026年的約定"),
+            "番外二 特別篇": ("番外二", "番外2", "特別篇"),
+            "後記一 完結": ("後記一", "後記1", "完結"),
+            "第一季第一集 新開始": ("第一季第一集", "第1季第1集", "新開始"),
+            "第壹佰零貳章 名稱": ("第壹佰零貳章", "102", "名稱"),
+        }
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                parts = split_chapter_title(title)
+                self.assertEqual(
+                    (parts["display_number"], parts["normalized_number"], parts["chapter_name"]),
+                    expected,
+                )
+
+    def test_chapter_name_comparison_removes_all_whitespace(self):
+        self.assertEqual(normalize_chapter_name_for_comparison("新 的\u3000開始"), "新的開始")
 
     def test_title_normalization_only_removes_harmless_display_differences(self):
         self.assertEqual(
@@ -92,6 +117,12 @@ class CatalogParserMatrixTests(unittest.TestCase):
             "第十章 原始", "第十章 修正版", "第10章 再修正版",
         ])
 
+        self.assertEqual(result["duplicate_indices"], [])
+
+        result = analyze_duplicate_chapters(
+            ["第十章 原始", "第十章 修正版", "第10章 再修正版"],
+            use_normalized_number=True, use_chapter_name=False,
+        )
         self.assertEqual(result["duplicate_indices"], [2, 3])
         self.assertEqual(
             [item["original_indices"] for item in result["duplicate_chapters"]],

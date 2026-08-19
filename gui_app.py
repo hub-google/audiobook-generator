@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # 載入目錄解析器
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 try:
-    from catalog_parser import parse_catalog
+    from catalog_parser import analyze_duplicate_chapters, parse_catalog, split_chapter_title
     from cloud_queue import (
         BLOCKING_STATES, GitHubQueueStore, add_tasks, delete_task,
         mark_task_interrupted, move_task, new_task, requeue_task_after_active,
@@ -1141,9 +1141,9 @@ class AudiobookGUIApp:
             return
             
         titles = self.catalog_data.get("chapter_titles", [])
-        duplicate_indices = {
-            int(value) for value in self.catalog_data.get("duplicate_indices", [])
-        }
+        duplicate_use_number = tk.BooleanVar(value=True)
+        duplicate_use_name = tk.BooleanVar(value=True)
+        duplicate_indices = set()
         if not titles:
             messagebox.showinfo("提示", "目前沒有章節標題資訊可供篩選。")
             return
@@ -1160,8 +1160,8 @@ class AudiobookGUIApp:
         
         top = tk.Toplevel(self.root)
         top.title("選擇要轉換的章節")
-        top.geometry("720x620")
-        top.minsize(650, 400)
+        top.geometry("1080x620")
+        top.minsize(900, 400)
         top.transient(self.root)
         top.grab_set()
 
@@ -1186,36 +1186,58 @@ class AudiobookGUIApp:
         search_entry = ttk.Entry(control_frame, width=16)
         search_entry.pack(side=tk.LEFT, padx=(0, 10))
 
-        # 中間 Listbox + Scrollbar 區塊
+        # 中間章節表格 + Scrollbar 區塊
         container = ttk.Frame(top)
         container.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
 
-        scrollbar = ttk.Scrollbar(container, orient="vertical")
-        listbox = tk.Listbox(
-            container,
-            selectmode=tk.SINGLE,
-            font=("Microsoft JhengHei", 10),
-            activestyle="none",
-            highlightthickness=1,
-            highlightcolor="#0097e6",
-            selectbackground="#e1f5fe",
-            selectforeground="#000000",
-            bd=1,
-            relief="solid",
-            yscrollcommand=scrollbar.set
-        )
-        scrollbar.config(command=listbox.yview)
-
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        columns = ("output_number", "normalized_number", "display_number", "chapter_name", "duplicate")
+        chapter_tree = ttk.Treeview(container, columns=columns, show="headings", selectmode="browse")
+        headings = {
+            "output_number": "編號章節數",
+            "normalized_number": "網站章節數正規化",
+            "display_number": "網站顯示章節數",
+            "chapter_name": "章節名稱",
+            "duplicate": "重複標記",
+        }
+        widths = {
+            "output_number": 105, "normalized_number": 155, "display_number": 145,
+            "chapter_name": 280, "duplicate": 85,
+        }
+        for column in columns:
+            chapter_tree.heading(column, text=headings[column])
+            chapter_tree.column(
+                column, width=widths[column], minwidth=70,
+                anchor=tk.W if column == "chapter_name" else tk.CENTER,
+                stretch=column == "chapter_name",
+            )
+        y_scrollbar = ttk.Scrollbar(container, orient="vertical", command=chapter_tree.yview)
+        x_scrollbar = ttk.Scrollbar(container, orient="horizontal", command=chapter_tree.xview)
+        chapter_tree.configure(yscrollcommand=y_scrollbar.set, xscrollcommand=x_scrollbar.set)
+        chapter_tree.grid(row=0, column=0, sticky="nsew")
+        y_scrollbar.grid(row=0, column=1, sticky="ns")
+        x_scrollbar.grid(row=1, column=0, sticky="ew")
+        container.rowconfigure(0, weight=1)
+        container.columnconfigure(0, weight=1)
 
         # 紀錄目前每個章節的勾選狀態 {global_idx: True/False} (True = 要轉換)
         chapter_state = {}
         for i in range(1, total_chapters + 1):
             chapter_state[i] = (i not in self.excluded_chapters)
 
-        # 紀錄目前 Listbox 顯示的章節編號列表 (對應 Listbox index)
+        chapter_parts = [split_chapter_title(title) for title in titles]
+
+        # 紀錄目前表格顯示的章節編號列表
         visible_indices = []
+
+        def _refresh_duplicates():
+            nonlocal duplicate_indices
+            analysis = analyze_duplicate_chapters(
+                titles,
+                self.catalog_data.get("chapters", []),
+                use_normalized_number=duplicate_use_number.get(),
+                use_chapter_name=duplicate_use_name.get(),
+            )
+            duplicate_indices = {int(value) for value in analysis["duplicate_indices"]}
 
         def _output_numbers():
             selected = [
@@ -1224,17 +1246,8 @@ class AudiobookGUIApp:
             ]
             return {source_idx: output_idx for output_idx, source_idx in enumerate(selected, 1)}
 
-        def _display_text(global_idx):
-            title = titles[global_idx - 1]
-            duplicate_mark = "  **" if global_idx in duplicate_indices else ""
-            if self.renumber_selected_chapters and cur_start <= global_idx <= cur_end:
-                output_idx = _output_numbers().get(global_idx)
-                if output_idx is not None:
-                    return f"製作第 {output_idx} 章｜網站原章：{title}{duplicate_mark}"
-            return f"網站第 {global_idx} 筆｜{title}{duplicate_mark}"
-
         def _update_listbox():
-            listbox.delete(0, tk.END)
+            chapter_tree.delete(*chapter_tree.get_children())
             visible_indices.clear()
 
             is_show_all = show_all_var.get()
@@ -1245,15 +1258,28 @@ class AudiobookGUIApp:
 
             for i in range(s_idx, e_idx + 1):
                 global_idx = i
-                display_text = _display_text(global_idx)
+                parts = chapter_parts[global_idx - 1]
+                is_checked = chapter_state.get(global_idx, True)
+                output_number = ""
+                if is_checked and cur_start <= global_idx <= cur_end:
+                    output_number = (
+                        _output_numbers().get(global_idx, "")
+                        if self.renumber_selected_chapters else global_idx
+                    )
+                values = (
+                    f"{'☑' if is_checked else '☐'} {output_number}".rstrip(),
+                    parts["normalized_number"],
+                    parts["display_number"],
+                    parts["chapter_name"],
+                    "重複" if global_idx in duplicate_indices else "",
+                )
+                display_text = " ".join(str(value) for value in values)
 
                 if filter_text and filter_text not in display_text.lower():
                     continue
 
                 visible_indices.append(global_idx)
-                is_checked = chapter_state.get(global_idx, True)
-                mark = "[✓]" if is_checked else "[  ]"
-                listbox.insert(tk.END, f"{mark}  {display_text}")
+                chapter_tree.insert("", tk.END, iid=str(global_idx), values=values)
 
         chk_show_all = ttk.Checkbutton(control_frame, text="🌐 顯示全書章節", variable=show_all_var, command=_update_listbox)
         chk_show_all.pack(side=tk.LEFT, padx=(0, 10))
@@ -1261,24 +1287,26 @@ class AudiobookGUIApp:
         search_entry.bind("<KeyRelease>", lambda e: _update_listbox())
 
         def _toggle_item(event=None):
-            sel = listbox.curselection()
+            if event is not None and getattr(event, "num", None) == 1:
+                if chapter_tree.identify_region(event.x, event.y) != "cell":
+                    return
+            sel = chapter_tree.selection()
             if not sel:
                 return
-            index = sel[0]
-            if 0 <= index < len(visible_indices):
-                g_idx = visible_indices[index]
+            g_idx = int(sel[0])
+            if g_idx in visible_indices:
                 chapter_state[g_idx] = not chapter_state[g_idx]
                 # 勾選變更可能讓後面所有製作章號前移或後移。
                 _update_listbox()
-                if g_idx in visible_indices:
-                    new_index = visible_indices.index(g_idx)
-                    listbox.selection_set(new_index)
-                    listbox.activate(new_index)
+                if chapter_tree.exists(str(g_idx)):
+                    chapter_tree.selection_set(str(g_idx))
+                    chapter_tree.focus(str(g_idx))
 
         # 單擊選取或按空白鍵切換狀態
-        listbox.bind("<ButtonRelease-1>", lambda e: _toggle_item())
-        listbox.bind("<space>", lambda e: (_toggle_item(), "break"))
+        chapter_tree.bind("<ButtonRelease-1>", lambda e: _toggle_item())
+        chapter_tree.bind("<space>", lambda e: (_toggle_item(), "break"))
 
+        _refresh_duplicates()
         _update_listbox()
 
         # 底部按鈕區
@@ -1311,6 +1339,37 @@ class AudiobookGUIApp:
                 text=f"已取消勾選 {changed} 個重複章節｜目錄共標記 {len(duplicate_indices)} 個"
             )
 
+        def _choose_duplicate_conditions():
+            dialog = tk.Toplevel(top)
+            dialog.title("重複判斷條件")
+            dialog.resizable(False, False)
+            dialog.transient(top)
+            dialog.grab_set()
+            body = ttk.Frame(dialog, padding=15)
+            body.pack(fill=tk.BOTH, expand=True)
+            pending_use_number = tk.BooleanVar(value=duplicate_use_number.get())
+            pending_use_name = tk.BooleanVar(value=duplicate_use_name.get())
+            ttk.Label(body, text="勾選要同時符合的重複條件：").pack(anchor=tk.W, pady=(0, 8))
+            ttk.Checkbutton(
+                body, text="網站章節數正規化", variable=pending_use_number,
+            ).pack(anchor=tk.W, pady=3)
+            ttk.Checkbutton(
+                body, text="章節名稱（去除空白）", variable=pending_use_name,
+            ).pack(anchor=tk.W, pady=3)
+
+            def _apply_conditions():
+                if not pending_use_number.get() and not pending_use_name.get():
+                    messagebox.showwarning("重複判斷條件", "請至少勾選一個判斷條件。", parent=dialog)
+                    return
+                duplicate_use_number.set(pending_use_number.get())
+                duplicate_use_name.set(pending_use_name.get())
+                _refresh_duplicates()
+                _update_listbox()
+                info_lbl.config(text=f"已重新判斷重複章節｜共標記 {len(duplicate_indices)} 個")
+                dialog.destroy()
+
+            ttk.Button(body, text="套用", command=_apply_conditions).pack(anchor=tk.E, pady=(12, 0))
+
         def _renumber_selected():
             self.renumber_selected_chapters = True
             _update_listbox()
@@ -1331,6 +1390,7 @@ class AudiobookGUIApp:
         ttk.Button(btn_frame, text="全選", command=_select_all).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="全不選", command=_deselect_all).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="反選", command=_invert_select).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="重複判斷條件", command=_choose_duplicate_conditions).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="排除重複章節", command=_exclude_duplicates).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="重新排序已選章節", command=_renumber_selected).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="確定", style="Accent.TButton", command=_close_dialog).pack(side=tk.RIGHT, padx=5)

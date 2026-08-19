@@ -21,8 +21,15 @@ USER_AGENTS = [
 _CHINESE_DIGITS = {
     "零": 0, "〇": 0, "一": 1, "二": 2, "兩": 2, "两": 2,
     "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+    "壹": 1, "貳": 2, "贰": 2, "參": 3, "叁": 3, "肆": 4,
+    "伍": 5, "陸": 6, "陆": 6, "柒": 7, "捌": 8, "玖": 9,
 }
-_CHINESE_UNITS = {"十": 10, "百": 100, "千": 1000, "萬": 10000, "万": 10000}
+_CHINESE_UNITS = {
+    "十": 10, "拾": 10, "百": 100, "佰": 100, "千": 1000, "仟": 1000,
+    "萬": 10000, "万": 10000,
+}
+_NUMBER_TOKEN = r"[0-9零〇一二兩两三四五六七八九十百千萬万壹貳贰參叁肆伍陸陆柒捌玖拾佰仟]+"
+_ORDINAL_UNIT = r"季|卷|部|篇|章|回|節|节|集|話|话"
 
 
 def normalize_chapter_title(title):
@@ -40,17 +47,20 @@ def _chinese_number_to_int(value):
         return None
     if value.isdigit():
         return int(value)
-    if any(char not in _CHINESE_DIGITS and char not in _CHINESE_UNITS for char in value):
+    if any(not char.isdigit() and char not in _CHINESE_DIGITS and char not in _CHINESE_UNITS for char in value):
         return None
 
     # Strings without units (for example 二〇一) are digit sequences.
     if not any(char in _CHINESE_UNITS for char in value):
-        return int("".join(str(_CHINESE_DIGITS[char]) for char in value))
+        return int("".join(char if char.isdigit() else str(_CHINESE_DIGITS[char]) for char in value))
 
     total = section = number = 0
     for char in value:
+        if char.isdigit():
+            number = (number * 10) + int(char)
+            continue
         if char in _CHINESE_DIGITS:
-            number = _CHINESE_DIGITS[char]
+            number = (number * 10) + _CHINESE_DIGITS[char]
             continue
         unit = _CHINESE_UNITS[char]
         if unit == 10000:
@@ -63,53 +73,116 @@ def _chinese_number_to_int(value):
     return total + section + number
 
 
+def _normalize_number_tokens(value):
+    """Normalize number tokens in an already isolated chapter identifier."""
+    compact = re.sub(r"\s+", "", unicodedata.normalize("NFKC", value))
+
+    def replace(match):
+        number = _chinese_number_to_int(match.group(0))
+        return str(number) if number is not None else match.group(0)
+
+    return re.sub(_NUMBER_TOKEN, replace, compact)
+
+
+def split_chapter_title(title):
+    """Split a catalog label into display identifier, normalized identifier and name.
+
+    Only a recognized leading identifier is normalized. Digits in the chapter name
+    are deliberately left untouched.
+    """
+    value = normalize_chapter_title(title)
+    spaced_number = rf"(?:{_NUMBER_TOKEN})(?:\s*(?:{_NUMBER_TOKEN}))*"
+    structural = re.match(
+        rf"^(?P<identifier>(?:第?\s*{spaced_number}\s*(?:{_ORDINAL_UNIT})\s*)+)",
+        value,
+    )
+    special = re.match(
+        rf"^(?P<identifier>(?:序章|楔子|番外|後記|后记)\s*(?:第?\s*{spaced_number})?(?:\s*(?:篇|章|回|集))?)",
+        value,
+    )
+    plain = re.match(
+        rf"^(?P<identifier>{spaced_number})(?=\s|[.．、:：\-—])",
+        value,
+    )
+    match = structural or special or plain
+    if not match:
+        return {
+            "display_number": "",
+            "normalized_number": "",
+            "chapter_name": value,
+        }
+
+    display_number = match.group("identifier").strip()
+    normalized_number = _normalize_number_tokens(display_number)
+    normalized_number = normalized_number.replace("后记", "後記").replace("节", "節").replace("话", "話")
+
+    # A single ordinary chapter unit is represented by its number alone. More
+    # descriptive identifiers (season/volume/special chapter) retain their labels.
+    simple = re.fullmatch(rf"第?({_NUMBER_TOKEN})(?:章|回|節|节|集|話|话)", re.sub(r"\s+", "", display_number))
+    if simple:
+        normalized_number = str(_chinese_number_to_int(simple.group(1)))
+
+    chapter_name = value[match.end():].lstrip(" \t-—:：、.．")
+    return {
+        "display_number": display_number,
+        "normalized_number": normalized_number,
+        "chapter_name": chapter_name,
+    }
+
+
+def normalize_chapter_name_for_comparison(name):
+    """Remove all display whitespace from a chapter name for duplicate matching."""
+    return re.sub(r"\s+", "", normalize_chapter_title(name))
+
+
 def parse_chapter_number(title):
     """Return a leading chapter number, supporting Arabic and Chinese forms."""
-    normalized = normalize_chapter_title(title)
-    match = re.match(
-        r"^第?\s*([0-9]+|[零〇一二兩两三四五六七八九十百千萬万]+)\s*(?:章|回|節|节)",
-        normalized,
-    )
-    return _chinese_number_to_int(match.group(1)) if match else None
+    normalized = split_chapter_title(title)["normalized_number"]
+    return int(normalized) if normalized.isdigit() else None
 
 
-def analyze_duplicate_chapters(chapter_titles, chapter_urls=None):
-    """Mark later catalog entries whose chapter number or full title repeats."""
+def analyze_duplicate_chapters(
+    chapter_titles, chapter_urls=None, use_normalized_number=True, use_chapter_name=True,
+):
+    """Mark later entries matching every enabled duplicate condition."""
     urls = list(chapter_urls or [])
-    seen_numbers = {}
-    seen_titles = {}
+    seen_keys = {}
     duplicate_indices = []
     duplicates = []
     chapter_numbers = []
 
     for index, raw_title in enumerate(chapter_titles, 1):
-        title = normalize_chapter_title(raw_title)
-        number = parse_chapter_number(title)
+        parts = split_chapter_title(raw_title)
+        normalized_number = parts["normalized_number"]
+        number = parse_chapter_number(raw_title)
         chapter_numbers.append(number)
+        normalized_name = normalize_chapter_name_for_comparison(parts["chapter_name"])
+        key_parts = []
         reasons = []
-        original_indices = set()
+        if use_normalized_number:
+            key_parts.append(normalized_number)
+            reasons.append("normalized_chapter_number")
+        if use_chapter_name:
+            key_parts.append(normalized_name)
+            reasons.append("chapter_name_without_whitespace")
+        # Empty identifiers/names must not make unrelated unparseable rows repeat.
+        key = tuple(key_parts) if key_parts and any(key_parts) else None
+        original_index = seen_keys.get(key) if key is not None else None
 
-        if number is not None and number in seen_numbers:
-            reasons.append("chapter_number")
-            original_indices.add(seen_numbers[number])
-        if title and title in seen_titles:
-            reasons.append("chapter_title")
-            original_indices.add(seen_titles[title])
-
-        if reasons:
+        if original_index is not None:
             duplicate_indices.append(index)
             duplicates.append({
                 "index": index,
                 "title": str(raw_title or "").strip(),
                 "url": urls[index - 1] if index <= len(urls) else "",
                 "chapter_number": number,
-                "reasons": reasons,
-                "original_indices": sorted(original_indices),
+                "normalized_chapter_number": normalized_number,
+                "chapter_name": parts["chapter_name"],
+                "reasons": list(reasons),
+                "original_indices": [original_index],
             })
-        if number is not None:
-            seen_numbers.setdefault(number, index)
-        if title:
-            seen_titles.setdefault(title, index)
+        if key is not None:
+            seen_keys.setdefault(key, index)
 
     return {
         "chapter_numbers": chapter_numbers,
