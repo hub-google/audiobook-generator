@@ -6,6 +6,7 @@ import random
 import urllib.parse
 import requests
 import logging
+import time
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from dotenv import load_dotenv
@@ -230,7 +231,7 @@ def analyze_cover_brief(book_title, pure_plot, source="", workspace_dir=None, an
         "synopsis": pure_plot,
     }
 
-def generate_gemini_art_prompt(book_title, pure_plot):
+def generate_gemini_art_prompt(book_title, pure_plot, max_attempts=4, retry_base_seconds=15):
     """
     使用 Google AI Studio Gemini 藝術總監引擎，分析全本小說名稱與完整劇情簡介，
     產出高質感、鮮豔震撼、具備核心主角與靈魂法寶/特徵的 8K 影視級英文 AI 生圖提示詞 (Art Prompt)。
@@ -264,17 +265,40 @@ def generate_gemini_art_prompt(book_title, pure_plot):
         }]
     }
     
-    res = requests.post(url, json=payload, timeout=30)
-    if res.status_code == 200:
-        candidates = res.json().get("candidates", [])
-        if candidates and "content" in candidates[0]:
-            prompt_text = candidates[0]["content"]["parts"][0]["text"].strip()
-            prompt_text = re.sub(r"^```[a-zA-Z]*\n?", "", prompt_text).rstrip("`").strip()
-            prompt_text = prompt_text.strip('"').strip("'")
-            logging.info(f"✨ Gemini 藝術總監產出提示詞成功: {prompt_text[:120]}...")
-            return prompt_text
-    
-    raise Exception(f"❌ Gemini 藝術總監 Prompt 生成失敗 (HTTP {res.status_code}): {res.text[:300]}")
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            res = requests.post(url, json=payload, timeout=30)
+            if res.status_code == 200:
+                candidates = res.json().get("candidates", [])
+                if candidates and "content" in candidates[0]:
+                    prompt_text = candidates[0]["content"]["parts"][0]["text"].strip()
+                    prompt_text = re.sub(r"^```[a-zA-Z]*\n?", "", prompt_text).rstrip("`").strip()
+                    prompt_text = prompt_text.strip('"').strip("'")
+                    logging.info(f"✨ Gemini 藝術總監產出提示詞成功: {prompt_text[:120]}...")
+                    return prompt_text
+                last_error = "HTTP 200 但回應中沒有可用的提示詞"
+            else:
+                last_error = f"HTTP {res.status_code}: {res.text[:300]}"
+
+            retryable = res.status_code == 429 or 500 <= res.status_code < 600
+            if not retryable or attempt == max_attempts:
+                break
+        except requests.RequestException as exc:
+            last_error = f"網路錯誤: {exc}"
+            if attempt == max_attempts:
+                break
+
+        delay = retry_base_seconds * (2 ** (attempt - 1))
+        logging.warning(
+            "Gemini 封面提示詞生成暫時失敗（第 %d/%d 次，%s）；%d 秒後重試，絕不跳過封面前置。",
+            attempt, max_attempts, last_error, delay,
+        )
+        time.sleep(delay)
+
+    raise RuntimeError(
+        f"❌ Gemini 藝術總監 Prompt 生成失敗，已重試 {max_attempts} 次；封面前置未完成，流程中止: {last_error}"
+    )
 
 
 def auto_generate_prompt_from_summary(book_title, workspace_dir=None, analyzer=None):

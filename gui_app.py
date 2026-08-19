@@ -18,7 +18,7 @@ try:
     from catalog_parser import analyze_duplicate_chapters, parse_catalog, split_chapter_title
     from cloud_queue import (
         BLOCKING_STATES, GitHubQueueStore, add_tasks, delete_task,
-        mark_task_interrupted, move_task, new_task, requeue_task_after_active,
+        mark_task_interrupted, move_task, move_tasks, new_task, requeue_task_after_active,
         update_task, update_task_chapters,
     )
     from github_run_status import (
@@ -183,7 +183,7 @@ class AudiobookGUIApp:
         columns = ("position", "book", "range", "duplicates", "status", "verified", "hf", "youtube", "run")
         tree_frame = ttk.Frame(section)
         tree_frame.pack(fill=tk.X, padx=5, pady=5)
-        self.queue_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=6, selectmode="browse")
+        self.queue_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=6, selectmode="extended")
         queue_scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.queue_tree.yview)
         self.queue_tree.configure(yscrollcommand=queue_scrollbar.set)
         headings = {
@@ -234,8 +234,7 @@ class AudiobookGUIApp:
         return GitHubQueueStore(repo, token), repo, token
 
     def _render_queue(self, queue):
-        selected = self.queue_tree.selection()
-        selected_id = selected[0] if selected else None
+        selected_ids = tuple(self.queue_tree.selection())
         for item in self.queue_tree.get_children():
             self.queue_tree.delete(item)
         for task in queue.get("tasks", []):
@@ -269,13 +268,18 @@ class AudiobookGUIApp:
                 elif status == "interrupted":
                     self.log(f"🛑 {title} 本次 Run 已中斷；任務已保留，可按「重新排程」")
             self.queue_status_cache[task["task_id"]] = current
-        if selected_id and self.queue_tree.exists(selected_id):
-            self.queue_tree.selection_set(selected_id)
-            selected_task = next((item for item in queue.get("tasks", []) if item.get("task_id") == selected_id), None)
-            if selected_task:
-                self._update_selected_task_status(selected_task)
-                self._update_queue_control_states(selected_task)
-        elif not selected_id:
+        restored_ids = [task_id for task_id in selected_ids if self.queue_tree.exists(task_id)]
+        if restored_ids:
+            self.queue_tree.selection_set(restored_ids)
+            selected_tasks = [
+                item for item in queue.get("tasks", []) if item.get("task_id") in restored_ids
+            ]
+            self._update_queue_control_states(selected_tasks)
+            if len(selected_tasks) == 1:
+                self._update_selected_task_status(selected_tasks[0])
+            else:
+                self.selected_status_var.set(f"已選取 {len(selected_tasks)} 筆小說任務；可批次暫停、刪除或調整順位。")
+        else:
             self._update_queue_control_states(None)
 
     def _queue_status_text(self, task):
@@ -440,16 +444,24 @@ class AudiobookGUIApp:
         threading.Thread(target=worker, daemon=True).start()
 
     def _selected_task(self):
-        selected = self.queue_tree.selection()
-        if not selected or not self.cloud_queue:
-            return None
-        return next((task for task in self.cloud_queue.get("tasks", []) if task.get("task_id") == selected[0]), None)
+        tasks = self._selected_tasks()
+        return tasks[0] if tasks else None
+
+    def _selected_tasks(self):
+        selected_ids = set(self.queue_tree.selection())
+        if not selected_ids or not self.cloud_queue:
+            return []
+        return [
+            task for task in self.cloud_queue.get("tasks", [])
+            if task.get("task_id") in selected_ids
+        ]
 
     def _on_queue_select(self, _event=None):
-        task = self._selected_task()
-        if not task:
+        tasks = self._selected_tasks()
+        if not tasks:
             self._update_queue_control_states(None)
             return
+        task = tasks[0]
         if task.get("run_id"):
             self.current_run_id = int(task["run_id"])
             try:
@@ -460,20 +472,26 @@ class AudiobookGUIApp:
         else:
             self.current_run_id = None
             self.btn_cancel.config(state=tk.DISABLED)
+        self._update_queue_control_states(tasks)
+        if len(tasks) > 1:
+            self.selected_status_var.set(f"已選取 {len(tasks)} 筆小說任務；可批次暫停、刪除或調整順位。")
+            return
         self._update_selected_task_status(task)
-        self._update_queue_control_states(task)
         if task.get("task_id") != self.editing_task_id:
             self._load_queue_task_for_edit(task)
 
-    def _update_queue_control_states(self, task):
-        status = task.get("status") if task else None
+    def _update_queue_control_states(self, task_or_tasks):
+        tasks = task_or_tasks if isinstance(task_or_tasks, (list, tuple)) else ([task_or_tasks] if task_or_tasks else [])
+        statuses = {task.get("status") for task in tasks}
+        all_toggleable = bool(tasks) and statuses <= {"queued", "paused"}
+        all_paused = bool(tasks) and statuses == {"paused"}
         self.btn_toggle_task.config(
-            state=tk.NORMAL if status in {"queued", "paused"} else tk.DISABLED,
-            text="恢復排程" if status == "paused" else "暫停排程",
+            state=tk.NORMAL if all_toggleable else tk.DISABLED,
+            text="恢復排程" if all_paused else "暫停排程",
         )
         self.btn_stop_task.config(
-            state=tk.NORMAL if status in {"running", "dispatching", "waiting_retry"} else tk.DISABLED,
-            text="正在取消…" if status == "canceling" else "取消本次 Run",
+            state=tk.NORMAL if len(tasks) == 1 and statuses <= {"running", "dispatching", "waiting_retry"} else tk.DISABLED,
+            text="正在取消…" if statuses == {"canceling"} else "取消本次 Run",
         )
 
     def _update_selected_task_status(self, task):
@@ -1023,29 +1041,37 @@ class AudiobookGUIApp:
         ttk.Button(top, text="依順序加入", style="Accent.TButton", command=submit).pack(pady=8)
 
     def move_selected_task(self, delta):
-        task = self._selected_task()
-        if task:
+        tasks = self._selected_tasks()
+        if tasks:
+            task_ids = [task["task_id"] for task in tasks]
             self._mutate_queue_async(
-                lambda queue: move_task(queue, task["task_id"], int(task["position"]) + delta),
-                f"Move audiobook task {task['task_id']}",
+                lambda queue: move_tasks(queue, task_ids, delta),
+                f"Move {len(task_ids)} audiobook task(s)",
             )
 
     def toggle_selected_task(self):
-        task = self._selected_task()
-        if not task:
-            messagebox.showinfo("暫停／恢復", "請先選取一筆小說任務。")
+        tasks = self._selected_tasks()
+        if not tasks:
+            messagebox.showinfo("暫停／恢復", "請先選取一筆或多筆小說任務。")
             return
-        if task.get("status") not in {"queued", "paused"}:
+        if any(task.get("status") not in {"queued", "paused"} for task in tasks):
             messagebox.showinfo("暫停／恢復", "只有等待中的任務可以暫停；執行中的任務請使用「取消本次 Run」。")
             return
-        new_status = "queued" if task.get("status") == "paused" else "paused"
+        new_status = "queued" if all(task.get("status") == "paused" for task in tasks) else "paused"
         action = "恢復排程" if new_status == "queued" else "暫停排程"
         self.btn_toggle_task.config(state=tk.DISABLED, text=f"正在{action}…")
-        self.selected_status_var.set(f"《{task.get('book_title') or '小說任務'}》｜正在{action}…")
+        self.selected_status_var.set(f"{len(tasks)} 筆小說任務｜正在{action}…")
+        task_ids = [task["task_id"] for task in tasks]
+
+        def mutate(queue):
+            for task_id in task_ids:
+                queue = update_task(queue, task_id, status=new_status)
+            return queue
+
         self._mutate_queue_async(
-            lambda queue: update_task(queue, task["task_id"], status=new_status),
-            f"Set {task['task_id']} to {new_status}",
-            f"✓ {task.get('book_title') or '小說任務'}：已{action}",
+            mutate,
+            f"Set {len(task_ids)} audiobook task(s) to {new_status}",
+            f"✓ 已將 {len(task_ids)} 筆小說任務{action}",
         )
 
     def requeue_selected_task(self):
@@ -1116,16 +1142,24 @@ class AudiobookGUIApp:
         threading.Thread(target=worker, daemon=True).start()
 
     def delete_selected_task(self):
-        task = self._selected_task()
-        if not task or not messagebox.askyesno("確認刪除", f"刪除佇列任務「{task.get('book_title')}」？\n不會刪除既有 HF 或 YouTube 成品。"):
+        tasks = self._selected_tasks()
+        if not tasks or not messagebox.askyesno("確認刪除", f"刪除選取的 {len(tasks)} 筆佇列任務？\n執行中的 Run 會送出取消；不會刪除既有 HF 或 YouTube 成品。"):
             return
-        run_id = task.get("run_id")
+        task_ids = [task["task_id"] for task in tasks]
         def worker():
             try:
                 store, repo, token = self._queue_store()
-                if run_id and task.get("status") in {"running", "dispatching", "waiting_retry", "canceling"}:
-                    requests.post(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel", headers={"Authorization": f"Bearer {token}"}, timeout=15)
-                queue = store.mutate(lambda value: delete_task(value, task["task_id"]), f"Delete audiobook task {task['task_id']}")
+                for task in tasks:
+                    run_id = task.get("run_id")
+                    if run_id and task.get("status") in {"running", "dispatching", "waiting_retry", "canceling"}:
+                        requests.post(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel", headers={"Authorization": f"Bearer {token}"}, timeout=15)
+
+                def mutate(value):
+                    for task_id in task_ids:
+                        value = delete_task(value, task_id)
+                    return value
+
+                queue = store.mutate(mutate, f"Delete {len(task_ids)} audiobook task(s)")
                 self.cloud_queue = queue
                 self.root.after(0, lambda: self._render_queue(queue))
                 self._dispatch_queue_workflow()

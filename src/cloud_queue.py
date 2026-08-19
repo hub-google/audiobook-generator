@@ -89,6 +89,33 @@ def move_task(queue, task_id, position):
     return touch(queue)
 
 
+def move_tasks(queue, task_ids, delta):
+    """Move a multi-selection one row while preserving its relative order."""
+    queue = normalize_queue(queue)
+    selected_ids = {str(task_id) for task_id in task_ids}
+    if not selected_ids or int(delta) == 0:
+        return queue
+    missing = selected_ids - {str(item.get("task_id")) for item in queue["tasks"]}
+    if missing:
+        raise KeyError(next(iter(missing)))
+    selected = [item for item in queue["tasks"] if str(item.get("task_id")) in selected_ids]
+    if any(item.get("status") in BLOCKING_STATES for item in selected):
+        raise ValueError("an active task cannot be reordered")
+
+    tasks = queue["tasks"]
+    if int(delta) < 0:
+        for index in range(1, len(tasks)):
+            if (str(tasks[index].get("task_id")) in selected_ids and
+                    str(tasks[index - 1].get("task_id")) not in selected_ids):
+                tasks[index - 1], tasks[index] = tasks[index], tasks[index - 1]
+    else:
+        for index in range(len(tasks) - 2, -1, -1):
+            if (str(tasks[index].get("task_id")) in selected_ids and
+                    str(tasks[index + 1].get("task_id")) not in selected_ids):
+                tasks[index], tasks[index + 1] = tasks[index + 1], tasks[index]
+    return touch(queue)
+
+
 def update_task(queue, task_id, **changes):
     queue = normalize_queue(queue)
     task = next((item for item in queue["tasks"] if item.get("task_id") == task_id), None)

@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from src.cloud_queue import (
-    add_tasks, current_task, empty_queue, move_task, new_task, next_task,
+    add_tasks, current_task, empty_queue, move_task, move_tasks, new_task, next_task,
     mark_task_interrupted, requeue_task_after_active, update_task,
     update_task_chapters,
 )
@@ -81,6 +81,30 @@ class CloudQueueTests(unittest.TestCase):
         queue = update_task(queue, task["task_id"], status="running")
         with self.assertRaises(ValueError):
             move_task(queue, task["task_id"], 1)
+
+    def test_multi_selection_moves_as_a_group_and_preserves_order(self):
+        tasks = [new_task(f"https://example/{i}", f"第{i}部") for i in range(1, 6)]
+        queue = add_tasks(empty_queue(), tasks)
+        selected = [tasks[1]["task_id"], tasks[3]["task_id"]]
+
+        queue = move_tasks(queue, selected, -1)
+        self.assertEqual([item["book_title"] for item in queue["tasks"]], [
+            "第2部", "第1部", "第4部", "第3部", "第5部",
+        ])
+
+        queue = move_tasks(queue, selected, 1)
+        self.assertEqual([item["book_title"] for item in queue["tasks"]], [
+            "第1部", "第2部", "第3部", "第4部", "第5部",
+        ])
+
+    def test_multi_selection_cannot_move_an_active_task(self):
+        first = new_task("https://example/1", "第一部")
+        second = new_task("https://example/2", "第二部")
+        queue = add_tasks(empty_queue(), [first, second])
+        queue = update_task(queue, second["task_id"], status="running")
+
+        with self.assertRaises(ValueError):
+            move_tasks(queue, [first["task_id"], second["task_id"]], -1)
 
     def test_interrupted_task_is_non_blocking_and_requeues_after_active(self):
         interrupted = new_task("https://example/1", "第一部")
