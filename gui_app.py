@@ -9,6 +9,8 @@ from tkinter import ttk, messagebox, scrolledtext, simpledialog
 from dotenv import load_dotenv
 import re
 import webbrowser
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 載入目錄解析器
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
@@ -18,6 +20,10 @@ try:
         BLOCKING_STATES, GitHubQueueStore, add_tasks, delete_task,
         mark_task_interrupted, move_task, new_task, requeue_task_after_active,
         update_task,
+    )
+    from github_run_status import (
+        error_observation, missing_observation, observation_text,
+        successful_observation,
     )
 except ImportError:
     parse_catalog = None
@@ -38,8 +44,10 @@ class AudiobookGUIApp:
         self.cloud_queue = None
         self.queue_syncing = False
         self.queue_sync_after = None
+        self.queue_freshness_after = None
         self.task_progress_windows = {}
         self.queue_status_cache = {}
+        self.github_observations = {}
 
         self._setup_style()
         self._build_ui()
@@ -158,17 +166,21 @@ class AudiobookGUIApp:
         self.link_counter = 0
 
         self.root.after(500, self.sync_cloud_queue)
+        self.root.after(1000, self._refresh_observation_freshness)
 
     def _build_queue_ui(self, parent):
         section = ttk.LabelFrame(parent, text="雲端小說佇列（關閉 GUI 後仍由 GitHub 繼續）")
         section.pack(fill=tk.X, pady=(0, 12))
-        columns = ("position", "book", "range", "status", "hf", "youtube", "run")
+        columns = ("position", "book", "range", "status", "verified", "hf", "youtube", "run")
         self.queue_tree = ttk.Treeview(section, columns=columns, show="headings", height=6, selectmode="browse")
         headings = {
             "position": "順位", "book": "小說", "range": "章節", "status": "狀態",
-            "hf": "HF", "youtube": "YouTube", "run": "Run",
+            "verified": "GitHub 查證", "hf": "HF", "youtube": "YouTube", "run": "Run",
         }
-        widths = {"position": 45, "book": 150, "range": 90, "status": 95, "hf": 70, "youtube": 80, "run": 90}
+        widths = {
+            "position": 45, "book": 145, "range": 85, "status": 210,
+            "verified": 100, "hf": 65, "youtube": 75, "run": 90,
+        }
         for key in columns:
             self.queue_tree.heading(key, text=headings[key])
             self.queue_tree.column(key, width=widths[key], anchor=tk.CENTER if key != "book" else tk.W)
@@ -211,8 +223,10 @@ class AudiobookGUIApp:
             end = task.get("end_chapter") or "全部"
             hf = task.get("hf_progress") or {}
             yt = task.get("youtube_progress") or {}
+            observation = self.github_observations.get(task.get("task_id"))
             self.queue_tree.insert("", tk.END, iid=task["task_id"], values=(
                 task.get("position"), task.get("book_title"), f"{start}–{end}", self._queue_status_text(task),
+                self._observation_checked_time(observation),
                 f"{hf.get('completed', 0)}/{hf.get('total', 0)}",
                 f"{yt.get('completed', 0)}/{yt.get('total', 0)}",
                 task.get("run_id") or "—",
@@ -236,8 +250,9 @@ class AudiobookGUIApp:
         if selected_id and self.queue_tree.exists(selected_id):
             self.queue_tree.selection_set(selected_id)
 
-    @staticmethod
-    def _queue_status_text(task):
+    def _queue_status_text(self, task):
+        if task.get("run_id"):
+            return observation_text(self.github_observations.get(task.get("task_id")))
         status = task.get("status") or "queued"
         labels = {
             "queued": "等待中", "dispatching": "正在建立 Run", "running": "執行中",
@@ -246,6 +261,69 @@ class AudiobookGUIApp:
             "paused": "已暫停排程", "stopped": "已停止", "completed": "已完成",
         }
         return labels.get(status, status)
+
+    @staticmethod
+    def _observation_checked_time(observation):
+        if not observation or not observation.get("checked_at"):
+            return "—"
+        try:
+            value = datetime.fromisoformat(str(observation["checked_at"]).replace("Z", "+00:00"))
+            return value.astimezone().strftime("%H:%M:%S")
+        except (TypeError, ValueError):
+            return "無效時間"
+
+    @staticmethod
+    def _http_error_observation(response):
+        status = response.status_code
+        if status == 401:
+            code = "unauthorized"
+        elif status == 429 or response.headers.get("X-RateLimit-Remaining") == "0":
+            code = "rate_limited"
+        elif status == 403:
+            code = "forbidden"
+        elif status >= 500:
+            code = "github_error"
+        else:
+            code = "invalid_response"
+        return error_observation(code, http_status=status, detail=response.text[:500])
+
+    def _observe_github_run(self, repo, token, run_id, previous):
+        headers = {
+            "Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        try:
+            response = requests.get(
+                f"https://api.github.com/repos/{repo}/actions/runs/{run_id}",
+                headers=headers, timeout=10,
+            )
+            if response.status_code == 200:
+                try:
+                    return successful_observation(response.json())
+                except (AttributeError, TypeError, ValueError, json.JSONDecodeError) as error:
+                    return error_observation("invalid_response", http_status=200, detail=error)
+            if response.status_code == 404:
+                verification = requests.get(
+                    f"https://api.github.com/repos/{repo}/actions/runs?per_page=1",
+                    headers=headers, timeout=10,
+                )
+                if verification.status_code != 200:
+                    return self._http_error_observation(verification)
+                return missing_observation(previous, confirmed=True)
+            return self._http_error_observation(response)
+        except requests.RequestException as error:
+            return error_observation("network_error", detail=error)
+
+    def _refresh_observation_freshness(self):
+        """Expire an old observation in the UI even while a network poll is blocked."""
+        if self.cloud_queue:
+            for task in self.cloud_queue.get("tasks", []):
+                task_id = task.get("task_id")
+                if task_id and task.get("run_id") and self.queue_tree.exists(task_id):
+                    observation = self.github_observations.get(task_id)
+                    self.queue_tree.set(task_id, "status", self._queue_status_text(task))
+                    self.queue_tree.set(task_id, "verified", self._observation_checked_time(observation))
+        self.queue_freshness_after = self.root.after(1000, self._refresh_observation_freshness)
 
     def sync_cloud_queue(self):
         if self.queue_sync_after is not None:
@@ -262,28 +340,36 @@ class AudiobookGUIApp:
                 store, repo, token = self._queue_store()
                 queue, _ = store.load()
                 interruptions = []
-                headers = {
-                    "Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                }
-                for task in queue.get("tasks", []):
-                    run_id = task.get("run_id")
-                    if not run_id or task.get("status") not in BLOCKING_STATES:
-                        continue
-                    response = requests.get(
-                        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}",
-                        headers=headers, timeout=10,
-                    )
-                    if response.status_code == 404:
-                        interruptions.append((task["task_id"], run_id, "run_not_found", "missing", None))
-                    elif response.status_code == 200:
-                        run_data = response.json()
-                        if run_data.get("status") == "completed" and run_data.get("conclusion") == "cancelled":
+                monitored = [task for task in queue.get("tasks", []) if task.get("run_id")]
+                observations = {}
+                with ThreadPoolExecutor(max_workers=min(6, max(1, len(monitored)))) as executor:
+                    futures = {
+                        executor.submit(
+                            self._observe_github_run, repo, token, task["run_id"],
+                            self.github_observations.get(task["task_id"]),
+                        ): task
+                        for task in monitored
+                    }
+                    for future in as_completed(futures):
+                        task = futures[future]
+                        try:
+                            observations[task["task_id"]] = future.result()
+                        except Exception as error:
+                            observations[task["task_id"]] = error_observation("network_error", detail=error)
+                for task in monitored:
+                    run_id = task["run_id"]
+                    observation = observations[task["task_id"]]
+                    self.github_observations[task["task_id"]] = observation
+                    if task.get("status") in BLOCKING_STATES:
+                        if observation.get("kind") == "not_found" and observation.get("confirmed_missing"):
+                            interruptions.append((task["task_id"], run_id, "run_not_found", "missing", None))
+                        elif (observation.get("kind") == "ok" and
+                              observation.get("raw_status") == "completed" and
+                              observation.get("raw_conclusion") == "cancelled"):
                             interruptions.append((
-                                task["task_id"], run_id, "run_cancelled", "cancelled", run_data.get("updated_at"),
+                                task["task_id"], run_id, "run_cancelled", "cancelled",
+                                observation.get("github_updated_at"),
                             ))
-                    else:
-                        response.raise_for_status()
                 if interruptions:
                     def apply_interruptions(latest):
                         for task_id, run_id, reason, conclusion, ended_at in interruptions:
@@ -300,10 +386,17 @@ class AudiobookGUIApp:
                 self.cloud_queue = queue
                 self.root.after(0, lambda: self._render_queue(queue))
             except Exception as error:
+                if self.cloud_queue:
+                    for task in self.cloud_queue.get("tasks", []):
+                        if task.get("run_id"):
+                            self.github_observations[task["task_id"]] = error_observation(
+                                "network_error", detail=error,
+                            )
+                    self.root.after(0, lambda q=self.cloud_queue: self._render_queue(q))
                 self.root.after(0, lambda e=str(error): self.log(f"⚠ 雲端佇列同步失敗：{e}"))
             finally:
                 self.queue_syncing = False
-                self.queue_sync_after = self.root.after(30000, self.sync_cloud_queue)
+                self.queue_sync_after = self.root.after(10000, self.sync_cloud_queue)
         threading.Thread(target=worker, daemon=True).start()
 
     def _selected_task(self):

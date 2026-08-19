@@ -26,3 +26,8 @@ def test_queue_sync_checks_bound_run_against_github():
     assert "actions/runs/{run_id}" in source
     assert "run_not_found" in source
     assert "mark_task_interrupted" in source
+    assert "self.root.after(10000, self.sync_cloud_queue)" in source
+    assert "observation_text" in source
+    assert "GitHub 查證" in source
+    assert "_refresh_observation_freshness" in source
+    assert "self.root.after(1000, self._refresh_observation_freshness)" in source
