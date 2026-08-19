@@ -10,13 +10,14 @@ from datetime import datetime, timezone
 
 PART_STEPS = (
     "prepare_chapters", "generate_subtitle", "merge_video", "validate_video",
-    "generate_metadata_cover", "upload_video", "upload_thumbnail",
+    "generate_metadata_cover", "archive_hf", "upload_video", "upload_thumbnail",
     "upload_caption", "add_playlist", "publish", "final_validation",
 )
 PART_LABELS = {
     "prepare_chapters": "準備章節", "generate_subtitle": "產生字幕",
     "merge_video": "合併影片", "validate_video": "驗證影片",
     "generate_metadata_cover": "資料／封面", "upload_video": "上傳影片",
+    "archive_hf": "HF 完整備份",
     "upload_thumbnail": "上傳封面", "upload_caption": "上傳字幕",
     "add_playlist": "播放清單", "publish": "最終發布",
     "final_validation": "最終驗收",
@@ -155,8 +156,8 @@ class PublicationCheckpoint:
             lines.append(f"| {GLOBAL_LABELS[step]} | {global_icons[status]} |")
         lines.extend([
             "", "## 後製與 YouTube 發布狀態", "",
-            "| 影片編號 | 小說章節 | 準備章節 | 產生字幕 | 合併影片 | 驗證影片 | 資料／封面 | 上傳影片 | 上傳封面 | 上傳字幕 | 播放清單 | 最終發布 | 最終驗收 |",
-            "|---:|---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|",
+            "| 影片編號 | 小說章節 | 準備章節 | 產生字幕 | 合併影片 | 驗證影片 | 資料／封面 | HF 備份 | 上傳影片 | 上傳封面 | 上傳字幕 | 播放清單 | 最終發布 | 最終驗收 |",
+            "|---:|---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|",
         ])
         icons = {"completed": "✅", "running": "🔄", "failed": "❌", "paused": "⏸️", "pending": "⏳"}
         for planned in plan:

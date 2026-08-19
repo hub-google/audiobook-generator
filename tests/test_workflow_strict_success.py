@@ -6,6 +6,7 @@ import yaml
 
 WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "audiobook.yml"
 RETRY_WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "youtube-retry.yml"
+DISPATCHER_WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "queue-dispatcher.yml"
 
 
 class WorkflowStrictSuccessTests(unittest.TestCase):
@@ -16,6 +17,8 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         cls.jobs = parsed["jobs"]
         cls.retry_text = RETRY_WORKFLOW_PATH.read_text(encoding="utf-8")
         cls.retry_jobs = yaml.safe_load(cls.retry_text)["jobs"]
+        cls.dispatcher_text = DISPATCHER_WORKFLOW_PATH.read_text(encoding="utf-8")
+        cls.dispatcher_jobs = yaml.safe_load(cls.dispatcher_text)["jobs"]
 
     def test_final_gate_depends_on_every_production_job(self):
         gate = self.jobs["strict_success_gate"]
@@ -29,30 +32,18 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn('"$YOUTUBE_RESULT" != "success"', command)
         self.assertIn("exit 1", command)
 
-    def test_scheduled_retry_wait_and_rerun_are_not_false_failures(self):
-        command = self.retry_jobs["retry_failed_run"]["steps"][0]["run"]
-        self.assertIn('elif [ "$conclusion" = "success" ]', command)
-        self.assertIn("eligible_epoch=$((updated_epoch + 7200))", command)
-        self.assertIn("retry_at=", command)
-        self.assertIn("No YouTube request was made", command)
-        self.assertNotIn("STRICT SUCCESS GATE FAILED", command)
-        self.assertNotIn("gate_message", command)
-
-    def test_scheduled_success_check_writes_explicit_summary(self):
-        command = self.retry_jobs["retry_failed_run"]["steps"][0]["run"]
-        self.assertIn("✅ Upload success confirmed", command)
-        self.assertIn('gh workflow disable "$RETRY_WORKFLOW"', command)
-        self.assertIn("No retry was started", command)
-        self.assertIn("no YouTube API request was made", command)
-        self.assertIn("no future scheduled check will be created", command)
+    def test_dispatcher_runs_one_task_aware_decision(self):
+        steps = self.dispatcher_jobs["dispatch_once"]["steps"]
+        self.assertTrue(any(step.get("run") == "python src/queue_dispatcher.py" for step in steps))
+        self.assertIn("audiobook-queue-dispatcher", self.dispatcher_text)
+        self.assertIn("workflow_run:", self.dispatcher_text)
 
     def test_schedule_is_isolated_from_manual_production_workflow(self):
         self.assertNotIn("schedule:", self.text)
-        self.assertIn("schedule:", self.retry_text)
-        setup_command = self.jobs["setup"]["steps"][0]["run"]
-        self.assertIn("gh workflow enable youtube-retry.yml", setup_command)
-        gate_command = self.jobs["strict_success_gate"]["steps"][1]["run"]
-        self.assertIn("gh workflow disable youtube-retry.yml", gate_command)
+        self.assertIn("schedule:", self.dispatcher_text)
+        self.assertNotIn("schedule:", self.retry_text)
+        self.assertNotIn("workflow enable youtube-retry.yml", self.text)
+        self.assertNotIn("workflow disable youtube-retry.yml", self.text)
 
     def test_worker_artifacts_cannot_be_empty(self):
         steps = self.jobs["process_chapters"]["steps"]
@@ -81,9 +72,13 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn('.get("include")', step["run"])
 
     def test_scheduled_retry_has_no_attempt_limit(self):
-        command = self.retry_jobs["retry_failed_run"]["steps"][0]["run"]
-        self.assertNotIn("Max retries", command)
-        self.assertNotIn('run_attempt:-1}" -ge', command)
+        self.assertNotIn("Max retries", self.dispatcher_text)
+        self.assertNotIn("max_attempt", self.dispatcher_text)
+
+    def test_hf_archive_is_required_by_workflow(self):
+        upload = str(self.jobs["upload_to_youtube"])
+        self.assertIn("HF_ARCHIVE_REPO", upload)
+        self.assertIn("hf_archive_state.json", upload)
 
 
 if __name__ == "__main__":

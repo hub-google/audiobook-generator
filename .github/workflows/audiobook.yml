@@ -1,8 +1,14 @@
 name: Audiobook Automation Pipeline (Parallel)
 
+run-name: "有聲小說｜${{ inputs.queue_task_id || 'manual' }}｜Ch${{ inputs.start_chap }}-${{ inputs.end_chap }}"
+
 on:
   workflow_dispatch:
     inputs:
+      queue_task_id:
+        description: '雲端佇列任務 ID；手動執行可留空'
+        required: false
+        default: ''
       catalog_url:
         description: '小說目錄網址 (e.g. https://tw.hjwzw.com/Book/Chapter/1644)'
         required: true
@@ -158,11 +164,6 @@ jobs:
       matrix: ${{ steps.gen_matrix.outputs.matrix }}
 
     steps:
-      - name: Enable automatic retry checks for this production run
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow enable youtube-retry.yml --repo "${{ github.repository }}"
-
       - name: Checkout Code
         uses: actions/checkout@v4
 
@@ -460,9 +461,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
+          QUEUE_TASK_ID: ${{ github.event.inputs.queue_task_id }}
         run: |
           set +e
-          python src/youtube_api_uploader.py --run-id "${{ github.run_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
+          python src/youtube_api_uploader.py --run-id "${{ github.run_id }}" --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
           code=$?
           set -e
 
@@ -512,6 +515,11 @@ jobs:
               
           with open(state_file, encoding="utf-8") as f:
               state = json.load(f)
+          hf_state_file = "upload_resume_state/hf_archive_state.json"
+          hf_state = {}
+          if os.path.exists(hf_state_file):
+              with open(hf_state_file, encoding="utf-8") as f:
+                  hf_state = json.load(f)
               
           done = len(state.get("completed_titles", []))
           total = len(state.get("part_plan", [])) or max(done, 1)
@@ -520,6 +528,12 @@ jobs:
           pending_captions = len(state.get("pending_captions", {}))
           pending_publish = len(state.get("pending_publish", {}))
           status = state.get("status", "unknown")
+          books = hf_state.get("books", {})
+          hf_parts = []
+          hf_repo = hf_state.get("repo_id", "尚未建立")
+          for book in books.values():
+              hf_parts.extend((book.get("parts") or {}).values())
+          hf_done = sum(item.get("status") == "complete" for item in hf_parts)
           print("[RUN_SUMMARY] " + json.dumps({
               "kind": "youtube", "status": status, "completed": done, "total": total,
               "pending_thumbnails": pending, "pending_playlist": pending_playlist,
@@ -541,6 +555,8 @@ jobs:
               f.write(f"| **Pending Playlist Inserts** | **{pending_playlist}** |\n")
               f.write(f"| **Pending CC Captions** | **{pending_captions}** |\n")
               f.write(f"| **Pending Final Publish** | **{pending_publish}** |\n")
+              f.write(f"| **Hugging Face Parts** | **{hf_done} / {total}** |\n")
+              f.write(f"| **Hugging Face Repo** | `{hf_repo}` |\n")
               if "reason" in state and state["reason"]:
                   f.write(f"| **Reason** | `{state['reason']}` |\n")
               if "retry_at" in state and state["retry_at"]:
@@ -602,10 +618,3 @@ jobs:
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "✅ Every chapter and every required YouTube publication step completed." >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Stop all future retry checks after strict success
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh workflow disable youtube-retry.yml --repo "${{ github.repository }}"
-          echo "Automatic retry scheduling is now disabled; no further check runs will be created." >> "$GITHUB_STEP_SUMMARY"

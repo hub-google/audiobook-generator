@@ -14,6 +14,7 @@ import argparse
 import logging
 import subprocess
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -28,12 +29,14 @@ try:
     from .publication_checkpoint import PART_STEPS, PublicationCheckpoint
     from .artifact_validation import validate_image, validate_srt, validate_video
     from .source_status import confirmed_missing_from_directory
+    from .huggingface_archiver import HuggingFaceArchiver
 except ImportError:
     # Support running this file directly as ``python src/youtube_api_uploader.py``.
     from part_builder import parse_chapter_num, get_media_duration, merge_part_videos
     from publication_checkpoint import PART_STEPS, PublicationCheckpoint
     from artifact_validation import validate_image, validate_srt, validate_video
     from source_status import confirmed_missing_from_directory
+    from huggingface_archiver import HuggingFaceArchiver
 
 if sys.platform == "win32":
     try:
@@ -877,8 +880,22 @@ def main():
     parser.add_argument("--privacy", default="public", choices=["public", "unlisted", "private"], help="Privacy status")
     parser.add_argument("--state-file", default="upload_resume_state/state.json",
                         help="Durable state restored/saved by GitHub Actions")
+    parser.add_argument("--task-id", default=os.environ.get("QUEUE_TASK_ID", ""), help="Persistent cloud queue task ID")
     args = parser.parse_args()
     publication = PublicationCheckpoint(args.state_file)
+
+    hf_token = os.environ.get("HF_TOKEN", "")
+    if not hf_token:
+        raise RuntimeError("HF_TOKEN is required because the production archive is mandatory")
+    hf_repo = os.environ.get("HF_ARCHIVE_REPO", "").strip()
+    if not hf_repo:
+        from huggingface_hub import HfApi
+        hf_repo = f"{HfApi(token=hf_token).whoami()['name']}/audiobook-archive"
+    hf_archiver = HuggingFaceArchiver(
+        hf_repo, hf_token,
+        os.path.join(os.path.dirname(os.path.abspath(args.state_file)), "hf_archive_state.json"),
+    )
+    hf_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hf-archive")
 
     saved_state = load_resume_state(args.state_file)
     completed_titles = set()
@@ -1413,10 +1430,13 @@ def main():
                         pending_thumbnails=pending_thumbnails,
                     )
 
+                preexisting_video_id = existing_video_ids.get(expected_title) if expected_title in completed_titles else None
+
                 # This includes durable checkpoint entries and exact-title
                 # progress recovered from the target playlist.
-                if expected_title in completed_titles:
+                if expected_title in completed_titles and part_counter in hf_archiver.completed_parts(book_title):
                     logging.info(f"⏭️ 【第 {part_counter} 部】(第 {s_c}~{e_c} 章) 已存在於 YouTube 播放清單，觸發【智能斷點續傳】秒跳過！")
+                    publication.complete(part_counter, "archive_hf", recovered_from_hf=True, hf_repo=hf_repo)
                     for item in sliced_items:
                         try:
                             if os.path.exists(item["path"]):
@@ -1488,6 +1508,52 @@ def main():
                             "\n\n來源網站缺失章節（原頁面無文章，故未製作）："
                             + "、".join(str(value) for value in omitted)
                         )
+
+                    publication.mark(part_counter, "archive_hf", "running")
+                    hf_future = hf_executor.submit(
+                        hf_archiver.archive_part,
+                        book_title=book_title, part_num=part_counter,
+                        start_chap=s_c, end_chap=e_c,
+                        chapters=[int(item["chap_num"]) for item in sliced_items],
+                        video_path=out_path, subtitle_path=out_srt_path,
+                        master_cover_path=p_meta["master_cover_file"],
+                        source_config_path=config_path, run_id=args.run_id,
+                        task_id=args.task_id, source_missing_chapters=omitted,
+                    )
+
+                    # A YouTube-complete Part from an earlier attempt may still
+                    # need its HF backup. Rebuild only the Part media, archive it,
+                    # and reuse the existing Video ID without another upload.
+                    if preexisting_video_id:
+                        try:
+                            hf_future.result()
+                            archive_record = hf_archiver.finalize_part(
+                                book_title=book_title, part_num=part_counter,
+                                youtube_video_id=preexisting_video_id, playlist_id=playlist_id,
+                                title=p_meta["title"], description=full_desc,
+                                privacy=args.privacy, playlist_position=part_counter - 1,
+                            )
+                            publication.complete(part_counter, "archive_hf", hf_repo=hf_repo, path=archive_record["root"])
+                            logging.info("[HF_ARCHIVE_MARKER] DONE | Part %s | Ch %s~%s | %s", part_counter, s_c, e_c, archive_record["root"])
+                            for step in ("upload_video", "upload_thumbnail", "upload_caption", "add_playlist", "publish"):
+                                publication.complete(part_counter, step, youtube_video_id=preexisting_video_id, recovered=True)
+                            publication.complete(
+                                part_counter, "final_validation",
+                                **verify_published_part(youtube, preexisting_video_id, playlist_id, args.privacy),
+                            )
+                        except Exception as error:
+                            publication.fail(part_counter, "archive_hf", error)
+                            logging.error("HF archive recovery failed; retaining Part media: %s", error)
+                            return 1
+                        for item in sliced_items:
+                            if os.path.exists(item["path"]):
+                                os.remove(item["path"])
+                        if os.path.exists(out_path):
+                            os.remove(out_path)
+                        sliced_paths = {item["path"] for item in sliced_items}
+                        chapter_pool = [item for item in chapter_pool if item["path"] not in sliced_paths]
+                        part_counter += 1
+                        continue
 
                     logging.info(f"[API_UPLOAD_MARKER] START | Part {part_counter} | Ch {s_c}~{e_c} | {out_name}")
                     sys.stdout.flush()
@@ -1602,10 +1668,24 @@ def main():
                             return EXIT_RETRY_LATER
                         publication.complete(part_counter, "publish", youtube_video_id=v_id, privacy=args.privacy)
                         del pending_publish[p_meta["title"]]
-                        completed_titles.add(p_meta["title"])
                         publication.mark(part_counter, "final_validation", "running")
                         evidence = verify_published_part(youtube, v_id, playlist_id, args.privacy)
                         publication.complete(part_counter, "final_validation", **evidence)
+                        try:
+                            hf_future.result()
+                            archive_record = hf_archiver.finalize_part(
+                                book_title=book_title, part_num=part_counter,
+                                youtube_video_id=v_id, playlist_id=playlist_id,
+                                title=p_meta["title"], description=full_desc,
+                                privacy=args.privacy, playlist_position=part_counter - 1,
+                            )
+                            publication.complete(part_counter, "archive_hf", hf_repo=hf_repo, path=archive_record["root"])
+                            logging.info("[HF_ARCHIVE_MARKER] DONE | Part %s | Ch %s~%s | %s", part_counter, s_c, e_c, archive_record["root"])
+                        except Exception as error:
+                            publication.fail(part_counter, "archive_hf", error)
+                            logging.error("HF archive failed; YouTube is complete but Part media will be retained: %s", error)
+                            return 1
+                        completed_titles.add(p_meta["title"])
                         save_resume_state(
                             args.state_file, args.run_id, args.privacy, "running",
                             completed_titles=completed_titles, part_plan=part_plan,
@@ -1918,6 +1998,8 @@ def main():
             record = publication.data.get("parts", {}).get(str(part_num), {})
             steps = record.get("steps") or {}
             for step in PART_STEPS:
+                if step == "archive_hf":
+                    continue
                 if (steps.get(step) or {}).get("status") != "completed":
                     publication.complete(
                         part_num,
@@ -1926,6 +2008,17 @@ def main():
                         youtube_video_id=video_id,
                     )
             publication.complete(part_num, "final_validation", **evidence)
+
+        hf_evidence = hf_archiver.verify_book(book_title, len(part_plan))
+        for planned in part_plan:
+            part_num = int(planned["part_num"])
+            record = publication.data.get("parts", {}).get(str(part_num), {})
+            if ((record.get("steps") or {}).get("archive_hf") or {}).get("status") != "completed":
+                raise RuntimeError(f"Part {part_num} is missing mandatory Hugging Face archive evidence")
+        logging.info(
+            "[HF_ARCHIVE_STATUS] COMPLETE | archived=%s | total=%s | repo=%s | folder=%s",
+            hf_evidence["parts"], len(part_plan), hf_evidence["repo_id"], hf_evidence["book_root"],
+        )
 
     logging.info("="*60)
     logging.info(f"🎉 全部影片極速上傳完畢！共上傳 {total_uploaded} 部分部影片至 YouTube 播放清單！")
@@ -1940,6 +2033,7 @@ def main():
                       pending_publish=pending_publish,
                       playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None)
     publication.mark_global("final_book_validation", "completed", completed_parts=len(completed_titles))
+    hf_executor.shutdown(wait=True)
     logging.info(
         "[API_UPLOAD_STATUS] COMPLETE | uploaded=%s | total=%s | source_run=%s",
         len(completed_titles), len(part_plan) or len(completed_titles), args.run_id or "local",

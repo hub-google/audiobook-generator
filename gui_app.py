@@ -5,7 +5,7 @@ import time
 import requests
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import ttk, messagebox, scrolledtext, simpledialog
 from dotenv import load_dotenv
 import re
 import webbrowser
@@ -14,8 +14,10 @@ import webbrowser
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 try:
     from catalog_parser import parse_catalog
+    from cloud_queue import GitHubQueueStore, add_tasks, delete_task, move_task, new_task, update_task
 except ImportError:
     parse_catalog = None
+    GitHubQueueStore = None
 
 ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 load_dotenv(ENV_PATH)
@@ -24,11 +26,14 @@ class AudiobookGUIApp:
     def __init__(self, root):
         self.root = root
         self.root.title("📚 GITHUB ACTION控制台")
-        self.root.geometry("780x620")
-        self.root.minsize(700, 550)
+        self.root.geometry("980x850")
+        self.root.minsize(820, 700)
 
         # 狀態變數
         self.catalog_data = None
+        self.cloud_queue = None
+        self.queue_syncing = False
+        self.queue_sync_after = None
 
         self._setup_style()
         self._build_ui()
@@ -59,6 +64,8 @@ class AudiobookGUIApp:
         # 標題列
         title_lbl = ttk.Label(main_frame, text="📚 GITHUB ACTION控制台", style="Title.TLabel")
         title_lbl.pack(anchor=tk.W, pady=(0, 15))
+
+        self._build_queue_ui(main_frame)
 
         # ── 區塊 1: 目錄網址與章節解析 ──
         section1 = ttk.LabelFrame(main_frame, text="1. 目錄解析與範圍選取")
@@ -110,7 +117,7 @@ class AudiobookGUIApp:
         action_frame = ttk.Frame(section2)
         action_frame.pack(fill=tk.X, pady=5)
 
-        self.btn_run = ttk.Button(action_frame, text="🚀 發動 GitHub Actions 雲端製作", style="Accent.TButton", command=self.trigger_github_actions)
+        self.btn_run = ttk.Button(action_frame, text="➕ 加入雲端製作佇列", style="Accent.TButton", command=self.enqueue_current_task)
         self.btn_run.pack(side=tk.LEFT, padx=(0, 10))
 
         self.btn_cancel = ttk.Button(action_frame, text="🛑 取消雲端作業", command=self.cancel_github_actions, state=tk.DISABLED)
@@ -136,6 +143,247 @@ class AudiobookGUIApp:
         self.log_text.tag_bind("hyperlink", "<Enter>", lambda e: self.log_text.config(cursor="hand2"))
         self.log_text.tag_bind("hyperlink", "<Leave>", lambda e: self.log_text.config(cursor=""))
         self.link_counter = 0
+
+        self.root.after(500, self.sync_cloud_queue)
+
+    def _build_queue_ui(self, parent):
+        section = ttk.LabelFrame(parent, text="雲端小說佇列（關閉 GUI 後仍由 GitHub 繼續）")
+        section.pack(fill=tk.X, pady=(0, 12))
+        columns = ("position", "book", "range", "status", "hf", "youtube", "run")
+        self.queue_tree = ttk.Treeview(section, columns=columns, show="headings", height=6, selectmode="browse")
+        headings = {
+            "position": "順位", "book": "小說", "range": "章節", "status": "狀態",
+            "hf": "HF", "youtube": "YouTube", "run": "Run",
+        }
+        widths = {"position": 45, "book": 150, "range": 90, "status": 95, "hf": 70, "youtube": 80, "run": 90}
+        for key in columns:
+            self.queue_tree.heading(key, text=headings[key])
+            self.queue_tree.column(key, width=widths[key], anchor=tk.CENTER if key != "book" else tk.W)
+        self.queue_tree.pack(fill=tk.X, padx=5, pady=5)
+        self.queue_tree.bind("<<TreeviewSelect>>", self._on_queue_select)
+
+        buttons = ttk.Frame(section)
+        buttons.pack(fill=tk.X, padx=5, pady=(0, 5))
+        ttk.Button(buttons, text="批量加入網址", command=self.open_batch_queue_dialog).pack(side=tk.LEFT, padx=2)
+        ttk.Button(buttons, text="↑", width=3, command=lambda: self.move_selected_task(-1)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(buttons, text="↓", width=3, command=lambda: self.move_selected_task(1)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(buttons, text="暫停/恢復", command=self.toggle_selected_task).pack(side=tk.LEFT, padx=2)
+        ttk.Button(buttons, text="停止", command=self.stop_selected_task).pack(side=tk.LEFT, padx=2)
+        ttk.Button(buttons, text="刪除", command=self.delete_selected_task).pack(side=tk.LEFT, padx=2)
+        ttk.Button(buttons, text="立即同步", command=self.sync_cloud_queue).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(buttons, text="執行調度檢查", command=self.trigger_queue_dispatcher).pack(side=tk.RIGHT, padx=2)
+
+    def _github_settings(self):
+        load_dotenv(ENV_PATH, override=True)
+        repo = os.getenv("GITHUB_REPO", "hub-google/audiobook-generator")
+        token = os.getenv("GITHUB_TOKEN", "")
+        if not token:
+            raise RuntimeError("本地 .env 中未找到 GITHUB_TOKEN")
+        return repo, token
+
+    def _queue_store(self):
+        repo, token = self._github_settings()
+        return GitHubQueueStore(repo, token), repo, token
+
+    def _render_queue(self, queue):
+        selected = self.queue_tree.selection()
+        selected_id = selected[0] if selected else None
+        for item in self.queue_tree.get_children():
+            self.queue_tree.delete(item)
+        for task in queue.get("tasks", []):
+            start = task.get("start_chapter") or 1
+            end = task.get("end_chapter") or "全部"
+            hf = task.get("hf_progress") or {}
+            yt = task.get("youtube_progress") or {}
+            self.queue_tree.insert("", tk.END, iid=task["task_id"], values=(
+                task.get("position"), task.get("book_title"), f"{start}–{end}", task.get("status"),
+                f"{hf.get('completed', 0)}/{hf.get('total', 0)}",
+                f"{yt.get('completed', 0)}/{yt.get('total', 0)}",
+                task.get("run_id") or "—",
+            ))
+        if selected_id and self.queue_tree.exists(selected_id):
+            self.queue_tree.selection_set(selected_id)
+
+    def sync_cloud_queue(self):
+        if self.queue_sync_after is not None:
+            try:
+                self.root.after_cancel(self.queue_sync_after)
+            except Exception:
+                pass
+            self.queue_sync_after = None
+        if self.queue_syncing:
+            return
+        self.queue_syncing = True
+        def worker():
+            try:
+                store, _, _ = self._queue_store()
+                queue, _ = store.load()
+                self.cloud_queue = queue
+                self.root.after(0, lambda: self._render_queue(queue))
+            except Exception as error:
+                self.root.after(0, lambda e=str(error): self.log(f"⚠ 雲端佇列同步失敗：{e}"))
+            finally:
+                self.queue_syncing = False
+                self.queue_sync_after = self.root.after(30000, self.sync_cloud_queue)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _selected_task(self):
+        selected = self.queue_tree.selection()
+        if not selected or not self.cloud_queue:
+            return None
+        return next((task for task in self.cloud_queue.get("tasks", []) if task.get("task_id") == selected[0]), None)
+
+    def _on_queue_select(self, _event=None):
+        task = self._selected_task()
+        if not task:
+            return
+        self.log(f"📌 選取 {task.get('book_title')}｜狀態={task.get('status')}｜Run={task.get('run_id') or '尚未建立'}")
+        if task.get("run_id"):
+            self.current_run_id = int(task["run_id"])
+            try:
+                self.current_repo, self.current_token = self._github_settings()
+                self.btn_cancel.config(state=tk.NORMAL if task.get("status") in {"running", "dispatching", "waiting_retry"} else tk.DISABLED)
+            except Exception:
+                pass
+
+    def _mutate_queue_async(self, callback, message):
+        def worker():
+            try:
+                store, _, _ = self._queue_store()
+                queue = store.mutate(callback, message)
+                self.cloud_queue = queue
+                self.root.after(0, lambda: self._render_queue(queue))
+                self._dispatch_queue_workflow()
+            except Exception as error:
+                self.root.after(0, lambda e=str(error): messagebox.showerror("雲端佇列", e))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _dispatch_queue_workflow(self):
+        _, repo, token = self._queue_store()
+        response = requests.post(
+            f"https://api.github.com/repos/{repo}/actions/workflows/queue-dispatcher.yml/dispatches",
+            headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}", "X-GitHub-Api-Version": "2022-11-28"},
+            json={"ref": "master"}, timeout=15,
+        )
+        if response.status_code not in (200, 204):
+            raise RuntimeError(f"無法啟動雲端調度器 ({response.status_code}): {response.text}")
+
+    def trigger_queue_dispatcher(self):
+        def worker():
+            try:
+                self._dispatch_queue_workflow()
+                self.root.after(0, lambda: self.log("✓ 已啟動一次雲端調度檢查"))
+            except Exception as error:
+                self.root.after(0, lambda e=str(error): messagebox.showerror("調度器", e))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def enqueue_current_task(self):
+        if not self.catalog_data:
+            messagebox.showwarning("提示", "請先解析小說目錄")
+            return
+        try:
+            start = int(self.entry_start.get())
+            end = int(self.entry_end.get())
+        except ValueError:
+            messagebox.showwarning("提示", "章節範圍必須是數字")
+            return
+        task = new_task(
+            self.url_entry.get().strip(), self.catalog_data.get("book_title", ""), start, end,
+            sorted(self.excluded_chapters),
+        )
+        self._mutate_queue_async(lambda queue: add_tasks(queue, [task]), f"Add {task['book_title']} to audiobook queue")
+
+    def open_batch_queue_dialog(self):
+        top = tk.Toplevel(self.root)
+        top.title("批量加入小說網址")
+        top.geometry("620x380")
+        ttk.Label(top, text="每行貼上一個小說目錄網址；系統會依行序解析並加入佇列。全部預設製作第 1 章到全書。") .pack(anchor=tk.W, padx=10, pady=8)
+        text_box = scrolledtext.ScrolledText(top, height=14)
+        text_box.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        def submit():
+            urls = [line.strip() for line in text_box.get("1.0", tk.END).splitlines() if line.strip()]
+            if not urls:
+                return
+            top.destroy()
+            self.log(f"正在解析並加入 {len(urls)} 部小說…")
+            def worker():
+                tasks = []
+                try:
+                    for url in urls:
+                        result = parse_catalog(url)
+                        if not result.get("success"):
+                            raise RuntimeError(f"解析失敗：{url}：{result.get('error')}")
+                        tasks.append(new_task(url, result["book_title"], 1, result["total_chapters"]))
+                    store, _, _ = self._queue_store()
+                    queue = store.mutate(lambda value: add_tasks(value, tasks), f"Batch add {len(tasks)} audiobook tasks")
+                    self.cloud_queue = queue
+                    self.root.after(0, lambda: self._render_queue(queue))
+                    self._dispatch_queue_workflow()
+                    self.root.after(0, lambda: self.log(f"✓ 已依順序加入 {len(tasks)} 部小說"))
+                except Exception as error:
+                    self.root.after(0, lambda e=str(error): messagebox.showerror("批量加入失敗", e))
+            threading.Thread(target=worker, daemon=True).start()
+        ttk.Button(top, text="依順序加入", style="Accent.TButton", command=submit).pack(pady=8)
+
+    def move_selected_task(self, delta):
+        task = self._selected_task()
+        if task:
+            self._mutate_queue_async(
+                lambda queue: move_task(queue, task["task_id"], int(task["position"]) + delta),
+                f"Move audiobook task {task['task_id']}",
+            )
+
+    def toggle_selected_task(self):
+        task = self._selected_task()
+        if not task:
+            return
+        new_status = "queued" if task.get("status") in {"paused", "stopped"} else "paused"
+        if task.get("status") in {"running", "dispatching", "waiting_retry"}:
+            messagebox.showinfo("提示", "執行中的小說請使用「停止」；暫停只適用於等待中的任務。")
+            return
+        self._mutate_queue_async(lambda queue: update_task(queue, task["task_id"], status=new_status), f"Set {task['task_id']} to {new_status}")
+
+    def stop_selected_task(self):
+        task = self._selected_task()
+        if not task:
+            return
+        run_id = task.get("run_id")
+        def worker():
+            try:
+                store, repo, token = self._queue_store()
+                if run_id:
+                    response = requests.post(
+                        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel",
+                        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}, timeout=15,
+                    )
+                    if response.status_code not in (200, 202, 409):
+                        raise RuntimeError(f"取消 Run 失敗 ({response.status_code}): {response.text}")
+                target_status = "stopped" if task.get("status") == "waiting_retry" or not run_id else "canceling"
+                queue = store.mutate(lambda value: update_task(value, task["task_id"], status=target_status, reason="user_cancelled"), f"Stop audiobook task {task['task_id']}")
+                self.cloud_queue = queue
+                self.root.after(0, lambda: self._render_queue(queue))
+                self._dispatch_queue_workflow()
+            except Exception as error:
+                self.root.after(0, lambda e=str(error): messagebox.showerror("停止失敗", e))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def delete_selected_task(self):
+        task = self._selected_task()
+        if not task or not messagebox.askyesno("確認刪除", f"刪除佇列任務「{task.get('book_title')}」？\n不會刪除既有 HF 或 YouTube 成品。"):
+            return
+        run_id = task.get("run_id")
+        def worker():
+            try:
+                store, repo, token = self._queue_store()
+                if run_id and task.get("status") in {"running", "dispatching", "waiting_retry", "canceling"}:
+                    requests.post(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel", headers={"Authorization": f"Bearer {token}"}, timeout=15)
+                queue = store.mutate(lambda value: delete_task(value, task["task_id"]), f"Delete audiobook task {task['task_id']}")
+                self.cloud_queue = queue
+                self.root.after(0, lambda: self._render_queue(queue))
+                self._dispatch_queue_workflow()
+            except Exception as error:
+                self.root.after(0, lambda e=str(error): messagebox.showerror("刪除失敗", e))
+        threading.Thread(target=worker, daemon=True).start()
 
     def log(self, message):
         timestamp = time.strftime("%H:%M:%S")

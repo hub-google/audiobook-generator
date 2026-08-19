@@ -1,0 +1,36 @@
+name: Audiobook Queue Dispatcher
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Audiobook Automation Pipeline (Parallel)"]
+    types: [completed]
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: audiobook-queue-dispatcher
+  cancel-in-progress: false
+
+jobs:
+  dispatch_once:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dispatcher dependencies
+        run: pip install requests
+
+      - name: Reconcile queue and perform one action
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QUEUE_STATE_BRANCH: automation-state
+        run: python src/queue_dispatcher.py

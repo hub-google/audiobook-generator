@@ -6,7 +6,7 @@ import json
 import os
 from urllib.parse import parse_qs, urlparse
 
-from .publication_checkpoint import GLOBAL_STEPS
+from .publication_checkpoint import GLOBAL_STEPS, PART_STEPS
 
 
 PENDING_FIELDS = (
@@ -95,6 +95,10 @@ def validate_upload_success(state_file, expected_run_id=None):
         record = part_records.get(str(int(part["part_num"]))) or {}
         if record.get("overall_status") != "completed":
             errors.append(f"Part {part['part_num']} publication ledger is not completed")
+        steps = record.get("steps") or {}
+        for step in PART_STEPS:
+            if (steps.get(step) or {}).get("status") != "completed":
+                errors.append(f"Part {part['part_num']} step {step} is not completed")
 
     if errors:
         raise RuntimeError("Strict success gate failed: " + "; ".join(errors))

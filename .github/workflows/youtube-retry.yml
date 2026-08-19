@@ -1,79 +1,22 @@
-name: YouTube upload retry scheduler
+name: Legacy YouTube Retry Redirect
 
 on:
-  schedule:
-    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 permissions:
   actions: write
-  contents: read
-
-concurrency:
-  group: youtube-retry-check
-  cancel-in-progress: false
+  contents: write
 
 jobs:
-  retry_failed_run:
-    name: Check latest audiobook run once
+  redirect:
     runs-on: ubuntu-latest
     steps:
-      - name: Retry only when eligible, then stop permanently on success
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+      - name: Run task-aware retry dispatcher once
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPOSITORY: ${{ github.repository }}
-          PRODUCTION_WORKFLOW: audiobook.yml
-          RETRY_WORKFLOW: youtube-retry.yml
-        run: |
-          latest_run=$(gh run list \
-            --repo "$REPOSITORY" \
-            --workflow "$PRODUCTION_WORKFLOW" \
-            --event workflow_dispatch \
-            --limit 1 \
-            --json databaseId,status,conclusion,updatedAt \
-            --jq '.[0] // {}')
-
-          run_id=$(jq -r '.databaseId // empty' <<< "$latest_run")
-          status=$(jq -r '.status // empty' <<< "$latest_run")
-          conclusion=$(jq -r '.conclusion // empty' <<< "$latest_run")
-          updated_at=$(jq -r '.updatedAt // empty' <<< "$latest_run")
-
-          echo "## Automatic retry check" >> "$GITHUB_STEP_SUMMARY"
-          if [ -z "$run_id" ]; then
-            echo "No manually-started audiobook run was found." >> "$GITHUB_STEP_SUMMARY"
-          elif [ "$status" != "completed" ]; then
-            echo "Run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) is still $status; no duplicate run was started." >> "$GITHUB_STEP_SUMMARY"
-          elif [ "$conclusion" = "success" ]; then
-            echo "### ✅ Upload success confirmed" >> "$GITHUB_STEP_SUMMARY"
-            echo "The strict success gate passed. Disabling this retry workflow now." >> "$GITHUB_STEP_SUMMARY"
-            gh workflow disable "$RETRY_WORKFLOW" --repo "$REPOSITORY"
-            echo "**Result:** No retry was started, no YouTube API request was made, and no future scheduled check will be created." >> "$GITHUB_STEP_SUMMARY"
-          elif [ "$conclusion" = "failure" ]; then
-            run_attempt=$(gh run view "$run_id" --repo "$REPOSITORY" --json attempt --jq '.attempt // 1')
-            now_epoch=$(date -u +%s)
-            updated_epoch=$(date -d "$updated_at" +%s)
-            eligible_epoch=$((updated_epoch + 7200))
-            retry_reason="otherError"
-
-            retry_line=$(gh run view "$run_id" --repo "$REPOSITORY" --log-failed 2>/dev/null |
-              grep -oE 'retry after [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+[+-][0-9:]+|retry_at=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+[+-][0-9:]+' |
-              tail -n 1 || true)
-            retry_at=$(sed -E 's/^retry after |^retry_at=//' <<< "$retry_line")
-            if [ -n "$retry_at" ]; then
-              parsed_retry_epoch=$(date -d "$retry_at" +%s 2>/dev/null || true)
-              if [ -n "$parsed_retry_epoch" ]; then
-                eligible_epoch=$parsed_retry_epoch
-                retry_reason="YouTubeDailyLimit"
-              fi
-            fi
-
-            if [ "$now_epoch" -lt "$eligible_epoch" ]; then
-              remaining_minutes=$(((eligible_epoch - now_epoch + 59) / 60))
-              eligible_at=$(date -u -d "@$eligible_epoch" +'%Y-%m-%dT%H:%M:%SZ')
-              echo "Run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) is waiting for **$retry_reason** (attempt $run_attempt). Eligible at **$eligible_at**, in about $remaining_minutes minute(s). No YouTube request was made." >> "$GITHUB_STEP_SUMMARY"
-            else
-              gh run rerun "$run_id" --failed --repo "$REPOSITORY"
-              echo "Re-running failed jobs from [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) (attempt $run_attempt → $((run_attempt+1))). Existing checkpoints will be reused." >> "$GITHUB_STEP_SUMMARY"
-            fi
-          else
-            echo "Latest manual run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) concluded with **$conclusion**; no retry was started." >> "$GITHUB_STEP_SUMMARY"
-          fi
+        run: python src/queue_dispatcher.py

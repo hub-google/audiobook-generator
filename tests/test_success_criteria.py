@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from src.success_criteria import validate_upload_success
-from src.publication_checkpoint import GLOBAL_STEPS
+from src.publication_checkpoint import GLOBAL_STEPS, PART_STEPS
 
 
 class StrictSuccessCriteriaTests(unittest.TestCase):
@@ -26,7 +26,10 @@ class StrictSuccessCriteriaTests(unittest.TestCase):
             "source_run_id": "123",
             "plan_status": "locked",
             "global_steps": {step: {"status": "completed"} for step in GLOBAL_STEPS},
-            "parts": {"1": {"overall_status": "completed"}},
+            "parts": {"1": {
+                "overall_status": "completed",
+                "steps": {step: {"status": "completed"} for step in PART_STEPS},
+            }},
         }
         with open(state_path, "w", encoding="utf-8") as handle:
             json.dump(state, handle)
@@ -57,6 +60,18 @@ class StrictSuccessCriteriaTests(unittest.TestCase):
             state_path = self.write_evidence(directory)
             with self.assertRaisesRegex(RuntimeError, "does not match source run"):
                 validate_upload_success(state_path, expected_run_id="999")
+
+    def test_rejects_missing_hugging_face_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = self.write_evidence(directory)
+            execution_path = os.path.join(directory, "part_execution.json")
+            with open(execution_path, encoding="utf-8") as handle:
+                execution = json.load(handle)
+            execution["parts"]["1"]["steps"]["archive_hf"]["status"] = "failed"
+            with open(execution_path, "w", encoding="utf-8") as handle:
+                json.dump(execution, handle)
+            with self.assertRaisesRegex(RuntimeError, "archive_hf"):
+                validate_upload_success(state_path, expected_run_id="123")
 
 
 if __name__ == "__main__":
