@@ -415,14 +415,99 @@ jobs:
           PY
 
 # ─────────────────────────────────────────────────────────────
-# Automatic YouTube API Upload & Playlist Builder (無直播，純 API 暴速上傳)
+# Plan and merge every Part before any external publication
+# ─────────────────────────────────────────────────────────────
+  plan_parts:
+    name: "🧭 Lock the complete Part plan"
+    needs: [setup, process_chapters]
+    if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.process_chapters.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      part_count: ${{ steps.plan.outputs.part_count }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install merge dependencies
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg
+          pip install -r requirements.txt
+      - name: Download locked source configuration
+        uses: actions/download-artifact@v4
+        with:
+          name: shared-config
+          path: prepared_source
+      - name: Inventory every chapter and lock the complete plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python src/prepare_parts.py \
+            --mode plan \
+            --run-id "${{ github.run_id }}" \
+            --repo "${{ github.repository }}" \
+            --config prepared_source/config.yaml \
+            --output-dir prepared_plan \
+            --work-dir temp_part_inventory \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Publish immutable Part plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: prepared-plan
+          path: prepared_plan/
+          if-no-files-found: error
+          retention-days: 7
+
+  merge_parts:
+    name: "🧩 Merge worker ${{ matrix.merge_worker_id }} — Parts ${{ matrix.part_numbers }}"
+    needs: plan_parts
+    strategy:
+      fail-fast: false
+      max-parallel: 17
+      matrix: ${{ fromJSON(needs.plan_parts.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install merge dependencies
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg
+          pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: prepared-plan
+          path: prepared_plan
+      - name: Merge only assigned locked Parts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
+        run: |
+          python src/prepare_parts.py \
+            --mode merge \
+            --repo "${{ github.repository }}" \
+            --plan prepared_plan/parts-plan.json \
+            --part-numbers "${{ matrix.part_numbers }}" \
+            --output-dir prepared_parts \
+            --work-dir temp_merge_worker
+
+# ─────────────────────────────────────────────────────────────
+# Ordered HF and YouTube publisher; this job never merges chapters
 # ─────────────────────────────────────────────────────────────
   upload_to_youtube:
-    name: "📤 Automatic YouTube API Upload (Video + Subtitles + Playlist)"
-    needs: [setup, process_chapters]
+    name: "📤 Ordered HF + YouTube publication"
+    needs: [setup, process_chapters, plan_parts, merge_parts]
     # Scheduled runs only check whether the latest manual run needs a retry.
     # They do not create worker artifacts, so never start the uploader for them.
-    if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success'
+    if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.merge_parts.result == 'success'
     runs-on: ubuntu-latest
 
     steps:
@@ -466,6 +551,22 @@ jobs:
           restore-keys: |
             youtube-upload-state-source-${{ github.run_id }}-
 
+      - name: Download immutable Part plan
+        uses: actions/download-artifact@v4
+        with:
+          name: prepared-plan
+          path: prepared_plan
+
+      - name: Fetch and verify merge-complete Parts from HF
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
+        run: |
+          python src/prepare_parts.py \
+            --mode fetch \
+            --plan prepared_plan/parts-plan.json \
+            --output-dir prepared_parts
+
       - name: Run YouTube API Uploader
         env:
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
@@ -475,10 +576,11 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
+          HF_MEDIA_PREUPLOADED: "true"
           QUEUE_TASK_ID: ${{ github.event.inputs.queue_task_id }}
         run: |
           set +e
-          python src/youtube_api_uploader.py --run-id "${{ github.run_id }}" --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
+          python src/youtube_api_uploader.py --run-id "${{ github.run_id }}" --input-dir prepared_parts --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
           code=$?
           set -e
 
@@ -609,21 +711,27 @@ jobs:
   strict_success_gate:
     name: "Strict final success gate"
     if: always() && github.event_name == 'workflow_dispatch'
-    needs: [setup, process_chapters, upload_to_youtube]
+    needs: [setup, process_chapters, plan_parts, merge_parts, upload_to_youtube]
     runs-on: ubuntu-latest
     steps:
       - name: Require every production job to succeed
         env:
           SETUP_RESULT: ${{ needs.setup.result }}
           WORKERS_RESULT: ${{ needs.process_chapters.result }}
+          PLAN_RESULT: ${{ needs.plan_parts.result }}
+          MERGE_RESULT: ${{ needs.merge_parts.result }}
           YOUTUBE_RESULT: ${{ needs.upload_to_youtube.result }}
         run: |
           echo "## Strict final success gate" >> "$GITHUB_STEP_SUMMARY"
           echo "- Setup: **$SETUP_RESULT**" >> "$GITHUB_STEP_SUMMARY"
           echo "- All chapter workers: **$WORKERS_RESULT**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Complete Part plan: **$PLAN_RESULT**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Parallel Part merge and HF media upload: **$MERGE_RESULT**" >> "$GITHUB_STEP_SUMMARY"
           echo "- YouTube video/subtitle/playlist publication: **$YOUTUBE_RESULT**" >> "$GITHUB_STEP_SUMMARY"
           if [ "$SETUP_RESULT" != "success" ] || \
              [ "$WORKERS_RESULT" != "success" ] || \
+             [ "$PLAN_RESULT" != "success" ] || \
+             [ "$MERGE_RESULT" != "success" ] || \
              [ "$YOUTUBE_RESULT" != "success" ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "❌ The audiobook is incomplete. This run must remain failed." >> "$GITHUB_STEP_SUMMARY"
