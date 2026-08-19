@@ -207,8 +207,14 @@ class AudiobookGUIApp:
         ttk.Button(buttons, text="批量加入網址", command=self.open_batch_queue_dialog).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="↑", width=3, command=lambda: self.move_selected_task(-1)).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="↓", width=3, command=lambda: self.move_selected_task(1)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(buttons, text="暫停/恢復", command=self.toggle_selected_task).pack(side=tk.LEFT, padx=2)
-        ttk.Button(buttons, text="取消本次 Run", command=self.stop_selected_task).pack(side=tk.LEFT, padx=2)
+        self.btn_toggle_task = ttk.Button(
+            buttons, text="暫停/恢復", command=self.toggle_selected_task, state=tk.DISABLED,
+        )
+        self.btn_toggle_task.pack(side=tk.LEFT, padx=2)
+        self.btn_stop_task = ttk.Button(
+            buttons, text="取消本次 Run", command=self.stop_selected_task, state=tk.DISABLED,
+        )
+        self.btn_stop_task.pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="重新排程", command=self.requeue_selected_task).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="刪除", command=self.delete_selected_task).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="查看進度", command=self.open_selected_task_progress).pack(side=tk.LEFT, padx=2)
@@ -268,11 +274,26 @@ class AudiobookGUIApp:
             selected_task = next((item for item in queue.get("tasks", []) if item.get("task_id") == selected_id), None)
             if selected_task:
                 self._update_selected_task_status(selected_task)
+                self._update_queue_control_states(selected_task)
+        elif not selected_id:
+            self._update_queue_control_states(None)
 
     def _queue_status_text(self, task):
+        status = task.get("status") or "queued"
+        # Local control states are more useful than the last GitHub observation.
+        # In particular, the old observation can remain "running" for a few
+        # seconds after a cancellation request has been accepted.
+        local_labels = {
+            "canceling": "正在取消 Run",
+            "interrupted": "執行中斷",
+            "paused": "已暫停排程",
+            "stopped": "已停止",
+            "needs_attention": "需要處理",
+        }
+        if status in local_labels:
+            return local_labels[status]
         if task.get("run_id"):
             return observation_text(self.github_observations.get(task.get("task_id")))
-        status = task.get("status") or "queued"
         labels = {
             "queued": "等待中", "dispatching": "正在建立 Run", "running": "執行中",
             "waiting_retry": "等待安全重試", "needs_attention": "需要處理",
@@ -427,6 +448,7 @@ class AudiobookGUIApp:
     def _on_queue_select(self, _event=None):
         task = self._selected_task()
         if not task:
+            self._update_queue_control_states(None)
             return
         if task.get("run_id"):
             self.current_run_id = int(task["run_id"])
@@ -439,8 +461,20 @@ class AudiobookGUIApp:
             self.current_run_id = None
             self.btn_cancel.config(state=tk.DISABLED)
         self._update_selected_task_status(task)
+        self._update_queue_control_states(task)
         if task.get("task_id") != self.editing_task_id:
             self._load_queue_task_for_edit(task)
+
+    def _update_queue_control_states(self, task):
+        status = task.get("status") if task else None
+        self.btn_toggle_task.config(
+            state=tk.NORMAL if status in {"queued", "paused"} else tk.DISABLED,
+            text="恢復排程" if status == "paused" else "暫停排程",
+        )
+        self.btn_stop_task.config(
+            state=tk.NORMAL if status in {"running", "dispatching", "waiting_retry"} else tk.DISABLED,
+            text="正在取消…" if status == "canceling" else "取消本次 Run",
+        )
 
     def _update_selected_task_status(self, task):
         hf = task.get("hf_progress") or {}
@@ -840,7 +874,10 @@ class AudiobookGUIApp:
                 if success_message:
                     self.root.after(0, lambda m=success_message: self.log(m))
             except Exception as error:
-                self.root.after(0, lambda e=str(error): messagebox.showerror("雲端佇列", e))
+                def show_error(detail=str(error)):
+                    self._update_queue_control_states(self._selected_task())
+                    messagebox.showerror("雲端佇列", detail)
+                self.root.after(0, show_error)
         threading.Thread(target=worker, daemon=True).start()
 
     def _dispatch_queue_workflow(self):
@@ -996,15 +1033,20 @@ class AudiobookGUIApp:
     def toggle_selected_task(self):
         task = self._selected_task()
         if not task:
+            messagebox.showinfo("暫停／恢復", "請先選取一筆小說任務。")
             return
         if task.get("status") not in {"queued", "paused"}:
-            messagebox.showinfo("提示", "這個狀態不能暫停；Run 中斷後請使用「重新排程」。")
+            messagebox.showinfo("暫停／恢復", "只有等待中的任務可以暫停；執行中的任務請使用「取消本次 Run」。")
             return
         new_status = "queued" if task.get("status") == "paused" else "paused"
-        if task.get("status") in {"running", "dispatching", "waiting_retry"}:
-            messagebox.showinfo("提示", "執行中的小說請使用「停止」；暫停只適用於等待中的任務。")
-            return
-        self._mutate_queue_async(lambda queue: update_task(queue, task["task_id"], status=new_status), f"Set {task['task_id']} to {new_status}")
+        action = "恢復排程" if new_status == "queued" else "暫停排程"
+        self.btn_toggle_task.config(state=tk.DISABLED, text=f"正在{action}…")
+        self.selected_status_var.set(f"《{task.get('book_title') or '小說任務'}》｜正在{action}…")
+        self._mutate_queue_async(
+            lambda queue: update_task(queue, task["task_id"], status=new_status),
+            f"Set {task['task_id']} to {new_status}",
+            f"✓ {task.get('book_title') or '小說任務'}：已{action}",
+        )
 
     def requeue_selected_task(self):
         task = self._selected_task()
@@ -1023,8 +1065,26 @@ class AudiobookGUIApp:
     def stop_selected_task(self):
         task = self._selected_task()
         if not task:
+            messagebox.showinfo("取消本次 Run", "請先選取一筆正在執行的小說任務。")
+            return
+        if task.get("status") not in {"running", "dispatching", "waiting_retry"}:
+            messagebox.showinfo("取消本次 Run", "這筆任務目前沒有可取消的 Run。")
+            return
+        title = task.get("book_title") or "小說任務"
+        if not messagebox.askyesno("確認取消", f"要取消「{title}」目前這一次 Run 嗎？\n任務會保留，之後可以重新排程。"):
             return
         run_id = task.get("run_id")
+        self.btn_stop_task.config(state=tk.DISABLED, text="正在送出取消…")
+        self.selected_status_var.set(f"《{title}》｜正在向 GitHub 送出取消要求…")
+        self.log(f"🛑 正在取消 {title} 的 Run {run_id or '（尚未建立）'}…")
+
+        def fail_stop(detail):
+            current = self._selected_task()
+            self._update_queue_control_states(current)
+            if current:
+                self._update_selected_task_status(current)
+            messagebox.showerror("取消 Run 失敗", detail)
+
         def worker():
             try:
                 store, repo, token = self._queue_store()
@@ -1033,15 +1093,26 @@ class AudiobookGUIApp:
                         f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel",
                         headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}, timeout=15,
                     )
-                    if response.status_code not in (200, 202, 409):
+                    if response.status_code == 409:
+                        raise RuntimeError("GitHub 拒絕取消：這個 Run 可能已經結束，或目前狀態不能取消。請按「立即同步」確認最新狀態。")
+                    if response.status_code not in (200, 202):
                         raise RuntimeError(f"取消 Run 失敗 ({response.status_code}): {response.text}")
                 target_status = "stopped" if task.get("status") == "waiting_retry" or not run_id else "canceling"
                 queue = store.mutate(lambda value: update_task(value, task["task_id"], status=target_status, reason="user_cancelled"), f"Stop audiobook task {task['task_id']}")
                 self.cloud_queue = queue
                 self.root.after(0, lambda: self._render_queue(queue))
-                self._dispatch_queue_workflow()
+                self.root.after(0, lambda: self.log(
+                    f"✓ GitHub 已接受 {title} 的取消要求；正在等待 Run 停止。"
+                    if run_id else f"✓ {title} 已停止，不會建立新的 Run。"
+                ))
+                try:
+                    self._dispatch_queue_workflow()
+                except Exception as dispatch_error:
+                    self.root.after(0, lambda e=str(dispatch_error): self.log(
+                        f"⚠ 取消要求已完成，但調度器暫時無法啟動：{e}"
+                    ))
             except Exception as error:
-                self.root.after(0, lambda e=str(error): messagebox.showerror("停止失敗", e))
+                self.root.after(0, lambda e=str(error): fail_stop(e))
         threading.Thread(target=worker, daemon=True).start()
 
     def delete_selected_task(self):
