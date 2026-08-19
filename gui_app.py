@@ -34,6 +34,8 @@ class AudiobookGUIApp:
         self.cloud_queue = None
         self.queue_syncing = False
         self.queue_sync_after = None
+        self.task_progress_windows = {}
+        self.queue_status_cache = {}
 
         self._setup_style()
         self._build_ui()
@@ -161,6 +163,7 @@ class AudiobookGUIApp:
             self.queue_tree.column(key, width=widths[key], anchor=tk.CENTER if key != "book" else tk.W)
         self.queue_tree.pack(fill=tk.X, padx=5, pady=5)
         self.queue_tree.bind("<<TreeviewSelect>>", self._on_queue_select)
+        self.queue_tree.bind("<Double-1>", self.open_selected_task_progress)
 
         buttons = ttk.Frame(section)
         buttons.pack(fill=tk.X, padx=5, pady=(0, 5))
@@ -170,6 +173,7 @@ class AudiobookGUIApp:
         ttk.Button(buttons, text="暫停/恢復", command=self.toggle_selected_task).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="停止", command=self.stop_selected_task).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="刪除", command=self.delete_selected_task).pack(side=tk.LEFT, padx=2)
+        ttk.Button(buttons, text="查看進度", command=self.open_selected_task_progress).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="立即同步", command=self.sync_cloud_queue).pack(side=tk.RIGHT, padx=2)
         ttk.Button(buttons, text="執行調度檢查", command=self.trigger_queue_dispatcher).pack(side=tk.RIGHT, padx=2)
 
@@ -201,6 +205,20 @@ class AudiobookGUIApp:
                 f"{yt.get('completed', 0)}/{yt.get('total', 0)}",
                 task.get("run_id") or "—",
             ))
+            previous = self.queue_status_cache.get(task["task_id"])
+            current = (task.get("status"), task.get("run_id"))
+            if previous != current:
+                status, run_id = current
+                title = task.get("book_title") or "待解析"
+                if status == "running" and run_id:
+                    self.log(f"🚀 {title} 已開始執行｜Run {run_id}")
+                elif status == "completed":
+                    self.log(f"✅ {title} 製作完成")
+                elif status == "waiting_retry":
+                    self.log(f"⏳ {title} 暫停等待安全重試")
+                elif status == "needs_attention":
+                    self.log(f"⚠ {title} 需要處理：{task.get('reason') or '未知原因'}")
+            self.queue_status_cache[task["task_id"]] = current
         if selected_id and self.queue_tree.exists(selected_id):
             self.queue_tree.selection_set(selected_id)
 
@@ -237,7 +255,6 @@ class AudiobookGUIApp:
         task = self._selected_task()
         if not task:
             return
-        self.log(f"📌 選取 {task.get('book_title')}｜狀態={task.get('status')}｜Run={task.get('run_id') or '尚未建立'}")
         if task.get("run_id"):
             self.current_run_id = int(task["run_id"])
             try:
@@ -245,32 +262,306 @@ class AudiobookGUIApp:
                 self.btn_cancel.config(state=tk.NORMAL if task.get("status") in {"running", "dispatching", "waiting_retry"} else tk.DISABLED)
             except Exception:
                 pass
-            self._show_selected_run_snapshot(task)
+        else:
+            self.current_run_id = None
+            self.btn_cancel.config(state=tk.DISABLED)
 
-    def _show_selected_run_snapshot(self, task):
-        def worker():
+    def open_selected_task_progress(self, _event=None):
+        task = self._selected_task()
+        if not task:
+            messagebox.showinfo("查看進度", "請先選取一個小說任務。")
+            return
+        self._open_task_progress(task)
+
+    def _open_task_progress(self, task):
+        task_id = task["task_id"]
+        existing = self.task_progress_windows.get(task_id)
+        if existing and existing["top"].winfo_exists():
+            existing["top"].deiconify()
+            existing["top"].lift()
+            existing["top"].focus_force()
+            return
+
+        top = tk.Toplevel(self.root)
+        top.title(f"{task.get('book_title') or '小說任務'}｜Run {task.get('run_id') or '等待建立'}")
+        top.geometry("900x680")
+        top.minsize(720, 480)
+
+        frame = ttk.Frame(top, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        title_var = tk.StringVar(value=f"📖 {task.get('book_title') or '待解析'}")
+        ttk.Label(frame, textvariable=title_var, style="Title.TLabel").pack(anchor=tk.W)
+        summary_var = tk.StringVar(value="正在取得雲端狀態…")
+        ttk.Label(frame, textvariable=summary_var, style="Header.TLabel").pack(anchor=tk.W, pady=(5, 8))
+
+        log_box = scrolledtext.ScrolledText(
+            frame, background="#1e1e1e", foreground="#dcdcdc", font=("Consolas", 10), wrap=tk.WORD
+        )
+        log_box.pack(fill=tk.BOTH, expand=True)
+        log_box.tag_config("hyperlink", foreground="#4da6ff", underline=1)
+        log_box.tag_config("success", foreground="#44bd32")
+        log_box.tag_config("warning", foreground="#e1b12c")
+        log_box.tag_config("error", foreground="#e84118")
+        log_box.tag_bind("hyperlink", "<Enter>", lambda _event: log_box.config(cursor="hand2"))
+        log_box.tag_bind("hyperlink", "<Leave>", lambda _event: log_box.config(cursor=""))
+        close_event = threading.Event()
+
+        state = {
+            "top": top, "task": dict(task), "title_var": title_var, "summary_var": summary_var,
+            "log": log_box, "close_event": close_event, "seen": set(), "job_states": {},
+            "completed_logs": set(), "last_log_check": {}, "run_announced": None, "link_counter": 0,
+        }
+        self.task_progress_windows[task_id] = state
+
+        def close_window():
+            close_event.set()
+            self.task_progress_windows.pop(task_id, None)
+            if top.winfo_exists():
+                top.destroy()
+
+        top.protocol("WM_DELETE_WINDOW", close_window)
+        ttk.Button(frame, text="關閉視窗（不停止雲端任務）", command=close_window).pack(anchor=tk.E, pady=(8, 0))
+
+        self._append_task_log(task_id, f"🚀 任務：{task.get('book_title') or '待解析'}")
+        self._append_task_log(
+            task_id,
+            f"📚 製作範圍：第 {task.get('start_chapter') or 1}～{task.get('end_chapter') or '全部'} 章",
+        )
+        if task.get("excluded_chapters"):
+            self._append_task_log(task_id, f"🚫 排除章節：{', '.join(map(str, task['excluded_chapters']))}")
+        if not task.get("run_id"):
+            self._append_task_log(task_id, "⏳ 已加入雲端佇列，正在等待前一個任務完成…", "warning")
+        threading.Thread(target=self._poll_task_progress, args=(task_id,), daemon=True).start()
+
+    def _append_task_log(self, task_id, message, style=None, url=None):
+        state = self.task_progress_windows.get(task_id)
+        if not state or state["close_event"].is_set() or not state["top"].winfo_exists():
+            return
+        box = state["log"]
+        timestamp = time.strftime("%H:%M:%S")
+        box.insert(tk.END, f"[{timestamp}] ")
+        if url:
+            box.insert(tk.END, message + "\n")
+            state["link_counter"] += 1
+            tag = f"url_{state['link_counter']}"
+            box.insert(tk.END, url, ("hyperlink", tag))
+            box.tag_bind(tag, "<Button-1>", lambda _event, target=url: webbrowser.open(target))
+            box.insert(tk.END, "\n")
+        else:
+            box.insert(tk.END, message + "\n", (style,) if style else ())
+        box.see(tk.END)
+
+    def _task_from_current_queue(self, task_id, fallback):
+        if self.cloud_queue:
+            current = next((item for item in self.cloud_queue.get("tasks", []) if item.get("task_id") == task_id), None)
+            if current:
+                return dict(current)
+        return dict(fallback)
+
+    @staticmethod
+    def _job_display_status(job):
+        status = job.get("status")
+        conclusion = job.get("conclusion")
+        if status == "completed":
+            return {
+                "success": "✅ 完成", "failure": "❌ 失敗", "cancelled": "🛑 已取消",
+                "skipped": "⏭️ 已略過",
+            }.get(conclusion, f"完成（{conclusion or '未知'}）")
+        return {"queued": "⏳ 等待中", "in_progress": "⚡ 執行中"}.get(status, status or "未知")
+
+    def _apply_task_snapshot(self, task_id, task, run_data, jobs, marker_events):
+        state = self.task_progress_windows.get(task_id)
+        if not state or state["close_event"].is_set() or not state["top"].winfo_exists():
+            return
+        state["task"] = dict(task)
+        run_id = run_data.get("id")
+        run_url = run_data.get("html_url")
+        if state["run_announced"] != run_id:
+            state["run_announced"] = run_id
+            state["top"].title(f"{task.get('book_title') or '小說任務'}｜Run {run_id}")
+            self._append_task_log(task_id, f"🔗 GitHub Run #{run_id}（點擊開啟）", url=run_url)
+            self._append_task_log(task_id, f"↻ 目前雲端執行輪次：Run attempt {run_data.get('run_attempt', 1)}")
+
+        setup_jobs = [job for job in jobs if "Parse Catalog" in (job.get("name") or "")]
+        worker_jobs = [job for job in jobs if re.search(r"Worker\s+\d+", job.get("name") or "", re.I)]
+        completed_workers = sum(
+            1 for job in worker_jobs if job.get("status") == "completed" and job.get("conclusion") == "success"
+        )
+        hf = task.get("hf_progress") or {}
+        youtube = task.get("youtube_progress") or {}
+        run_status = run_data.get("conclusion") or run_data.get("status") or "未知"
+        state["summary_var"].set(
+            f"狀態：{run_status}　｜　Workers：{completed_workers}/{len(worker_jobs)}　｜　"
+            f"HF：{hf.get('completed', 0)}/{hf.get('total', 0)}　｜　"
+            f"YouTube：{youtube.get('completed', 0)}/{youtube.get('total', 0)}"
+        )
+
+        ordered_jobs = setup_jobs + worker_jobs + [
+            job for job in jobs if job not in setup_jobs and job not in worker_jobs and job.get("conclusion") != "skipped"
+        ]
+        for job in ordered_jobs:
+            name = job.get("name") or "未命名 Job"
+            key = (job.get("status"), job.get("conclusion"))
+            if state["job_states"].get(name) == key:
+                continue
+            state["job_states"][name] = key
+            display = self._job_display_status(job)
+            if "Parse Catalog" in name:
+                if job.get("status") == "in_progress":
+                    message = "🔍 正在解析小說目錄並建立 Worker 分工…"
+                elif job.get("conclusion") == "success":
+                    message = f"✅ 目錄解析完成，已建立 {len(worker_jobs)} 個 Worker"
+                else:
+                    message = f"🔍 目錄解析：{display}"
+            else:
+                message = f"{name}｜{display}"
+            style = "error" if job.get("conclusion") == "failure" else "success" if job.get("conclusion") == "success" else None
+            self._append_task_log(task_id, message, style)
+
+            if "Parse Catalog" in name:
+                for step in job.get("steps") or []:
+                    step_name = step.get("name") or ""
+                    if not re.search(r"parse|catalog|matrix|目錄|解析", step_name, re.I):
+                        continue
+                    step_key = f"setup-step:{step_name}"
+                    step_state = (step.get("status"), step.get("conclusion"))
+                    if state["job_states"].get(step_key) == step_state:
+                        continue
+                    state["job_states"][step_key] = step_state
+                    self._append_task_log(
+                        task_id, f"   └─ {step_name}｜{self._job_display_status(step)}",
+                        "error" if step.get("conclusion") == "failure" else
+                        "success" if step.get("conclusion") == "success" else None,
+                    )
+
+        for marker_key, message, style in marker_events:
+            if marker_key not in state["seen"]:
+                state["seen"].add(marker_key)
+                self._append_task_log(task_id, message, style)
+
+        terminal = run_data.get("status") == "completed"
+        terminal_key = ("run_terminal", run_data.get("conclusion"))
+        if terminal and terminal_key not in state["seen"]:
+            state["seen"].add(terminal_key)
+            conclusion = run_data.get("conclusion")
+            if conclusion == "success":
+                self._append_task_log(task_id, "🎉 雲端任務已全部完成。", "success")
+            else:
+                self._append_task_log(task_id, f"❌ 雲端任務結束：{conclusion or '未知結果'}", "error")
+
+    @staticmethod
+    def _parse_task_log_markers(text, job_id):
+        events = []
+        for worker, chapters, progress in re.findall(
+            r"\[PROGRESS_MARKER\] Worker-(\d+) \| Ch (\S+) (?:complete|done) \((\d+/\d+)\)", text
+        ):
+            events.append((f"{job_id}:worker:{worker}:{chapters}:{progress}",
+                           f"⚡ Worker {worker}｜第 {chapters} 章｜✅ 合成完成（進度 {progress}）", "success"))
+        for action, part, chapters, detail in re.findall(
+            r"\[API_UPLOAD_MARKER\] (START|DONE) \| Part (\S+) \| Ch (\S+) \| (.+)", text
+        ):
+            icon = "▶️" if action == "START" else "✅"
+            label = "開始上傳" if action == "START" else "上傳完成並加入播放清單"
+            events.append((f"{job_id}:youtube:{action}:{part}:{chapters}",
+                           f"📤 YouTube Part {part}｜第 {chapters} 章｜{icon} {label}（{detail.strip()}）",
+                           "success" if action == "DONE" else None))
+        for part in re.findall(r"\[HF_ARCHIVE_MARKER\] DONE \| Part (\d+)", text):
+            events.append((f"{job_id}:hf:{part}", f"📦 Hugging Face Part {part}｜✅ 備份完成", "success"))
+        for summary_text in re.findall(r"\[RUN_SUMMARY\] (\{[^\r\n]+\})", text):
             try:
-                repo, token = self._github_settings()
-                headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
-                run_id = int(task["run_id"])
-                run = requests.get(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}", headers=headers, timeout=15)
-                run.raise_for_status()
-                jobs = requests.get(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100", headers=headers, timeout=15)
-                jobs.raise_for_status()
-                run_data = run.json()
-                job_data = jobs.json().get("jobs", [])
-                summary = "、".join(
-                    f"{item.get('name')}={item.get('conclusion') or item.get('status')}" for item in job_data
-                ) or "Jobs 尚未建立"
-                url = run_data.get("html_url") or f"https://github.com/{repo}/actions/runs/{run_id}"
-                self.root.after(0, lambda: self.log(
-                    f"🔎 {task.get('book_title')} Run {run_id}：{run_data.get('conclusion') or run_data.get('status')}｜{summary}｜{url}"
-                ))
-            except Exception as error:
-                self.root.after(0, lambda e=str(error): self.log(f"⚠ 無法讀取選定 Run 詳情：{e}"))
-        threading.Thread(target=worker, daemon=True).start()
+                summary = json.loads(summary_text)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if summary.get("kind") == "worker":
+                message = f"📋 Worker {summary.get('worker')} 摘要｜完成 {summary.get('completed')}/{summary.get('total')} 章"
+            else:
+                message = f"📋 YouTube 摘要｜{summary.get('status')}｜完成 {summary.get('completed')}/{summary.get('total')} Parts"
+            events.append((f"{job_id}:summary:{summary_text}", message, None))
+        return events
 
-    def _mutate_queue_async(self, callback, message):
+    def _poll_task_progress(self, task_id):
+        state = self.task_progress_windows.get(task_id)
+        if not state:
+            return
+        close_event = state["close_event"]
+        try:
+            repo, token = self._github_settings()
+            headers = {
+                "Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+            while not close_event.is_set():
+                task = self._task_from_current_queue(task_id, state["task"])
+                run_id = task.get("run_id")
+                if not run_id:
+                    try:
+                        store, _, _ = self._queue_store()
+                        queue, _ = store.load()
+                        task = next((item for item in queue.get("tasks", []) if item.get("task_id") == task_id), task)
+                    except Exception:
+                        pass
+                    run_id = task.get("run_id")
+                    if not run_id:
+                        self.root.after(0, lambda tid=task_id, t=dict(task): self._update_waiting_task_summary(tid, t))
+                        close_event.wait(10)
+                        continue
+
+                run_response = requests.get(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}", headers=headers, timeout=15)
+                run_response.raise_for_status()
+                jobs_response = requests.get(
+                    f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100", headers=headers, timeout=15
+                )
+                jobs_response.raise_for_status()
+                run_data = run_response.json()
+                jobs = jobs_response.json().get("jobs", [])
+                marker_events = []
+                now = time.time()
+                for job in jobs:
+                    job_id = job.get("id")
+                    job_status = job.get("status")
+                    if not job_id or job_status not in {"in_progress", "completed"}:
+                        continue
+                    if job_status == "completed" and job_id in state["completed_logs"]:
+                        continue
+                    if job_status == "in_progress" and now - state["last_log_check"].get(job_id, 0) < 15:
+                        continue
+                    state["last_log_check"][job_id] = now
+                    try:
+                        log_response = requests.get(
+                            f"https://api.github.com/repos/{repo}/actions/jobs/{job_id}/logs",
+                            headers=headers, timeout=12, allow_redirects=True,
+                        )
+                        if log_response.status_code == 200:
+                            marker_events.extend(self._parse_task_log_markers(log_response.text, job_id))
+                            if job_status == "completed":
+                                state["completed_logs"].add(job_id)
+                    except requests.RequestException:
+                        pass
+                self.root.after(
+                    0, lambda tid=task_id, t=dict(task), rd=run_data, js=jobs, me=marker_events:
+                    self._apply_task_snapshot(tid, t, rd, js, me)
+                )
+                if run_data.get("status") == "completed":
+                    break
+                close_event.wait(10)
+        except Exception as error:
+            self.root.after(0, lambda tid=task_id, detail=str(error): self._task_progress_error(tid, detail))
+            if not close_event.wait(10):
+                threading.Thread(target=self._poll_task_progress, args=(task_id,), daemon=True).start()
+
+    def _update_waiting_task_summary(self, task_id, task):
+        state = self.task_progress_windows.get(task_id)
+        if state and state["top"].winfo_exists():
+            state["task"] = dict(task)
+            state["summary_var"].set(f"狀態：{task.get('status') or 'queued'}｜等待建立 GitHub Run")
+
+    def _task_progress_error(self, task_id, detail):
+        state = self.task_progress_windows.get(task_id)
+        if state and state["top"].winfo_exists():
+            state["summary_var"].set("暫時無法取得 GitHub 狀態；雲端任務不受影響")
+            self._append_task_log(task_id, f"⚠ GitHub 狀態同步失敗：{detail}", "warning")
+
+    def _mutate_queue_async(self, callback, message, success_message=None):
         def worker():
             try:
                 store, _, _ = self._queue_store()
@@ -278,6 +569,8 @@ class AudiobookGUIApp:
                 self.cloud_queue = queue
                 self.root.after(0, lambda: self._render_queue(queue))
                 self._dispatch_queue_workflow()
+                if success_message:
+                    self.root.after(0, lambda m=success_message: self.log(m))
             except Exception as error:
                 self.root.after(0, lambda e=str(error): messagebox.showerror("雲端佇列", e))
         threading.Thread(target=worker, daemon=True).start()
@@ -315,7 +608,11 @@ class AudiobookGUIApp:
             self.url_entry.get().strip(), self.catalog_data.get("book_title", ""), start, end,
             sorted(self.excluded_chapters),
         )
-        self._mutate_queue_async(lambda queue: add_tasks(queue, [task]), f"Add {task['book_title']} to audiobook queue")
+        self._mutate_queue_async(
+            lambda queue: add_tasks(queue, [task]),
+            f"Add {task['book_title']} to audiobook queue",
+            f"✓ 已加入任務：{task['book_title']}（第 {start}～{end} 章）",
+        )
 
     def open_batch_queue_dialog(self):
         top = tk.Toplevel(self.root)

@@ -5,7 +5,6 @@ import yaml
 
 
 WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "audiobook.yml"
-RETRY_WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "youtube-retry.yml"
 DISPATCHER_WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "queue-dispatcher.yml"
 
 
@@ -15,8 +14,6 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         cls.text = WORKFLOW_PATH.read_text(encoding="utf-8")
         parsed = yaml.safe_load(cls.text)
         cls.jobs = parsed["jobs"]
-        cls.retry_text = RETRY_WORKFLOW_PATH.read_text(encoding="utf-8")
-        cls.retry_jobs = yaml.safe_load(cls.retry_text)["jobs"]
         cls.dispatcher_text = DISPATCHER_WORKFLOW_PATH.read_text(encoding="utf-8")
         cls.dispatcher_jobs = yaml.safe_load(cls.dispatcher_text)["jobs"]
 
@@ -41,7 +38,6 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
     def test_schedule_is_isolated_from_manual_production_workflow(self):
         self.assertNotIn("schedule:", self.text)
         self.assertIn("schedule:", self.dispatcher_text)
-        self.assertNotIn("schedule:", self.retry_text)
         self.assertNotIn("workflow enable youtube-retry.yml", self.text)
         self.assertNotIn("workflow disable youtube-retry.yml", self.text)
 
