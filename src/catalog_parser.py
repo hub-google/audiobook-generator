@@ -92,8 +92,13 @@ def split_chapter_title(title):
     """
     value = normalize_chapter_title(title)
     spaced_number = rf"(?:{_NUMBER_TOKEN})(?:\s*(?:{_NUMBER_TOKEN}))*"
+    first_ordinal = rf"(?:第?\s*{spaced_number}\s*(?:{_ORDINAL_UNIT})\s*)"
+    # A following ordinal must explicitly start with `第`. This preserves
+    # identifiers such as `第一季第一集`, while preventing a title such as
+    # `第141章 一千萬話費` from treating `一千萬話` as another ordinal.
+    following_ordinal = rf"(?:第\s*{spaced_number}\s*(?:{_ORDINAL_UNIT})\s*)"
     structural = re.match(
-        rf"^(?P<identifier>(?:第?\s*{spaced_number}\s*(?:{_ORDINAL_UNIT})\s*)+)",
+        rf"^(?P<identifier>{first_ordinal}(?:{following_ordinal})*)",
         value,
     )
     special = re.match(
@@ -144,9 +149,10 @@ def parse_chapter_number(title):
 def analyze_duplicate_chapters(
     chapter_titles, chapter_urls=None, use_normalized_number=True, use_chapter_name=True,
 ):
-    """Mark later entries matching every enabled duplicate condition."""
+    """Mark later entries matching any enabled, non-empty duplicate condition."""
     urls = list(chapter_urls or [])
-    seen_keys = {}
+    seen_numbers = {}
+    seen_names = {}
     duplicate_indices = []
     duplicates = []
     chapter_numbers = []
@@ -157,19 +163,16 @@ def analyze_duplicate_chapters(
         number = parse_chapter_number(raw_title)
         chapter_numbers.append(number)
         normalized_name = normalize_chapter_name_for_comparison(parts["chapter_name"])
-        key_parts = []
         reasons = []
-        if use_normalized_number:
-            key_parts.append(normalized_number)
+        original_indices = set()
+        if use_normalized_number and normalized_number and normalized_number in seen_numbers:
             reasons.append("normalized_chapter_number")
-        if use_chapter_name:
-            key_parts.append(normalized_name)
+            original_indices.add(seen_numbers[normalized_number])
+        if use_chapter_name and normalized_name and normalized_name in seen_names:
             reasons.append("chapter_name_without_whitespace")
-        # Empty identifiers/names must not make unrelated unparseable rows repeat.
-        key = tuple(key_parts) if key_parts and any(key_parts) else None
-        original_index = seen_keys.get(key) if key is not None else None
+            original_indices.add(seen_names[normalized_name])
 
-        if original_index is not None:
+        if original_indices:
             duplicate_indices.append(index)
             duplicates.append({
                 "index": index,
@@ -179,10 +182,12 @@ def analyze_duplicate_chapters(
                 "normalized_chapter_number": normalized_number,
                 "chapter_name": parts["chapter_name"],
                 "reasons": list(reasons),
-                "original_indices": [original_index],
+                "original_indices": sorted(original_indices),
             })
-        if key is not None:
-            seen_keys.setdefault(key, index)
+        if use_normalized_number and normalized_number:
+            seen_numbers.setdefault(normalized_number, index)
+        if use_chapter_name and normalized_name:
+            seen_names.setdefault(normalized_name, index)
 
     return {
         "chapter_numbers": chapter_numbers,

@@ -57,7 +57,7 @@ class CatalogParserMatrixTests(unittest.TestCase):
         self.assertEqual(result["duplicate_indices"], [2])
         self.assertEqual(result["duplicate_chapter_count"], 1)
 
-    def test_duplicate_analysis_defaults_to_number_and_whitespace_free_name(self):
+    def test_duplicate_analysis_defaults_to_number_or_whitespace_free_name(self):
         titles = [
             "第243章 正常章節",
             "第244章 車神老呂",
@@ -69,9 +69,12 @@ class CatalogParserMatrixTests(unittest.TestCase):
 
         result = analyze_duplicate_chapters(titles, urls)
 
-        self.assertEqual(result["duplicate_indices"], [5])
-        self.assertEqual(result["duplicate_chapter_count"], 1)
+        self.assertEqual(result["duplicate_indices"], [3, 5])
+        self.assertEqual(result["duplicate_chapter_count"], 2)
         self.assertEqual(result["duplicate_chapters"][0]["reasons"], [
+            "normalized_chapter_number",
+        ])
+        self.assertEqual(result["duplicate_chapters"][1]["reasons"], [
             "normalized_chapter_number", "chapter_name_without_whitespace",
         ])
 
@@ -94,6 +97,7 @@ class CatalogParserMatrixTests(unittest.TestCase):
             "後記一 完結": ("後記一", "後記1", "完結"),
             "第一季第一集 新開始": ("第一季第一集", "第1季第1集", "新開始"),
             "第壹佰零貳章 名稱": ("第壹佰零貳章", "102", "名稱"),
+            "第141章 一千萬話費，問你怕不怕": ("第141章", "141", "一千萬話費,問你怕不怕"),
         }
         for title, expected in cases.items():
             with self.subTest(title=title):
@@ -117,7 +121,11 @@ class CatalogParserMatrixTests(unittest.TestCase):
             "第十章 原始", "第十章 修正版", "第10章 再修正版",
         ])
 
-        self.assertEqual(result["duplicate_indices"], [])
+        self.assertEqual(result["duplicate_indices"], [2, 3])
+        self.assertEqual(
+            [item["reasons"] for item in result["duplicate_chapters"]],
+            [["normalized_chapter_number"], ["normalized_chapter_number"]],
+        )
 
         result = analyze_duplicate_chapters(
             ["第十章 原始", "第十章 修正版", "第10章 再修正版"],
@@ -128,6 +136,22 @@ class CatalogParserMatrixTests(unittest.TestCase):
             [item["original_indices"] for item in result["duplicate_chapters"]],
             [[1], [1]],
         )
+
+    def test_duplicate_conditions_are_combined_with_or(self):
+        result = analyze_duplicate_chapters([
+            "第一章 甲", "第二章 乙", "第一章 乙",
+        ])
+
+        self.assertEqual(result["duplicate_indices"], [3])
+        self.assertEqual(result["duplicate_chapters"][0]["reasons"], [
+            "normalized_chapter_number", "chapter_name_without_whitespace",
+        ])
+        self.assertEqual(result["duplicate_chapters"][0]["original_indices"], [1, 2])
+
+    def test_empty_duplicate_values_are_ignored(self):
+        result = analyze_duplicate_chapters(["", "", "無編號標題", "另一個標題"])
+
+        self.assertEqual(result["duplicate_indices"], [])
 
     def test_selected_chapters_can_be_renumbered_without_losing_source_indices(self):
         with tempfile.TemporaryDirectory() as directory:

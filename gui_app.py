@@ -1349,7 +1349,7 @@ class AudiobookGUIApp:
             body.pack(fill=tk.BOTH, expand=True)
             pending_use_number = tk.BooleanVar(value=duplicate_use_number.get())
             pending_use_name = tk.BooleanVar(value=duplicate_use_name.get())
-            ttk.Label(body, text="勾選要同時符合的重複條件：").pack(anchor=tk.W, pady=(0, 8))
+            ttk.Label(body, text="勾選任一符合即視為重複的條件：").pack(anchor=tk.W, pady=(0, 8))
             ttk.Checkbutton(
                 body, text="網站章節數正規化", variable=pending_use_number,
             ).pack(anchor=tk.W, pady=3)
