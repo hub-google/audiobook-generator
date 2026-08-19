@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 24,
-  "updated_at": "2026-08-19T08:00:04.378934+00:00",
+  "revision": 25,
+  "updated_at": "2026-08-19T08:00:12.011852+00:00",
   "tasks": [
     {
       "task_id": "book-20260819-cfdccaa4",
@@ -85,7 +85,7 @@
         "total": 0
       },
       "created_at": "2026-08-19T02:46:37.628018+00:00",
-      "updated_at": "2026-08-19T08:00:04.378934+00:00",
+      "updated_at": "2026-08-19T08:00:12.011852+00:00",
       "run_conclusion": null,
       "run_completed_at": null,
       "run_history": [
