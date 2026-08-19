@@ -16,6 +16,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 try:
     from catalog_parser import analyze_duplicate_chapters, parse_catalog, split_chapter_title
+    from cleaner import chunk_text, clean_text_content
+    from crawler import fetch_chapter_text
     from cloud_queue import (
         BLOCKING_STATES, GitHubQueueStore, add_tasks, delete_task,
         mark_task_interrupted, move_task, move_tasks, new_task, requeue_task_after_active,
@@ -220,6 +222,17 @@ class AudiobookGUIApp:
         ttk.Button(buttons, text="查看進度", command=self.open_selected_task_progress).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="立即同步", command=self.sync_cloud_queue).pack(side=tk.RIGHT, padx=2)
         ttk.Button(buttons, text="執行調度檢查", command=self.trigger_queue_dispatcher).pack(side=tk.RIGHT, padx=2)
+
+        review_buttons = ttk.Frame(section)
+        review_buttons.pack(fill=tk.X, padx=5, pady=(0, 5))
+        self.btn_sample_text = ttk.Button(
+            review_buttons, text="🔍 抽查第一／中間／最後章 Raw 與 Clean",
+            command=self.open_text_sample, state=tk.DISABLED,
+        )
+        self.btn_sample_text.pack(side=tk.LEFT, padx=2)
+        ttk.Label(
+            review_buttons, text="語音品質檢查：Clean 欄就是 TTS 實際會朗讀的文字",
+        ).pack(side=tk.LEFT, padx=8)
 
     def _github_settings(self):
         load_dotenv(ENV_PATH, override=True)
@@ -493,6 +506,121 @@ class AudiobookGUIApp:
             state=tk.NORMAL if len(tasks) == 1 and statuses <= {"running", "dispatching", "waiting_retry"} else tk.DISABLED,
             text="正在取消…" if statuses == {"canceling"} else "取消本次 Run",
         )
+        self.btn_sample_text.config(state=tk.NORMAL if len(tasks) == 1 else tk.DISABLED)
+
+    @staticmethod
+    def _text_sample_chapters(task, catalog):
+        """Return first/lower-middle/last chapters after applying task filters."""
+        total = int(catalog.get("total_chapters") or len(catalog.get("chapters") or []))
+        start = max(1, int(task.get("start_chapter") or 1))
+        end = min(total, int(task.get("end_chapter") or total))
+        excluded = {int(value) for value in task.get("excluded_chapters") or []}
+        source_indices = [value for value in range(start, end + 1) if value not in excluded]
+        if not source_indices:
+            raise ValueError("這項任務的章節範圍已全部排除，沒有可抽查的章節。")
+        positions = [0, (len(source_indices) - 1) // 2, len(source_indices) - 1]
+        labels = ["第一章", "中間章", "最後一章"]
+        samples = []
+        for label, position in zip(labels, positions):
+            source_index = source_indices[position]
+            output_index = position + 1 if task.get("renumber_selected") else source_index
+            samples.append({
+                "label": label,
+                "source_index": source_index,
+                "output_index": output_index,
+                "url": catalog["base_url"] + catalog["chapters"][source_index - 1],
+                "catalog_title": catalog["chapter_titles"][source_index - 1],
+            })
+        return samples
+
+    @staticmethod
+    def _build_text_sample(raw_title, raw_body, book_title):
+        raw_text = raw_title + "\n\n" + raw_body
+        cleaned = clean_text_content(raw_body, raw_title, book_title)
+        return raw_text, chunk_text(cleaned, max_length=18)
+
+    def open_text_sample(self):
+        task = self._selected_task()
+        if not task:
+            messagebox.showinfo("抽查文字", "請先單選一本小說。")
+            return
+
+        top = tk.Toplevel(self.root)
+        top.title(f"Cleaner 文字抽查｜{task.get('book_title') or '待解析'}")
+        top.geometry("1120x760")
+        top.minsize(820, 520)
+        frame = ttk.Frame(top, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+        status_var = tk.StringVar(value="正在解析目錄並取得三個取樣章節…")
+        ttk.Label(frame, textvariable=status_var, style="Header.TLabel").pack(anchor=tk.W, pady=(0, 8))
+        notebook = ttk.Notebook(frame)
+        notebook.pack(fill=tk.BOTH, expand=True)
+        views = {}
+        for label in ("第一章", "中間章", "最後一章"):
+            page = ttk.Frame(notebook, padding=6)
+            notebook.add(page, text=label)
+            info_var = tk.StringVar(value="等待載入…")
+            ttk.Label(page, textvariable=info_var).pack(anchor=tk.W, pady=(0, 5))
+            panes = ttk.Panedwindow(page, orient=tk.HORIZONTAL)
+            panes.pack(fill=tk.BOTH, expand=True)
+            raw_frame = ttk.LabelFrame(panes, text="Raw TXT（爬蟲原始輸出）")
+            clean_frame = ttk.LabelFrame(panes, text="Clean TXT（TTS 實際輸入）")
+            raw_box = scrolledtext.ScrolledText(raw_frame, wrap=tk.WORD, font=("Microsoft JhengHei", 11))
+            clean_box = scrolledtext.ScrolledText(clean_frame, wrap=tk.WORD, font=("Microsoft JhengHei", 11))
+            raw_box.pack(fill=tk.BOTH, expand=True)
+            clean_box.pack(fill=tk.BOTH, expand=True)
+            panes.add(raw_frame, weight=1)
+            panes.add(clean_frame, weight=1)
+            views[label] = (info_var, raw_box, clean_box)
+
+        def show_error(detail):
+            status_var.set("抽查失敗")
+            messagebox.showerror("抽查文字失敗", detail, parent=top)
+
+        def render(results):
+            warnings = 0
+            for sample, raw_text, clean_text in results:
+                info_var, raw_box, clean_box = views[sample["label"]]
+                raw_chars = len(raw_text.strip())
+                clean_chars = len(clean_text.replace("\n", "").strip())
+                removed = max(0, raw_chars - clean_chars)
+                ratio = (removed / raw_chars * 100) if raw_chars else 0
+                warning = ""
+                if not clean_text.strip():
+                    warning = "　⚠ Clean 為空"
+                elif ratio >= 50:
+                    warning = "　⚠ 清除比例偏高"
+                suspicious = [word for word in ("本站", "域名", "最新地址", "手機閱讀", "廣告") if word in clean_text]
+                if suspicious:
+                    warning += f"　⚠ 疑似殘留：{'、'.join(suspicious)}"
+                warnings += bool(warning)
+                mapping = f"來源第 {sample['source_index']} 章"
+                if sample["output_index"] != sample["source_index"]:
+                    mapping += f" → 輸出第 {sample['output_index']} 章"
+                info_var.set(
+                    f"{mapping}｜{sample['catalog_title']}｜Raw {raw_chars:,} 字｜Clean {clean_chars:,} 字｜約清除 {ratio:.1f}%{warning}"
+                )
+                for box, content in ((raw_box, raw_text), (clean_box, clean_text)):
+                    box.delete("1.0", tk.END)
+                    box.insert("1.0", content)
+                    box.config(state=tk.DISABLED)
+            status_var.set(f"抽查完成：3 個位置，{warnings} 個需要留意。左右內容可直接捲動比對。")
+
+        def worker():
+            try:
+                catalog = parse_catalog(task.get("catalog_url") or "")
+                samples = self._text_sample_chapters(task, catalog)
+                results = []
+                for sample in samples:
+                    title, body = fetch_chapter_text(sample["url"])
+                    raw_text, clean_text = self._build_text_sample(
+                        title, body, task.get("book_title") or catalog.get("book_title") or "",
+                    )
+                    results.append((sample, raw_text, clean_text))
+                self.root.after(0, lambda: render(results) if top.winfo_exists() else None)
+            except Exception as error:
+                self.root.after(0, lambda detail=str(error): show_error(detail) if top.winfo_exists() else None)
+        threading.Thread(target=worker, daemon=True).start()
 
     def _update_selected_task_status(self, task):
         hf = task.get("hf_progress") or {}

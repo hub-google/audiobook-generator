@@ -16,6 +16,33 @@ except ImportError:
         SourceMissingError, SourceStatusStore, looks_like_anti_bot_page,
     )
 
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
+]
+
+
+def fetch_chapter_text(url, timeout=15):
+    """Fetch one chapter using the same HTML selectors as the production crawler."""
+    headers = {"User-Agent": random.choice(USER_AGENTS)}
+    response = requests.get(url, headers=headers, timeout=timeout)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.content, "html.parser", from_encoding="utf-8")
+    title_h1 = soup.find("h1")
+    title = title_h1.get_text(strip=True) if title_h1 else "未知章節"
+    content_div = soup.find(
+        "div",
+        style=lambda value: value and "word-wrap: break-word" in value and "text-indent: 2em" in value,
+    )
+    raw_text = content_div.get_text(separator="\n") if content_div else ""
+    if not raw_text.strip():
+        page_text = soup.get_text(" ", strip=True)
+        if looks_like_anti_bot_page(page_text):
+            raise RuntimeError("來源網站回傳防機器人或流量限制頁面")
+        raise ValueError(f"找不到章節內文（頁面標題：{title}）")
+    return title, raw_text
+
 def load_config():
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.yaml")
     with open(config_path, "r", encoding="utf-8") as f:

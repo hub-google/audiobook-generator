@@ -9,6 +9,7 @@ def make_app():
     app = object.__new__(AudiobookGUIApp)
     app.btn_toggle_task = Mock()
     app.btn_stop_task = Mock()
+    app.btn_sample_text = Mock()
     app.github_observations = {}
     return app
 
@@ -30,6 +31,39 @@ class GuiQueueControlTests(unittest.TestCase):
             "state": tk.DISABLED,
             "text": "正在取消…",
         })
+
+    def test_text_sample_only_enables_for_single_selection(self):
+        app = make_app()
+        app._update_queue_control_states([{"status": "queued"}, {"status": "paused"}])
+        self.assertEqual(app.btn_sample_text.config.call_args.kwargs["state"], tk.DISABLED)
+        app._update_queue_control_states({"status": "completed"})
+        self.assertEqual(app.btn_sample_text.config.call_args.kwargs["state"], tk.NORMAL)
+
+    def test_sample_positions_use_filtered_lower_middle_and_output_number(self):
+        catalog = {
+            "total_chapters": 8,
+            "base_url": "https://example.test",
+            "chapters": [f"/read/{i}" for i in range(1, 9)],
+            "chapter_titles": [f"第{i}章" for i in range(1, 9)],
+        }
+        task = {
+            "start_chapter": 1, "end_chapter": 8,
+            "excluded_chapters": [2, 4], "renumber_selected": True,
+        }
+        samples = AudiobookGUIApp._text_sample_chapters(task, catalog)
+        self.assertEqual([item["source_index"] for item in samples], [1, 5, 8])
+        self.assertEqual([item["output_index"] for item in samples], [1, 3, 6])
+
+    def test_2000_chapter_middle_is_1000(self):
+        catalog = {
+            "total_chapters": 2000, "base_url": "https://example.test",
+            "chapters": [f"/{i}" for i in range(1, 2001)],
+            "chapter_titles": [str(i) for i in range(1, 2001)],
+        }
+        samples = AudiobookGUIApp._text_sample_chapters(
+            {"start_chapter": 1, "end_chapter": 2000}, catalog,
+        )
+        self.assertEqual(samples[1]["source_index"], 1000)
 
     def test_canceling_status_is_not_hidden_by_stale_github_observation(self):
         app = make_app()
