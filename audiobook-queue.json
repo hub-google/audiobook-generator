@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 10,
-  "updated_at": "2026-08-19T04:04:23.690361+00:00",
+  "revision": 11,
+  "updated_at": "2026-08-19T04:20:55.285348+00:00",
   "tasks": [
     {
       "task_id": "book-20260819-630acc92",
@@ -11,11 +11,11 @@
       "start_chapter": 1,
       "end_chapter": 3300,
       "excluded_chapters": [],
-      "status": "running",
+      "status": "interrupted",
       "run_id": 32214245540,
       "run_attempt": 1,
       "retry_at": null,
-      "reason": null,
+      "reason": "run_cancelled",
       "hf_progress": {
         "completed": 0,
         "total": 0
@@ -25,7 +25,16 @@
         "total": 0
       },
       "created_at": "2026-08-19T02:46:39.148885+00:00",
-      "updated_at": "2026-08-19T04:01:48.536980+00:00"
+      "updated_at": "2026-08-19T04:20:55.285348+00:00",
+      "run_conclusion": "cancelled",
+      "run_completed_at": "2026-08-19T04:20:37Z",
+      "run_history": [
+        {
+          "run_id": 32214245540,
+          "conclusion": "cancelled",
+          "ended_at": "2026-08-19T04:20:37Z"
+        }
+      ]
     },
     {
       "task_id": "book-20260819-cfdccaa4",
