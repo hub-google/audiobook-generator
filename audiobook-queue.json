@@ -71,11 +71,11 @@
         1453,
         1475
       ],
-      "status": "running",
+      "status": "waiting_retry",
       "run_id": 32264477776,
       "run_attempt": 1,
-      "retry_at": null,
-      "reason": null,
+      "retry_at": "2026-08-19T18:47:04.096124+00:00",
+      "reason": "otherError",
       "hf_progress": {
         "completed": 0,
         "total": 0
