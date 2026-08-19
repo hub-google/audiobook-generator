@@ -14,7 +14,10 @@ import webbrowser
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 try:
     from catalog_parser import parse_catalog
-    from cloud_queue import GitHubQueueStore, add_tasks, delete_task, move_task, new_task, update_task
+    from cloud_queue import (
+        GitHubQueueStore, add_tasks, delete_task, move_task, new_task,
+        requeue_task_after_active, update_task,
+    )
 except ImportError:
     parse_catalog = None
     GitHubQueueStore = None
@@ -26,7 +29,7 @@ class AudiobookGUIApp:
     def __init__(self, root):
         self.root = root
         self.root.title("📚 GITHUB ACTION控制台")
-        self.root.geometry("980x850")
+        self.root.geometry("1100x850")
         self.root.minsize(820, 700)
 
         # 狀態變數
@@ -69,8 +72,15 @@ class AudiobookGUIApp:
 
         self._build_queue_ui(main_frame)
 
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True)
+        settings_tab = ttk.Frame(notebook, padding=(4, 8))
+        cloud_tab = ttk.Frame(notebook, padding=(4, 8))
+        notebook.add(cloud_tab, text="雲端執行日誌")
+        notebook.add(settings_tab, text="新增小說／章節設定")
+
         # ── 區塊 1: 目錄網址與章節解析 ──
-        section1 = ttk.LabelFrame(main_frame, text="1. 目錄解析與範圍選取")
+        section1 = ttk.LabelFrame(settings_tab, text="1. 目錄解析與範圍選取")
         section1.pack(fill=tk.X, pady=(0, 15))
 
         url_frame = ttk.Frame(section1)
@@ -112,7 +122,7 @@ class AudiobookGUIApp:
 
 
         # ── 區塊 2: 雲端製作控管 ──
-        section2 = ttk.LabelFrame(main_frame, text="2. 雲端製作控管")
+        section2 = ttk.LabelFrame(cloud_tab, text="2. 雲端製作控管")
         section2.pack(fill=tk.BOTH, expand=True)
 
         # Google Drive inputs removed
@@ -171,7 +181,8 @@ class AudiobookGUIApp:
         ttk.Button(buttons, text="↑", width=3, command=lambda: self.move_selected_task(-1)).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="↓", width=3, command=lambda: self.move_selected_task(1)).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="暫停/恢復", command=self.toggle_selected_task).pack(side=tk.LEFT, padx=2)
-        ttk.Button(buttons, text="停止", command=self.stop_selected_task).pack(side=tk.LEFT, padx=2)
+        ttk.Button(buttons, text="取消本次 Run", command=self.stop_selected_task).pack(side=tk.LEFT, padx=2)
+        ttk.Button(buttons, text="重新排程", command=self.requeue_selected_task).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="刪除", command=self.delete_selected_task).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="查看進度", command=self.open_selected_task_progress).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="立即同步", command=self.sync_cloud_queue).pack(side=tk.RIGHT, padx=2)
@@ -200,7 +211,7 @@ class AudiobookGUIApp:
             hf = task.get("hf_progress") or {}
             yt = task.get("youtube_progress") or {}
             self.queue_tree.insert("", tk.END, iid=task["task_id"], values=(
-                task.get("position"), task.get("book_title"), f"{start}–{end}", task.get("status"),
+                task.get("position"), task.get("book_title"), f"{start}–{end}", self._queue_status_text(task),
                 f"{hf.get('completed', 0)}/{hf.get('total', 0)}",
                 f"{yt.get('completed', 0)}/{yt.get('total', 0)}",
                 task.get("run_id") or "—",
@@ -218,9 +229,22 @@ class AudiobookGUIApp:
                     self.log(f"⏳ {title} 暫停等待安全重試")
                 elif status == "needs_attention":
                     self.log(f"⚠ {title} 需要處理：{task.get('reason') or '未知原因'}")
+                elif status == "interrupted":
+                    self.log(f"🛑 {title} 本次 Run 已中斷；任務已保留，可按「重新排程」")
             self.queue_status_cache[task["task_id"]] = current
         if selected_id and self.queue_tree.exists(selected_id):
             self.queue_tree.selection_set(selected_id)
+
+    @staticmethod
+    def _queue_status_text(task):
+        status = task.get("status") or "queued"
+        labels = {
+            "queued": "等待中", "dispatching": "正在建立 Run", "running": "執行中",
+            "waiting_retry": "等待安全重試", "needs_attention": "需要處理",
+            "canceling": "正在取消 Run", "interrupted": "執行中斷",
+            "paused": "已暫停排程", "stopped": "已停止", "completed": "已完成",
+        }
+        return labels.get(status, status)
 
     def sync_cloud_queue(self):
         if self.queue_sync_after is not None:
@@ -515,15 +539,23 @@ class AudiobookGUIApp:
                 run_data = run_response.json()
                 jobs = jobs_response.json().get("jobs", [])
                 marker_events = []
+                # Paint the lightweight Run/Jobs snapshot immediately.  Log
+                # downloads can be large and must never hold the whole window
+                # on "正在取得雲端狀態".
+                self.root.after(
+                    0, lambda tid=task_id, t=dict(task), rd=run_data, js=jobs:
+                    self._apply_task_snapshot(tid, t, rd, js, [])
+                )
                 now = time.time()
                 for job in jobs:
                     job_id = job.get("id")
                     job_status = job.get("status")
-                    if not job_id or job_status not in {"in_progress", "completed"}:
+                    # Completed jobs are already fully represented by the Jobs
+                    # API.  Fetch only live logs for progress markers; a
+                    # cancelled 20-worker Run therefore opens immediately.
+                    if not job_id or job_status != "in_progress":
                         continue
-                    if job_status == "completed" and job_id in state["completed_logs"]:
-                        continue
-                    if job_status == "in_progress" and now - state["last_log_check"].get(job_id, 0) < 15:
+                    if now - state["last_log_check"].get(job_id, 0) < 30:
                         continue
                     state["last_log_check"][job_id] = now
                     try:
@@ -533,14 +565,13 @@ class AudiobookGUIApp:
                         )
                         if log_response.status_code == 200:
                             marker_events.extend(self._parse_task_log_markers(log_response.text, job_id))
-                            if job_status == "completed":
-                                state["completed_logs"].add(job_id)
                     except requests.RequestException:
                         pass
-                self.root.after(
-                    0, lambda tid=task_id, t=dict(task), rd=run_data, js=jobs, me=marker_events:
-                    self._apply_task_snapshot(tid, t, rd, js, me)
-                )
+                if marker_events:
+                    self.root.after(
+                        0, lambda tid=task_id, t=dict(task), rd=run_data, js=jobs, me=marker_events:
+                        self._apply_task_snapshot(tid, t, rd, js, me)
+                    )
                 if run_data.get("status") == "completed":
                     break
                 close_event.wait(10)
@@ -658,11 +689,28 @@ class AudiobookGUIApp:
         task = self._selected_task()
         if not task:
             return
-        new_status = "queued" if task.get("status") in {"paused", "stopped"} else "paused"
+        if task.get("status") not in {"queued", "paused"}:
+            messagebox.showinfo("提示", "這個狀態不能暫停；Run 中斷後請使用「重新排程」。")
+            return
+        new_status = "queued" if task.get("status") == "paused" else "paused"
         if task.get("status") in {"running", "dispatching", "waiting_retry"}:
             messagebox.showinfo("提示", "執行中的小說請使用「停止」；暫停只適用於等待中的任務。")
             return
         self._mutate_queue_async(lambda queue: update_task(queue, task["task_id"], status=new_status), f"Set {task['task_id']} to {new_status}")
+
+    def requeue_selected_task(self):
+        task = self._selected_task()
+        if not task:
+            return
+        if task.get("status") not in {"interrupted", "stopped", "needs_attention"}:
+            messagebox.showinfo("重新排程", "只有已中斷、已停止或需要處理的小說可以重新排程。")
+            return
+        title = task.get("book_title") or "小說任務"
+        self._mutate_queue_async(
+            lambda queue: requeue_task_after_active(queue, task["task_id"]),
+            f"Requeue interrupted audiobook task {task['task_id']}",
+            f"✓ {title} 已排到目前執行中小說的下一順位",
+        )
 
     def stop_selected_task(self):
         task = self._selected_task()

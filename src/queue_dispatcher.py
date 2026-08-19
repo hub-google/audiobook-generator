@@ -88,11 +88,15 @@ class Dispatcher:
         by_task = {}
         for run in runs:
             task_id = task_id_from_run_name(run.get("display_title") or run.get("name"))
-            if task_id and task_id not in by_task:
-                by_task[task_id] = run
+            if task_id:
+                by_task.setdefault(task_id, []).append(run)
         changed = False
         for task in queue["tasks"]:
-            run = by_task.get(task.get("task_id"))
+            candidates = by_task.get(task.get("task_id"), [])
+            retry_requested_at = parse_time(task.get("retry_requested_at"))
+            if retry_requested_at:
+                candidates = [run for run in candidates if (parse_time(run.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc)) >= retry_requested_at]
+            run = candidates[0] if candidates else None
             if not run:
                 continue
             run_id = int(run["id"])
@@ -101,7 +105,7 @@ class Dispatcher:
             if task.get("run_id") != run_id:
                 task["run_id"] = run_id
                 changed = True
-            progress = self.progress_markers(run_id)
+            progress = None if status == "completed" and conclusion == "cancelled" else self.progress_markers(run_id)
             if progress:
                 for key, value in progress.items():
                     if task.get(key) != value:
@@ -121,8 +125,15 @@ class Dispatcher:
                     "retry_at": retry_at.isoformat(),
                 })
                 changed = True
-            elif status == "completed" and conclusion == "cancelled" and task.get("status") == "canceling":
-                task.update({"status": "stopped", "reason": "user_cancelled", "retry_at": None})
+            elif status == "completed" and conclusion == "cancelled" and task.get("status") not in {"interrupted", "paused"}:
+                history = list(task.get("run_history") or [])
+                if not any(item.get("run_id") == run_id for item in history):
+                    history.append({"run_id": run_id, "conclusion": "cancelled", "ended_at": run.get("updated_at")})
+                task.update({
+                    "status": "interrupted", "reason": "run_cancelled", "retry_at": None,
+                    "run_conclusion": "cancelled", "run_completed_at": run.get("updated_at"),
+                    "run_history": history,
+                })
                 changed = True
         return queue, changed
 

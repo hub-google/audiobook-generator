@@ -15,7 +15,7 @@ import requests
 
 QUEUE_SCHEMA_VERSION = 1
 BLOCKING_STATES = {"dispatching", "running", "waiting_retry", "needs_attention", "canceling"}
-TERMINAL_STATES = {"completed", "stopped"}
+TERMINAL_STATES = {"completed", "stopped", "interrupted"}
 
 
 def utc_now():
@@ -52,6 +52,9 @@ def new_task(catalog_url, book_title="", start_chapter=1, end_chapter=None, excl
         "status": "queued",
         "run_id": None,
         "run_attempt": 0,
+        "execution_generation": 1,
+        "retry_requested_at": None,
+        "run_history": [],
         "retry_at": None,
         "reason": None,
         "hf_progress": {"completed": 0, "total": 0},
@@ -94,6 +97,55 @@ def update_task(queue, task_id, **changes):
 def delete_task(queue, task_id):
     queue = normalize_queue(queue)
     queue["tasks"] = [item for item in queue["tasks"] if item.get("task_id") != task_id]
+    return touch(queue)
+
+
+def requeue_task_after_active(queue, task_id):
+    """Requeue an interrupted book immediately behind the active book.
+
+    A cancelled Actions run is only one execution attempt.  The durable book
+    task remains in the queue until the user explicitly deletes it.
+    """
+    queue = normalize_queue(queue)
+    index = next((i for i, item in enumerate(queue["tasks"]) if item.get("task_id") == task_id), None)
+    if index is None:
+        raise KeyError(task_id)
+    task = queue["tasks"][index]
+    if task.get("status") not in {"interrupted", "stopped", "needs_attention"}:
+        raise ValueError("只有已中斷、已停止或需要處理的任務可以重新排程")
+
+    active_id = next(
+        (item.get("task_id") for item in queue["tasks"]
+         if item.get("task_id") != task_id and item.get("status") in BLOCKING_STATES),
+        None,
+    )
+    old_run_id = task.get("run_id")
+    history = list(task.get("run_history") or [])
+    if old_run_id and not any(item.get("run_id") == old_run_id for item in history):
+        history.append({
+            "run_id": old_run_id,
+            "conclusion": task.get("run_conclusion") or "cancelled",
+            "ended_at": task.get("run_completed_at") or utc_now(),
+        })
+    task.update({
+        "status": "queued",
+        "run_id": None,
+        "run_attempt": 0,
+        "run_conclusion": None,
+        "run_completed_at": None,
+        "reason": None,
+        "retry_at": None,
+        "retry_requested_at": utc_now(),
+        "execution_generation": int(task.get("execution_generation") or 1) + 1,
+        "run_history": history,
+    })
+
+    task = queue["tasks"].pop(index)
+    if active_id:
+        active_index = next(i for i, item in enumerate(queue["tasks"]) if item.get("task_id") == active_id)
+        queue["tasks"].insert(active_index + 1, task)
+    else:
+        queue["tasks"].insert(0, task)
     return touch(queue)
 
 
