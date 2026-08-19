@@ -170,7 +170,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker:v1
+      image: ghcr.io/hub-google/audiobook-worker@sha256:74856ba2efca08fd57c0d384f5b7477c0e74e4b6f2082894a5ac22f6f6bc7fe1
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -259,7 +259,7 @@ jobs:
     needs: setup
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker:v1
+      image: ghcr.io/hub-google/audiobook-worker@sha256:74856ba2efca08fd57c0d384f5b7477c0e74e4b6f2082894a5ac22f6f6bc7fe1
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -393,7 +393,7 @@ jobs:
     if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.process_chapters.result == 'success'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker:v1
+      image: ghcr.io/hub-google/audiobook-worker@sha256:74856ba2efca08fd57c0d384f5b7477c0e74e4b6f2082894a5ac22f6f6bc7fe1
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -438,7 +438,7 @@ jobs:
       matrix: ${{ fromJSON(needs.plan_parts.outputs.matrix) }}
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker:v1
+      image: ghcr.io/hub-google/audiobook-worker@sha256:74856ba2efca08fd57c0d384f5b7477c0e74e4b6f2082894a5ac22f6f6bc7fe1
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -474,7 +474,7 @@ jobs:
     if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.merge_parts.result == 'success'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker:v1
+      image: ghcr.io/hub-google/audiobook-worker@sha256:74856ba2efca08fd57c0d384f5b7477c0e74e4b6f2082894a5ac22f6f6bc7fe1
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
