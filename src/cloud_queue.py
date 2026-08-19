@@ -40,7 +40,7 @@ def normalize_queue(value):
 
 
 def new_task(catalog_url, book_title="", start_chapter=1, end_chapter=None, excluded_chapters=None,
-             renumber_selected=False):
+             renumber_selected=False, duplicate_chapter_count=None):
     now = utc_now()
     return {
         "task_id": f"book-{datetime.now(timezone.utc):%Y%m%d}-{uuid.uuid4().hex[:8]}",
@@ -51,6 +51,9 @@ def new_task(catalog_url, book_title="", start_chapter=1, end_chapter=None, excl
         "end_chapter": int(end_chapter) if end_chapter is not None else None,
         "excluded_chapters": sorted({int(value) for value in (excluded_chapters or [])}),
         "renumber_selected": bool(renumber_selected),
+        "duplicate_chapter_count": (
+            int(duplicate_chapter_count) if duplicate_chapter_count is not None else None
+        ),
         "status": "queued",
         "run_id": None,
         "run_attempt": 0,
@@ -97,7 +100,8 @@ def update_task(queue, task_id, **changes):
 
 
 def update_task_chapters(queue, task_id, start_chapter, end_chapter, excluded_chapters=None,
-                         requeue_after_cancel=False, renumber_selected=False):
+                         requeue_after_cancel=False, renumber_selected=False,
+                         duplicate_chapter_count=None):
     """Persist an edited chapter plan and optionally restart after cancellation."""
     start = int(start_chapter)
     end = int(end_chapter)
@@ -109,6 +113,8 @@ def update_task_chapters(queue, task_id, start_chapter, end_chapter, excluded_ch
         "excluded_chapters": excluded,
         "renumber_selected": bool(renumber_selected),
     }
+    if duplicate_chapter_count is not None:
+        changes["duplicate_chapter_count"] = int(duplicate_chapter_count)
     if requeue_after_cancel:
         changes.update({"status": "canceling", "reason": "chapter_plan_updated", "requeue_after_edit": True})
     return update_task(queue, task_id, **changes)

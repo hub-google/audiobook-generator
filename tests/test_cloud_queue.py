@@ -10,6 +10,20 @@ from src.queue_dispatcher import Dispatcher
 
 
 class CloudQueueTests(unittest.TestCase):
+    def test_duplicate_chapter_count_is_persisted_and_updated(self):
+        task = new_task(
+            "https://example/1", "第一部", 1, 100,
+            duplicate_chapter_count=7,
+        )
+        self.assertEqual(task["duplicate_chapter_count"], 7)
+
+        queue = add_tasks(empty_queue(), [task])
+        queue = update_task_chapters(
+            queue, task["task_id"], 1, 80,
+            duplicate_chapter_count=9,
+        )
+        self.assertEqual(queue["tasks"][0]["duplicate_chapter_count"], 9)
+
     def test_chapter_plan_update_normalizes_exclusions(self):
         task = new_task("https://example/1", "第一部", 1, 100)
         queue = add_tasks(empty_queue(), [task])

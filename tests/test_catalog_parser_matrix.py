@@ -1,11 +1,20 @@
 import unittest
+from unittest.mock import Mock, patch
 
 import os
 import tempfile
 
 import yaml
 
-from src.catalog_parser import MAX_PARALLEL_WORKERS, generate_config_yaml, generate_matrix
+from src.catalog_parser import (
+    MAX_PARALLEL_WORKERS,
+    analyze_duplicate_chapters,
+    generate_config_yaml,
+    generate_matrix,
+    normalize_chapter_title,
+    parse_catalog,
+    parse_chapter_number,
+)
 
 
 def _parsed_catalog(total=5):
@@ -27,6 +36,68 @@ def parsed_catalog(chapter_count):
 
 
 class CatalogParserMatrixTests(unittest.TestCase):
+    @patch("src.catalog_parser.requests.get")
+    def test_catalog_preserves_repeated_links_for_user_review(self, get):
+        response = Mock()
+        response.content = (
+            "<html><h1>測試小說</h1>"
+            "<a href='/Book/Read/1,10'>第一章 開始</a>"
+            "<a href='/Book/Read/1,10'>第一章 開始</a>"
+            "</html>"
+        ).encode("utf-8")
+        response.raise_for_status.return_value = None
+        get.return_value = response
+
+        result = parse_catalog("https://example.com/Book/Chapter/1")
+
+        self.assertEqual(result["total_chapters"], 2)
+        self.assertEqual(result["chapters"], ["/Book/Read/1,10", "/Book/Read/1,10"])
+        self.assertEqual(result["duplicate_indices"], [2])
+        self.assertEqual(result["duplicate_chapter_count"], 1)
+
+    def test_duplicate_analysis_uses_chapter_number_or_normalized_full_title(self):
+        titles = [
+            "第243章 正常章節",
+            "第244章 車神老呂",
+            "第244章 車神老呂:腰命啊",
+            "第一百三十五章 喋血藍原谷",
+            "第一百三十五章\u200b 喋血藍原谷",
+        ]
+        urls = [f"/Book/Read/35728,{value}" for value in range(5)]
+
+        result = analyze_duplicate_chapters(titles, urls)
+
+        self.assertEqual(result["duplicate_indices"], [3, 5])
+        self.assertEqual(result["duplicate_chapter_count"], 2)
+        self.assertEqual(result["duplicate_chapters"][0]["reasons"], ["chapter_number"])
+        self.assertEqual(
+            result["duplicate_chapters"][1]["reasons"],
+            ["chapter_number", "chapter_title"],
+        )
+
+    def test_chinese_and_arabic_chapter_numbers_compare_equally(self):
+        self.assertEqual(parse_chapter_number("第一百三十五章 喋血藍原谷"), 135)
+        self.assertEqual(parse_chapter_number("第135章 喋血藍原谷"), 135)
+        self.assertEqual(parse_chapter_number("第二〇一章"), 201)
+        self.assertIsNone(parse_chapter_number("番外篇 喋血藍原谷"))
+
+    def test_title_normalization_only_removes_harmless_display_differences(self):
+        self.assertEqual(
+            normalize_chapter_title("\u200b第１３５章　喋血藍原谷  "),
+            "第135章 喋血藍原谷",
+        )
+
+    def test_three_repeated_entries_keep_only_the_first_as_original(self):
+        result = analyze_duplicate_chapters([
+            "第十章 原始", "第十章 修正版", "第10章 再修正版",
+        ])
+
+        self.assertEqual(result["duplicate_indices"], [2, 3])
+        self.assertEqual(
+            [item["original_indices"] for item in result["duplicate_chapters"]],
+            [[1], [1]],
+        )
+
     def test_selected_chapters_can_be_renumbered_without_losing_source_indices(self):
         with tempfile.TemporaryDirectory() as directory:
             output = os.path.join(directory, "config.yaml")

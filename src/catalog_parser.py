@@ -5,6 +5,7 @@ import yaml
 import json
 import argparse
 import requests
+import unicodedata
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
@@ -15,6 +16,107 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
 ]
+
+
+_CHINESE_DIGITS = {
+    "零": 0, "〇": 0, "一": 1, "二": 2, "兩": 2, "两": 2,
+    "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+}
+_CHINESE_UNITS = {"十": 10, "百": 100, "千": 1000, "萬": 10000, "万": 10000}
+
+
+def normalize_chapter_title(title):
+    """Normalize harmless display differences without changing title meaning."""
+    normalized = unicodedata.normalize("NFKC", str(title or ""))
+    normalized = "".join(
+        char for char in normalized
+        if unicodedata.category(char) not in {"Cc", "Cf"}
+    )
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _chinese_number_to_int(value):
+    if not value:
+        return None
+    if value.isdigit():
+        return int(value)
+    if any(char not in _CHINESE_DIGITS and char not in _CHINESE_UNITS for char in value):
+        return None
+
+    # Strings without units (for example 二〇一) are digit sequences.
+    if not any(char in _CHINESE_UNITS for char in value):
+        return int("".join(str(_CHINESE_DIGITS[char]) for char in value))
+
+    total = section = number = 0
+    for char in value:
+        if char in _CHINESE_DIGITS:
+            number = _CHINESE_DIGITS[char]
+            continue
+        unit = _CHINESE_UNITS[char]
+        if unit == 10000:
+            section += number
+            total += (section or 1) * unit
+            section = number = 0
+        else:
+            section += (number or 1) * unit
+            number = 0
+    return total + section + number
+
+
+def parse_chapter_number(title):
+    """Return a leading chapter number, supporting Arabic and Chinese forms."""
+    normalized = normalize_chapter_title(title)
+    match = re.match(
+        r"^第?\s*([0-9]+|[零〇一二兩两三四五六七八九十百千萬万]+)\s*(?:章|回|節|节)",
+        normalized,
+    )
+    return _chinese_number_to_int(match.group(1)) if match else None
+
+
+def analyze_duplicate_chapters(chapter_titles, chapter_urls=None):
+    """Mark later catalog entries whose chapter number or full title repeats."""
+    urls = list(chapter_urls or [])
+    seen_numbers = {}
+    seen_titles = {}
+    duplicate_indices = []
+    duplicates = []
+    chapter_numbers = []
+
+    for index, raw_title in enumerate(chapter_titles, 1):
+        title = normalize_chapter_title(raw_title)
+        number = parse_chapter_number(title)
+        chapter_numbers.append(number)
+        reasons = []
+        original_indices = set()
+
+        if number is not None and number in seen_numbers:
+            reasons.append("chapter_number")
+            original_indices.add(seen_numbers[number])
+        if title and title in seen_titles:
+            reasons.append("chapter_title")
+            original_indices.add(seen_titles[title])
+
+        if reasons:
+            duplicate_indices.append(index)
+            duplicates.append({
+                "index": index,
+                "title": str(raw_title or "").strip(),
+                "url": urls[index - 1] if index <= len(urls) else "",
+                "chapter_number": number,
+                "reasons": reasons,
+                "original_indices": sorted(original_indices),
+            })
+        if number is not None:
+            seen_numbers.setdefault(number, index)
+        if title:
+            seen_titles.setdefault(title, index)
+
+    return {
+        "chapter_numbers": chapter_numbers,
+        "duplicate_indices": duplicate_indices,
+        "duplicate_chapters": duplicates,
+        "duplicate_chapter_count": len(duplicate_indices),
+    }
 
 def parse_catalog(catalog_url):
     """
@@ -49,8 +151,6 @@ def parse_catalog(catalog_url):
     # 2. 解析章節連結
     chapter_urls = []
     chapter_titles = []
-    seen = set()
-
     for a in soup.find_all('a', href=True):
         href = a['href'].strip()
         # 匹配 hjwzw.com 的 /Book/Read/ 格式，或其他通用格式
@@ -64,12 +164,15 @@ def parse_catalog(catalog_url):
             else:
                 full_href = '/' + href.lstrip('/')
 
-            if full_href not in seen:
-                seen.add(full_href)
-                chapter_urls.append(full_href)
-                chapter_titles.append(a.text.strip() or f"第 {len(chapter_urls)} 章")
+            # Preserve every catalog entry. Duplicate entries must remain visible
+            # so the GUI can annotate them and let the user decide whether to
+            # uncheck them.
+            chapter_urls.append(full_href)
+            chapter_titles.append(a.text.strip() or f"第 {len(chapter_urls)} 章")
 
-    return {
+    duplicate_analysis = analyze_duplicate_chapters(chapter_titles, chapter_urls)
+
+    result = {
         "success": True,
         "book_title": book_title,
         "base_url": base_url,
@@ -77,6 +180,8 @@ def parse_catalog(catalog_url):
         "chapter_titles": chapter_titles,
         "total_chapters": len(chapter_urls)
     }
+    result.update(duplicate_analysis)
+    return result
 
 def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="config.yaml",
                           exclude_chapters=None, chapters_per_worker=5,

@@ -180,18 +180,18 @@ class AudiobookGUIApp:
     def _build_queue_ui(self, parent):
         section = ttk.LabelFrame(parent, text="雲端小說佇列（關閉 GUI 後仍由 GitHub 繼續）")
         section.pack(fill=tk.X, pady=(0, 12))
-        columns = ("position", "book", "range", "status", "verified", "hf", "youtube", "run")
+        columns = ("position", "book", "range", "duplicates", "status", "verified", "hf", "youtube", "run")
         tree_frame = ttk.Frame(section)
         tree_frame.pack(fill=tk.X, padx=5, pady=5)
         self.queue_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=6, selectmode="browse")
         queue_scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.queue_tree.yview)
         self.queue_tree.configure(yscrollcommand=queue_scrollbar.set)
         headings = {
-            "position": "順位", "book": "小說", "range": "章節", "status": "狀態",
+            "position": "順位", "book": "小說", "range": "章節", "duplicates": "重複章節", "status": "狀態",
             "verified": "GitHub 查證", "hf": "HF", "youtube": "YouTube", "run": "Run",
         }
         widths = {
-            "position": 45, "book": 145, "range": 85, "status": 210,
+            "position": 45, "book": 135, "range": 80, "duplicates": 75, "status": 175,
             "verified": 100, "hf": 65, "youtube": 75, "run": 90,
         }
         for key in columns:
@@ -238,8 +238,10 @@ class AudiobookGUIApp:
             hf = task.get("hf_progress") or {}
             yt = task.get("youtube_progress") or {}
             observation = self.github_observations.get(task.get("task_id"))
+            duplicate_count = task.get("duplicate_chapter_count")
             self.queue_tree.insert("", tk.END, iid=task["task_id"], values=(
-                task.get("position"), task.get("book_title"), f"{start}–{end}", self._queue_status_text(task),
+                task.get("position"), task.get("book_title"), f"{start}–{end}",
+                duplicate_count if duplicate_count is not None else "—", self._queue_status_text(task),
                 self._observation_checked_time(observation),
                 f"{hf.get('completed', 0)}/{hf.get('total', 0)}",
                 f"{yt.get('completed', 0)}/{yt.get('total', 0)}",
@@ -873,6 +875,7 @@ class AudiobookGUIApp:
         task = new_task(
             self.url_entry.get().strip(), self.catalog_data.get("book_title", ""), start, end,
             sorted(self.excluded_chapters), self.renumber_selected_chapters,
+            self.catalog_data.get("duplicate_chapter_count"),
         )
         self._mutate_queue_async(
             lambda queue: add_tasks(queue, [task]),
@@ -932,6 +935,7 @@ class AudiobookGUIApp:
                     lambda value: update_task_chapters(
                         value, task_id, start, end, excluded, active,
                         self.renumber_selected_chapters,
+                        (self.catalog_data or {}).get("duplicate_chapter_count"),
                     ),
                     f"Update chapter plan for audiobook task {task_id}",
                 )
@@ -966,7 +970,10 @@ class AudiobookGUIApp:
                         result = parse_catalog(url)
                         if not result.get("success"):
                             raise RuntimeError(f"解析失敗：{url}：{result.get('error')}")
-                        tasks.append(new_task(url, result["book_title"], 1, result["total_chapters"]))
+                        tasks.append(new_task(
+                            url, result["book_title"], 1, result["total_chapters"],
+                            duplicate_chapter_count=result.get("duplicate_chapter_count"),
+                        ))
                     store, _, _ = self._queue_store()
                     queue = store.mutate(lambda value: add_tasks(value, tasks), f"Batch add {len(tasks)} audiobook tasks")
                     self.cloud_queue = queue
@@ -1101,8 +1108,12 @@ class AudiobookGUIApp:
             self.catalog_data = res
             book_title = res["book_title"]
             total = res["total_chapters"]
+            duplicate_count = int(res.get("duplicate_chapter_count") or 0)
 
-            self.lbl_book_info.config(text=f"書名: {book_title} | 總章節: {total} 章", foreground="#27ae60")
+            self.lbl_book_info.config(
+                text=f"書名: {book_title} | 總章節: {total} 章 | 重複章節: {duplicate_count} 章",
+                foreground="#27ae60",
+            )
             self.entry_start.delete(0, tk.END)
             self.entry_start.insert(0, "1")
             self.entry_end.delete(0, tk.END)
@@ -1114,7 +1125,7 @@ class AudiobookGUIApp:
             self._update_chapter_selection_summary(1, total)
 
             self.lbl_status.config(text="解析完成", foreground="#27ae60")
-            self.log(f"✓ 解析成功！書名:【{book_title}】，共找到 {total} 章節。")
+            self.log(f"✓ 解析成功！書名:【{book_title}】，共找到 {total} 章節；標記 {duplicate_count} 個重複章節。")
         else:
             self._on_parse_failed("無法找到章節內容")
 
@@ -1130,6 +1141,9 @@ class AudiobookGUIApp:
             return
             
         titles = self.catalog_data.get("chapter_titles", [])
+        duplicate_indices = {
+            int(value) for value in self.catalog_data.get("duplicate_indices", [])
+        }
         if not titles:
             messagebox.showinfo("提示", "目前沒有章節標題資訊可供篩選。")
             return
@@ -1146,8 +1160,8 @@ class AudiobookGUIApp:
         
         top = tk.Toplevel(self.root)
         top.title("選擇要轉換的章節")
-        top.geometry("520x620")
-        top.minsize(450, 400)
+        top.geometry("720x620")
+        top.minsize(650, 400)
         top.transient(self.root)
         top.grab_set()
 
@@ -1212,11 +1226,12 @@ class AudiobookGUIApp:
 
         def _display_text(global_idx):
             title = titles[global_idx - 1]
+            duplicate_mark = "  **" if global_idx in duplicate_indices else ""
             if self.renumber_selected_chapters and cur_start <= global_idx <= cur_end:
                 output_idx = _output_numbers().get(global_idx)
                 if output_idx is not None:
-                    return f"製作第 {output_idx} 章｜網站原章：{title}"
-            return f"網站第 {global_idx} 筆｜{title}"
+                    return f"製作第 {output_idx} 章｜網站原章：{title}{duplicate_mark}"
+            return f"網站第 {global_idx} 筆｜{title}{duplicate_mark}"
 
         def _update_listbox():
             listbox.delete(0, tk.END)
@@ -1285,6 +1300,17 @@ class AudiobookGUIApp:
                 chapter_state[g_idx] = not chapter_state[g_idx]
             _update_listbox()
 
+        def _exclude_duplicates():
+            changed = 0
+            for g_idx in duplicate_indices:
+                if chapter_state.get(g_idx, False):
+                    chapter_state[g_idx] = False
+                    changed += 1
+            _update_listbox()
+            info_lbl.config(
+                text=f"已取消勾選 {changed} 個重複章節｜目錄共標記 {len(duplicate_indices)} 個"
+            )
+
         def _renumber_selected():
             self.renumber_selected_chapters = True
             _update_listbox()
@@ -1305,6 +1331,7 @@ class AudiobookGUIApp:
         ttk.Button(btn_frame, text="全選", command=_select_all).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="全不選", command=_deselect_all).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="反選", command=_invert_select).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="排除重複章節", command=_exclude_duplicates).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="重新排序已選章節", command=_renumber_selected).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="確定", style="Accent.TButton", command=_close_dialog).pack(side=tk.RIGHT, padx=5)
 
