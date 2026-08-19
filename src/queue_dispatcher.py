@@ -148,7 +148,24 @@ class Dispatcher:
             failed = update_task(latest, task_id, status="needs_attention", reason=f"dispatch_failed: {error}")
             self.store.save(failed, sha=latest_sha, message=f"Record dispatch failure for {task_id}")
             raise
-        return queue, f"Dispatched {task.get('book_title')} ({task_id})."
+        # workflow_dispatch returns 204 without a Run ID. Match the unique
+        # task ID embedded in run-name so the GUI can open/cancel the exact Run
+        # immediately instead of waiting for the next 15-minute reconciliation.
+        run_id = None
+        for _ in range(10):
+            for run in self.runs():
+                if task_id_from_run_name(run.get("display_title") or run.get("name")) == task_id:
+                    run_id = int(run["id"])
+                    break
+            if run_id:
+                break
+            import time
+            time.sleep(3)
+        if run_id:
+            latest, latest_sha = self.store.load()
+            running = update_task(latest, task_id, status="running", run_id=run_id, run_attempt=1)
+            self.store.save(running, sha=latest_sha, message=f"Attach Run {run_id} to {task_id}")
+        return queue, f"Dispatched {task.get('book_title')} ({task_id}) as Run {run_id or 'pending discovery'}."
 
     def run(self):
         queue, sha = self.store.load()

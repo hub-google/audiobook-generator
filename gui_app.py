@@ -245,6 +245,30 @@ class AudiobookGUIApp:
                 self.btn_cancel.config(state=tk.NORMAL if task.get("status") in {"running", "dispatching", "waiting_retry"} else tk.DISABLED)
             except Exception:
                 pass
+            self._show_selected_run_snapshot(task)
+
+    def _show_selected_run_snapshot(self, task):
+        def worker():
+            try:
+                repo, token = self._github_settings()
+                headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+                run_id = int(task["run_id"])
+                run = requests.get(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}", headers=headers, timeout=15)
+                run.raise_for_status()
+                jobs = requests.get(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100", headers=headers, timeout=15)
+                jobs.raise_for_status()
+                run_data = run.json()
+                job_data = jobs.json().get("jobs", [])
+                summary = "、".join(
+                    f"{item.get('name')}={item.get('conclusion') or item.get('status')}" for item in job_data
+                ) or "Jobs 尚未建立"
+                url = run_data.get("html_url") or f"https://github.com/{repo}/actions/runs/{run_id}"
+                self.root.after(0, lambda: self.log(
+                    f"🔎 {task.get('book_title')} Run {run_id}：{run_data.get('conclusion') or run_data.get('status')}｜{summary}｜{url}"
+                ))
+            except Exception as error:
+                self.root.after(0, lambda e=str(error): self.log(f"⚠ 無法讀取選定 Run 詳情：{e}"))
+        threading.Thread(target=worker, daemon=True).start()
 
     def _mutate_queue_async(self, callback, message):
         def worker():
