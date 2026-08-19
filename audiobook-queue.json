@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 20,
-  "updated_at": "2026-08-19T06:54:32.533587+00:00",
+  "revision": 21,
+  "updated_at": "2026-08-19T07:01:13.245015+00:00",
   "tasks": [
     {
       "task_id": "book-20260819-cfdccaa4",
@@ -71,11 +71,11 @@
         1453,
         1475
       ],
-      "status": "needs_attention",
-      "run_id": 32215455813,
-      "run_attempt": 1,
-      "retry_at": "2026-08-19T08:55:07.427634+00:00",
-      "reason": "$(python",
+      "status": "queued",
+      "run_id": null,
+      "run_attempt": 0,
+      "retry_at": null,
+      "reason": null,
       "hf_progress": {
         "completed": 0,
         "total": 0
@@ -98,10 +98,15 @@
           "run_id": 32214049849,
           "conclusion": "cancelled",
           "ended_at": "2026-08-19T04:01:18Z"
+        },
+        {
+          "run_id": 32215455813,
+          "conclusion": "cancelled",
+          "ended_at": "2026-08-19T07:01:13.245015+00:00"
         }
       ],
-      "retry_requested_at": "2026-08-19T04:04:23.690361+00:00",
-      "execution_generation": 3,
+      "retry_requested_at": "2026-08-19T07:01:13.245015+00:00",
+      "execution_generation": 4,
       "renumber_selected": true,
       "duplicate_chapter_count": 1366
     },
