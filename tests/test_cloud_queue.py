@@ -90,7 +90,8 @@ class CloudQueueTests(unittest.TestCase):
         dispatcher.progress_markers = Mock(return_value=None)
         dispatcher.dispatch_next = Mock(return_value=(queue, "started next"))
 
-        self.assertEqual(dispatcher.run(), "started next")
+        result = dispatcher.run()
+        self.assertIn("已啟動", result)
         dispatched_queue = dispatcher.dispatch_next.call_args.args[0]
         self.assertEqual(dispatched_queue["tasks"][0]["status"], "interrupted")
         self.assertEqual(next_task(dispatched_queue)["task_id"], second["task_id"])
@@ -108,7 +109,8 @@ class CloudQueueTests(unittest.TestCase):
         dispatcher.run_by_id = Mock(return_value=None)
         dispatcher.dispatch_next = Mock(return_value=(queue, "started next"))
 
-        self.assertEqual(dispatcher.run(), "started next")
+        result = dispatcher.run()
+        self.assertIn("已啟動", result)
         dispatched_queue = dispatcher.dispatch_next.call_args.args[0]
         interrupted = dispatched_queue["tasks"][0]
         self.assertEqual(interrupted["status"], "interrupted")

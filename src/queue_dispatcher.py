@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -20,6 +21,15 @@ TRANSIENT_REASONS = {
     "quotaExceeded", "uploadLimitExceeded", "rateLimitExceeded", "backendError", "otherError",
     "thumbnailRateLimit", "captionUploadFailed", "playlistInsertFailed", "publishFailed",
     "retryable YouTube API failure",
+}
+
+TAIPEI = ZoneInfo("Asia/Taipei")
+STATUS_LABELS = {
+    "dispatching": "正在啟動",
+    "running": "製作中",
+    "waiting_retry": "等待自動重試",
+    "needs_attention": "需要人工處理",
+    "canceling": "正在取消",
 }
 
 
@@ -189,10 +199,92 @@ class Dispatcher:
             import time
             time.sleep(3)
         if run_id:
+            task.update({"status": "running", "run_id": run_id, "run_attempt": 1})
             latest, latest_sha = self.store.load()
             running = update_task(latest, task_id, status="running", run_id=run_id, run_attempt=1)
             self.store.save(running, sha=latest_sha, message=f"Attach Run {run_id} to {task_id}")
         return queue, f"Dispatched {task.get('book_title')} ({task_id}) as Run {run_id or 'pending discovery'}."
+
+    def summary(self, queue, action, task=None):
+        """Render a useful operator-facing Markdown report for Actions summary."""
+        now = datetime.now(timezone.utc)
+        queued = [item for item in queue.get("tasks", []) if item.get("status") == "queued"]
+        active = task or current_task(queue)
+
+        if action == "dispatched":
+            headline = f"🚀 **已啟動《{active.get('book_title') or '待解析書名'}》**"
+            action_text = "已保留佇列中的下一項任務，並啟動有聲書製作流程。"
+        elif action == "retried":
+            headline = f"🔄 **已自動重試《{active.get('book_title') or '待解析書名'}》**"
+            action_text = "重跑失敗的工作，並沿用已保存的章節及上傳檢查點。"
+        elif active and active.get("status") == "waiting_retry":
+            headline = f"🕒 **《{active.get('book_title') or '待解析書名'}》正在等待自動重試**"
+            action_text = "尚未到達重試時間，本次沒有發出重試請求，也沒有啟動下一本。"
+        elif active and active.get("status") == "needs_attention":
+            headline = f"🔴 **《{active.get('book_title') or '待解析書名'}》需要人工處理**"
+            action_text = "目前錯誤無法自動恢復；此任務會阻擋後續佇列。"
+        elif active:
+            headline = f"🟡 **《{active.get('book_title') or '待解析書名'}》仍在製作**"
+            action_text = "已同步目前進度；為避免同時製作兩本小說，本次未啟動下一本。"
+        else:
+            headline = "⚪ **目前沒有待製作小說**"
+            action_text = "已完成佇列檢查，沒有可啟動的任務。"
+
+        lines = [
+            "## 本次調度結果", "", headline, "",
+            f"- **本次動作：** {action_text}",
+            f"- **檢查時間：** {now.astimezone(TAIPEI):%Y-%m-%d %H:%M:%S}（台北時間）",
+            "- **下次定期檢查：** 最多約 15 分鐘後",
+        ]
+
+        if active:
+            status = STATUS_LABELS.get(active.get("status"), active.get("status") or "未知")
+            run_id = active.get("run_id")
+            lines += ["", "## 目前任務", "", f"### 《{active.get('book_title') or '待解析書名'}》", "",
+                      f"- **任務編號：** `{active.get('task_id')}`", f"- **狀態：** {status}"]
+            if run_id:
+                lines.append(f"- **製作流程：** [GitHub Actions Run {run_id}](https://github.com/{self.repo}/actions/runs/{run_id})")
+            started = parse_time(active.get("dispatched_at"))
+            if started:
+                elapsed = max(0, int((now - started).total_seconds()))
+                hours, remainder = divmod(elapsed, 3600)
+                minutes = remainder // 60
+                lines.append(f"- **開始時間：** {started.astimezone(TAIPEI):%Y-%m-%d %H:%M:%S}（已執行 {hours} 小時 {minutes} 分）")
+            lines.append(f"- **執行次數：** 第 {int(active.get('run_attempt') or 1)} 次")
+            reason = active.get("reason")
+            if reason:
+                lines.append(f"- **原因：** `{reason}`")
+            retry_at = parse_time(active.get("retry_at"))
+            if retry_at:
+                lines.append(f"- **預計重試：** {retry_at.astimezone(TAIPEI):%Y-%m-%d %H:%M:%S}（台北時間）")
+
+            yt = active.get("youtube_progress") or {}
+            hf = active.get("hf_progress") or {}
+            lines += ["", "### 發布進度", "", "| 項目 | 已完成 | 總數 |", "|---|---:|---:|",
+                      f"| YouTube | {int(yt.get('completed') or 0)} Part | {int(yt.get('total') or 0)} Part |",
+                      f"| Hugging Face 備份 | {int(hf.get('completed') or 0)} Part | {int(hf.get('total') or 0)} Part |"]
+
+        next_up = queued[0] if queued else None
+        lines += ["", "## 等待中的佇列", "", f"- **等待任務：** {len(queued)} 本"]
+        if next_up:
+            end = next_up.get("end_chapter") or "最後一章"
+            lines += [f"- **下一本：** 《{next_up.get('book_title') or '待解析書名'}》",
+                      f"- **章節範圍：** 第 {next_up.get('start_chapter') or 1}–{end} 章",
+                      "- **預計啟動：** 目前任務完成或解除阻塞後"]
+        else:
+            lines.append("- **下一本：** 無")
+
+        lines += ["", "## 這次實際執行的動作", "", "- 已讀取雲端佇列",
+                  "- 已比對有聲書製作流程的 GitHub Actions 狀態", "- 已同步可取得的 YouTube 與 Hugging Face 進度"]
+        if action == "dispatched":
+            lines.append("- 已啟動佇列中的下一本小說")
+        elif action == "retried":
+            lines.append("- 已重新執行失敗的工作")
+        elif active:
+            lines.append("- 未啟動第二本小說")
+        else:
+            lines.append("- 佇列中沒有可啟動的任務")
+        return "\n".join(lines)
 
     def run(self):
         queue, sha = self.store.load()
@@ -208,12 +300,16 @@ class Dispatcher:
                     self.request("POST", f"/actions/runs/{run_id}/rerun-failed-jobs")
                     updated = update_task(queue, active["task_id"], status="running", run_attempt=int(active.get("run_attempt") or 1) + 1)
                     self.store.save(updated, sha=sha, message=f"Retry audiobook task {active['task_id']}")
-                    return f"Retried {active['task_id']} from its saved checkpoints."
-            return f"Current task {active['task_id']} is waiting until {active.get('retry_at')}."
+                    return self.summary(updated, "retried", current_task(updated))
+            return self.summary(queue, "waiting", active)
         if active:
-            return f"Current task {active['task_id']} is {active['status']}; no second task was started."
-        queue, message = self.dispatch_next(queue)
-        return message
+            return self.summary(queue, "active", active)
+        prospective = next_task(queue)
+        queue, _message = self.dispatch_next(queue)
+        dispatched = current_task(queue)
+        if not dispatched and prospective:
+            dispatched = next((item for item in queue.get("tasks", []) if item.get("task_id") == prospective.get("task_id")), prospective)
+        return self.summary(queue, "dispatched", dispatched) if dispatched else self.summary(queue, "idle")
 
 
 def main():

@@ -75,7 +75,7 @@ jobs:
           {
             echo "# 有聲小說佇列調度結果"
             echo
-            echo "$result_icon **執行結果：$result_text**"
+            echo "$result_icon **調度器執行$result_text**"
             echo
             echo "- 觸發方式：\`${{ github.event_name }}\`"
             echo "- 執行編號：[${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
@@ -84,7 +84,7 @@ jobs:
             echo "## 調度訊息"
             echo
             if [ -s dispatcher-result.txt ]; then
-              sed 's/^/    /' dispatcher-result.txt
+              cat dispatcher-result.txt
             else
               echo "    調度步驟沒有產生輸出；請展開 job log 檢查前置步驟。"
             fi
