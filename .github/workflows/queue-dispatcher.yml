@@ -49,7 +49,43 @@ jobs:
         run: pip install requests
 
       - name: Reconcile queue and perform one action
+        id: dispatch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           QUEUE_STATE_BRANCH: automation-state
-        run: python src/queue_dispatcher.py
+        shell: bash
+        run: |
+          set -o pipefail
+          python src/queue_dispatcher.py 2>&1 | tee dispatcher-result.txt
+
+      - name: Write dispatcher result to job summary
+        if: always()
+        shell: bash
+        env:
+          DISPATCH_OUTCOME: ${{ steps.dispatch.outcome }}
+        run: |
+          if [ "$DISPATCH_OUTCOME" = "success" ]; then
+            result_icon="✅"
+            result_text="成功"
+          else
+            result_icon="❌"
+            result_text="失敗"
+          fi
+
+          {
+            echo "# 有聲小說佇列調度結果"
+            echo
+            echo "$result_icon **執行結果：$result_text**"
+            echo
+            echo "- 觸發方式：\`${{ github.event_name }}\`"
+            echo "- 執行編號：[${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            echo "- 執行時間：\`$(date -u '+%Y-%m-%d %H:%M:%S UTC')\`"
+            echo
+            echo "## 調度訊息"
+            echo
+            if [ -s dispatcher-result.txt ]; then
+              sed 's/^/    /' dispatcher-result.txt
+            else
+              echo "    調度步驟沒有產生輸出；請展開 job log 檢查前置步驟。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

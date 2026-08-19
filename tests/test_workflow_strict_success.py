@@ -31,9 +31,16 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
 
     def test_dispatcher_runs_one_task_aware_decision(self):
         steps = self.dispatcher_jobs["dispatch_once"]["steps"]
-        self.assertTrue(any(step.get("run") == "python src/queue_dispatcher.py" for step in steps))
+        self.assertTrue(any("python src/queue_dispatcher.py" in step.get("run", "") for step in steps))
         self.assertIn("audiobook-queue-dispatcher", self.dispatcher_text)
         self.assertIn("workflow_run:", self.dispatcher_text)
+
+    def test_dispatcher_always_writes_a_readable_job_summary(self):
+        steps = self.dispatcher_jobs["dispatch_once"]["steps"]
+        summary_step = next(step for step in steps if step.get("name") == "Write dispatcher result to job summary")
+        self.assertEqual(summary_step.get("if"), "always()")
+        self.assertIn("GITHUB_STEP_SUMMARY", summary_step.get("run", ""))
+        self.assertIn("調度訊息", summary_step.get("run", ""))
 
     def test_worker_concurrency_is_capped_at_seventeen(self):
         self.assertEqual(self.jobs["process_chapters"]["strategy"]["max-parallel"], 17)
