@@ -18,7 +18,6 @@ except ImportError:
     parse_catalog = None
 
 ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-ACTIVE_RUN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".gui-active-run.json")
 load_dotenv(ENV_PATH)
 
 class AudiobookGUIApp:
@@ -33,7 +32,6 @@ class AudiobookGUIApp:
 
         self._setup_style()
         self._build_ui()
-        self.root.after(500, self._resume_saved_run)
 
     def _setup_style(self):
         style = ttk.Style()
@@ -158,51 +156,6 @@ class AudiobookGUIApp:
                 
         self.log_text.insert(tk.END, "\n")
         self.log_text.see(tk.END)
-
-    def _save_active_run(self, repo, run_id, workflow_name):
-        payload = {"repo": repo, "run_id": int(run_id), "workflow_name": workflow_name}
-        temp_path = ACTIVE_RUN_PATH + ".tmp"
-        with open(temp_path, "w", encoding="utf-8") as state_file:
-            json.dump(payload, state_file, ensure_ascii=False, indent=2)
-            state_file.flush()
-            os.fsync(state_file.fileno())
-        os.replace(temp_path, ACTIVE_RUN_PATH)
-
-    def _clear_active_run(self):
-        try:
-            os.remove(ACTIVE_RUN_PATH)
-        except FileNotFoundError:
-            pass
-
-    def _resume_saved_run(self):
-        if not os.path.exists(ACTIVE_RUN_PATH):
-            return
-        try:
-            with open(ACTIVE_RUN_PATH, encoding="utf-8") as state_file:
-                state = json.load(state_file)
-            load_dotenv(ENV_PATH, override=True)
-            token = os.getenv("GITHUB_TOKEN", "")
-            if not token:
-                return
-            self.current_repo = state["repo"]
-            self.current_token = token
-            self.current_run_id = int(state["run_id"])
-            self.cancel_requested = False
-            self.btn_run.config(state=tk.DISABLED)
-            self.btn_cancel.config(state=tk.NORMAL)
-            self.progress_bar.start(10)
-            self.log(f"↻ 接回上次監控的雲端 Run #{self.current_run_id}…")
-            def _resume_worker():
-                try:
-                    self._poll_workflow_runs(
-                        self.current_repo, token, state.get("workflow_name"),
-                        known_run_id=self.current_run_id,
-                    )
-                except Exception as error:
-                    self.root.after(0, lambda e=str(error): self._on_workflow_failed(e))
-            threading.Thread(target=_resume_worker, daemon=True).start()
-        except Exception as error:
-            self.log(f"⚠ 無法恢復上次 Run：{error}")
 
     # ── 解析目錄 ──
     def start_parse_catalog(self):
@@ -523,7 +476,7 @@ class AudiobookGUIApp:
                 
         threading.Thread(target=_cancel_worker, daemon=True).start()
 
-    def _poll_workflow_runs(self, repo, token, target_workflow_name=None, known_run_id=None):
+    def _poll_workflow_runs(self, repo, token, target_workflow_name=None):
         headers = {
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {token}",
@@ -581,9 +534,9 @@ class AudiobookGUIApp:
                         ))
                     time.sleep(5)
 
-        run_id = int(known_run_id) if known_run_id else None
+        run_id = None
         max_wait = 40
-        for attempt in range(max_wait if not run_id else 0):
+        for attempt in range(max_wait):
             r = github_get(runs_url, timeout=10)
             if r.status_code == 200:
                 runs = r.json().get("workflow_runs", [])
@@ -605,7 +558,6 @@ class AudiobookGUIApp:
                             continue
                     run_id = run["id"]
                     self.current_run_id = run_id
-                    self._save_active_run(repo, run_id, target_workflow_name)
                     status = run["status"]
                     html_url = run.get("html_url", f"https://github.com/{repo}/actions/runs/{run_id}")
                     self.root.after(0, lambda s=status, url=html_url, r=repo: self.log(
@@ -782,7 +734,6 @@ class AudiobookGUIApp:
             # Jobs and logs are synchronized before showing the terminal result, so
             # progress produced while the GUI was offline is not skipped.
             if run_status == "completed":
-                self._clear_active_run()
                 if upload_pause:
                     retry_text = upload_pause["retry_at"]
                     self.root.after(0, lambda p=upload_pause, t=retry_text: self._on_workflow_failed(
