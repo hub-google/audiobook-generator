@@ -1331,7 +1331,8 @@ class AudiobookGUIApp:
                 res = parse_catalog(url)
                 self.root.after(0, lambda: self._on_parse_success(res))
             except Exception as e:
-                self.root.after(0, lambda: self._on_parse_failed(str(e)))
+                error_message = str(e)
+                self.root.after(0, lambda message=error_message: self._on_parse_failed(message))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -1735,7 +1736,8 @@ class AudiobookGUIApp:
                 else:
                     self.root.after(0, lambda: self.log(f"⚠ 發送取消指令失敗 (HTTP {r.status_code}): {r.text}"))
             except Exception as e:
-                self.root.after(0, lambda: self.log(f"⚠ 取消請求發生例外: {e}"))
+                error_message = str(e)
+                self.root.after(0, lambda message=error_message: self.log(f"⚠ 取消請求發生例外: {message}"))
                 
         threading.Thread(target=_cancel_worker, daemon=True).start()
 
@@ -1823,8 +1825,8 @@ class AudiobookGUIApp:
                     self.current_run_id = run_id
                     status = run["status"]
                     html_url = run.get("html_url", f"https://github.com/{repo}/actions/runs/{run_id}")
-                    self.root.after(0, lambda s=status, url=html_url, r=repo: self.log(
-                        f"已連結至雲端 Run ID #{run_id}，目前狀態: {s}\n"
+                    self.root.after(0, lambda rid=run_id, s=status, url=html_url, r=repo: self.log(
+                        f"已連結至雲端 Run ID #{rid}，目前狀態: {s}\n"
                         f"   👉 點此查看即時進度: {url}\n"
                         f"   📂 雲端快取備份位址: https://github.com/{r}/actions/caches"
                     ))
@@ -2093,8 +2095,9 @@ class AudiobookGUIApp:
                 
                 self.root.after(0, _update_log)
             except Exception as e:
-                self.root.after(0, lambda: self.log(
-                    f"✅ 已確認 YouTube 上傳全部成功！（無法讀取檔案大小: {e}）"
+                error_message = str(e)
+                self.root.after(0, lambda message=error_message: self.log(
+                    f"✅ 已確認 YouTube 上傳全部成功！（無法讀取檔案大小: {message}）"
                 ))
                 
         threading.Thread(target=_fetch_artifact_info, daemon=True).start()

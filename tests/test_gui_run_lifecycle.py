@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 
 
@@ -31,3 +32,30 @@ def test_queue_sync_checks_bound_run_against_github():
     assert "GitHub 查證" in source
     assert "_refresh_observation_freshness" in source
     assert "self.root.after(1000, self._refresh_observation_freshness)" in source
+
+
+def test_deferred_gui_callbacks_do_not_capture_exception_targets():
+    """Exception targets are cleared when an except block exits (PEP 3110)."""
+    tree = ast.parse(GUI_SOURCE.read_text(encoding="utf-8"))
+    unsafe = []
+    for handler in (node for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)):
+        if not handler.name:
+            continue
+        for child in ast.walk(handler):
+            if not isinstance(child, ast.Lambda):
+                continue
+            bound = {arg.arg for arg in child.args.args}
+            referenced = {
+                node.id for node in ast.walk(child.body) if isinstance(node, ast.Name)
+            }
+            if handler.name in referenced and handler.name not in bound:
+                unsafe.append((child.lineno, handler.name))
+
+    assert unsafe == []
+
+
+def test_run_discovery_callback_binds_the_discovered_run_id():
+    source = GUI_SOURCE.read_text(encoding="utf-8")
+
+    assert "lambda rid=run_id, s=status" in source
+    assert "Run ID #{rid}" in source
