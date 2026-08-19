@@ -150,31 +150,22 @@ class AudiobookGUIApp:
         self.excluded_chapters = set()
 
 
-        # ── 區塊 2: 雲端製作控管 ──
-        section2 = ttk.LabelFrame(cloud_tab, text="2. 雲端製作控管")
+        # ── 區塊 2: 雲端執行日誌 ──
+        # 每本小說的控制都集中在上方佇列；舊版的全域控制容易讓人誤以為
+        # 它們會操作整個佇列，因此只保留真正有用的雲端日誌。
+        section2 = ttk.LabelFrame(cloud_tab, text="2. 雲端執行日誌")
         section2.pack(fill=tk.BOTH, expand=True)
 
-        # Google Drive inputs removed
+        # 保留元件供舊版單一 Run 相容程式使用，但不放進新介面。
         action_frame = ttk.Frame(section2)
-        action_frame.pack(fill=tk.X, pady=5)
-
         self.btn_cancel = ttk.Button(action_frame, text="🛑 取消雲端作業", command=self.cancel_github_actions, state=tk.DISABLED)
-        self.btn_cancel.pack(side=tk.LEFT, padx=(0, 15))
-
         self.btn_download = ttk.Button(action_frame, text="📥 一鍵下載成品", command=self.start_batch_download, state=tk.DISABLED)
-        self.btn_download.pack(side=tk.LEFT, padx=(0, 15))
-
         self.lbl_status = ttk.Label(action_frame, text="就緒", style="Status.TLabel")
-        self.lbl_status.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        # 進度條
         self.progress_bar = ttk.Progressbar(section2, mode="indeterminate")
-        self.progress_bar.pack(fill=tk.X, pady=5)
 
         # 實時 Log 控制台
-        ttk.Label(section2, text="雲端執行日誌 (Cloud Logs):").pack(anchor=tk.W, pady=(5, 2))
         self.log_text = scrolledtext.ScrolledText(section2, height=12, background="#1e1e1e", foreground="#dcdcdc", font=("Consolas", 9))
-        self.log_text.pack(fill=tk.BOTH, expand=True)
+        self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         # 設定超連結標籤
         self.log_text.tag_config("hyperlink", foreground="#4da6ff", underline=1)
@@ -189,7 +180,11 @@ class AudiobookGUIApp:
         section = ttk.LabelFrame(parent, text="雲端小說佇列（關閉 GUI 後仍由 GitHub 繼續）")
         section.pack(fill=tk.X, pady=(0, 12))
         columns = ("position", "book", "range", "status", "verified", "hf", "youtube", "run")
-        self.queue_tree = ttk.Treeview(section, columns=columns, show="headings", height=6, selectmode="browse")
+        tree_frame = ttk.Frame(section)
+        tree_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.queue_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=6, selectmode="browse")
+        queue_scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.queue_tree.yview)
+        self.queue_tree.configure(yscrollcommand=queue_scrollbar.set)
         headings = {
             "position": "順位", "book": "小說", "range": "章節", "status": "狀態",
             "verified": "GitHub 查證", "hf": "HF", "youtube": "YouTube", "run": "Run",
@@ -201,7 +196,8 @@ class AudiobookGUIApp:
         for key in columns:
             self.queue_tree.heading(key, text=headings[key])
             self.queue_tree.column(key, width=widths[key], anchor=tk.CENTER if key != "book" else tk.W)
-        self.queue_tree.pack(fill=tk.X, padx=5, pady=5)
+        self.queue_tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        queue_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.queue_tree.bind("<<TreeviewSelect>>", self._on_queue_select)
         self.queue_tree.bind("<Double-1>", self.open_selected_task_progress)
 
@@ -896,6 +892,27 @@ class AudiobookGUIApp:
         active = task.get("status") in {"running", "dispatching", "canceling"}
         task_id, run_id = task["task_id"], task.get("run_id")
         excluded = sorted(value for value in self.excluded_chapters if start <= value <= end)
+        original_button_text = self.btn_update_queue.cget("text")
+        self.btn_update_queue.config(state=tk.DISABLED, text="⏳ 正在更新雲端佇列…")
+        self.selected_status_var.set(
+            f"《{task.get('book_title') or '待解析'}》｜正在儲存第 {start}～{end} 章設定…"
+        )
+
+        def finish_update(queue, dispatch_error=None):
+            self._render_queue(queue)
+            self.btn_update_queue.config(state=tk.NORMAL, text=original_button_text)
+            updated = next((item for item in queue.get("tasks", []) if item.get("task_id") == task_id), None)
+            if updated:
+                self._update_selected_task_status(updated)
+            result = "已停止舊 Run，確認取消後自動重新排程" if active else "已更新雲端佇列"
+            self.log(f"✓ {task.get('book_title')}：第 {start}～{end} 章；{result}")
+            if dispatch_error:
+                self.log(f"⚠ 章節設定已儲存，但調度器暫時無法啟動：{dispatch_error}")
+
+        def fail_update(detail):
+            self.btn_update_queue.config(state=tk.NORMAL, text=original_button_text)
+            self._update_selected_task_status(task)
+            messagebox.showerror("更新章節失敗", detail)
 
         def worker():
             try:
@@ -912,12 +929,14 @@ class AudiobookGUIApp:
                     f"Update chapter plan for audiobook task {task_id}",
                 )
                 self.cloud_queue = queue
-                self.root.after(0, lambda: self._render_queue(queue))
-                self._dispatch_queue_workflow()
-                result = "已停止舊 Run，確認取消後自動重新排程" if active else "已直接更新雲端佇列"
-                self.root.after(0, lambda: self.log(f"✓ {task.get('book_title')}：第 {start}～{end} 章；{result}"))
+                dispatch_error = None
+                try:
+                    self._dispatch_queue_workflow()
+                except Exception as error:
+                    dispatch_error = str(error)
+                self.root.after(0, lambda q=queue, e=dispatch_error: finish_update(q, e))
             except Exception as error:
-                self.root.after(0, lambda detail=str(error): messagebox.showerror("更新章節失敗", detail))
+                self.root.after(0, lambda detail=str(error): fail_update(detail))
         threading.Thread(target=worker, daemon=True).start()
 
     def open_batch_queue_dialog(self):
