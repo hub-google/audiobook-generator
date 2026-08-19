@@ -179,7 +179,11 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
         "-r", "1",
         "-threads", "0",
         "-c:a", "aac", "-b:a", "128k",
-        "-shortest",
+        # The image input is an infinite 1 FPS loop.  Do not rely on
+        # ``-shortest`` to drain that sparse stream: some FFmpeg builds can
+        # leave several queued video frames after the WAV ends.  Cap the
+        # container explicitly at the source-audio duration instead.
+        "-t", f"{duration:.6f}",
         partial_video
     ]
     t0 = time.time()
