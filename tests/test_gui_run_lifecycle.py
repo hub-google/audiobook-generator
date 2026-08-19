@@ -18,3 +18,11 @@ def test_network_recovery_remains_in_the_current_run_monitor():
     assert "while True:" in source
     assert "網路已恢復，正在重新同步雲端 Run、Jobs 與執行紀錄" in source
     assert "GUI 將持續重試" in source
+
+
+def test_queue_sync_checks_bound_run_against_github():
+    source = GUI_SOURCE.read_text(encoding="utf-8")
+
+    assert "actions/runs/{run_id}" in source
+    assert "run_not_found" in source
+    assert "mark_task_interrupted" in source

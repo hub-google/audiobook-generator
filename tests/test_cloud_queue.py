@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 
 from src.cloud_queue import (
     add_tasks, current_task, empty_queue, move_task, new_task, next_task,
-    requeue_task_after_active, update_task,
+    mark_task_interrupted, requeue_task_after_active, update_task,
 )
 from src.queue_dispatcher import Dispatcher
 
@@ -94,6 +94,37 @@ class CloudQueueTests(unittest.TestCase):
         dispatched_queue = dispatcher.dispatch_next.call_args.args[0]
         self.assertEqual(dispatched_queue["tasks"][0]["status"], "interrupted")
         self.assertEqual(next_task(dispatched_queue)["task_id"], second["task_id"])
+
+    def test_missing_bound_run_interrupts_book_and_starts_next(self):
+        first = new_task("https://example/1", "第一部")
+        second = new_task("https://example/2", "第二部")
+        queue = add_tasks(empty_queue(), [first, second])
+        queue = update_task(queue, first["task_id"], status="running", run_id=404123)
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.store = Mock()
+        dispatcher.store.load.return_value = (queue, "sha")
+        dispatcher.store.save.return_value = "next-sha"
+        dispatcher.runs = Mock(return_value=[])
+        dispatcher.run_by_id = Mock(return_value=None)
+        dispatcher.dispatch_next = Mock(return_value=(queue, "started next"))
+
+        self.assertEqual(dispatcher.run(), "started next")
+        dispatched_queue = dispatcher.dispatch_next.call_args.args[0]
+        interrupted = dispatched_queue["tasks"][0]
+        self.assertEqual(interrupted["status"], "interrupted")
+        self.assertEqual(interrupted["reason"], "run_not_found")
+        self.assertEqual(interrupted["run_history"][0]["run_id"], 404123)
+        self.assertEqual(next_task(dispatched_queue)["task_id"], second["task_id"])
+
+    def test_mark_interrupted_is_idempotent_for_run_history(self):
+        task = new_task("https://example/1", "第一部")
+        queue = add_tasks(empty_queue(), [task])
+        queue = update_task(queue, task["task_id"], status="running", run_id=123)
+
+        queue = mark_task_interrupted(queue, task["task_id"], ended_at="2026-08-19T02:00:00Z")
+        queue = mark_task_interrupted(queue, task["task_id"], ended_at="2026-08-19T02:00:00Z")
+
+        self.assertEqual(len(queue["tasks"][0]["run_history"]), 1)
 
     def test_requeued_book_ignores_runs_created_before_retry_request(self):
         task = new_task("https://example/1", "第一部")

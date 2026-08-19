@@ -15,8 +15,9 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 try:
     from catalog_parser import parse_catalog
     from cloud_queue import (
-        GitHubQueueStore, add_tasks, delete_task, move_task, new_task,
-        requeue_task_after_active, update_task,
+        BLOCKING_STATES, GitHubQueueStore, add_tasks, delete_task,
+        mark_task_interrupted, move_task, new_task, requeue_task_after_active,
+        update_task,
     )
 except ImportError:
     parse_catalog = None
@@ -258,8 +259,44 @@ class AudiobookGUIApp:
         self.queue_syncing = True
         def worker():
             try:
-                store, _, _ = self._queue_store()
+                store, repo, token = self._queue_store()
                 queue, _ = store.load()
+                interruptions = []
+                headers = {
+                    "Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                }
+                for task in queue.get("tasks", []):
+                    run_id = task.get("run_id")
+                    if not run_id or task.get("status") not in BLOCKING_STATES:
+                        continue
+                    response = requests.get(
+                        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}",
+                        headers=headers, timeout=10,
+                    )
+                    if response.status_code == 404:
+                        interruptions.append((task["task_id"], run_id, "run_not_found", "missing", None))
+                    elif response.status_code == 200:
+                        run_data = response.json()
+                        if run_data.get("status") == "completed" and run_data.get("conclusion") == "cancelled":
+                            interruptions.append((
+                                task["task_id"], run_id, "run_cancelled", "cancelled", run_data.get("updated_at"),
+                            ))
+                    else:
+                        response.raise_for_status()
+                if interruptions:
+                    def apply_interruptions(latest):
+                        for task_id, run_id, reason, conclusion, ended_at in interruptions:
+                            current = next(
+                                (item for item in latest.get("tasks", []) if item.get("task_id") == task_id), None
+                            )
+                            if current and current.get("run_id") == run_id and current.get("status") in BLOCKING_STATES:
+                                latest = mark_task_interrupted(
+                                    latest, task_id, reason=reason, conclusion=conclusion, ended_at=ended_at,
+                                )
+                        return latest
+                    queue = store.mutate(apply_interruptions, "Reconcile missing or cancelled audiobook runs")
+                    self._dispatch_queue_workflow()
                 self.cloud_queue = queue
                 self.root.after(0, lambda: self._render_queue(queue))
             except Exception as error:

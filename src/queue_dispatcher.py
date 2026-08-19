@@ -11,9 +11,9 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 try:
-    from .cloud_queue import BLOCKING_STATES, GitHubQueueStore, current_task, next_task, task_id_from_run_name, update_task
+    from .cloud_queue import BLOCKING_STATES, GitHubQueueStore, current_task, mark_task_interrupted, next_task, task_id_from_run_name, update_task
 except ImportError:
-    from cloud_queue import BLOCKING_STATES, GitHubQueueStore, current_task, next_task, task_id_from_run_name, update_task
+    from cloud_queue import BLOCKING_STATES, GitHubQueueStore, current_task, mark_task_interrupted, next_task, task_id_from_run_name, update_task
 
 
 TRANSIENT_REASONS = {
@@ -51,6 +51,14 @@ class Dispatcher:
 
     def runs(self):
         return self.request("GET", "/actions/workflows/audiobook.yml/runs", params={"event": "workflow_dispatch", "per_page": 100}).json().get("workflow_runs", [])
+
+    def run_by_id(self, run_id):
+        response = requests.get(f"{self.api}/actions/runs/{run_id}", headers=self.headers, timeout=30)
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            raise RuntimeError(f"GitHub API GET /actions/runs/{run_id} failed ({response.status_code}): {response.text}")
+        return response.json()
 
     def retry_marker(self, run_id):
         try:
@@ -98,7 +106,18 @@ class Dispatcher:
                 candidates = [run for run in candidates if (parse_time(run.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc)) >= retry_requested_at]
             run = candidates[0] if candidates else None
             if not run:
-                continue
+                bound_run_id = task.get("run_id")
+                if bound_run_id and task.get("status") in BLOCKING_STATES:
+                    run = self.run_by_id(bound_run_id)
+                    if run is None:
+                        queue = mark_task_interrupted(
+                            queue, task["task_id"], reason="run_not_found",
+                            conclusion="missing", ended_at=datetime.now(timezone.utc).isoformat(),
+                        )
+                        changed = True
+                        continue
+                if not run:
+                    continue
             run_id = int(run["id"])
             status = run.get("status")
             conclusion = run.get("conclusion")
@@ -126,14 +145,10 @@ class Dispatcher:
                 })
                 changed = True
             elif status == "completed" and conclusion == "cancelled" and task.get("status") not in {"interrupted", "paused"}:
-                history = list(task.get("run_history") or [])
-                if not any(item.get("run_id") == run_id for item in history):
-                    history.append({"run_id": run_id, "conclusion": "cancelled", "ended_at": run.get("updated_at")})
-                task.update({
-                    "status": "interrupted", "reason": "run_cancelled", "retry_at": None,
-                    "run_conclusion": "cancelled", "run_completed_at": run.get("updated_at"),
-                    "run_history": history,
-                })
+                queue = mark_task_interrupted(
+                    queue, task["task_id"], reason="run_cancelled",
+                    conclusion="cancelled", ended_at=run.get("updated_at"),
+                )
                 changed = True
         return queue, changed
 

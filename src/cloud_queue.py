@@ -94,6 +94,32 @@ def update_task(queue, task_id, **changes):
     return touch(queue)
 
 
+def mark_task_interrupted(queue, task_id, reason="run_cancelled", conclusion="cancelled", ended_at=None):
+    """Keep a book task but release its cancelled or missing Actions run."""
+    queue = normalize_queue(queue)
+    task = next((item for item in queue["tasks"] if item.get("task_id") == task_id), None)
+    if task is None:
+        raise KeyError(task_id)
+    run_id = task.get("run_id")
+    history = list(task.get("run_history") or [])
+    if run_id and not any(item.get("run_id") == run_id for item in history):
+        history.append({
+            "run_id": run_id,
+            "conclusion": conclusion,
+            "ended_at": ended_at or utc_now(),
+        })
+    task.update({
+        "status": "interrupted",
+        "reason": reason,
+        "retry_at": None,
+        "run_conclusion": conclusion,
+        "run_completed_at": ended_at or utc_now(),
+        "run_history": history,
+        "updated_at": utc_now(),
+    })
+    return touch(queue)
+
+
 def delete_task(queue, task_id):
     queue = normalize_queue(queue)
     queue["tasks"] = [item for item in queue["tasks"] if item.get("task_id") != task_id]
