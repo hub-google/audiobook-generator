@@ -50,7 +50,18 @@ def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir):
         inventory.extend(scan_artifact_chapters(str(expanded), name))
     by_chapter={int(x["chap_num"]):x for x in inventory}; completed=[]
     for part in assigned:
-        number=int(part["part_num"]); items=[by_chapter[int(c)] for c in part["chapters"]]; start,end=int(part["start_chap"]),int(part["end_chap"])
+        number=int(part["part_num"]); start,end=int(part["start_chap"]),int(part["end_chap"])
+        missing_chapters=[int(c) for c in part["chapters"] if int(c) not in by_chapter]
+        if missing_chapters: raise RuntimeError(f"Part {number} is missing chapter media: {missing_chapters}")
+        items=[by_chapter[int(c)] for c in part["chapters"]]
+        missing_videos=[int(x["chap_num"]) for x in items if not x.get("path") or not Path(x["path"]).is_file()]
+        missing_subtitles=[int(x["chap_num"]) for x in items if not x.get("srt_path") or not Path(x["srt_path"]).is_file() or Path(x["srt_path"]).stat().st_size == 0]
+        invalid_durations=[int(x["chap_num"]) for x in items if float(x.get("dur") or 0) <= 0]
+        if missing_videos or missing_subtitles or invalid_durations:
+            raise RuntimeError(
+                f"Part {number} artifact validation failed: missing_videos={missing_videos}, "
+                f"missing_subtitles={missing_subtitles}, invalid_durations={invalid_durations}"
+            )
         stem=f"{plan['book_title']}_Part_{number:02d}_Ch{start:04d}_to_Ch{end:04d}"; video,subtitle=output/f"{stem}.mp4",output/f"{stem}.srt"
         if not generate_part_srt(items,str(subtitle)): raise RuntimeError(f"could not generate Part {number} subtitle")
         if not merge_part_videos(dict(part,files=[x["path"] for x in items]),str(video)): raise RuntimeError(f"could not merge Part {number}")

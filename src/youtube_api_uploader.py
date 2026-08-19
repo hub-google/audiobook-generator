@@ -755,6 +755,10 @@ def scan_artifact_chapters(artifact_dir, artifact_name):
             "artifact": artifact_name,
             "chap_num": chapter_num,
             "dur": get_media_duration(video_path),
+            # Merge callers need usable local paths after expanding an artifact.
+            # Keep the relative fields as the durable inventory representation.
+            "path": os.path.abspath(video_path),
+            "srt_path": os.path.abspath(srt_path) if srt_path else None,
             "video_relpath": os.path.relpath(video_path, artifact_dir),
             "srt_relpath": os.path.relpath(srt_path, artifact_dir) if srt_path else None,
         })
