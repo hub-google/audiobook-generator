@@ -35,6 +35,16 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("audiobook-queue-dispatcher", self.dispatcher_text)
         self.assertIn("workflow_run:", self.dispatcher_text)
 
+    def test_worker_concurrency_is_capped_at_seventeen(self):
+        self.assertEqual(self.jobs["process_chapters"]["strategy"]["max-parallel"], 17)
+
+    def test_run_names_are_readable_and_dispatcher_history_is_pruned(self):
+        self.assertIn("有聲小說製作", self.text)
+        self.assertIn("inputs.book_title", self.text)
+        self.assertIn("有聲小說佇列調度", self.dispatcher_text)
+        self.assertIn("Delete older dispatcher run records", self.dispatcher_text)
+        self.assertIn('actions/runs/$old_run_id', self.dispatcher_text)
+
     def test_schedule_is_isolated_from_manual_production_workflow(self):
         self.assertNotIn("schedule:", self.text)
         self.assertIn("schedule:", self.dispatcher_text)

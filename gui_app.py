@@ -989,6 +989,7 @@ class AudiobookGUIApp:
                 payload = {
                     "ref": "master",
                     "inputs": {
+                        "book_title": self.catalog_data.get("book_title", "待解析書名"),
                         "catalog_url": url,
                         "start_chap": start_chap,
                         "end_chap": end_chap,

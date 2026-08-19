@@ -1,10 +1,14 @@
 name: Audiobook Automation Pipeline (Parallel)
 
-run-name: "有聲小說｜${{ inputs.queue_task_id || 'manual' }}｜Ch${{ inputs.start_chap }}-${{ inputs.end_chap }}"
+run-name: "有聲小說製作｜${{ inputs.book_title || '待解析書名' }}｜Ch${{ inputs.start_chap }}-${{ inputs.end_chap }}｜${{ inputs.queue_task_id || 'GUI直接執行' }}"
 
 on:
   workflow_dispatch:
     inputs:
+      book_title:
+        description: '小說書名（只用於可讀的 Run 名稱）'
+        required: false
+        default: '待解析書名'
       queue_task_id:
         description: '雲端佇列任務 ID；手動執行可留空'
         required: false
@@ -257,7 +261,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 20
+      max-parallel: 17
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
 
     steps:

@@ -134,6 +134,7 @@ class Dispatcher:
         task.update({"status": "dispatching", "reason": None, "retry_at": None, "dispatched_at": datetime.now(timezone.utc).isoformat()})
         self.store.save(queue, sha=self.store.load()[1], message=f"Reserve audiobook task {task_id}")
         inputs = {
+            "book_title": task.get("book_title") or "待解析書名",
             "queue_task_id": task_id,
             "catalog_url": task["catalog_url"],
             "start_chap": str(task.get("start_chapter") or 1),

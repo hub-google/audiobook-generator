@@ -24,9 +24,9 @@
 
 ## 3. 調度器
 
-`.github/workflows/queue-dispatcher.yml` 是短時 Action，由 GUI、`workflow_run: completed` 與每 15 分鐘 schedule 喚醒。每次只讀取、對帳、執行一個決策後結束，不得 sleep 等待小說完成，因此不受單一 Job 六小時限制。
+`.github/workflows/queue-dispatcher.yml` 是短時 Action，由 GUI、`workflow_run: completed` 與每 15 分鐘 schedule 喚醒。每次只讀取、對帳、執行一個決策後結束，不得 sleep 等待小說完成，因此不受單一 Job 六小時限制。每次開始時必須刪除較早且已完成的 Dispatcher Run 紀錄，Actions 清單只保留目前需要判讀的調度紀錄。
 
-調度順序：先處理 blocking task；`waiting_retry` 到期後針對其確定 Run ID 執行 failed-job rerun。沒有 blocking task 時才取 position 最小的 queued task。Run 名稱必須含永久 task ID，以此配對，不得取「最新 Run」。
+調度順序：先處理 blocking task；`waiting_retry` 到期後針對其確定 Run ID 執行 failed-job rerun。沒有 blocking task 時才取 position 最小的 queued task。Production Run 名稱必須包含「有聲小說製作」、小說書名、章節範圍及永久 task ID，以 task ID 配對而不得取「最新 Run」；Dispatcher Run 名稱必須清楚標示「有聲小說佇列調度」與觸發事件。
 
 ## 4. 配額與續作
 
