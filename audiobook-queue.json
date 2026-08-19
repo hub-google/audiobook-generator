@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 3,
-  "updated_at": "2026-08-19T02:50:15.503810+00:00",
+  "revision": 4,
+  "updated_at": "2026-08-19T02:50:26.256388+00:00",
   "tasks": [
     {
       "task_id": "book-20260819-cfdccaa4",
@@ -50,30 +50,6 @@
       },
       "created_at": "2026-08-19T02:46:39.148885+00:00",
       "updated_at": "2026-08-19T02:46:39.148885+00:00"
-    },
-    {
-      "task_id": "book-20260819-43f50cd1",
-      "position": 3,
-      "book_title": "凡人修仙傳",
-      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/1644",
-      "start_chapter": 1,
-      "end_chapter": 2442,
-      "excluded_chapters": [],
-      "status": "queued",
-      "run_id": null,
-      "run_attempt": 0,
-      "retry_at": null,
-      "reason": null,
-      "hf_progress": {
-        "completed": 0,
-        "total": 0
-      },
-      "youtube_progress": {
-        "completed": 0,
-        "total": 0
-      },
-      "created_at": "2026-08-19T02:50:14.311503+00:00",
-      "updated_at": "2026-08-19T02:50:14.311503+00:00"
     }
   ]
 }
