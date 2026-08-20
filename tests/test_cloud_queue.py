@@ -111,6 +111,28 @@ class CloudQueueTests(unittest.TestCase):
         self.assertEqual(reconciled["tasks"][0]["retry_at"], "2026-08-20T09:30:00+00:00")
         dispatcher.retry_marker.assert_not_called()
 
+    def test_existing_retry_deadline_migrates_bad_legacy_reason_to_waiting(self):
+        task = new_task("https://example/1", "舊狀態書")
+        queue = add_tasks(empty_queue(), [task])
+        queue = update_task(
+            queue, task["task_id"], status="needs_attention", run_id=123,
+            retry_at="2026-08-20T09:55:37+00:00", reason="$(python",
+        )
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.runs = Mock(return_value=[{
+            "id": 123, "status": "completed", "conclusion": "failure",
+            "created_at": "2026-08-20T07:00:00Z", "updated_at": "2026-08-20T07:27:43Z",
+            "display_title": f"有聲小說｜{task['task_id']}｜Ch1-100",
+        }])
+        dispatcher.retry_marker = Mock(return_value=("$(python", None))
+        dispatcher.progress_markers = Mock(return_value=None)
+
+        reconciled, changed = dispatcher.reconcile(queue)
+
+        self.assertTrue(changed)
+        self.assertEqual(reconciled["tasks"][0]["status"], "waiting_retry")
+        self.assertEqual(reconciled["tasks"][0]["reason"], "otherError")
+
     def test_paused_task_is_skipped_and_can_be_reordered(self):
         first = new_task("https://example/1", "第一部")
         second = new_task("https://example/2", "第二部")

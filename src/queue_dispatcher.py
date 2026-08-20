@@ -184,10 +184,13 @@ class Dispatcher:
             elif status == "completed" and conclusion == "failure" and task.get("status") not in {"stopped", "paused"}:
                 if task.get("status") == "waiting_retry" and task.get("retry_at"):
                     continue
+                existing_retry_at = parse_time(task.get("retry_at"))
                 reason, retry_at = self.retry_marker(run_id)
-                retry_at = parse_time(task.get("retry_at")) or retry_at
+                retry_at = existing_retry_at or retry_at
+                if existing_retry_at and reason not in TRANSIENT_REASONS:
+                    reason = "otherError"
                 task.update({
-                    "status": "waiting_retry" if reason in TRANSIENT_REASONS else "needs_attention",
+                    "status": "waiting_retry" if existing_retry_at or reason in TRANSIENT_REASONS else "needs_attention",
                     "reason": reason,
                     "retry_at": retry_at.isoformat(),
                 })
