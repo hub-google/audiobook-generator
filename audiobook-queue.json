@@ -1495,18 +1495,18 @@
         1484,
         1485
       ],
-      "status": "needs_attention",
+      "status": "waiting_retry",
       "run_id": 32322921633,
       "run_attempt": 1,
-      "retry_at": null,
-      "reason": "run_failure",
+      "retry_at": "2026-08-20T04:02:38.215214+00:00",
+      "reason": "otherError",
       "hf_progress": {
-        "completed": 0,
-        "total": 0
+        "completed": 1,
+        "total": 1
       },
       "youtube_progress": {
-        "completed": 0,
-        "total": 0
+        "completed": 1,
+        "total": 1
       },
       "created_at": "2026-08-19T02:46:37.628018+00:00",
       "updated_at": "2026-08-20T02:02:13.473590+00:00",
