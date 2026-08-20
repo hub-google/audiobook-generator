@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 301,
-  "updated_at": "2026-08-20T09:24:35.878187+00:00",
+  "revision": 302,
+  "updated_at": "2026-08-20T09:25:01.505707+00:00",
   "tasks": [
     {
       "task_id": "book-20260819-630acc92",
@@ -156,11 +156,11 @@
         2816,
         2870
       ],
-      "status": "waiting_retry",
+      "status": "needs_attention",
       "run_id": 32326794640,
       "run_attempt": 1,
-      "retry_at": "2026-08-20T11:24:58.704206+00:00",
-      "reason": "rateLimitExceeded",
+      "retry_at": null,
+      "reason": "run_failure",
       "hf_progress": {
         "completed": 38,
         "total": 38
@@ -170,7 +170,7 @@
         "total": 38
       },
       "created_at": "2026-08-19T02:46:39.148885+00:00",
-      "updated_at": "2026-08-20T09:24:35.878187+00:00",
+      "updated_at": "2026-08-20T09:25:01.505707+00:00",
       "run_conclusion": "failure",
       "run_completed_at": "2026-08-20T07:27:43Z",
       "run_history": [
