@@ -6,6 +6,7 @@ import yaml
 
 WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "audiobook.yml"
 DISPATCHER_WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "queue-dispatcher.yml"
+PREPARE_PARTS_PATH = Path(__file__).parents[1] / "src" / "prepare_parts.py"
 
 
 class WorkflowStrictSuccessTests(unittest.TestCase):
@@ -16,6 +17,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         cls.jobs = parsed["jobs"]
         cls.dispatcher_text = DISPATCHER_WORKFLOW_PATH.read_text(encoding="utf-8")
         cls.dispatcher_jobs = yaml.safe_load(cls.dispatcher_text)["jobs"]
+        cls.prepare_parts_text = PREPARE_PARTS_PATH.read_text(encoding="utf-8")
 
     def test_final_gate_depends_on_every_production_job(self):
         gate = self.jobs["strict_success_gate"]
@@ -100,6 +102,20 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         upload = str(self.jobs["upload_to_youtube"])
         self.assertIn("HF_ARCHIVE_REPO", upload)
         self.assertIn("hf_archive_state.json", upload)
+
+    def test_hf_receives_only_batched_merged_mp4s(self):
+        merge = self.jobs["merge_parts"]
+        upload_steps = [step for step in merge["steps"] if step.get("uses") == "actions/upload-artifact@v4"]
+        self.assertEqual(len(upload_steps), 1)
+        sidecar_paths = upload_steps[0]["with"]["path"]
+        self.assertIn("prepared_parts/*.srt", sidecar_paths)
+        self.assertIn("prepared_parts/shard-manifest-*.json", sidecar_paths)
+        self.assertNotIn("*.mp4", sidecar_paths)
+        self.assertIn("CommitOperationAdd", self.prepare_parts_text)
+        self.assertEqual(self.prepare_parts_text.count("api.create_commit("), 1)
+        self.assertNotIn("api.upload_file(", self.prepare_parts_text)
+        fetch = next(step for step in self.jobs["upload_to_youtube"]["steps"] if step.get("name") == "Fetch and verify merge-complete Parts from HF")
+        self.assertIn("--sidecar-dir prepared_sidecars", fetch["run"])
 
 
 if __name__ == "__main__":

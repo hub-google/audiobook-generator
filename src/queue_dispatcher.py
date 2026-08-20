@@ -182,6 +182,8 @@ class Dispatcher:
                 task.update({"status": "completed", "reason": None, "retry_at": None, "completed_at": run.get("updated_at")})
                 changed = True
             elif status == "completed" and conclusion == "failure" and task.get("status") not in {"stopped", "paused"}:
+                if task.get("status") == "waiting_retry" and task.get("retry_at"):
+                    continue
                 reason, retry_at = self.retry_marker(run_id)
                 task.update({
                     "status": "waiting_retry" if reason in TRANSIENT_REASONS else "needs_attention",

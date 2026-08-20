@@ -475,6 +475,15 @@ jobs:
             --part-numbers "${{ matrix.part_numbers }}" \
             --output-dir prepared_parts \
             --work-dir temp_merge_worker
+      - name: Publish lightweight subtitles and MP4 verification sidecars
+        uses: actions/upload-artifact@v4
+        with:
+          name: merge-result-${{ matrix.merge_worker_id }}
+          path: |
+            prepared_parts/*.srt
+            prepared_parts/shard-manifest-*.json
+          if-no-files-found: error
+          retention-days: 7
 
 # ─────────────────────────────────────────────────────────────
 # Ordered HF and YouTube publisher; this job never merges chapters
@@ -513,6 +522,13 @@ jobs:
           name: prepared-plan
           path: prepared_plan
 
+      - name: Download merge-worker subtitles and verification sidecars
+        uses: actions/download-artifact@v4
+        with:
+          pattern: merge-result-*
+          path: prepared_sidecars
+          merge-multiple: true
+
       - name: Fetch and verify merge-complete Parts from HF
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -521,6 +537,7 @@ jobs:
           python src/prepare_parts.py \
             --mode fetch \
             --plan prepared_plan/parts-plan.json \
+            --sidecar-dir prepared_sidecars \
             --output-dir prepared_parts
 
       - name: Run YouTube API Uploader
