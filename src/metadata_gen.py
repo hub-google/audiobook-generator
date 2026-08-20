@@ -255,10 +255,11 @@ def generate_gemini_art_prompt(book_title, pure_plot, max_attempts=4, retry_base
         }]
     }
     
-    # 使用呼叫端指定的最大嘗試次數
+    # 乒乓交替嘗試
+    max_total_attempts = max_attempts
     last_error = None
 
-    for attempt in range(1, max_attempts + 1):
+    for attempt in range(1, max_total_attempts + 1):
         # 奇數次用 latest，偶數次用 3.5-flash
         current_model = "gemini-flash-latest" if attempt % 2 != 0 else "gemini-3.5-flash"
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={api_key}"
@@ -282,20 +283,20 @@ def generate_gemini_art_prompt(book_title, pure_plot, max_attempts=4, retry_base
         except Exception as exc:
             last_error = f"例外錯誤: {exc}"
 
-        if attempt == max_attempts:
+        if attempt == max_total_attempts:
             break
             
-        # 標準指數退避: base, base*2, base*4, ...
-        delay = retry_base_seconds * (2 ** (attempt - 1))
+        # 每一輪（2次嘗試）遞增等待時間: 15, 15, 30, 30, 60, 60 (以 retry_base_seconds=15 為例)
+        delay = retry_base_seconds * (2 ** ((attempt - 1) // 2))
         next_model = "gemini-3.5-flash" if attempt % 2 != 0 else "gemini-flash-latest"
         logging.warning(
-            f"⚠️ 第 {attempt}/{max_attempts} 次 ({current_model}) 失敗: {last_error}；"
+            f"⚠️ 第 {attempt}/{max_total_attempts} 次 ({current_model}) 失敗: {last_error}；"
             f"等待 {delay} 秒後，切換至 {next_model} 重試..."
         )
         time.sleep(delay)
 
     raise RuntimeError(
-        f"❌ 封面前置未完成，流程中止：Gemini 藝術總監 Prompt 生成失敗，已重試 {max_attempts} 次: {last_error}"
+        f"❌ Gemini 藝術總監 Prompt 生成失敗，已交替重試 {max_total_attempts} 次全滅；流程中止: {last_error}"
     )
 
 
@@ -814,7 +815,7 @@ def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=No
                 pure_plot = json.load(f).get("brief", {}).get("synopsis", "")
         except (OSError, ValueError):
             pass
-        _, _ = "", "(reused cached master cover)"
+        english_plot, final_prompt = "", "(reused cached master cover)"
 
     title = generate_video_title(book_title, start_chap, end_chap, part_num=part_num)
     desc = generate_video_description(book_title, start_chap, end_chap, pure_plot=pure_plot, part_num=part_num)

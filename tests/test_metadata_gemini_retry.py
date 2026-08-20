@@ -27,7 +27,7 @@ class MetadataGeminiRetryTests(unittest.TestCase):
 
         self.assertEqual(result, "cinematic cover")
         self.assertEqual(mock_post.call_count, 3)
-        self.assertEqual([call.args[0] for call in mock_sleep.call_args_list], [1, 2])
+        self.assertEqual([call.args[0] for call in mock_sleep.call_args_list], [1, 1])
 
     @patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"})
     @patch("src.metadata_gen.time.sleep")
@@ -35,11 +35,11 @@ class MetadataGeminiRetryTests(unittest.TestCase):
     def test_gemini_503_exhaustion_fails_the_cover_prerequisite(self, mock_post, mock_sleep):
         mock_post.return_value = _response(503, "high demand")
 
-        with self.assertRaisesRegex(RuntimeError, "封面前置未完成，流程中止"):
+        with self.assertRaisesRegex(RuntimeError, "Gemini 藝術總監 Prompt 生成失敗"):
             generate_gemini_art_prompt("測試小說", "劇情", max_attempts=3, retry_base_seconds=1)
 
         self.assertEqual(mock_post.call_count, 3)
-        self.assertEqual([call.args[0] for call in mock_sleep.call_args_list], [1, 2])
+        self.assertEqual([call.args[0] for call in mock_sleep.call_args_list], [1, 1])
 
 
 if __name__ == "__main__":

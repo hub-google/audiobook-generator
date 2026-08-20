@@ -26,6 +26,7 @@ from src.youtube_api_uploader import (
     ThumbnailUploadPaused,
     UploadPaused,
     validate_chapter_inventory,
+    parse_chapter_info,
 )
 from googleapiclient.errors import HttpError
 from httplib2 import Response
@@ -458,6 +459,32 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         self.assertEqual(result["confirmed_missing"], [2])
         self.assertEqual(plan[0]["chapters"], [1, 3])
         self.assertEqual(plan[0]["source_missing_chapters"], [2])
+
+    def test_parse_chapter_info_part_formats(self):
+        self.assertEqual(
+            parse_chapter_info("吞噬星空_Part_01_Ch0001_to_Ch0003.mp4"),
+            (1, 3),
+        )
+        self.assertEqual(
+            parse_chapter_info("吞噬星空_Part_02_Ch0004_to_Ch0085.mp4"),
+            (4, 85),
+        )
+        self.assertEqual(
+            parse_chapter_info("吞噬星空_Part_01_chapter_0001_to_0085.mp4"),
+            (1, 85),
+        )
+        self.assertEqual(
+            parse_chapter_info("吞噬星空_Part_01_chapter_1_to_chapter_85.mp4"),
+            (1, 85),
+        )
+
+    def test_parse_chapter_info_single_and_worker_formats(self):
+        self.assertEqual(parse_chapter_info("吞噬星空_chapter_1.mp4"), (1, 1))
+        self.assertEqual(parse_chapter_info("吞噬星空_chapter_0120.mp4"), (120, 120))
+        self.assertEqual(parse_chapter_info("吞噬星空_Ch1.mp4"), (1, 1))
+        self.assertEqual(parse_chapter_info("video-worker-0"), (1, 120))
+        self.assertEqual(parse_chapter_info("video-worker-1"), (121, 240))
+        self.assertEqual(parse_chapter_info("unknown_filename.mp4"), (999999, 999999))
 
 
 if __name__ == "__main__":

@@ -279,11 +279,11 @@ def get_authenticated_service():
 
 def parse_chapter_info(filename):
     """從檔名解析起始與結束章節號碼，供升序排序"""
-    m_range = re.search(r'chapter_(\d+)_to_(\d+)', filename, re.IGNORECASE)
+    m_range = re.search(r'(?:chapter_|ch)(\d+)_to_(?:chapter_|ch)?(\d+)', filename, re.IGNORECASE)
     if m_range:
         return int(m_range.group(1)), int(m_range.group(2))
     
-    m_single = re.search(r'chapter_(\d+)', filename, re.IGNORECASE)
+    m_single = re.search(r'(?:chapter_|ch)(\d+)', filename, re.IGNORECASE)
     if m_single:
         chap = int(m_single.group(1))
         return chap, chap

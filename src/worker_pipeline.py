@@ -348,10 +348,10 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
             logging.info("[PROGRESS_MARKER] Worker-%s | Ch %s complete (%s/%s)",
                          worker_id, chapter_num, position, len(exact_indices))
         except Exception as error:
-            # 品質優先：任何章節失敗立即停止整個 pipeline，不跳過繼續。
+            # Independent chapters may continue, but the worker cannot succeed
+            # while any chapter remains incomplete.
             logging.exception("[CHECKPOINT] Worker-%s chapter %s stopped: %s",
                               worker_id, chapter_num, error)
-            raise
 
     final_failed = set(checkpoint.incomplete_chapters())
     missing_chapters = set(checkpoint.source_missing_chapters())
