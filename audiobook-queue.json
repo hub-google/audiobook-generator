@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 212,
-  "updated_at": "2026-08-20T02:44:21.435594+00:00",
+  "revision": 213,
+  "updated_at": "2026-08-20T03:02:02.469132+00:00",
   "tasks": [
     {
       "task_id": "book-20260819-cfdccaa4",
@@ -1727,7 +1727,7 @@
         2816,
         2870
       ],
-      "status": "paused",
+      "status": "queued",
       "run_id": null,
       "run_attempt": 0,
       "retry_at": null,
@@ -1771,8 +1771,8 @@
           "ended_at": "2026-08-20T02:17:56Z"
         }
       ],
-      "retry_requested_at": "2026-08-20T02:18:23.531962+00:00",
-      "execution_generation": 6,
+      "retry_requested_at": "2026-08-20T03:02:02.469132+00:00",
+      "execution_generation": 7,
       "renumber_selected": true,
       "duplicate_chapter_count": 144
     }
