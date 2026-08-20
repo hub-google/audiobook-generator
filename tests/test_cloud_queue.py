@@ -297,7 +297,8 @@ class CloudQueueTests(unittest.TestCase):
         )
 
         failed = queue["tasks"][0]
-        self.assertEqual(failed["status"], "needs_attention")
+        self.assertEqual(failed["status"], "waiting_retry")
+        self.assertIsNotNone(failed.get("retry_at"))
         self.assertEqual(failed["run_history"][0]["run_id"], 456)
         queue = requeue_task_after_active(queue, task["task_id"])
         self.assertEqual(queue["tasks"][0]["status"], "queued")

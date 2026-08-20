@@ -22,7 +22,7 @@ try:
     from crawler import fetch_chapter_text
     from cloud_queue import (
         BLOCKING_STATES, GitHubQueueStore, TERMINAL_STATES, add_tasks, delete_task,
-        is_task_active, mark_task_interrupted, mark_task_needs_attention, move_task,
+        is_task_active, mark_task_interrupted, mark_task_needs_attention, mark_task_waiting_retry, move_task,
         move_tasks, new_task, requeue_task_after_active, update_task, update_task_chapters,
     )
     from github_run_status import (
@@ -447,7 +447,7 @@ class AudiobookGUIApp:
                               observation.get("raw_conclusion") != "success"):
                             conclusion = observation.get("raw_conclusion") or "unknown"
                             terminal_updates.append((
-                                task["task_id"], run_id, "needs_attention",
+                                task["task_id"], run_id, "waiting_retry",
                                 f"run_{conclusion}", conclusion,
                                 observation.get("github_updated_at"),
                             ))
@@ -464,8 +464,12 @@ class AudiobookGUIApp:
                                 (item for item in latest.get("tasks", []) if item.get("task_id") == task_id), None
                             )
                             if current and current.get("run_id") == run_id and current.get("status") in BLOCKING_STATES:
-                                marker = mark_task_interrupted if target == "interrupted" else mark_task_needs_attention
-                                latest = marker(latest, task_id, reason=reason, conclusion=conclusion, ended_at=ended_at)
+                                if target == "interrupted":
+                                    latest = mark_task_interrupted(latest, task_id, reason=reason, conclusion=conclusion, ended_at=ended_at)
+                                else:
+                                    if current.get("status") == "waiting_retry" and current.get("retry_at"):
+                                        continue
+                                    latest = mark_task_waiting_retry(latest, task_id, reason=reason, conclusion=conclusion, ended_at=ended_at)
                         return latest
                     queue = store.mutate(apply_terminal_updates, "Reconcile completed audiobook runs")
                     self._dispatch_queue_workflow()

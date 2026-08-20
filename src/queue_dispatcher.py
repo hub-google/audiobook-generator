@@ -60,6 +60,8 @@ class Dispatcher:
         self.repo = repo
         self.token = token
         self.store = GitHubQueueStore(repo, token, branch=branch)
+
+
         self.headers = {
             "Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
             "X-GitHub-Api-Version": "2022-11-28",
@@ -86,8 +88,11 @@ class Dispatcher:
     def retry_marker(self, run_id):
         try:
             command = [_find_gh(), "run", "view", str(run_id), "--repo", self.repo, "--log-failed"]
-            result = subprocess.run(command, capture_output=True, text=True, timeout=90, check=False)
-            text = result.stdout + result.stderr
+            result = subprocess.run(
+                command, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=90, check=False,
+            )
+            text = (result.stdout or "") + (result.stderr or "")
         except (OSError, subprocess.SubprocessError):
             return "otherError", datetime.now(timezone.utc) + timedelta(hours=2)
         reason_match = re.findall(r"reason=([^ |\r\n]+)", text)
@@ -96,15 +101,16 @@ class Dispatcher:
         if "429 Too Many Requests" in text or "rate limit" in text.lower():
             reason = "rateLimitExceeded"
         retry_at = parse_time(retry_match[-1]) if retry_match else None
-        return reason, retry_at or datetime.now(timezone.utc) + timedelta(hours=2)
+        return reason, retry_at or (datetime.now(timezone.utc) + timedelta(hours=2))
 
     def progress_markers(self, run_id):
         try:
             result = subprocess.run(
                 [_find_gh(), "run", "view", str(run_id), "--repo", self.repo, "--log"],
-                capture_output=True, text=True, timeout=120, check=False,
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=120, check=False,
             )
-            text = result.stdout
+            text = result.stdout or ""
         except (OSError, subprocess.SubprocessError):
             return None
         yt_parts = {int(value) for value in re.findall(r"\[API_UPLOAD_MARKER\] DONE \| Part (\d+)", text)}
@@ -186,11 +192,11 @@ class Dispatcher:
                     continue
                 existing_retry_at = parse_time(task.get("retry_at"))
                 reason, retry_at = self.retry_marker(run_id)
-                retry_at = existing_retry_at or retry_at
-                if existing_retry_at and reason not in TRANSIENT_REASONS:
+                if reason not in TRANSIENT_REASONS:
                     reason = "otherError"
+                retry_at = existing_retry_at or retry_at or (datetime.now(timezone.utc) + timedelta(hours=2))
                 task.update({
-                    "status": "waiting_retry" if existing_retry_at or reason in TRANSIENT_REASONS else "needs_attention",
+                    "status": "waiting_retry",
                     "reason": reason,
                     "retry_at": retry_at.isoformat(),
                 })

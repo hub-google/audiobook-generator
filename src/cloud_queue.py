@@ -18,8 +18,8 @@ BLOCKING_STATES = {"dispatching", "running", "waiting_retry", "needs_attention",
 TERMINAL_STATES = {"completed", "stopped", "interrupted"}
 
 
-ACTIVE_EXECUTION_STATES = {"dispatching", "running", "waiting_retry", "canceling"}
-NON_ACTIVE_STATES = {"completed", "stopped", "interrupted", "needs_attention", "paused"}
+ACTIVE_EXECUTION_STATES = {"dispatching", "running", "canceling"}
+NON_ACTIVE_STATES = {"completed", "stopped", "interrupted", "needs_attention", "paused", "waiting_retry"}
 
 
 def utc_now():
@@ -198,8 +198,11 @@ def mark_task_interrupted(queue, task_id, reason="run_cancelled", conclusion="ca
     return touch(queue)
 
 
-def mark_task_needs_attention(queue, task_id, reason="run_failed", conclusion="failure", ended_at=None):
-    """Release a completed unsuccessful run so the task can be requeued."""
+from datetime import datetime, timedelta, timezone
+
+
+def mark_task_waiting_retry(queue, task_id, reason="run_failure", conclusion="failure", ended_at=None, retry_at=None):
+    """Mark a task for automatic retry within 2 hours."""
     queue = normalize_queue(queue)
     task = next((item for item in queue["tasks"] if item.get("task_id") == task_id), None)
     if task is None:
@@ -212,16 +215,22 @@ def mark_task_needs_attention(queue, task_id, reason="run_failed", conclusion="f
             "conclusion": conclusion,
             "ended_at": ended_at or utc_now(),
         })
+    default_retry = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
     task.update({
-        "status": "needs_attention",
+        "status": "waiting_retry",
         "reason": reason,
-        "retry_at": None,
+        "retry_at": retry_at or task.get("retry_at") or default_retry,
         "run_conclusion": conclusion,
         "run_completed_at": ended_at or utc_now(),
         "run_history": history,
         "updated_at": utc_now(),
     })
     return touch(queue)
+
+
+def mark_task_needs_attention(queue, task_id, reason="run_failed", conclusion="failure", ended_at=None, retry_at=None):
+    """Legacy alias: ensure all failures transition to waiting_retry with guaranteed retry deadline."""
+    return mark_task_waiting_retry(queue, task_id, reason=reason, conclusion=conclusion, ended_at=ended_at, retry_at=retry_at)
 
 
 def delete_task(queue, task_id):
