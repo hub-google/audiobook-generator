@@ -11,11 +11,11 @@
       "start_chapter": 1,
       "end_chapter": 1486,
       "excluded_chapters": [],
-      "status": "canceling",
+      "status": "completed",
       "run_id": 32325705308,
       "run_attempt": 1,
       "retry_at": null,
-      "reason": "chapter_plan_updated",
+      "reason": null,
       "hf_progress": {
         "completed": 1,
         "total": 1
@@ -246,7 +246,7 @@
         2870
       ],
       "status": "interrupted",
-      "run_id": 32323730742,
+      "run_id": 32326794640,
       "run_attempt": 1,
       "retry_at": null,
       "reason": "run_cancelled",
