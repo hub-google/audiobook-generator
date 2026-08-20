@@ -156,11 +156,11 @@
         2816,
         2870
       ],
-      "status": "needs_attention",
+      "status": "waiting_retry",
       "run_id": 32326794640,
       "run_attempt": 1,
       "retry_at": "2026-08-20T09:55:37.472959+00:00",
-      "reason": "$(python",
+      "reason": "rateLimitExceeded",
       "hf_progress": {
         "completed": 38,
         "total": 38
