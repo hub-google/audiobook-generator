@@ -70,7 +70,7 @@ class GuiQueueControlTests(unittest.TestCase):
         app = make_app()
         task = {"task_id": "task-1", "run_id": 123, "status": "canceling"}
 
-        self.assertEqual(app._queue_status_text(task), "正在取消 Run")
+        self.assertEqual(app._queue_status_text(task), "canceling")
 
     def test_verified_github_run_state_overrides_local_queue_state(self):
         app = make_app()
@@ -80,7 +80,7 @@ class GuiQueueControlTests(unittest.TestCase):
             "checked_at": datetime.now(timezone.utc).isoformat(),
         }
 
-        self.assertEqual(app._queue_status_text(task), "執行中")
+        self.assertEqual(app._queue_status_text(task), "in_progress")
 
     def test_stop_task_enables_when_task_has_run_id(self):
         app = make_app()

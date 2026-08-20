@@ -320,22 +320,7 @@ class AudiobookGUIApp:
             observation = self.github_observations.get(task.get("task_id"))
             if observation:
                 return observation_text(observation)
-        local_labels = {
-            "canceling": "正在取消 Run",
-            "interrupted": "執行中斷",
-            "paused": "已暫停排程",
-            "stopped": "已停止",
-            "needs_attention": "需要處理",
-        }
-        if status in local_labels:
-            return local_labels[status]
-        labels = {
-            "queued": "等待中", "dispatching": "正在建立 Run", "running": "執行中",
-            "waiting_retry": "等待安全重試", "needs_attention": "需要處理",
-            "canceling": "正在取消 Run", "interrupted": "執行中斷",
-            "paused": "已暫停排程", "stopped": "已停止", "completed": "已完成",
-        }
-        return labels.get(status, status)
+        return status
 
     @staticmethod
     def _observation_checked_time(observation):

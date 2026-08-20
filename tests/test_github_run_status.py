@@ -40,14 +40,14 @@ class GitHubRunStatusTests(unittest.TestCase):
         conclusion = successful_observation(
             {"status": "completed", "conclusion": "future_conclusion"}, CHECKED,
         )
-        self.assertEqual(observation_text(status, now=NOW), "未知狀態｜future_status")
-        self.assertEqual(observation_text(conclusion, now=NOW), "未知結果｜future_conclusion")
+        self.assertEqual(observation_text(status, now=NOW), "future_status")
+        self.assertEqual(observation_text(conclusion, now=NOW), "future_conclusion")
 
     def test_missing_run_requires_two_confirmed_observations(self):
         first = missing_observation(None, CHECKED, confirmed=True)
         second = missing_observation(first, CHECKED, confirmed=True)
-        self.assertEqual(observation_text(first, now=NOW), "API 查無 Run｜複查中")
-        self.assertEqual(observation_text(second, now=NOW), "Run 已不存在")
+        self.assertEqual(observation_text(first, now=NOW), "checking")
+        self.assertEqual(observation_text(second, now=NOW), "not_found")
 
     def test_api_errors_replace_running_with_unconfirmed(self):
         for code in (
@@ -55,14 +55,14 @@ class GitHubRunStatusTests(unittest.TestCase):
             "network_error", "invalid_response",
         ):
             text = observation_text(error_observation(code, checked_at=CHECKED), now=NOW)
-            self.assertTrue(text.startswith("無法確認｜"), text)
+            self.assertTrue(text.startswith("error: "), text)
 
     def test_observation_becomes_unconfirmed_after_ttl(self):
         observation = successful_observation({"status": "in_progress", "conclusion": None}, CHECKED)
-        self.assertEqual(observation_text(observation, now=NOW), "執行中")
+        self.assertEqual(observation_text(observation, now=NOW), "in_progress")
         self.assertEqual(
             observation_text(observation, now=NOW + timedelta(seconds=31)),
-            "無法確認｜查證資料已過期",
+            "stale",
         )
 
 

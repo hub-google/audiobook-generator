@@ -6,33 +6,33 @@ from datetime import datetime, timezone
 
 
 RUN_STATUS_LABELS = {
-    "requested": "已建立，等待排程",
-    "queued": "等待 Runner",
-    "pending": "等待執行限制解除",
-    "waiting": "等待人工核准",
-    "in_progress": "執行中",
+    "requested": "requested",
+    "queued": "queued",
+    "pending": "pending",
+    "waiting": "waiting",
+    "in_progress": "in_progress",
 }
 
 RUN_CONCLUSION_LABELS = {
-    "success": "Run 已成功",
-    "cancelled": "執行中斷｜Run 已取消",
-    "failure": "執行失敗",
-    "timed_out": "執行逾時",
-    "action_required": "需要人工處理",
-    "stale": "Run 已過期",
-    "neutral": "Run 中性結束",
-    "skipped": "Run 已略過",
-    "startup_failure": "Run 啟動失敗",
+    "success": "success",
+    "cancelled": "cancelled",
+    "failure": "failure",
+    "timed_out": "timed_out",
+    "action_required": "action_required",
+    "stale": "stale",
+    "neutral": "neutral",
+    "skipped": "skipped",
+    "startup_failure": "startup_failure",
 }
 
 ERROR_LABELS = {
-    "unauthorized": "GitHub Token 無效",
-    "forbidden": "GitHub 權限不足",
-    "rate_limited": "GitHub API 限流",
-    "github_error": "GitHub 服務異常",
-    "network_error": "無法連線 GitHub",
-    "invalid_response": "GitHub 回應無法解析",
-    "stale": "查證資料已過期",
+    "unauthorized": "unauthorized",
+    "forbidden": "forbidden",
+    "rate_limited": "rate_limited",
+    "github_error": "github_error",
+    "network_error": "network_error",
+    "invalid_response": "invalid_response",
+    "stale": "stale",
 }
 
 
@@ -92,21 +92,21 @@ def observation_is_fresh(observation, now=None, ttl_seconds=30):
 
 def observation_text(observation, now=None, ttl_seconds=30):
     if not observation:
-        return "尚未查證 GitHub"
+        return "unverified"
     if not observation_is_fresh(observation, now=now, ttl_seconds=ttl_seconds):
-        return "無法確認｜查證資料已過期"
+        return "stale"
     kind = observation.get("kind")
     if kind == "error":
         code = observation.get("error_code") or "invalid_response"
-        return f"無法確認｜{ERROR_LABELS.get(code, code)}"
+        return f"error: {ERROR_LABELS.get(code, code)}"
     if kind == "not_found":
-        return "Run 已不存在" if observation.get("confirmed_missing") else "API 查無 Run｜複查中"
+        return "not_found" if observation.get("confirmed_missing") else "checking"
     status = observation.get("raw_status")
     conclusion = observation.get("raw_conclusion")
     if status == "completed":
         if conclusion is None:
-            return "Run 已結束｜等待結果同步"
-        return RUN_CONCLUSION_LABELS.get(conclusion, f"未知結果｜{conclusion}")
+            return "completed"
+        return RUN_CONCLUSION_LABELS.get(conclusion, conclusion or "completed")
     if status in RUN_STATUS_LABELS:
         return RUN_STATUS_LABELS[status]
-    return f"未知狀態｜{status or '空值'}"
+    return status or "unknown"
