@@ -93,7 +93,7 @@ class Dispatcher:
         reason_match = re.findall(r"reason=([^ |\r\n]+)", text)
         retry_match = re.findall(r"retry(?: after|_at=)([0-9T:.+\-Z]+)", text)
         reason = reason_match[-1] if reason_match else "otherError"
-        if not reason_match and ("429 Too Many Requests" in text or "rate limit" in text.lower()):
+        if "429 Too Many Requests" in text or "rate limit" in text.lower():
             reason = "rateLimitExceeded"
         retry_at = parse_time(retry_match[-1]) if retry_match else None
         return reason, retry_at or datetime.now(timezone.utc) + timedelta(hours=2)
@@ -185,6 +185,7 @@ class Dispatcher:
                 if task.get("status") == "waiting_retry" and task.get("retry_at"):
                     continue
                 reason, retry_at = self.retry_marker(run_id)
+                retry_at = parse_time(task.get("retry_at")) or retry_at
                 task.update({
                     "status": "waiting_retry" if reason in TRANSIENT_REASONS else "needs_attention",
                     "reason": reason,

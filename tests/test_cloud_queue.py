@@ -79,7 +79,7 @@ class CloudQueueTests(unittest.TestCase):
     @patch("src.queue_dispatcher.subprocess.run")
     def test_huggingface_429_is_classified_for_automatic_retry(self, run):
         run.return_value = Mock(
-            stdout="429 Too Many Requests: exceeded the rate limit for repository commits",
+            stdout="reason=$(python read_state.py)\n429 Too Many Requests: exceeded the rate limit for repository commits",
             stderr="",
         )
         dispatcher = Dispatcher("owner/repo", "token")
