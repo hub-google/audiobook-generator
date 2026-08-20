@@ -328,8 +328,8 @@
       "status": "needs_attention",
       "run_id": 32326794640,
       "run_attempt": 1,
-      "retry_at": null,
-      "reason": "run_failure",
+      "retry_at": "2026-08-20T09:33:52.734351+00:00",
+      "reason": "$(python",
       "hf_progress": {
         "completed": 38,
         "total": 38
