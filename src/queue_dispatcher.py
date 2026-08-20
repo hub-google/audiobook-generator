@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import subprocess
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -15,6 +17,17 @@ try:
     from .cloud_queue import BLOCKING_STATES, GitHubQueueStore, current_task, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
 except ImportError:
     from cloud_queue import BLOCKING_STATES, GitHubQueueStore, current_task, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
+
+
+def _find_gh() -> str:
+    """Resolve GitHub CLI executable path, checking PATH then common Windows locations."""
+    found = shutil.which("gh")
+    if found:
+        return found
+    installed = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "GitHub CLI" / "gh.exe"
+    if installed.exists():
+        return str(installed)
+    raise FileNotFoundError("找不到 GitHub CLI (gh)。請先安裝並執行 gh auth login。")
 
 
 TRANSIENT_REASONS = {
@@ -72,7 +85,7 @@ class Dispatcher:
 
     def retry_marker(self, run_id):
         try:
-            command = ["gh", "run", "view", str(run_id), "--repo", self.repo, "--log-failed"]
+            command = [_find_gh(), "run", "view", str(run_id), "--repo", self.repo, "--log-failed"]
             result = subprocess.run(command, capture_output=True, text=True, timeout=90, check=False)
             text = result.stdout + result.stderr
         except (OSError, subprocess.SubprocessError):
@@ -86,7 +99,7 @@ class Dispatcher:
     def progress_markers(self, run_id):
         try:
             result = subprocess.run(
-                ["gh", "run", "view", str(run_id), "--repo", self.repo, "--log"],
+                [_find_gh(), "run", "view", str(run_id), "--repo", self.repo, "--log"],
                 capture_output=True, text=True, timeout=120, check=False,
             )
             text = result.stdout

@@ -406,6 +406,9 @@ def run_tts_ms(target_indices=None):
                 except Exception:
                     pass
             failed_chapters.add(int(chap_num))
+            raise RuntimeError(
+                f"[TTS_MS] 第 {chap_num} 章經過 {CHAPTER_MAX_ATTEMPTS} 次完整嘗試仍失敗，流程中止"
+            )
 
     return succeeded_chapters, failed_chapters
 

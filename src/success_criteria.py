@@ -6,7 +6,10 @@ import json
 import os
 from urllib.parse import parse_qs, urlparse
 
-from .publication_checkpoint import GLOBAL_STEPS, PART_STEPS
+try:
+    from .publication_checkpoint import GLOBAL_STEPS, PART_STEPS
+except ImportError:
+    from publication_checkpoint import GLOBAL_STEPS, PART_STEPS
 
 
 PENDING_FIELDS = (

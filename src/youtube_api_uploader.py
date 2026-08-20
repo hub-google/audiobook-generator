@@ -17,6 +17,18 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+from pathlib import Path
+
+def _find_gh() -> str:
+    """Resolve GitHub CLI executable path, checking PATH then common Windows locations."""
+    import shutil as _shutil
+    found = _shutil.which("gh")
+    if found:
+        return found
+    installed = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "GitHub CLI" / "gh.exe"
+    if installed.exists():
+        return str(installed)
+    raise FileNotFoundError("找不到 GitHub CLI (gh)。請先安裝並執行 gh auth login。")
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -675,7 +687,7 @@ def generate_part_srt(sliced_items, output_srt_path):
             if srt_p and os.path.exists(srt_p):
                 try:
                     with open(srt_p, "r", encoding="utf-8") as in_f:
-                        content = in_f.read().strip().split('\n\n')
+                        content = re.split(r'\n\s*\n', in_f.read().strip())
                         for block in content:
                             lines = block.strip().split('\n')
                             if len(lines) >= 3:
@@ -707,7 +719,7 @@ def get_run_artifact_names(run_id, repo):
     # GitHub returns only 30 artifacts per page by default, so a 20-worker run
     # already spans multiple pages (shared-config + 40 worker artifacts).
     cmd = [
-        "gh", "api", "--paginate",
+        _find_gh(), "api", "--paginate",
         f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100",
         "--jq", ".artifacts[].name",
     ]
@@ -853,7 +865,7 @@ def download_artifact_task(run_id, repo, artifact_name, dest_dir):
     os.makedirs(dest_dir, exist_ok=True)
     
     dl_cmd = [
-        "gh", "run", "download", str(run_id),
+        _find_gh(), "run", "download", str(run_id),
         "--repo", repo,
         "--name", artifact_name,
         "--dir", dest_dir
@@ -865,7 +877,7 @@ def get_latest_successful_run_id(repo):
     """Fallback when no run_id is passed and no state.json exists: auto-detect latest video production run."""
     try:
         cmd = [
-            "gh", "api",
+            _find_gh(), "api",
             f"repos/{repo}/actions/workflows/audiobook.yml/runs?status=success&per_page=1",
             "--jq", ".workflow_runs[0].id"
         ]

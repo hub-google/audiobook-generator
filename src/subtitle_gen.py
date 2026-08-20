@@ -143,7 +143,7 @@ def merge_srts(chapter_srt_paths, chapter_durations, full_srt_output_path):
                 continue
                 
             with open(srt_path, "r", encoding="utf-8") as in_f:
-                content = in_f.read().strip().split('\n\n')
+                content = re.split(r'\n\s*\n', in_f.read().strip())
                 
                 for block in content:
                     lines = block.split('\n')

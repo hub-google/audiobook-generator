@@ -1678,7 +1678,7 @@ class AudiobookGUIApp:
             self.renumber_selected_chapters = True
             _update_listbox()
             info_lbl.config(
-                text=f"已依勾選順序重新編號｜網站索引仍保留供下載定位"
+                text="已依勾選順序重新編號｜網站索引仍保留供下載定位"
             )
 
         def _close_dialog():

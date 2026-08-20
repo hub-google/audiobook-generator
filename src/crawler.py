@@ -242,4 +242,7 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
                 if attempt < max_retries - 1:
                     time.sleep(2 ** attempt)
                 else:
-                    logging.error(f"[Crawler Worker] Max retries reached for chapter {global_idx}. Skipping.")
+                    logging.error(f"[Crawler Worker] Max retries reached for chapter {global_idx}. Raising.")
+                    raise RuntimeError(
+                        f"[Crawler Worker] 章節 {global_idx} 爬取失敗，已重試 {max_retries} 次: {e}"
+                    )
