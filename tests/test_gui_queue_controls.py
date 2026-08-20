@@ -1,5 +1,6 @@
 import tkinter as tk
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import Mock
 
 from gui_app import AudiobookGUIApp
@@ -70,6 +71,16 @@ class GuiQueueControlTests(unittest.TestCase):
         task = {"task_id": "task-1", "run_id": 123, "status": "canceling"}
 
         self.assertEqual(app._queue_status_text(task), "正在取消 Run")
+
+    def test_verified_github_run_state_overrides_local_queue_state(self):
+        app = make_app()
+        task = {"task_id": "task-1", "run_id": 123, "status": "needs_attention"}
+        app.github_observations["task-1"] = {
+            "kind": "ok", "raw_status": "in_progress", "raw_conclusion": None,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        self.assertEqual(app._queue_status_text(task), "執行中")
 
 
 if __name__ == "__main__":

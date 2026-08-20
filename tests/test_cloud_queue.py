@@ -236,6 +236,17 @@ class CloudQueueTests(unittest.TestCase):
         self.assertEqual(queue["tasks"][0]["status"], "queued")
         self.assertIsNone(queue["tasks"][0]["run_id"])
 
+    def test_every_non_active_state_can_be_requeued(self):
+        for status in ("queued", "paused", "completed", "stopped", "interrupted", "needs_attention"):
+            with self.subTest(status=status):
+                task = new_task("https://example/1", "第一部")
+                queue = add_tasks(empty_queue(), [task])
+                queue = update_task(queue, task["task_id"], status=status)
+
+                queue = requeue_task_after_active(queue, task["task_id"])
+
+                self.assertEqual(queue["tasks"][0]["status"], "queued")
+
     def test_requeued_book_ignores_runs_created_before_retry_request(self):
         task = new_task("https://example/1", "第一部")
         queue = add_tasks(empty_queue(), [task])

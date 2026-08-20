@@ -297,9 +297,12 @@ class AudiobookGUIApp:
 
     def _queue_status_text(self, task):
         status = task.get("status") or "queued"
-        # Local control states are more useful than the last GitHub observation.
-        # In particular, the old observation can remain "running" for a few
-        # seconds after a cancellation request has been accepted.
+        # A bound Run's verified GitHub state is authoritative.  Queue-control
+        # state must never hide an in-progress (or otherwise verified) Run.
+        if task.get("run_id"):
+            observation = self.github_observations.get(task.get("task_id"))
+            if observation:
+                return observation_text(observation)
         local_labels = {
             "canceling": "正在取消 Run",
             "interrupted": "執行中斷",
@@ -309,8 +312,6 @@ class AudiobookGUIApp:
         }
         if status in local_labels:
             return local_labels[status]
-        if task.get("run_id"):
-            return observation_text(self.github_observations.get(task.get("task_id")))
         labels = {
             "queued": "等待中", "dispatching": "正在建立 Run", "running": "執行中",
             "waiting_retry": "等待安全重試", "needs_attention": "需要處理",
@@ -1214,13 +1215,74 @@ class AudiobookGUIApp:
         task = self._selected_task()
         if not task:
             return
-        if task.get("status") not in {"interrupted", "stopped", "needs_attention"}:
-            messagebox.showinfo("重新排程", "只有已中斷、已停止或需要處理的小說可以重新排程。")
-            return
         title = task.get("book_title") or "小說任務"
+        run_id = task.get("run_id")
+        observation = self.github_observations.get(task.get("task_id")) or {}
+        github_active = (
+            run_id and observation.get("kind") == "ok" and
+            observation.get("raw_status") != "completed"
+        )
+        # If GitHub could not be verified, retain the conservative local guard
+        # so an active Run is not orphaned and duplicated.
+        active = github_active or (
+            run_id and observation.get("kind") != "ok" and
+            task.get("status") in {"running", "dispatching", "waiting_retry", "canceling"}
+        )
+        if active:
+            if not messagebox.askyesno(
+                    "確認重新排程",
+                    f"「{title}」目前的 Run 仍在 GitHub 執行。\n"
+                    "要先取消本次 Run，並在確認結束後自動重新排程嗎？"):
+                return
+            self.selected_status_var.set(f"《{title}》｜正在取消目前 Run，之後會自動重新排程…")
+
+            def worker():
+                try:
+                    store, repo, token = self._queue_store()
+                    response = requests.post(
+                        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel",
+                        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+                        timeout=15,
+                    )
+                    if response.status_code not in (200, 202, 409):
+                        raise RuntimeError(f"取消 Run 失敗 ({response.status_code}): {response.text}")
+                    if response.status_code == 409:
+                        # The Run can finish between the last poll and this
+                        # request.  It is no longer active, so requeue directly.
+                        def requeue_finished(value):
+                            value = update_task(
+                                value, task["task_id"], status="needs_attention",
+                                reason="user_requeue_after_run_ended",
+                            )
+                            return requeue_task_after_active(value, task["task_id"])
+                        queue = store.mutate(
+                            requeue_finished,
+                            f"Requeue completed audiobook task {task['task_id']}",
+                        )
+                    else:
+                        queue = store.mutate(
+                            lambda value: update_task(
+                                value, task["task_id"], status="canceling",
+                                reason="user_requeue", requeue_after_edit=True,
+                            ),
+                            f"Cancel and requeue audiobook task {task['task_id']}",
+                        )
+                    self.cloud_queue = queue
+                    self.root.after(0, lambda: self._render_queue(queue))
+                    result_message = (
+                        f"✓ {title} 的 Run 已結束，已直接重新排程。"
+                        if response.status_code == 409 else
+                        f"✓ {title} 的 Run 取消要求已送出；GitHub 確認結束後會自動重新排程。"
+                    )
+                    self.root.after(0, lambda message=result_message: self.log(message))
+                    self._dispatch_queue_workflow()
+                except Exception as error:
+                    self.root.after(0, lambda e=str(error): messagebox.showerror("重新排程失敗", e))
+            threading.Thread(target=worker, daemon=True).start()
+            return
         self._mutate_queue_async(
             lambda queue: requeue_task_after_active(queue, task["task_id"]),
-            f"Requeue interrupted audiobook task {task['task_id']}",
+            f"Requeue audiobook task {task['task_id']}",
             f"✓ {title} 已排到目前執行中小說的下一順位",
         )
 

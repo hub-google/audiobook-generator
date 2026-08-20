@@ -216,8 +216,8 @@ def requeue_task_after_active(queue, task_id):
     if index is None:
         raise KeyError(task_id)
     task = queue["tasks"][index]
-    if task.get("status") not in {"interrupted", "stopped", "needs_attention"}:
-        raise ValueError("只有已中斷、已停止或需要處理的任務可以重新排程")
+    if task.get("status") in {"dispatching", "running", "waiting_retry", "canceling"}:
+        raise ValueError("執行中的任務必須先取消目前 Run，再重新排程")
 
     active_id = next(
         (item.get("task_id") for item in queue["tasks"]
