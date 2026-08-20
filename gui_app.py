@@ -2,6 +2,8 @@ import os
 import sys
 import json
 import time
+import shutil
+import subprocess
 import requests
 import threading
 import tkinter as tk
@@ -239,7 +241,22 @@ class AudiobookGUIApp:
         repo = os.getenv("GITHUB_REPO", "hub-google/audiobook-generator")
         token = os.getenv("GITHUB_TOKEN", "")
         if not token:
-            raise RuntimeError("本地 .env 中未找到 GITHUB_TOKEN")
+            gh_candidates = [
+                r"C:\Program Files\GitHub CLI\gh.exe",
+                shutil.which("gh"),
+                os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "GitHub CLI", "gh.exe"),
+            ]
+            for gh_path in gh_candidates:
+                if gh_path and os.path.exists(gh_path):
+                    try:
+                        res = subprocess.run([gh_path, "auth", "token"], capture_output=True, text=True, timeout=5)
+                        if res.returncode == 0 and res.stdout.strip():
+                            token = res.stdout.strip()
+                            break
+                    except Exception:
+                        pass
+        if not token:
+            raise RuntimeError("本地 .env 中未找到 GITHUB_TOKEN，且未檢測到 GitHub CLI 登入")
         return repo, token
 
     def _queue_store(self):
@@ -350,27 +367,30 @@ class AudiobookGUIApp:
             "Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
             "X-GitHub-Api-Version": "2022-11-28",
         }
-        try:
-            response = requests.get(
-                f"https://api.github.com/repos/{repo}/actions/runs/{run_id}",
-                headers=headers, timeout=10,
-            )
-            if response.status_code == 200:
-                try:
-                    return successful_observation(response.json())
-                except (AttributeError, TypeError, ValueError, json.JSONDecodeError) as error:
-                    return error_observation("invalid_response", http_status=200, detail=error)
-            if response.status_code == 404:
-                verification = requests.get(
-                    f"https://api.github.com/repos/{repo}/actions/runs?per_page=1",
-                    headers=headers, timeout=10,
+        for attempt in range(2):
+            try:
+                response = requests.get(
+                    f"https://api.github.com/repos/{repo}/actions/runs/{run_id}",
+                    headers=headers, timeout=15,
                 )
-                if verification.status_code != 200:
-                    return self._http_error_observation(verification)
-                return missing_observation(previous, confirmed=True)
-            return self._http_error_observation(response)
-        except requests.RequestException as error:
-            return error_observation("network_error", detail=error)
+                if response.status_code == 200:
+                    try:
+                        return successful_observation(response.json())
+                    except (AttributeError, TypeError, ValueError, json.JSONDecodeError) as error:
+                        return error_observation("invalid_response", http_status=200, detail=error)
+                if response.status_code == 404:
+                    verification = requests.get(
+                        f"https://api.github.com/repos/{repo}/actions/runs?per_page=1",
+                        headers=headers, timeout=15,
+                    )
+                    if verification.status_code != 200:
+                        return self._http_error_observation(verification)
+                    return missing_observation(previous, confirmed=True)
+                return self._http_error_observation(response)
+            except requests.RequestException as error:
+                if attempt == 1:
+                    return error_observation("network_error", detail=error)
+                time.sleep(1)
 
     def _refresh_observation_freshness(self):
         """Expire an old observation in the UI even while a network poll is blocked."""
@@ -511,8 +531,16 @@ class AudiobookGUIApp:
             state=tk.NORMAL if all_toggleable else tk.DISABLED,
             text="恢復排程" if all_paused else "暫停排程",
         )
+        has_cancellable_run = (
+            len(tasks) == 1 and
+            statuses != {"canceling"} and
+            (
+                bool(tasks[0].get("run_id")) or
+                statuses <= {"running", "dispatching", "waiting_retry"}
+            )
+        )
         self.btn_stop_task.config(
-            state=tk.NORMAL if len(tasks) == 1 and statuses <= {"running", "dispatching", "waiting_retry"} else tk.DISABLED,
+            state=tk.NORMAL if has_cancellable_run else tk.DISABLED,
             text="正在取消…" if statuses == {"canceling"} else "取消本次 Run",
         )
         self.btn_sample_text.config(state=tk.NORMAL if len(tasks) == 1 else tk.DISABLED)
@@ -1025,7 +1053,12 @@ class AudiobookGUIApp:
                 queue = store.mutate(callback, message)
                 self.cloud_queue = queue
                 self.root.after(0, lambda: self._render_queue(queue))
-                self._dispatch_queue_workflow()
+                try:
+                    self._dispatch_queue_workflow()
+                except Exception as dispatch_error:
+                    self.root.after(0, lambda e=str(dispatch_error): self.log(
+                        f"⚠ 佇列已更新，但調度器暫時無法啟動：{e}"
+                    ))
                 if success_message:
                     self.root.after(0, lambda m=success_message: self.log(m))
             except Exception as error:
@@ -1239,16 +1272,24 @@ class AudiobookGUIApp:
             def worker():
                 try:
                     store, repo, token = self._queue_store()
-                    response = requests.post(
-                        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel",
-                        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-                        timeout=15,
-                    )
-                    if response.status_code not in (200, 202, 409):
-                        raise RuntimeError(f"取消 Run 失敗 ({response.status_code}): {response.text}")
-                    if response.status_code == 409:
-                        # The Run can finish between the last poll and this
-                        # request.  It is no longer active, so requeue directly.
+                    run_already_ended = False
+                    try:
+                        response = requests.post(
+                            f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel",
+                            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+                            timeout=15,
+                        )
+                        if response.status_code == 409:
+                            run_already_ended = True
+                        elif response.status_code not in (200, 202):
+                            raise RuntimeError(f"取消 Run 失敗 ({response.status_code}): {response.text}")
+                    except Exception as cancel_err:
+                        if not isinstance(cancel_err, RuntimeError):
+                            run_already_ended = True
+                        else:
+                            raise
+
+                    if run_already_ended:
                         def requeue_finished(value):
                             value = update_task(
                                 value, task["task_id"], status="needs_attention",
@@ -1271,11 +1312,16 @@ class AudiobookGUIApp:
                     self.root.after(0, lambda: self._render_queue(queue))
                     result_message = (
                         f"✓ {title} 的 Run 已結束，已直接重新排程。"
-                        if response.status_code == 409 else
+                        if run_already_ended else
                         f"✓ {title} 的 Run 取消要求已送出；GitHub 確認結束後會自動重新排程。"
                     )
                     self.root.after(0, lambda message=result_message: self.log(message))
-                    self._dispatch_queue_workflow()
+                    try:
+                        self._dispatch_queue_workflow()
+                    except Exception as dispatch_error:
+                        self.root.after(0, lambda e=str(dispatch_error): self.log(
+                            f"⚠ 重新排程已完成，但調度器暫時無法啟動：{e}"
+                        ))
                 except Exception as error:
                     self.root.after(0, lambda e=str(error): messagebox.showerror("重新排程失敗", e))
             threading.Thread(target=worker, daemon=True).start()
@@ -1289,15 +1335,15 @@ class AudiobookGUIApp:
     def stop_selected_task(self):
         task = self._selected_task()
         if not task:
-            messagebox.showinfo("取消本次 Run", "請先選取一筆正在執行的小說任務。")
+            messagebox.showinfo("取消本次 Run", "請先選取一筆小說任務。")
             return
-        if task.get("status") not in {"running", "dispatching", "waiting_retry"}:
+        run_id = task.get("run_id")
+        if not (run_id or task.get("status") in {"running", "dispatching", "waiting_retry", "canceling"}):
             messagebox.showinfo("取消本次 Run", "這筆任務目前沒有可取消的 Run。")
             return
         title = task.get("book_title") or "小說任務"
         if not messagebox.askyesno("確認取消", f"要取消「{title}」目前這一次 Run 嗎？\n任務會保留，之後可以重新排程。"):
             return
-        run_id = task.get("run_id")
         self.btn_stop_task.config(state=tk.DISABLED, text="正在送出取消…")
         self.selected_status_var.set(f"《{title}》｜正在向 GitHub 送出取消要求…")
         self.log(f"🛑 正在取消 {title} 的 Run {run_id or '（尚未建立）'}…")
@@ -1313,14 +1359,17 @@ class AudiobookGUIApp:
             try:
                 store, repo, token = self._queue_store()
                 if run_id:
-                    response = requests.post(
-                        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel",
-                        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}, timeout=15,
-                    )
-                    if response.status_code == 409:
-                        raise RuntimeError("GitHub 拒絕取消：這個 Run 可能已經結束，或目前狀態不能取消。請按「立即同步」確認最新狀態。")
-                    if response.status_code not in (200, 202):
-                        raise RuntimeError(f"取消 Run 失敗 ({response.status_code}): {response.text}")
+                    try:
+                        response = requests.post(
+                            f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel",
+                            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}, timeout=15,
+                        )
+                        if response.status_code not in (200, 202, 409):
+                            raise RuntimeError(f"取消 Run 失敗 ({response.status_code}): {response.text}")
+                    except Exception as cancel_error:
+                        if isinstance(cancel_error, RuntimeError):
+                            raise
+                        logging.warning(f"Could not cancel run {run_id}: {cancel_error}")
                 target_status = "stopped" if task.get("status") == "waiting_retry" or not run_id else "canceling"
                 queue = store.mutate(lambda value: update_task(value, task["task_id"], status=target_status, reason="user_cancelled"), f"Stop audiobook task {task['task_id']}")
                 self.cloud_queue = queue
@@ -1705,19 +1754,17 @@ class AudiobookGUIApp:
         start_chap = self.entry_start.get().strip()
         end_chap = self.entry_end.get().strip()
 
-        # 自動從本地 .env 獲取 repo 與 token
-        load_dotenv(ENV_PATH, override=True)
-        repo = os.getenv("GITHUB_REPO", "hub-google/audiobook-generator")
-        token = os.getenv("GITHUB_TOKEN", "")
+        # 自動從本地 .env 或 GitHub CLI 獲取 repo 與 token
+        try:
+            repo, token = self._github_settings()
+        except Exception as e:
+            messagebox.showerror("錯誤", str(e))
+            return
         
         self.current_repo = repo
         self.current_token = token
         self.current_run_id = None
         self.cancel_requested = False
-
-        if not token:
-            messagebox.showerror("錯誤", "本地 .env 中未找到 GITHUB_TOKEN！請確認檔案。")
-            return
 
         if not start_chap.isdigit() or not end_chap.isdigit():
             messagebox.showwarning("提示", "開始與結束章節必須為數字！")

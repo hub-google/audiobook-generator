@@ -82,6 +82,14 @@ class GuiQueueControlTests(unittest.TestCase):
 
         self.assertEqual(app._queue_status_text(task), "執行中")
 
+    def test_stop_task_enables_when_task_has_run_id(self):
+        app = make_app()
+        app._update_queue_control_states({"status": "interrupted", "run_id": 32323730742})
+        self.assertEqual(app.btn_stop_task.config.call_args.kwargs["state"], tk.NORMAL)
+
+        app._update_queue_control_states({"status": "needs_attention", "run_id": 32323730742})
+        self.assertEqual(app.btn_stop_task.config.call_args.kwargs["state"], tk.NORMAL)
+
 
 if __name__ == "__main__":
     unittest.main()
