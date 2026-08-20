@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 233,
-  "updated_at": "2026-08-20T07:28:07.608428+00:00",
+  "revision": 234,
+  "updated_at": "2026-08-20T07:28:27.138735+00:00",
   "tasks": [
     {
       "task_id": "book-20260819-630acc92",
@@ -170,7 +170,7 @@
         "total": 0
       },
       "created_at": "2026-08-19T02:46:39.148885+00:00",
-      "updated_at": "2026-08-20T07:28:07.608428+00:00",
+      "updated_at": "2026-08-20T07:28:27.138735+00:00",
       "run_conclusion": "failure",
       "run_completed_at": "2026-08-20T07:27:43Z",
       "run_history": [
