@@ -56,14 +56,16 @@ def run_crawler():
     
     workspace_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", config['paths']['workspace_base'], book_title))
     raw_text_dir = os.path.join(workspace_dir, "RawText")
-    if not os.path.exists(raw_text_dir):
-        os.makedirs(raw_text_dir)
+    os.makedirs(raw_text_dir, exist_ok=True)
         
     progress_file = os.path.join(workspace_dir, "progress.json")
     scraped_chapters = []
     if os.path.exists(progress_file):
-        with open(progress_file, "r", encoding="utf-8") as f:
-            scraped_chapters = json.load(f).get("scraped_chapters", [])
+        try:
+            with open(progress_file, "r", encoding="utf-8") as f:
+                scraped_chapters = json.load(f).get("scraped_chapters", [])
+        except (json.JSONDecodeError, OSError) as error:
+            logging.warning("[Crawler] Ignoring corrupt progress index %s: %s", progress_file, error)
             
     for i, chap_url in enumerate(chapters):
         if chap_url in scraped_chapters:
@@ -112,8 +114,10 @@ def run_crawler():
                 
                 # Update progress
                 scraped_chapters.append(chap_url)
-                with open(progress_file, "w", encoding="utf-8") as f:
+                progress_tmp = progress_file + ".tmp"
+                with open(progress_tmp, "w", encoding="utf-8") as f:
                     json.dump({"scraped_chapters": scraped_chapters}, f)
+                os.replace(progress_tmp, progress_file)
                     
                 break # Success, exit retry loop
             except Exception as e:

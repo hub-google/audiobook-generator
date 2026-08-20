@@ -188,6 +188,8 @@ def validate_stage(stage, path, workspace_dir=None, chapter=None, book_title=Non
         return validate_text(path, clean=True)
     if stage == "tts":
         return validate_wav(path)
+    if stage in {"subtitle", "video"} and not workspace_dir:
+        raise ArtifactValidationError(f"workspace_dir is required for {stage} validation")
     if stage == "subtitle":
         wav_path = os.path.join(workspace_dir, "Audio", f"{book_title}_chapter_{chapter}.wav")
         duration = validate_wav(wav_path)["duration_seconds"] if os.path.exists(wav_path) else None

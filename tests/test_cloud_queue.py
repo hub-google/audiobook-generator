@@ -66,6 +66,29 @@ class CloudQueueTests(unittest.TestCase):
         self.assertEqual(current_task(queue)["task_id"], first["task_id"])
         self.assertIsNone(next_task(queue))
 
+    def test_failed_task_needing_attention_blocks_the_next_book(self):
+        failed = new_task("https://example/1", "失敗書")
+        waiting = new_task("https://example/2", "下一本")
+        queue = add_tasks(empty_queue(), [failed, waiting])
+        queue = update_task(queue, failed["task_id"], status="needs_attention", run_id=123,
+                            run_conclusion="failure")
+
+        self.assertEqual(current_task(queue)["task_id"], failed["task_id"])
+        self.assertIsNone(next_task(queue))
+
+    @patch("src.queue_dispatcher.subprocess.run")
+    def test_huggingface_429_is_classified_for_automatic_retry(self, run):
+        run.return_value = Mock(
+            stdout="429 Too Many Requests: exceeded the rate limit for repository commits",
+            stderr="",
+        )
+        dispatcher = Dispatcher("owner/repo", "token")
+
+        reason, retry_at = dispatcher.retry_marker(123)
+
+        self.assertEqual(reason, "rateLimitExceeded")
+        self.assertIsNotNone(retry_at)
+
     def test_paused_task_is_skipped_and_can_be_reordered(self):
         first = new_task("https://example/1", "第一部")
         second = new_task("https://example/2", "第二部")

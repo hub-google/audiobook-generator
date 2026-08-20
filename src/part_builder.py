@@ -187,7 +187,7 @@ def merge_part_videos(part_info, output_video_path):
 
     with open(concat_txt, "w", encoding="utf-8") as f:
         for mp4 in files:
-            safe_p = os.path.abspath(mp4).replace("\\", "/")
+            safe_p = os.path.abspath(mp4).replace("\\", "/").replace("'", "'\\''")
             f.write(f"file '{safe_p}'\n")
 
     cmd = [

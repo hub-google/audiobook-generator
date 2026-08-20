@@ -299,18 +299,20 @@ def get_or_create_playlist(youtube, playlist_title, playlist_desc=""):
     """Return ``(playlist_id, created)`` for the requested playlist."""
     logging.info(f"🔍 檢查 YouTube 頻道是否存在播放清單:【{playlist_title}】...")
     try:
-        request = youtube.playlists().list(
-            part="snippet,status",
-            mine=True,
-            maxResults=50
-        )
-        response = request.execute()
-
-        for item in response.get("items", []):
-            if item["snippet"]["title"].strip() == playlist_title.strip():
-                playlist_id = item["id"]
-                logging.info(f"✅ 找到已有播放清單 (ID: {playlist_id}):【{playlist_title}】")
-                return playlist_id, False
+        page_token = None
+        while True:
+            response = youtube.playlists().list(
+                part="snippet,status", mine=True, maxResults=50,
+                pageToken=page_token,
+            ).execute()
+            for item in response.get("items", []):
+                if item["snippet"]["title"].strip() == playlist_title.strip():
+                    playlist_id = item["id"]
+                    logging.info(f"✅ 找到已有播放清單 (ID: {playlist_id}):【{playlist_title}】")
+                    return playlist_id, False
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
 
         logging.info(f"➕ 正在建立全新播放清單:【{playlist_title}】...")
         body = {
@@ -1662,7 +1664,21 @@ def main():
                                           pending_captions=pending_captions,
                                           pending_publish=pending_publish)
                         publication.mark(part_counter, "upload_caption", "running")
-                        if not upload_caption_file(youtube, v_id, out_srt_path):
+                        try:
+                            caption_uploaded = upload_caption_file(youtube, v_id, out_srt_path)
+                        except UploadPaused as paused:
+                            pending_captions[p_meta["title"]] = {
+                                "video_id": v_id, "srt_path": out_srt_path,
+                            }
+                            publication.fail(part_counter, "upload_caption", paused, paused=True, youtube_video_id=v_id)
+                            save_resume_state(
+                                args.state_file, args.run_id, args.privacy, "paused",
+                                paused.reason, paused.retry_at, completed_titles, part_plan,
+                                pending_thumbnails, pending_playlist=pending_playlist,
+                                pending_captions=pending_captions, pending_publish=pending_publish,
+                            )
+                            return EXIT_RETRY_LATER
+                        if not caption_uploaded:
                             pending_captions[p_meta["title"]] = {
                                 "video_id": v_id, "srt_path": out_srt_path,
                             }
@@ -2025,7 +2041,20 @@ def main():
                                   pending_publish=pending_publish,
                                   playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None)
                 publication.mark(part_n, "upload_caption", "running")
-                if not upload_caption_file(youtube, v_id, v_srt):
+                try:
+                    caption_uploaded = upload_caption_file(youtube, v_id, v_srt)
+                except UploadPaused as paused:
+                    pending_captions[v_title] = {"video_id": v_id, "srt_path": v_srt}
+                    publication.fail(part_n, "upload_caption", paused, paused=True, youtube_video_id=v_id)
+                    save_resume_state(
+                        args.state_file, args.run_id, args.privacy, "paused",
+                        paused.reason, paused.retry_at, completed_titles, part_plan,
+                        pending_thumbnails, pending_playlist=pending_playlist,
+                        pending_captions=pending_captions, pending_publish=pending_publish,
+                        playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None,
+                    )
+                    return EXIT_RETRY_LATER
+                if not caption_uploaded:
                     pending_captions[v_title] = {"video_id": v_id, "srt_path": v_srt}
                     retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
                     save_resume_state(

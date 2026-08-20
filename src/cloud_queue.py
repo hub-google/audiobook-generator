@@ -40,6 +40,13 @@ def is_task_active(task):
     return False
 
 
+def is_task_blocking(task):
+    """Whether a task prevents dispatch, including terminal failures awaiting intervention."""
+    return isinstance(task, dict) and (
+        task.get("status") in BLOCKING_STATES or is_task_active(task)
+    )
+
+
 def normalize_queue(value):
     queue = copy.deepcopy(value) if isinstance(value, dict) else empty_queue()
     queue.setdefault("schema_version", QUEUE_SCHEMA_VERSION)
@@ -48,7 +55,7 @@ def normalize_queue(value):
     if not isinstance(queue["tasks"], list):
         raise ValueError("queue tasks must be a list")
     queue["tasks"].sort(key=lambda item: (
-        0 if is_task_active(item) else 1,
+        0 if is_task_blocking(item) else 1,
         int(item.get("position", 10**9)),
         item.get("created_at", ""),
     ))
@@ -275,7 +282,7 @@ def requeue_task_after_active(queue, task_id, active_id=None):
 
 def current_task(queue):
     queue = normalize_queue(queue)
-    return next((item for item in queue["tasks"] if is_task_active(item)), None)
+    return next((item for item in queue["tasks"] if is_task_blocking(item)), None)
 
 
 def next_task(queue):
@@ -287,8 +294,8 @@ def next_task(queue):
 def touch(queue):
     if not isinstance(queue, dict) or not isinstance(queue.get("tasks"), list):
         raise ValueError("invalid queue")
-    active = [t for t in queue["tasks"] if is_task_active(t)]
-    non_active = [t for t in queue["tasks"] if not is_task_active(t)]
+    active = [t for t in queue["tasks"] if is_task_blocking(t)]
+    non_active = [t for t in queue["tasks"] if not is_task_blocking(t)]
     queue["tasks"] = active + non_active
     for position, task in enumerate(queue["tasks"], 1):
         task["position"] = position

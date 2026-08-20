@@ -466,6 +466,7 @@ def main():
         ))
         checkpoint = PipelineCheckpoint(workspace_dir, book_title, args.worker_id, exact_indices)
         checkpoint.export_manifest()
+        m_val = checkpoint.validate_manifest()
         chapter_count = m_val.get("chapter_count", len(complete_chapters)) if isinstance(m_val, dict) else len(complete_chapters)
         total_duration = m_val.get("total_duration_seconds", 0.0) if isinstance(m_val, dict) else 0.0
         missing_count = m_val.get("missing_count", 0) if isinstance(m_val, dict) else 0

@@ -44,16 +44,16 @@ def split_long_subtitle_text(text, max_len=22):
         part1 = text[:best_idx + 1].strip()
         part2 = text[best_idx + 1:].strip()
         if part1 and part2:
-            if len(part2) > max_len:
-                part2 = split_long_subtitle_text(part2, max_len)
+            part1 = split_long_subtitle_text(part1, max_len)
+            part2 = split_long_subtitle_text(part2, max_len)
             return f"{part1}\n{part2}"
 
     # 若無標點符號，則從中點硬切
     mid = len(text) // 2
     part1 = text[:mid].strip()
     part2 = text[mid:].strip()
-    if len(part2) > max_len:
-        part2 = split_long_subtitle_text(part2, max_len)
+    part1 = split_long_subtitle_text(part1, max_len)
+    part2 = split_long_subtitle_text(part2, max_len)
     return f"{part1}\n{part2}"
 
 import re

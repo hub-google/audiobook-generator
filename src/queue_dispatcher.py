@@ -14,9 +14,9 @@ from zoneinfo import ZoneInfo
 import requests
 
 try:
-    from .cloud_queue import BLOCKING_STATES, GitHubQueueStore, current_task, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
+    from .cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
 except ImportError:
-    from cloud_queue import BLOCKING_STATES, GitHubQueueStore, current_task, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
+    from cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
 
 
 def _find_gh() -> str:
@@ -93,6 +93,8 @@ class Dispatcher:
         reason_match = re.findall(r"reason=([^ |\r\n]+)", text)
         retry_match = re.findall(r"retry(?: after|_at=)([0-9T:.+\-Z]+)", text)
         reason = reason_match[-1] if reason_match else "otherError"
+        if not reason_match and ("429 Too Many Requests" in text or "rate limit" in text.lower()):
+            reason = "rateLimitExceeded"
         retry_at = parse_time(retry_match[-1]) if retry_match else None
         return reason, retry_at or datetime.now(timezone.utc) + timedelta(hours=2)
 
@@ -330,10 +332,19 @@ class Dispatcher:
         return "\n".join(lines)
 
     def run(self):
-        queue, sha = self.store.load()
-        queue, changed = self.reconcile(queue)
-        if changed:
-            sha = self.store.save(queue, sha=sha, message="Reconcile audiobook queue with GitHub runs")
+        # GUI polling and workflow_run commonly reconcile the same completion
+        # concurrently. Reload and recompute after an optimistic-lock conflict.
+        for attempt in range(5):
+            queue, sha = self.store.load()
+            queue, changed = self.reconcile(queue)
+            if not changed:
+                break
+            try:
+                sha = self.store.save(queue, sha=sha, message="Reconcile audiobook queue with GitHub runs")
+                break
+            except QueueConflict:
+                if attempt == 4:
+                    raise
         active = current_task(queue)
         if active and active.get("status") == "waiting_retry":
             retry_at = parse_time(active.get("retry_at"))

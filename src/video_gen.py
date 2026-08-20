@@ -274,8 +274,10 @@ def run_video_gen(build_parts=True, target_indices=None):
         mp4_path, dur = generate_chapter_video(
             book_title, wav_path, workspace_dir, video_dir, fallback_images
         )
-        if mp4_path:
-            chapter_mp4s.append(mp4_path)
+        if not mp4_path:
+            logging.error("[VideoGen] Skipping failed chapter output: %s", wav_path)
+            continue
+        chapter_mp4s.append(mp4_path)
         chap_num = parse_chapter_num(os.path.basename(wav_path))
         chapter_title = get_chapter_title(workspace_dir, book_title, chap_num)
         chapter_durations[chapter_title] = dur

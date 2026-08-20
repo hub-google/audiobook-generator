@@ -260,6 +260,8 @@ class AudiobookGUIApp:
         return repo, token
 
     def _queue_store(self):
+        if GitHubQueueStore is None:
+            raise RuntimeError("雲端佇列模組載入失敗；請檢查 src/cloud_queue.py 與 requests 套件")
         repo, token = self._github_settings()
         return GitHubQueueStore(repo, token), repo, token
 

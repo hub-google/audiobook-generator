@@ -240,7 +240,7 @@ jobs:
           echo "## 📚 Audiobook Pipeline Started" >> "$GITHUB_STEP_SUMMARY"
           echo "✅ **Target URL:** ${{ github.event.inputs.catalog_url }}" >> "$GITHUB_STEP_SUMMARY"
           echo "✅ **Chapter Range:** ${START} ~ ${END}" >> "$GITHUB_STEP_SUMMARY"
-          echo "✅ **Workers Created:** $(jq '. | length' matrix.json)" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ **Workers Created:** $(jq '.include | length' matrix.json)" >> "$GITHUB_STEP_SUMMARY"
         env:
           START: ${{ github.event.inputs.start_chap }}
           END: ${{ github.event.inputs.end_chap }}

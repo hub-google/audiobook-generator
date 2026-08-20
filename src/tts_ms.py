@@ -159,9 +159,10 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, 
     for i, (text, mp3_path, wav_path, part_label) in enumerate(task_metas):
         if not skip_flags[i] and os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 100:
             try:
-                subprocess.run(
+                await asyncio.to_thread(
+                    subprocess.run,
                     [ffmpeg_path, "-y", "-i", mp3_path, wav_path],
-                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
                 if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
                     os.remove(mp3_path)
@@ -329,7 +330,7 @@ def run_tts_ms(target_indices=None):
                 concat_list_path = wav_path + "_concat.txt"
                 with open(concat_list_path, "w", encoding="utf-8") as f:
                     for p in generated_parts:
-                        safe_path = p.replace("\\", "/")
+                        safe_path = p.replace("\\", "/").replace("'", "'\\''")
                         f.write(f"file '{safe_path}'\n")
                 try:
                     subprocess.run(
