@@ -103,7 +103,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("HF_ARCHIVE_REPO", upload)
         self.assertIn("hf_archive_state.json", upload)
 
-    def test_hf_receives_only_batched_merged_mp4s(self):
+    def test_hf_receives_complete_part_archives_in_one_commit_per_worker(self):
         merge = self.jobs["merge_parts"]
         upload_steps = [step for step in merge["steps"] if step.get("uses") == "actions/upload-artifact@v4"]
         self.assertEqual(len(upload_steps), 1)
@@ -114,6 +114,9 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("CommitOperationAdd", self.prepare_parts_text)
         self.assertEqual(self.prepare_parts_text.count("api.create_commit("), 1)
         self.assertNotIn("api.upload_file(", self.prepare_parts_text)
+        for archive_name in ("merge_manifest.json", "part_manifest.json", "media_info.json"):
+            self.assertIn(archive_name, self.prepare_parts_text)
+        self.assertIn("remote_subtitle", self.prepare_parts_text)
         fetch = next(step for step in self.jobs["upload_to_youtube"]["steps"] if step.get("name") == "Fetch and verify merge-complete Parts from HF")
         self.assertIn("--sidecar-dir prepared_sidecars", fetch["run"])
 

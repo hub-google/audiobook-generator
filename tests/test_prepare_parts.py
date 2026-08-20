@@ -2,7 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import yaml
 
@@ -11,6 +11,51 @@ from src.youtube_api_uploader import scan_artifact_chapters
 
 
 class PreparePartsTests(unittest.TestCase):
+    def test_merge_uploads_complete_part_tree_in_one_hf_commit(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            plan = root / 'parts-plan.json'
+            plan.write_text(json.dumps({
+                'source_run_id': '123', 'book_title': '測試書',
+                'source_missing_chapters': [],
+                'chapter_artifacts': {'1': 'mp4-worker-0'},
+                'parts': [{'part_num': 1, 'start_chap': 1, 'end_chap': 1,
+                           'chapters': [1], 'duration': 1.0}],
+            }), encoding='utf-8')
+            chapter_video, chapter_srt = root / 'chapter_1.mp4', root / 'chapter_1.srt'
+            chapter_video.write_bytes(b'chapter-video')
+            chapter_srt.write_text('subtitle', encoding='utf-8')
+            scanned = [{'artifact': 'mp4-worker-0', 'chap_num': 1, 'dur': 1.0,
+                        'path': str(chapter_video), 'srt_path': str(chapter_srt)}]
+            api = MagicMock()
+
+            def make_srt(_items, destination):
+                Path(destination).write_text('merged subtitle', encoding='utf-8')
+                return True
+
+            def make_video(_part, destination):
+                Path(destination).write_bytes(b'merged video')
+                return True
+
+            with patch.dict('os.environ', {'HF_TOKEN': 'token', 'HF_ARCHIVE_REPO': 'owner/archive'}), \
+                 patch('huggingface_hub.HfApi', return_value=api), \
+                 patch('src.prepare_parts.download_artifact_task', return_value=True), \
+                 patch('src.prepare_parts.scan_artifact_chapters', return_value=scanned), \
+                 patch('src.prepare_parts.generate_part_srt', side_effect=make_srt), \
+                 patch('src.prepare_parts.merge_part_videos', side_effect=make_video), \
+                 patch('src.prepare_parts.validate_video', return_value={'valid': True}), \
+                 patch('src.prepare_parts.validate_srt', return_value={'valid': True}), \
+                 patch('src.prepare_parts._media_info', return_value={'format': {'duration': '1'}}):
+                merge_assigned_parts(plan, [1], 'owner/repo', root / 'out', root / 'work')
+
+            api.create_commit.assert_called_once()
+            paths = {operation.path_in_repo for operation in api.create_commit.call_args.kwargs['operations']}
+            self.assertEqual({Path(path).name for path in paths}, {
+                '測試書_Part_01_Ch0001_to_Ch0001.mp4',
+                '測試書_Part_01_Ch0001_to_Ch0001.srt',
+                'merge_manifest.json', 'part_manifest.json', 'media_info.json',
+            })
+
     def test_scanned_inventory_exposes_local_merge_paths(self):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)

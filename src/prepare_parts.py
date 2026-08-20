@@ -1,6 +1,6 @@
 """Plan the whole book, then merge locked Parts on up to 17 matrix workers."""
 from __future__ import annotations
-import argparse, hashlib, json, os, shutil
+import argparse, hashlib, json, os, shutil, subprocess
 from pathlib import Path
 import yaml
 try:
@@ -87,12 +87,7 @@ def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir):
         if not download_artifact_task(plan["source_run_id"], repo, name, str(expanded)): raise RuntimeError(f"could not download {name}")
         inventory.extend(scan_artifact_chapters(str(expanded), name))
     by_chapter={int(x["chap_num"]):x for x in inventory}; completed=[]; hf_operations=[]
-    hf_token=os.environ.get("HF_TOKEN",""); hf_repo=os.environ.get("HF_ARCHIVE_REPO","").strip()
-    if not hf_token: raise RuntimeError("HF_TOKEN is required for every merge worker")
     from huggingface_hub import CommitOperationAdd, HfApi
-    api=HfApi(token=hf_token)
-    if not hf_repo: hf_repo=f"{api.whoami()['name']}/audiobook-archive"
-    api.create_repo(hf_repo,repo_type="dataset",private=True,exist_ok=True)
     for part in assigned:
         number=int(part["part_num"]); start,end=int(part["start_chap"]),int(part["end_chap"])
         missing_chapters=[int(c) for c in part["chapters"] if int(c) not in by_chapter]
@@ -111,12 +106,26 @@ def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir):
         if not merge_part_videos(dict(part,files=[x["path"] for x in items]),str(video)): raise RuntimeError(f"could not merge Part {number}")
         folder=f"有聲小說_{safe_hf_name(plan['book_title'])}_第{number:02d}部_第{start:04d}章-第{end:04d}章"
         remote_root=f"有聲小說/{safe_hf_name(plan['book_title'])}/{folder}"
-        remote_video=f"{remote_root}/{video.name}"
-        completed_part={**part,"video":video.name,"subtitle":subtitle.name,"hf_video_path":remote_video,"video_bytes":video.stat().st_size,"video_sha256":_sha256(video),"video_validation":validate_video(str(video),float(part["duration"])),"subtitle_validation":validate_srt(str(subtitle),float(part["duration"]))}
+        remote_video=f"{remote_root}/{video.name}"; remote_subtitle=f"{remote_root}/{subtitle.name}"
+        completed_part={**part,"video":video.name,"subtitle":subtitle.name,"hf_video_path":remote_video,"hf_subtitle_path":remote_subtitle,"video_bytes":video.stat().st_size,"video_sha256":_sha256(video),"subtitle_bytes":subtitle.stat().st_size,"subtitle_sha256":_sha256(subtitle),"video_validation":validate_video(str(video),float(part["duration"])),"subtitle_validation":validate_srt(str(subtitle),float(part["duration"]))}
         completed.append(completed_part)
         hf_operations.append(CommitOperationAdd(path_in_repo=remote_video,path_or_fileobj=str(video)))
+        hf_operations.append(CommitOperationAdd(path_in_repo=remote_subtitle,path_or_fileobj=str(subtitle)))
+        files={"video":{"path":remote_video,"bytes":video.stat().st_size,"sha256":completed_part["video_sha256"]},"subtitle":{"path":remote_subtitle,"bytes":subtitle.stat().st_size,"sha256":completed_part["subtitle_sha256"]}}
+        merge_manifest={"schema_version":1,"status":"merge_complete","source_run_id":plan["source_run_id"],"book_title":plan["book_title"],"part":completed_part,"files":files}
+        part_manifest={"project":"有聲小說","book_title":plan["book_title"],"part_number":number,"start_chapter":start,"end_chapter":end,"chapters":[int(c) for c in part["chapters"]],"source_missing_chapters":[int(c) for c in plan.get("source_missing_chapters",[])],"source_run_id":str(plan["source_run_id"]),"queue_task_id":"","files":files,"status":"uploaded_pending_youtube_metadata"}
+        sidecars={"merge_manifest.json":merge_manifest,"part_manifest.json":part_manifest,"media_info.json":_media_info(video)}
+        for filename,payload in sidecars.items():
+            local_sidecar=output/f"part-{number:02d}-{filename}"
+            local_sidecar.write_text(json.dumps(payload,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+            hf_operations.append(CommitOperationAdd(path_in_repo=f"{remote_root}/{filename}",path_or_fileobj=str(local_sidecar)))
     if hf_operations:
-        api.create_commit(repo_id=hf_repo,repo_type="dataset",operations=hf_operations,commit_message=f"Upload merged MP4s for {plan['book_title']} Parts {','.join(map(str,sorted(wanted)))}")
+        hf_token=os.environ.get("HF_TOKEN",""); hf_repo=os.environ.get("HF_ARCHIVE_REPO","").strip()
+        if not hf_token: raise RuntimeError("HF_TOKEN is required for every merge worker")
+        api=HfApi(token=hf_token)
+        if not hf_repo: hf_repo=f"{api.whoami()['name']}/audiobook-archive"
+        api.create_repo(hf_repo,repo_type="dataset",private=True,exist_ok=True)
+        api.create_commit(repo_id=hf_repo,repo_type="dataset",operations=hf_operations,commit_message=f"Archive merged Parts for {plan['book_title']}: {','.join(map(str,sorted(wanted)))}")
     for item in completed:
         print(f"[HF_MEDIA_MARKER] DONE | Part {item['part_num']} | Ch {item['start_chap']}~{item['end_chap']} | {item['hf_video_path']}",flush=True)
         (output/item["video"]).unlink(missing_ok=True)
@@ -128,6 +137,11 @@ def _sha256(path):
     with Path(path).open("rb") as handle:
         for chunk in iter(lambda:handle.read(8*1024*1024),b""): digest.update(chunk)
     return digest.hexdigest()
+
+def _media_info(path):
+    result=subprocess.run(["ffprobe","-v","error","-show_format","-show_streams","-of","json",str(path)],capture_output=True,text=True,timeout=120,check=False)
+    if result.returncode != 0: return {"probe_error":result.stderr[-2000:]}
+    return json.loads(result.stdout)
 
 def fetch_parts_from_hf(plan_path, output_dir, sidecar_dir=None):
     from huggingface_hub import HfApi, hf_hub_download

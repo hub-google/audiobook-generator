@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import re
@@ -11,7 +12,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
 
 
 def _now():
@@ -88,6 +89,11 @@ class HuggingFaceArchiver:
             repo_id=self.repo_id, repo_type="dataset", commit_message=message,
         )
 
+    @staticmethod
+    def _json_operation(value, remote_path):
+        payload = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        return CommitOperationAdd(path_in_repo=remote_path, path_or_fileobj=io.BytesIO(payload))
+
     def archive_part(self, *, book_title, part_num, start_chap, end_chap, chapters,
                      video_path, subtitle_path, master_cover_path, source_config_path=None,
                      run_id="", task_id="", source_missing_chapters=None):
@@ -115,10 +121,27 @@ class HuggingFaceArchiver:
             "source_run_id": str(run_id or ""), "queue_task_id": str(task_id or ""),
             "files": fingerprint, "archived_at": _now(), "status": "complete",
         }
-        message = f"Archive {book_title} Part {int(part_num):02d}"
-        self._upload(video, video_remote, message)
-        record = {"status": "complete", "root": part_root, "files": fingerprint, "manifest": manifest}
+        subtitle = Path(subtitle_path)
+        if not subtitle.is_file() or subtitle.stat().st_size <= 0:
+            raise RuntimeError(f"HF archive input is missing or empty: {subtitle}")
+        subtitle_remote = f"{part_root}/{subtitle.name}"
+        fingerprint["subtitle"] = {"path": subtitle_remote, "bytes": subtitle.stat().st_size, "sha256": sha256_file(subtitle)}
+        manifest["files"] = fingerprint
+        manifest["status"] = "uploaded_pending_youtube_metadata"
+        operations = [
+            CommitOperationAdd(path_in_repo=video_remote, path_or_fileobj=str(video)),
+            CommitOperationAdd(path_in_repo=subtitle_remote, path_or_fileobj=str(subtitle)),
+            self._json_operation(manifest, f"{part_root}/part_manifest.json"),
+            self._json_operation(media_info(video), f"{part_root}/media_info.json"),
+        ]
+        merge_manifest = {"schema_version": 1, "status": "merge_complete", "source_run_id": str(run_id or ""), "book_title": book_title, "part": manifest, "files": fingerprint}
+        operations.append(self._json_operation(merge_manifest, f"{part_root}/merge_manifest.json"))
+        self.api.create_commit(repo_id=self.repo_id, repo_type="dataset", operations=operations,
+                               commit_message=f"Archive {book_title} Part {int(part_num):02d}")
+        record = {"status": "uploaded_pending_youtube_metadata", "root": part_root, "files": fingerprint, "manifest": manifest}
         book["parts"][str(int(part_num))] = record
+        book["master_cover_path"] = str(master_cover_path)
+        if source_config_path: book["source_config_path"] = str(source_config_path)
         self._save()
         return record
 
@@ -131,16 +154,18 @@ class HuggingFaceArchiver:
         Matrix workers write to the final unique Part paths, so the ordered
         publisher only verifies and records them; it never uploads large media.
         """
-        video = Path(video_path)
+        video, subtitle = Path(video_path), Path(subtitle_path)
         part_root = self._part_root(book_title, part_num, start_chap, end_chap)
         root = self._book_root(book_title)
-        video_remote = f"{part_root}/{video.name}"
+        video_remote, subtitle_remote = f"{part_root}/{video.name}", f"{part_root}/{subtitle.name}"
         remote = set(self.api.list_repo_files(self.repo_id, repo_type="dataset"))
-        missing = {video_remote} - remote
+        required = {video_remote, subtitle_remote, f"{part_root}/merge_manifest.json", f"{part_root}/part_manifest.json", f"{part_root}/media_info.json"}
+        missing = required - remote
         if missing:
             raise RuntimeError(f"merge worker HF upload is missing: {sorted(missing)}")
         fingerprint = {
             "video": {"path": video_remote, "bytes": video.stat().st_size, "sha256": sha256_file(video)},
+            "subtitle": {"path": subtitle_remote, "bytes": subtitle.stat().st_size, "sha256": sha256_file(subtitle)},
         }
         manifest = {
             "project": self.project, "book_title": book_title, "part_number": int(part_num),
@@ -153,6 +178,8 @@ class HuggingFaceArchiver:
         record = {"status": "complete", "root": part_root, "files": fingerprint, "manifest": manifest}
         book = self.state["books"].setdefault(book_title, {"parts": {}, "root": root})
         book["parts"][str(int(part_num))] = record
+        book["master_cover_path"] = str(master_cover_path)
+        if source_config_path: book["source_config_path"] = str(source_config_path)
         self._save()
         return record
 
@@ -174,7 +201,7 @@ class HuggingFaceArchiver:
         return record
 
     def _write_book_indexes(self, book_title):
-        """Kept for API compatibility; HF stores merged MP4 files only."""
+        """Kept for API compatibility; final indexes are batch-written by verify_book."""
         self._save()
 
     def completed_parts(self, book_title):
@@ -189,8 +216,26 @@ class HuggingFaceArchiver:
         required = set()
         for item in parts.values():
             if item.get("status") == "complete":
-                required.add(item["files"]["video"]["path"])
+                required.update({item["files"]["video"]["path"], item["files"]["subtitle"]["path"], f"{item['root']}/merge_manifest.json", f"{item['root']}/media_info.json"})
         absent = sorted(required - remote)
         if missing or absent:
             raise RuntimeError(f"HF archive verification failed; incomplete Parts={missing}, missing files={absent[:10]}")
+        part_records = [parts[key] for key in sorted(parts, key=lambda value: int(value))]
+        index = {"project": self.project, "book_title": book_title, "parts": [{"part_number": item["manifest"]["part_number"], "start_chapter": item["manifest"]["start_chapter"], "end_chapter": item["manifest"]["end_chapter"], "video": item["files"]["video"], "subtitle": item["files"]["subtitle"], "status": item["status"]} for item in part_records], "updated_at": _now()}
+        book_manifest = {"project": self.project, "book_title": book_title, "master_cover": f"{book.get('root')}/master_cover.jpg", "part_count": len(part_records), "completed_parts": len(part_records), "archive_status": "complete", "updated_at": _now()}
+        operations = []
+        for item in part_records:
+            operations.append(self._json_operation(item["youtube"], f"{item['root']}/youtube_metadata.json"))
+            operations.append(self._json_operation(item["manifest"], f"{item['root']}/part_manifest.json"))
+        operations.extend([
+            self._json_operation(index, f"{book['root']}/part_index.json"),
+            self._json_operation(book_manifest, f"{book['root']}/book_manifest.json"),
+            self._json_operation(self.state, "_system/archive_state.json"),
+        ])
+        cover = Path(book.get("master_cover_path") or "")
+        if cover.is_file(): operations.append(CommitOperationAdd(path_in_repo=f"{book['root']}/master_cover.jpg", path_or_fileobj=str(cover)))
+        config = Path(book.get("source_config_path") or "")
+        if config.is_file(): operations.append(CommitOperationAdd(path_in_repo=f"{book['root']}/source_config.yaml", path_or_fileobj=str(config)))
+        self.api.create_commit(repo_id=self.repo_id, repo_type="dataset", operations=operations,
+                               commit_message=f"Finalize {book_title} archive metadata")
         return {"repo_id": self.repo_id, "book_root": book.get("root"), "parts": int(expected_parts), "verified": True}
