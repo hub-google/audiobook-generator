@@ -313,13 +313,16 @@ class AudiobookGUIApp:
             self._update_queue_control_states(None)
 
     def _queue_status_text(self, task):
-        status = task.get("status") or "queued"
-        # A bound Run's verified GitHub state is authoritative.  Queue-control
+        # A bound Run's verified GitHub state is authoritative. Queue-control
         # state must never hide an in-progress (or otherwise verified) Run.
         if task.get("run_id"):
             observation = self.github_observations.get(task.get("task_id"))
             if observation:
                 return observation_text(observation)
+            return task.get("status") or "idle"
+        status = task.get("status") or "idle"
+        if status == "queued":
+            return "idle"
         return status
 
     @staticmethod

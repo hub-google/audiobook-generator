@@ -90,6 +90,11 @@ class GuiQueueControlTests(unittest.TestCase):
         app._update_queue_control_states({"status": "needs_attention", "run_id": 32323730742})
         self.assertEqual(app.btn_stop_task.config.call_args.kwargs["state"], tk.NORMAL)
 
+    def test_queued_task_without_run_displays_idle(self):
+        app = make_app()
+        task = {"task_id": "task-1", "run_id": None, "status": "queued"}
+        self.assertEqual(app._queue_status_text(task), "idle")
+
 
 if __name__ == "__main__":
     unittest.main()

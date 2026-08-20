@@ -10,15 +10,20 @@
 
 狀態語意如下：
 
-| 狀態 | 是否阻擋下一部 | 行為 |
-|---|:---:|---|
-| queued | 否 | 可被調度 |
-| dispatching/running | 是 | 不得啟動第二部 |
-| waiting_retry | 是 | 到 `retry_at` 前不得呼叫 YouTube；到期 rerun failed jobs |
-| needs_attention | 是 | 憑證或永久設定錯誤，等待人工修正 |
-| paused/stopped | 否 | 跳過並尋找下一個 queued 任務 |
-| canceling | 是 | 等 GitHub Run 真正 cancelled |
-| completed | 否 | strict success 已通過 |
+| 狀態 (內部) | GUI 顯示 (無 Run) | GUI 顯示 (有 Run) | 是否阻擋下一部 | 排程器行為 |
+|---|---|---|:---:|---|
+| queued | idle | queued / pending | 否 | 依順位自動調度 |
+| dispatching/running | — | in_progress | 是 | 鎖定順位 1，不得啟動第二部 |
+| waiting_retry | — | waiting / retry | 是 | 到 `retry_at` 前不得呼叫 YouTube；到期 rerun failed jobs |
+| needs_attention | needs_attention | failed / error | 是 | 憑證或永久設定錯誤，等待人工修正 |
+| paused | paused | paused | 否 | 跳過並尋找下一個待命任務 |
+| interrupted / stopped | interrupted | interrupted | 否 | 跳過並尋找下一個待命任務；不自動重跑 |
+| canceling | — | canceling | 是 | 等 GitHub Run 真正 cancelled 後轉 interrupted |
+| completed | completed | completed | 否 | strict success 已通過，釋放下一部 |
+
+### 順位規則（Position Rules）
+1. **執行中任務強制鎖定第 1 順位**：任何處於活躍執行狀態（`running`, `dispatching`, `waiting_retry`, `canceling` 或持有未結束之 GitHub Run）的任務，在正規化（`normalize_queue`）與保存（`touch`）時必定自動排在 **順位 1**。
+2. **重新排程（Requeue）精確下移**：對任何中斷或需重排的任務點擊「重新排程」時，該任務會自動插入於目前正在執行的活躍任務正下方（**順位 2**），絕不搶佔正在跑的任務。
 
 更新使用 GitHub Contents API 的 blob SHA 作樂觀鎖；衝突時必須重讀並重套操作。調度 workflow 使用固定 concurrency group，且 dispatch 前將任務原子保留為 `dispatching`。
 
@@ -26,7 +31,11 @@
 
 `.github/workflows/queue-dispatcher.yml` 是短時 Action，由 GUI、`workflow_run: completed` 與每 15 分鐘 schedule 喚醒。每次只讀取、對帳、執行一個決策後結束，不得 sleep 等待小說完成，因此不受單一 Job 六小時限制。每次開始時必須刪除較早且已完成的 Dispatcher Run 紀錄，Actions 清單只保留目前需要判讀的調度紀錄。
 
-調度順序：先處理 blocking task；`waiting_retry` 到期後針對其確定 Run ID 執行 failed-job rerun。沒有 blocking task 時才取 position 最小的 queued task。Production Run 名稱必須包含「有聲小說製作」、小說書名、章節範圍及永久 task ID，以 task ID 配對而不得取「最新 Run」；Dispatcher Run 名稱必須清楚標示「有聲小說佇列調度」與觸發事件。
+調度規則：
+1. **防併發硬閘門（Concurrency Guard）**：`dispatch_next()` 在發布新任務前，必須先查詢 GitHub Actions；只要 GitHub 上已有任何未結束（`status != 'completed'`）的 `audiobook.yml` Run，調度器一律強制終止調度，絕對不發布第二部小說。
+2. **自動對帳活躍 Run**：若 GitHub 上有活躍 Run，調度器自動將對應任務狀態校正為 `running` 並鎖定在順位 1。
+3. **取消後自動接續**：當執行中的小說被手動取消（Run Cancelled）並標記為 `interrupted` 後，調度器會直接略過該中斷任務，自動尋找下一筆 `queued` 任務並發布執行。
+4. **調度命名**：Production Run 名稱必須包含「有聲小說製作」、小說書名、章節範圍及永久 task ID，以 task ID 配對而不得取「最新 Run」；Dispatcher Run 名稱必須清楚標示「有聲小說佇列調度」與觸發事件。
 
 ## 4. 配額與續作
 
@@ -56,7 +65,13 @@ SRT 必須是實際送交 YouTube Caption API 的同一檔案。`master_cover.jp
 
 ## 7. GUI 契約
 
-GUI 主表顯示順位、小說、章節、狀態、HF、YouTube 與 Run ID；支援批量加入、上下移、暫停／恢復、停止、刪除、同步及立即調度。選取小說時，下方紀錄綁定該 task/run。刪除任務預設只刪佇列並取消 active Run，不得刪除已存在的 HF 或 YouTube 成品。
+GUI 主表顯示順位、小說、章節、重複章節、狀態、GitHub 查證時間、HF、YouTube 與 Run ID；支援批量加入、上下移、暫停／恢復、停止、刪除、同步及立即調度。
+- **狀態顯示契約**：
+  - 未向 GitHub 發布 Run 之待命任務，狀態一律顯示為 **`idle`**（非 `queued`），明確區隔未發布與 GitHub Actions Run 排隊。
+  - GitHub 真正發布 Run 且等待 Runner 時顯示 **`queued`** / **`pending`**（此時必有 Run ID）。
+  - GitHub 執行中顯示 **`in_progress`**。
+  - 任務取消或中斷顯示 **`interrupted`**；手動暫停顯示 **`paused`**。
+- 選取小說時，下方紀錄綁定該 task/run。刪除任務預設只刪佇列並取消 active Run，不得刪除已存在的 HF 或 YouTube 成品。
 
 ## 8. 完成定義與 Summary
 
