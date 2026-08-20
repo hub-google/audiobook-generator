@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 
 from src.cloud_queue import (
     add_tasks, current_task, empty_queue, move_task, move_tasks, new_task, next_task,
-    mark_task_interrupted, requeue_task_after_active, update_task,
+    mark_task_interrupted, mark_task_needs_attention, requeue_task_after_active, update_task,
     update_task_chapters,
 )
 from src.queue_dispatcher import Dispatcher
@@ -218,6 +218,23 @@ class CloudQueueTests(unittest.TestCase):
         queue = mark_task_interrupted(queue, task["task_id"], ended_at="2026-08-19T02:00:00Z")
 
         self.assertEqual(len(queue["tasks"][0]["run_history"]), 1)
+
+    def test_failed_run_needs_attention_and_can_be_requeued(self):
+        task = new_task("https://example/1", "第一部")
+        queue = add_tasks(empty_queue(), [task])
+        queue = update_task(queue, task["task_id"], status="running", run_id=456)
+
+        queue = mark_task_needs_attention(
+            queue, task["task_id"], reason="run_failure", conclusion="failure",
+            ended_at="2026-08-20T02:00:00Z",
+        )
+
+        failed = queue["tasks"][0]
+        self.assertEqual(failed["status"], "needs_attention")
+        self.assertEqual(failed["run_history"][0]["run_id"], 456)
+        queue = requeue_task_after_active(queue, task["task_id"])
+        self.assertEqual(queue["tasks"][0]["status"], "queued")
+        self.assertIsNone(queue["tasks"][0]["run_id"])
 
     def test_requeued_book_ignores_runs_created_before_retry_request(self):
         task = new_task("https://example/1", "第一部")

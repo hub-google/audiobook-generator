@@ -20,7 +20,7 @@ try:
     from crawler import fetch_chapter_text
     from cloud_queue import (
         BLOCKING_STATES, GitHubQueueStore, add_tasks, delete_task,
-        mark_task_interrupted, move_task, move_tasks, new_task, requeue_task_after_active,
+        mark_task_interrupted, mark_task_needs_attention, move_task, move_tasks, new_task, requeue_task_after_active,
         update_task, update_task_chapters,
     )
     from github_run_status import (
@@ -396,7 +396,7 @@ class AudiobookGUIApp:
             try:
                 store, repo, token = self._queue_store()
                 queue, _ = store.load()
-                interruptions = []
+                terminal_updates = []
                 monitored = [task for task in queue.get("tasks", []) if task.get("run_id")]
                 observations = {}
                 with ThreadPoolExecutor(max_workers=min(6, max(1, len(monitored)))) as executor:
@@ -419,26 +419,34 @@ class AudiobookGUIApp:
                     self.github_observations[task["task_id"]] = observation
                     if task.get("status") in BLOCKING_STATES:
                         if observation.get("kind") == "not_found" and observation.get("confirmed_missing"):
-                            interruptions.append((task["task_id"], run_id, "run_not_found", "missing", None))
+                            terminal_updates.append((task["task_id"], run_id, "interrupted", "run_not_found", "missing", None))
                         elif (observation.get("kind") == "ok" and
                               observation.get("raw_status") == "completed" and
                               observation.get("raw_conclusion") == "cancelled"):
-                            interruptions.append((
-                                task["task_id"], run_id, "run_cancelled", "cancelled",
+                            terminal_updates.append((
+                                task["task_id"], run_id, "interrupted", "run_cancelled", "cancelled",
                                 observation.get("github_updated_at"),
                             ))
-                if interruptions:
-                    def apply_interruptions(latest):
-                        for task_id, run_id, reason, conclusion, ended_at in interruptions:
+                        elif (observation.get("kind") == "ok" and
+                              observation.get("raw_status") == "completed" and
+                              observation.get("raw_conclusion") != "success"):
+                            conclusion = observation.get("raw_conclusion") or "unknown"
+                            terminal_updates.append((
+                                task["task_id"], run_id, "needs_attention",
+                                f"run_{conclusion}", conclusion,
+                                observation.get("github_updated_at"),
+                            ))
+                if terminal_updates:
+                    def apply_terminal_updates(latest):
+                        for task_id, run_id, target, reason, conclusion, ended_at in terminal_updates:
                             current = next(
                                 (item for item in latest.get("tasks", []) if item.get("task_id") == task_id), None
                             )
                             if current and current.get("run_id") == run_id and current.get("status") in BLOCKING_STATES:
-                                latest = mark_task_interrupted(
-                                    latest, task_id, reason=reason, conclusion=conclusion, ended_at=ended_at,
-                                )
+                                marker = mark_task_interrupted if target == "interrupted" else mark_task_needs_attention
+                                latest = marker(latest, task_id, reason=reason, conclusion=conclusion, ended_at=ended_at)
                         return latest
-                    queue = store.mutate(apply_interruptions, "Reconcile missing or cancelled audiobook runs")
+                    queue = store.mutate(apply_terminal_updates, "Reconcile completed audiobook runs")
                     self._dispatch_queue_workflow()
                 self.cloud_queue = queue
                 self.root.after(0, lambda: self._render_queue(queue))
