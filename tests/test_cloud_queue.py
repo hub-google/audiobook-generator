@@ -275,10 +275,14 @@ class CloudQueueTests(unittest.TestCase):
         dispatcher.store = Mock()
         dispatcher.store.load.return_value = (queue, "sha")
         dispatcher.store.save.return_value = "next-sha"
-        dispatcher.runs = Mock(return_value=[{
-            "id": 123,
-            "name": f"有聲小說製作｜凡人修仙傳｜Ch1-100｜{task['task_id']}",
-        }])
+        dispatcher.runs = Mock(side_effect=[
+            [],
+            [{
+                "id": 123,
+                "name": f"有聲小說製作｜凡人修仙傳｜Ch1-100｜{task['task_id']}",
+                "status": "in_progress",
+            }],
+        ])
 
         dispatcher.dispatch_next(queue)
 

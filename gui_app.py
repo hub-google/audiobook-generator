@@ -403,6 +403,7 @@ class AudiobookGUIApp:
                 store, repo, token = self._queue_store()
                 queue, _ = store.load()
                 terminal_updates = []
+                running_updates = []
                 monitored = [task for task in queue.get("tasks", []) if task.get("run_id")]
                 observations = {}
                 with ThreadPoolExecutor(max_workers=min(6, max(1, len(monitored)))) as executor:
@@ -423,7 +424,10 @@ class AudiobookGUIApp:
                     run_id = task["run_id"]
                     observation = observations[task["task_id"]]
                     self.github_observations[task["task_id"]] = observation
-                    if task.get("status") in BLOCKING_STATES:
+                    if observation.get("kind") == "ok" and observation.get("raw_status") != "completed":
+                        if task.get("status") != "running":
+                            running_updates.append((task["task_id"], run_id))
+                    elif task.get("status") in BLOCKING_STATES:
                         if observation.get("kind") == "not_found" and observation.get("confirmed_missing"):
                             terminal_updates.append((task["task_id"], run_id, "interrupted", "run_not_found", "missing", None))
                         elif (observation.get("kind") == "ok" and
@@ -442,6 +446,12 @@ class AudiobookGUIApp:
                                 f"run_{conclusion}", conclusion,
                                 observation.get("github_updated_at"),
                             ))
+                if running_updates:
+                    def apply_running_updates(latest):
+                        for task_id, run_id in running_updates:
+                            latest = update_task(latest, task_id, status="running", run_id=run_id, reason=None, run_conclusion=None)
+                        return latest
+                    queue = store.mutate(apply_running_updates, "Reconcile active running audiobook tasks")
                 if terminal_updates:
                     def apply_terminal_updates(latest):
                         for task_id, run_id, target, reason, conclusion, ended_at in terminal_updates:

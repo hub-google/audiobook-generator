@@ -170,9 +170,12 @@ class Dispatcher:
                     if task.get(key) != value:
                         task[key] = value
                         changed = True
-            if status != "completed" and task.get("status") in {"dispatching", "queued"}:
-                task["status"] = "running"
-                changed = True
+            if status != "completed":
+                if task.get("status") != "running":
+                    task["status"] = "running"
+                    task["run_conclusion"] = None
+                    task["reason"] = None
+                    changed = True
             elif status == "completed" and conclusion == "success" and task.get("status") != "completed":
                 task.update({"status": "completed", "reason": None, "retry_at": None, "completed_at": run.get("updated_at")})
                 changed = True
@@ -197,6 +200,11 @@ class Dispatcher:
         return queue, changed
 
     def dispatch_next(self, queue):
+        active_runs = [r for r in self.runs() if r.get("status") != "completed"]
+        if active_runs:
+            first_run = active_runs[0]
+            return queue, f"Audiobook run {first_run.get('id')} ({first_run.get('display_title') or first_run.get('name')}) is already active on GitHub. Will not dispatch another task."
+
         task = next_task(queue)
         if not task:
             return queue, "No queued task is eligible."
