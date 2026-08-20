@@ -1495,18 +1495,18 @@
         1484,
         1485
       ],
-      "status": "canceling",
+      "status": "completed",
       "run_id": 32325705308,
       "run_attempt": 1,
       "retry_at": null,
-      "reason": "chapter_plan_updated",
+      "reason": null,
       "hf_progress": {
-        "completed": 0,
-        "total": 0
+        "completed": 1,
+        "total": 1
       },
       "youtube_progress": {
         "completed": 0,
-        "total": 0
+        "total": 1
       },
       "created_at": "2026-08-19T02:46:37.628018+00:00",
       "updated_at": "2026-08-20T03:02:08.170105+00:00",
@@ -1573,7 +1573,8 @@
       "execution_generation": 12,
       "renumber_selected": true,
       "duplicate_chapter_count": 1366,
-      "requeue_after_edit": true
+      "requeue_after_edit": true,
+      "completed_at": "2026-08-20T02:48:17Z"
     },
     {
       "task_id": "book-20260819-630acc92",
