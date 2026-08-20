@@ -1866,6 +1866,47 @@ def main():
 
             if v_title in completed_titles:
                 logging.info("⏭️ 已上傳，跳過：%s", v_title)
+                preexisting_video_id = existing_video_ids.get(v_title)
+                if part_n in hf_archiver.completed_parts(book_title):
+                    publication.complete(part_n, "archive_hf", recovered_from_hf=True, hf_repo=hf_repo)
+                elif preexisting_video_id:
+                    v_srt_name = os.path.basename(v_path).replace(".mp4", ".srt")
+                    v_srt = os.path.join(upload_subtitles_dir, v_srt_name)
+                    if not os.path.exists(v_srt):
+                        v_srt = v_path.replace(".mp4", ".srt")
+                        if not os.path.exists(v_srt):
+                            v_srt = None
+                    full_desc = f"{v_desc}\n\n播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
+                    if item.get("source_missing_chapters"):
+                        full_desc += "\n\n來源網站缺失章節（原頁面無文章，故未製作）：" + "、".join(
+                            str(value) for value in item["source_missing_chapters"]
+                        )
+                    publication.mark(part_n, "archive_hf", "running")
+                    archive_method = (
+                        hf_archiver.register_preuploaded_part
+                        if os.environ.get("HF_MEDIA_PREUPLOADED", "").lower() in {"1", "true", "yes"}
+                        else hf_archiver.archive_part
+                    )
+                    archive_record = archive_method(
+                        book_title=book_title, part_num=part_n,
+                        start_chap=item["start_chap"], end_chap=item["end_chap"],
+                        chapters=item.get("chapters") or list(range(item["start_chap"], item["end_chap"] + 1)),
+                        video_path=v_path, subtitle_path=v_srt,
+                        master_cover_path=item["master_cover_path"],
+                        source_config_path=config_path, run_id=args.run_id,
+                        task_id=args.task_id,
+                        source_missing_chapters=item.get("source_missing_chapters") or [],
+                    )
+                    archive_record = hf_archiver.finalize_part(
+                        book_title=book_title, part_num=part_n,
+                        youtube_video_id=preexisting_video_id, playlist_id=playlist_id,
+                        title=v_title, description=full_desc, privacy=args.privacy,
+                        playlist_position=part_n - 1,
+                    )
+                    publication.complete(part_n, "archive_hf", hf_repo=hf_repo, path=archive_record["root"])
+                else:
+                    if part_n in hf_archiver.completed_parts(book_title):
+                        publication.complete(part_n, "archive_hf", recovered_from_hf=True, hf_repo=hf_repo)
                 continue
 
             # 尋找對應的 SRT 字幕檔 (優先搜尋 Upload_Subtitles 資料夾)
@@ -2089,7 +2130,10 @@ def main():
             part_num = int(planned["part_num"])
             record = publication.data.get("parts", {}).get(str(part_num), {})
             if ((record.get("steps") or {}).get("archive_hf") or {}).get("status") != "completed":
-                raise RuntimeError(f"Part {part_num} is missing mandatory Hugging Face archive evidence")
+                if part_num in hf_archiver.completed_parts(book_title):
+                    publication.complete(part_num, "archive_hf", recovered_from_hf=True, hf_repo=hf_repo)
+                else:
+                    raise RuntimeError(f"Part {part_num} is missing mandatory Hugging Face archive evidence")
         logging.info(
             "[HF_ARCHIVE_STATUS] COMPLETE | archived=%s | total=%s | repo=%s | folder=%s",
             hf_evidence["parts"], len(part_plan), hf_evidence["repo_id"], hf_evidence["book_root"],

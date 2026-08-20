@@ -514,6 +514,25 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
                     f"global step {step} must be completed",
                 )
 
+    def test_final_validation_accepts_hf_completed_parts(self):
+        from src.publication_checkpoint import PublicationCheckpoint
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_file = os.path.join(temp_dir, "state.json")
+            checkpoint = PublicationCheckpoint(state_file)
+            part_plan = [{"part_num": 1, "start_chap": 1, "end_chap": 1, "chapters": [1], "title": "Part 1", "duration": 100.0}]
+            checkpoint.lock_plan(part_plan, run_id="123", book_title="Book")
+            completed_hf_parts = {1}
+            for planned in part_plan:
+                part_num = int(planned["part_num"])
+                record = checkpoint.data.get("parts", {}).get(str(part_num), {})
+                if ((record.get("steps") or {}).get("archive_hf") or {}).get("status") != "completed":
+                    if part_num in completed_hf_parts:
+                        checkpoint.complete(part_num, "archive_hf", recovered_from_hf=True, hf_repo="owner/repo")
+            self.assertEqual(
+                checkpoint.data["parts"]["1"]["steps"]["archive_hf"]["status"],
+                "completed",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
