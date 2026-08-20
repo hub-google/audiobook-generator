@@ -1495,11 +1495,11 @@
         1484,
         1485
       ],
-      "status": "needs_attention",
+      "status": "waiting_retry",
       "run_id": 32322921633,
       "run_attempt": 1,
-      "retry_at": null,
-      "reason": "run_failure",
+      "retry_at": "2026-08-20T04:03:24.838375+00:00",
+      "reason": "otherError",
       "hf_progress": {
         "completed": 1,
         "total": 1
