@@ -18,12 +18,26 @@ BLOCKING_STATES = {"dispatching", "running", "waiting_retry", "needs_attention",
 TERMINAL_STATES = {"completed", "stopped", "interrupted"}
 
 
+ACTIVE_EXECUTION_STATES = {"dispatching", "running", "waiting_retry", "canceling"}
+NON_ACTIVE_STATES = {"completed", "stopped", "interrupted", "needs_attention", "paused"}
+
+
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
 
 
 def empty_queue():
     return {"schema_version": QUEUE_SCHEMA_VERSION, "revision": 0, "updated_at": utc_now(), "tasks": []}
+
+
+def is_task_active(task):
+    if not isinstance(task, dict):
+        return False
+    if task.get("status") in ACTIVE_EXECUTION_STATES:
+        return True
+    if task.get("run_id") and not task.get("run_conclusion") and task.get("status") not in NON_ACTIVE_STATES:
+        return True
+    return False
 
 
 def normalize_queue(value):
@@ -33,7 +47,11 @@ def normalize_queue(value):
     queue.setdefault("tasks", [])
     if not isinstance(queue["tasks"], list):
         raise ValueError("queue tasks must be a list")
-    queue["tasks"].sort(key=lambda item: (int(item.get("position", 10**9)), item.get("created_at", "")))
+    queue["tasks"].sort(key=lambda item: (
+        0 if is_task_active(item) else 1,
+        int(item.get("position", 10**9)),
+        item.get("created_at", ""),
+    ))
     for position, task in enumerate(queue["tasks"], 1):
         task["position"] = position
     return queue
@@ -82,7 +100,7 @@ def move_task(queue, task_id, position):
     if index is None:
         raise KeyError(task_id)
     task = queue["tasks"].pop(index)
-    if task.get("status") in BLOCKING_STATES:
+    if is_task_active(task):
         raise ValueError("an active task cannot be reordered")
     target = max(0, min(len(queue["tasks"]), int(position) - 1))
     queue["tasks"].insert(target, task)
@@ -99,7 +117,7 @@ def move_tasks(queue, task_ids, delta):
     if missing:
         raise KeyError(next(iter(missing)))
     selected = [item for item in queue["tasks"] if str(item.get("task_id")) in selected_ids]
-    if any(item.get("status") in BLOCKING_STATES for item in selected):
+    if any(is_task_active(item) for item in selected):
         raise ValueError("an active task cannot be reordered")
 
     tasks = queue["tasks"]
@@ -205,7 +223,7 @@ def delete_task(queue, task_id):
     return touch(queue)
 
 
-def requeue_task_after_active(queue, task_id):
+def requeue_task_after_active(queue, task_id, active_id=None):
     """Requeue an interrupted book immediately behind the active book.
 
     A cancelled Actions run is only one execution attempt.  The durable book
@@ -216,14 +234,15 @@ def requeue_task_after_active(queue, task_id):
     if index is None:
         raise KeyError(task_id)
     task = queue["tasks"][index]
-    if task.get("status") in {"dispatching", "running", "waiting_retry", "canceling"}:
+    if is_task_active(task):
         raise ValueError("執行中的任務必須先取消目前 Run，再重新排程")
 
-    active_id = next(
-        (item.get("task_id") for item in queue["tasks"]
-         if item.get("task_id") != task_id and item.get("status") in BLOCKING_STATES),
-        None,
-    )
+    if not active_id:
+        active_id = next(
+            (item.get("task_id") for item in queue["tasks"]
+             if item.get("task_id") != task_id and is_task_active(item)),
+            None,
+        )
     old_run_id = task.get("run_id")
     history = list(task.get("run_history") or [])
     if old_run_id and not any(item.get("run_id") == old_run_id for item in history):
@@ -246,7 +265,7 @@ def requeue_task_after_active(queue, task_id):
     })
 
     task = queue["tasks"].pop(index)
-    if active_id:
+    if active_id and any(item.get("task_id") == active_id for item in queue["tasks"]):
         active_index = next(i for i, item in enumerate(queue["tasks"]) if item.get("task_id") == active_id)
         queue["tasks"].insert(active_index + 1, task)
     else:
@@ -256,7 +275,7 @@ def requeue_task_after_active(queue, task_id):
 
 def current_task(queue):
     queue = normalize_queue(queue)
-    return next((item for item in queue["tasks"] if item.get("status") in BLOCKING_STATES), None)
+    return next((item for item in queue["tasks"] if is_task_active(item)), None)
 
 
 def next_task(queue):
@@ -268,6 +287,9 @@ def next_task(queue):
 def touch(queue):
     if not isinstance(queue, dict) or not isinstance(queue.get("tasks"), list):
         raise ValueError("invalid queue")
+    active = [t for t in queue["tasks"] if is_task_active(t)]
+    non_active = [t for t in queue["tasks"] if not is_task_active(t)]
+    queue["tasks"] = active + non_active
     for position, task in enumerate(queue["tasks"], 1):
         task["position"] = position
     queue["revision"] = int(queue.get("revision", 0)) + 1

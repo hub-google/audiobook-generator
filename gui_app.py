@@ -21,9 +21,9 @@ try:
     from cleaner import chunk_text, clean_text_content
     from crawler import fetch_chapter_text
     from cloud_queue import (
-        BLOCKING_STATES, GitHubQueueStore, add_tasks, delete_task,
-        mark_task_interrupted, mark_task_needs_attention, move_task, move_tasks, new_task, requeue_task_after_active,
-        update_task, update_task_chapters,
+        BLOCKING_STATES, GitHubQueueStore, TERMINAL_STATES, add_tasks, delete_task,
+        is_task_active, mark_task_interrupted, mark_task_needs_attention, move_task,
+        move_tasks, new_task, requeue_task_after_active, update_task, update_task_chapters,
     )
     from github_run_status import (
         error_observation, missing_observation, observation_text,
@@ -1229,6 +1229,18 @@ class AudiobookGUIApp:
             f"✓ 已將 {len(task_ids)} 筆小說任務{action}",
         )
 
+    def _find_active_task_id(self, exclude_task_id=None):
+        for other in (self.cloud_queue or {}).get("tasks", []):
+            other_id = other.get("task_id")
+            if other_id and other_id != exclude_task_id:
+                obs = self.github_observations.get(other_id) or {}
+                if (
+                    (obs.get("kind") == "ok" and obs.get("raw_status") != "completed") or
+                    is_task_active(other)
+                ):
+                    return other_id
+        return None
+
     def requeue_selected_task(self):
         task = self._selected_task()
         if not task:
@@ -1246,6 +1258,7 @@ class AudiobookGUIApp:
             run_id and observation.get("kind") != "ok" and
             task.get("status") in {"running", "dispatching", "waiting_retry", "canceling"}
         )
+        active_task_id = self._find_active_task_id(exclude_task_id=task.get("task_id"))
         if active:
             if not messagebox.askyesno(
                     "確認重新排程",
@@ -1280,7 +1293,7 @@ class AudiobookGUIApp:
                                 value, task["task_id"], status="needs_attention",
                                 reason="user_requeue_after_run_ended",
                             )
-                            return requeue_task_after_active(value, task["task_id"])
+                            return requeue_task_after_active(value, task["task_id"], active_id=active_task_id)
                         queue = store.mutate(
                             requeue_finished,
                             f"Requeue completed audiobook task {task['task_id']}",
@@ -1312,7 +1325,7 @@ class AudiobookGUIApp:
             threading.Thread(target=worker, daemon=True).start()
             return
         self._mutate_queue_async(
-            lambda queue: requeue_task_after_active(queue, task["task_id"]),
+            lambda queue: requeue_task_after_active(queue, task["task_id"], active_id=active_task_id),
             f"Requeue audiobook task {task['task_id']}",
             f"✓ {title} 已排到目前執行中小說的下一順位",
         )

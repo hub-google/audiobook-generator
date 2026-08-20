@@ -288,6 +288,54 @@ class CloudQueueTests(unittest.TestCase):
         )
         self.assertEqual(dispatch_call.kwargs["json"]["inputs"]["book_title"], "凡人修仙傳")
 
+    def test_active_task_is_always_position_1(self):
+        first = new_task("https://example/1", "吞噬星空")
+        second = new_task("https://example/2", "修真聊天群")
+        queue = add_tasks(empty_queue(), [first, second])
+        self.assertEqual(queue["tasks"][0]["book_title"], "吞噬星空")
+        self.assertEqual(queue["tasks"][1]["book_title"], "修真聊天群")
+
+        # When second starts running, it must automatically become position 1
+        queue = update_task(queue, second["task_id"], status="running", run_id=32326794640)
+        self.assertEqual(queue["tasks"][0]["book_title"], "修真聊天群")
+        self.assertEqual(queue["tasks"][0]["position"], 1)
+        self.assertEqual(queue["tasks"][1]["book_title"], "吞噬星空")
+        self.assertEqual(queue["tasks"][1]["position"], 2)
+
+    def test_requeue_task_places_behind_currently_running_task(self):
+        task1 = new_task("https://example/1", "吞噬星空")
+        task2 = new_task("https://example/2", "修真聊天群")
+        task3 = new_task("https://example/3", "完美世界")
+        queue = add_tasks(empty_queue(), [task1, task2, task3])
+
+        # task1 was interrupted, task2 is running
+        queue = update_task(queue, task1["task_id"], status="interrupted")
+        queue = update_task(queue, task2["task_id"], status="running", run_id=32326794640)
+
+        self.assertEqual(queue["tasks"][0]["book_title"], "修真聊天群")
+        self.assertEqual(queue["tasks"][0]["position"], 1)
+
+        # Requeue task1 -> must be position 2 (behind task2), task3 is position 3
+        queue = requeue_task_after_active(queue, task1["task_id"])
+        self.assertEqual(queue["tasks"][0]["book_title"], "修真聊天群")
+        self.assertEqual(queue["tasks"][0]["position"], 1)
+        self.assertEqual(queue["tasks"][1]["book_title"], "吞噬星空")
+        self.assertEqual(queue["tasks"][1]["position"], 2)
+        self.assertEqual(queue["tasks"][2]["book_title"], "完美世界")
+        self.assertEqual(queue["tasks"][2]["position"], 3)
+
+    def test_requeue_task_with_explicit_active_id(self):
+        task1 = new_task("https://example/1", "吞噬星空")
+        task2 = new_task("https://example/2", "修真聊天群")
+        queue = add_tasks(empty_queue(), [task1, task2])
+
+        # Even if task2 status in json is still queued but GUI knows it's active
+        queue = requeue_task_after_active(queue, task1["task_id"], active_id=task2["task_id"])
+        self.assertEqual(queue["tasks"][0]["book_title"], "修真聊天群")
+        self.assertEqual(queue["tasks"][0]["position"], 1)
+        self.assertEqual(queue["tasks"][1]["book_title"], "吞噬星空")
+        self.assertEqual(queue["tasks"][1]["position"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
