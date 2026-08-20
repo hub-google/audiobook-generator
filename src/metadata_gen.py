@@ -167,35 +167,25 @@ def get_calligraphy_font(size):
 
 def generate_dynamic_taglines(book_title, pure_plot=""):
     """
-    根據小說書名與大綱，由 AI 自動生成 2 句霸氣吸睛的四字宣傳標語 (絕不硬編或複製他人文案)
+    根據小說書名與大綱，由 AI 自動生成 2 句霸氣吸睛的四字宣傳標語。
+    失敗或超時直接報錯中止，嚴禁使用低品質硬編碼備用語句。
     """
     try:
         import urllib.parse
         import requests
         prompt = f"請為小說《{book_title}》寫2句霸氣吸睛的4字宣傳標語，用繁體中文，格式如: 句一, 句二"
         url = f"https://text.pollinations.ai/{urllib.parse.quote(prompt)}?model=openai"
-        res = requests.get(url, timeout=3)
+        res = requests.get(url, timeout=10)
         if res.status_code == 200 and res.text:
             text = res.text.strip().replace('\n', ' ')
             m = re.findall(r'[\u4e00-\u9fa5]{4}', text)
             if len(m) >= 2 and m[0] != m[1]:
                 return m[0], m[1]
-    except Exception:
-        pass
-
-    # 備用智慧主題標語庫 (根據小說類型題材自動對應，不抄襲他人)
-    if "凡人" in book_title:
-        return "山 村 少 年", "踏 入 仙 途"
-    elif "仙" in book_title or "修" in book_title or "劍" in book_title:
-        return "逆 天 獨 尊", "踏 碎 凌 霄"
-    elif "武" in book_title or "江湖" in book_title:
-        return "縱 橫 江 湖", "獨 步 武 林"
-    elif "醫" in book_title or "都市" in book_title:
-        return "神 醫 下 山", "縱 橫 都 市"
-    elif "帝" in book_title or "王" in book_title or "神" in book_title:
-        return "萬 族 共 尊", "獨 斷 萬 古"
-    else:
-        return "執 掌 乾 坤", "逆 天 飛 升"
+            raise ValueError(f"AI 回傳內容無法提取標準4字標語: {text[:100]}")
+        else:
+            raise RuntimeError(f"HTTP {res.status_code}: {res.text[:100]}")
+    except Exception as exc:
+        raise RuntimeError(f"❌ AI 宣傳標語生成失敗或超時 ({exc})！嚴禁使用寫死備用方案，流程中止。")
 
 def _neutral_cover_prompt(book_title):
     return (
