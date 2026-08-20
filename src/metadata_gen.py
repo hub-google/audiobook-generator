@@ -242,7 +242,7 @@ def generate_gemini_art_prompt(book_title, pure_plot, max_attempts=4, retry_base
 
     logging.info(f"🎨 啟動 Gemini 藝術總監引擎分析《{book_title}》劇情與視覺風格...")
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
+    # URL will be generated dynamically per attempt
     
     sys_instruction = (
         "You are a world-class Hollywood concept artist and master book-cover art director. "
@@ -265,8 +265,15 @@ def generate_gemini_art_prompt(book_title, pure_plot, max_attempts=4, retry_base
         }]
     }
     
+    # 乒乓交替 3 輪 = 6 次嘗試
+    max_total_attempts = 6
     last_error = None
-    for attempt in range(1, max_attempts + 1):
+
+    for attempt in range(1, max_total_attempts + 1):
+        # 奇數次用 latest，偶數次用 3.5-flash
+        current_model = "gemini-flash-latest" if attempt % 2 != 0 else "gemini-3.5-flash"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={api_key}"
+        
         try:
             res = requests.post(url, json=payload, timeout=30)
             if res.status_code == 200:
@@ -275,29 +282,31 @@ def generate_gemini_art_prompt(book_title, pure_plot, max_attempts=4, retry_base
                     prompt_text = candidates[0]["content"]["parts"][0]["text"].strip()
                     prompt_text = re.sub(r"^```[a-zA-Z]*\n?", "", prompt_text).rstrip("`").strip()
                     prompt_text = prompt_text.strip('"').strip("'")
-                    logging.info(f"✨ Gemini 藝術總監產出提示詞成功: {prompt_text[:120]}...")
+                    logging.info(f"✨ Gemini 藝術總監產出提示詞成功 (使用 {current_model}): {prompt_text[:120]}...")
                     return prompt_text
                 last_error = "HTTP 200 但回應中沒有可用的提示詞"
             else:
                 last_error = f"HTTP {res.status_code}: {res.text[:300]}"
-
-            retryable = res.status_code == 429 or 500 <= res.status_code < 600
-            if not retryable or attempt == max_attempts:
-                break
+                
         except requests.RequestException as exc:
             last_error = f"網路錯誤: {exc}"
-            if attempt == max_attempts:
-                break
+        except Exception as exc:
+            last_error = f"例外錯誤: {exc}"
 
-        delay = retry_base_seconds * (2 ** (attempt - 1))
+        if attempt == max_total_attempts:
+            break
+            
+        # 每一輪（2次嘗試）遞增等待時間: 15, 15, 30, 30, 60, 60 (以 retry_base_seconds=15 為例)
+        delay = retry_base_seconds * (2 ** ((attempt - 1) // 2))
+        next_model = "gemini-3.5-flash" if attempt % 2 != 0 else "gemini-flash-latest"
         logging.warning(
-            "Gemini 封面提示詞生成暫時失敗（第 %d/%d 次，%s）；%d 秒後重試，絕不跳過封面前置。",
-            attempt, max_attempts, last_error, delay,
+            f"⚠️ 第 {attempt}/{max_total_attempts} 次 ({current_model}) 失敗: {last_error}；"
+            f"等待 {delay} 秒後，切換至 {next_model} 重試..."
         )
         time.sleep(delay)
 
     raise RuntimeError(
-        f"❌ Gemini 藝術總監 Prompt 生成失敗，已重試 {max_attempts} 次；封面前置未完成，流程中止: {last_error}"
+        f"❌ Gemini 藝術總監 Prompt 生成失敗，已交替重試 {max_total_attempts} 次全滅；流程中止: {last_error}"
     )
 
 
