@@ -1835,6 +1835,12 @@ def main():
                 "chapters": item.get("chapters") or list(range(item["start_chap"], item["end_chap"] + 1)),
                 "duration": get_media_duration(item["video_path"]), "title": item["title"],
             })
+        artifact_count = len(set(prepared_plan.get("chapter_artifacts", {}).values())) if prepared_plan.get("chapter_artifacts") else len(files_to_upload)
+        chapter_count = len(prepared_plan.get("chapter_artifacts", {})) if prepared_plan.get("chapter_artifacts") else sum(len(p.get("chapters", [])) for p in local_plan)
+        source_missing = prepared_plan.get("source_missing_chapters", []) if prepared_plan else []
+        publication.mark_global("download_artifacts", "completed", artifact_count=artifact_count)
+        publication.mark_global("probe_durations", "completed", chapter_count=chapter_count)
+        publication.mark_global("validate_inventory", "completed", chapter_count=chapter_count, source_missing_chapters=source_missing)
         publication.lock_plan(local_plan, run_id=args.run_id, book_title=book_title)
         publication.mark_global("lock_plan", "completed", part_count=len(local_plan))
         part_plan = local_plan

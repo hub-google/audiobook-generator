@@ -487,5 +487,33 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         self.assertEqual(parse_chapter_info("unknown_filename.mp4"), (999999, 999999))
 
 
+    def test_input_dir_marks_all_global_publication_steps(self):
+        from src.publication_checkpoint import GLOBAL_STEPS, PublicationCheckpoint
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_file = os.path.join(temp_dir, "state.json")
+            checkpoint = PublicationCheckpoint(state_file)
+            prepared_plan = {
+                "chapter_artifacts": {"1": "mp4-worker-0", "2": "mp4-worker-0"},
+                "source_missing_chapters": [],
+            }
+            local_plan = [{"part_num": 1, "start_chap": 1, "end_chap": 2, "chapters": [1, 2], "title": "Part 1", "duration": 100.0}]
+            artifact_count = len(set(prepared_plan.get("chapter_artifacts", {}).values()))
+            chapter_count = len(prepared_plan.get("chapter_artifacts", {}))
+            source_missing = prepared_plan.get("source_missing_chapters", [])
+            checkpoint.mark_global("download_artifacts", "completed", artifact_count=artifact_count)
+            checkpoint.mark_global("probe_durations", "completed", chapter_count=chapter_count)
+            checkpoint.mark_global("validate_inventory", "completed", chapter_count=chapter_count, source_missing_chapters=source_missing)
+            checkpoint.lock_plan(local_plan, run_id="123", book_title="Book")
+            checkpoint.mark_global("lock_plan", "completed", part_count=len(local_plan))
+            checkpoint.mark_global("playlist", "completed", playlist_id="PL123")
+            checkpoint.mark_global("final_book_validation", "completed", completed_parts=1)
+            for step in GLOBAL_STEPS:
+                self.assertEqual(
+                    checkpoint.data["global_steps"].get(step, {}).get("status"),
+                    "completed",
+                    f"global step {step} must be completed",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
