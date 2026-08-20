@@ -199,3 +199,66 @@ def validate_stage(stage, path, workspace_dir=None, chapter=None, book_title=Non
         duration = validate_wav(wav_path)["duration_seconds"] if os.path.exists(wav_path) else None
         return validate_video(path, duration)
     raise ValueError(f"unknown stage: {stage}")
+
+
+def validate_worker_manifest(path, expected_worker_id=None, expected_chapters=None, confirmed_missing=None):
+    """Validate that the lightweight worker duration manifest is valid, non-empty, and complete."""
+    if not os.path.exists(path):
+        raise ArtifactValidationError(f"manifest file does not exist: {path}")
+    if os.path.getsize(path) < 10:
+        raise ArtifactValidationError(f"manifest file is too small: {path}")
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
+        raise ArtifactValidationError(f"manifest JSON cannot be decoded: {error}") from error
+
+    if not isinstance(data, dict):
+        raise ArtifactValidationError("manifest root must be a JSON object")
+    if expected_worker_id is not None and int(data.get("worker_id", -1)) != int(expected_worker_id):
+        raise ArtifactValidationError(
+            f"manifest worker_id mismatch: expected {expected_worker_id}, got {data.get('worker_id')}"
+        )
+    chapters = data.get("chapters")
+    if not isinstance(chapters, list):
+        raise ArtifactValidationError("manifest chapters must be a list")
+
+    confirmed_missing = {int(c) for c in (confirmed_missing or data.get("source_missing", []))}
+    recorded_missing = {int(c) for c in data.get("source_missing", [])}
+
+    chapter_nums = []
+    total_duration = 0.0
+    for pos, item in enumerate(chapters, start=1):
+        if not isinstance(item, dict):
+            raise ArtifactValidationError(f"manifest chapter #{pos} is not an object")
+        num = item.get("chap_num")
+        if num is None or not str(num).isdigit():
+            raise ArtifactValidationError(f"manifest chapter #{pos} has invalid chap_num")
+        dur = item.get("dur")
+        try:
+            dur = float(dur)
+        except (TypeError, ValueError):
+            dur = 0.0
+        if dur <= 0.25:
+            raise ArtifactValidationError(f"manifest chapter {num} has invalid duration {dur}")
+        chapter_nums.append(int(num))
+        total_duration += dur
+
+    if expected_chapters is not None:
+        expected_set = {int(c) for c in expected_chapters}
+        covered_set = set(chapter_nums) | confirmed_missing
+        missing_set = expected_set - covered_set
+        extra_set = set(chapter_nums) - expected_set
+        if missing_set or extra_set:
+            raise ArtifactValidationError(
+                f"manifest chapters mismatch: missing={sorted(missing_set)}, unexpected={sorted(extra_set)}"
+            )
+
+    return {
+        "bytes": os.path.getsize(path),
+        "worker_id": data.get("worker_id"),
+        "chapter_count": len(chapters),
+        "missing_count": len(recorded_missing),
+        "total_duration_seconds": round(total_duration, 3),
+        "sha256": sha256_file(path),
+    }

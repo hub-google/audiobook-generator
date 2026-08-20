@@ -6,27 +6,65 @@ import yaml
 try:
     from .artifact_validation import validate_srt, validate_video
     from .part_builder import merge_part_videos
-    from .youtube_api_uploader import (build_part_plan_from_inventory, confirmed_missing_from_directory, download_artifact_task, generate_part_srt, get_run_artifact_names, scan_artifact_chapters, validate_chapter_inventory)
+    from .youtube_api_uploader import (build_part_plan_from_inventory, confirmed_missing_from_directory, download_artifact_task, generate_part_srt, get_run_artifact_names, get_run_manifest_artifact_names, scan_artifact_chapters, validate_chapter_inventory)
 except ImportError:
     from artifact_validation import validate_srt, validate_video
     from part_builder import merge_part_videos
-    from youtube_api_uploader import (build_part_plan_from_inventory, confirmed_missing_from_directory, download_artifact_task, generate_part_srt, get_run_artifact_names, scan_artifact_chapters, validate_chapter_inventory)
+    from youtube_api_uploader import (build_part_plan_from_inventory, confirmed_missing_from_directory, download_artifact_task, generate_part_srt, get_run_artifact_names, get_run_manifest_artifact_names, scan_artifact_chapters, validate_chapter_inventory)
 
 def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17):
     config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
     selected = [int(n) for n in config.get("selected_indices") or []]
     if not selected: raise RuntimeError("shared config has no selected_indices")
     output, work = Path(output_dir), Path(work_dir); output.mkdir(parents=True, exist_ok=True)
+    manifest_names = get_run_manifest_artifact_names(str(run_id), repo) if repo else []
     names = get_run_artifact_names(str(run_id), repo)
-    if not names: raise RuntimeError(f"source Run {run_id} has no worker artifacts")
+    if not manifest_names and not names: raise RuntimeError(f"source Run {run_id} has no worker artifacts")
     inventory, source_missing = [], set()
-    for name in names:
-        expanded = work / name
-        if not download_artifact_task(str(run_id), repo, name, str(expanded)): raise RuntimeError(f"could not download {name}")
-        source_missing.update(confirmed_missing_from_directory(str(expanded)))
-        scanned = scan_artifact_chapters(str(expanded), name)
-        if not scanned and not source_missing: raise RuntimeError(f"{name} contains no chapter MP4")
-        inventory.extend(scanned); shutil.rmtree(expanded, ignore_errors=True)
+
+    # Fast path: load lightweight manifest JSONs (only a few KB per worker)
+    if manifest_names and (not names or len(manifest_names) >= len(names)):
+        for name in manifest_names:
+            expanded = work / name
+            if not download_artifact_task(str(run_id), repo, name, str(expanded)):
+                raise RuntimeError(f"could not download {name}")
+            manifest_files = list(expanded.glob("**/*.json"))
+            if not manifest_files:
+                raise RuntimeError(f"{name} contains no manifest JSON")
+            data = json.loads(manifest_files[0].read_text(encoding="utf-8"))
+            worker_id = data.get("worker_id")
+            for chapter in data.get("chapters", []):
+                inventory.append({
+                    "artifact": chapter.get("artifact") or f"mp4-worker-{worker_id}",
+                    "chap_num": int(chapter["chap_num"]),
+                    "dur": float(chapter["dur"]),
+                })
+            source_missing.update(int(c) for c in data.get("source_missing", []))
+            shutil.rmtree(expanded, ignore_errors=True)
+    else:
+        # Fallback / backward compatibility: download worker artifacts
+        for name in names:
+            expanded = work / name
+            if not download_artifact_task(str(run_id), repo, name, str(expanded)):
+                raise RuntimeError(f"could not download {name}")
+            manifest_files = list(expanded.glob("**/manifest-worker-*.json"))
+            if manifest_files:
+                data = json.loads(manifest_files[0].read_text(encoding="utf-8"))
+                for chapter in data.get("chapters", []):
+                    inventory.append({
+                        "artifact": chapter.get("artifact") or name,
+                        "chap_num": int(chapter["chap_num"]),
+                        "dur": float(chapter["dur"]),
+                    })
+                source_missing.update(int(c) for c in data.get("source_missing", []))
+            else:
+                source_missing.update(confirmed_missing_from_directory(str(expanded)))
+                scanned = scan_artifact_chapters(str(expanded), name)
+                if not scanned and not source_missing:
+                    raise RuntimeError(f"{name} contains no chapter MP4")
+                inventory.extend(scanned)
+            shutil.rmtree(expanded, ignore_errors=True)
+
     inventory.sort(key=lambda x: int(x["chap_num"]))
     validate_chapter_inventory(inventory, selected[0], selected[-1], source_missing)
     parts = build_part_plan_from_inventory(inventory, 10*3600, 11*3600, source_missing)

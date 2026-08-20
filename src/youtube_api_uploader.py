@@ -731,6 +731,32 @@ def get_run_artifact_names(run_id, repo):
     return select_worker_artifacts(all_names)
 
 
+def get_run_manifest_artifact_names(run_id, repo):
+    cmd = [
+        _find_gh(), "api", "--paginate",
+        f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100",
+        "--jq", ".artifacts[].name",
+    ]
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if res.returncode != 0:
+        logging.error(f"Failed to fetch manifest artifacts for run {run_id}: {res.stderr}")
+        return []
+    all_names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
+    return select_manifest_artifacts(all_names)
+
+
+def select_manifest_artifacts(all_names):
+    """Select one manifest artifact per worker."""
+    selected = {}
+    for name in all_names:
+        if name.startswith("manifest-worker-"):
+            try:
+                selected[artifact_worker_index(name)] = name
+            except ValueError:
+                pass
+    return [selected[index] for index in sorted(selected)]
+
+
 def select_worker_artifacts(all_names):
     """Select one artifact per worker, preferring the lightweight MP4 artifact."""
     selected = {}
@@ -743,7 +769,7 @@ def select_worker_artifacts(all_names):
 
 def artifact_worker_index(name):
     """Extract the worker id, never the ``4`` embedded in the ``mp4`` prefix."""
-    match = re.search(r"(?:mp4|video)-worker-(\d+)$", name)
+    match = re.search(r"(?:mp4|video|manifest)-worker-(\d+)$", name)
     if not match:
         raise ValueError(f"無法識別 Worker Artifact 名稱：{name}")
     return int(match.group(1))

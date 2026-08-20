@@ -316,6 +316,14 @@ jobs:
           path: Workspace/
           key: ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-${{ github.run_id }}-${{ github.run_attempt }}
 
+      - name: Upload worker manifest (Fast Part Planning)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifest-worker-${{ matrix.worker_id }}
+          path: Workspace/*/Manifests/manifest-worker-${{ matrix.worker_id }}.json
+          if-no-files-found: error
+
       - name: Upload MP4 Videos & Subtitles Only (Lightweight Artifact for YouTube Upload)
         if: always()
         uses: actions/upload-artifact@v4
@@ -325,6 +333,7 @@ jobs:
             Workspace/*/Video/
             Workspace/*/Subtitles/
             Workspace/*/SourceStatus/
+            Workspace/*/Manifests/
             Upload_Subtitles/
           if-no-files-found: error
 
@@ -370,10 +379,14 @@ jobs:
           checkpoint = PipelineCheckpoint(
               workspace, book_title, worker_id, chapters
           )
+          checkpoint.export_manifest()
+          m_val = checkpoint.validate_manifest()
           incomplete = checkpoint.incomplete_chapters()
           print("[RUN_SUMMARY] " + __import__("json").dumps({
               "kind": "worker", "worker": worker_id,
               "completed": len(chapters) - len(incomplete), "total": len(chapters),
+              "manifest_chapters": m_val["chapter_count"],
+              "manifest_duration": m_val["total_duration_seconds"],
               "incomplete": incomplete,
           }, ensure_ascii=False))
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:

@@ -83,6 +83,46 @@ class ArtifactValidationTests(unittest.TestCase):
         finally:
             os.remove(video_path)
 
+    def test_validates_worker_manifest_and_rejects_missing_chapters(self):
+        from src.artifact_validation import validate_worker_manifest
+        with tempfile.TemporaryDirectory() as directory:
+            manifest_path = os.path.join(directory, "manifest-worker-0.json")
+            data = {
+                "schema_version": 1,
+                "worker_id": 0,
+                "artifact": "mp4-worker-0",
+                "book_title": "測試書",
+                "chapters": [
+                    {"chap_num": 1, "dur": 150.0},
+                    {"chap_num": 2, "dur": 200.5},
+                ],
+                "source_missing": [3],
+            }
+            with open(manifest_path, "w", encoding="utf-8") as handle:
+                json.dump(data, handle)
+
+            result = validate_worker_manifest(
+                manifest_path, expected_worker_id=0,
+                expected_chapters=[1, 2, 3], confirmed_missing=[3]
+            )
+            self.assertEqual(result["chapter_count"], 2)
+            self.assertEqual(result["missing_count"], 1)
+            self.assertEqual(result["total_duration_seconds"], 350.5)
+
+            # Test mismatch in chapters
+            with self.assertRaises(ArtifactValidationError):
+                validate_worker_manifest(
+                    manifest_path, expected_worker_id=0,
+                    expected_chapters=[1, 2, 4], confirmed_missing=[]
+                )
+
+            # Test mismatch in worker_id
+            with self.assertRaises(ArtifactValidationError):
+                validate_worker_manifest(
+                    manifest_path, expected_worker_id=1,
+                    expected_chapters=[1, 2, 3]
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

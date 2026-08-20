@@ -12,9 +12,9 @@ import hashlib
 from datetime import datetime, timezone
 
 try:
-    from .artifact_validation import ArtifactValidationError, validate_stage
+    from .artifact_validation import ArtifactValidationError, validate_stage, validate_worker_manifest
 except ImportError:
-    from artifact_validation import ArtifactValidationError, validate_stage
+    from artifact_validation import ArtifactValidationError, validate_stage, validate_worker_manifest
 
 
 STAGES = ("crawler", "cleaner", "tts", "subtitle", "image", "video")
@@ -341,6 +341,62 @@ class PipelineCheckpoint:
             os.fsync(checkpoint_file.fileno())
         os.replace(temp_path, self.path)
 
+    def export_manifest(self, destination_path=None, artifact_name=None):
+        if destination_path is None:
+            manifest_dir = os.path.join(self.workspace_dir, "Manifests")
+            os.makedirs(manifest_dir, exist_ok=True)
+            destination_path = os.path.join(manifest_dir, f"manifest-worker-{self.worker_id}.json")
+        os.makedirs(os.path.dirname(os.path.abspath(destination_path)), exist_ok=True)
+        if artifact_name is None:
+            artifact_name = f"mp4-worker-{self.worker_id}"
+
+        chapters = []
+        source_missing = sorted(int(c) for c in self.source_missing_chapters())
+        for chapter in self.chapter_numbers:
+            if chapter in source_missing:
+                continue
+            rec = self.data.get("chapters", {}).get(str(chapter), {})
+            video_rec = rec.get("stages", {}).get("video", {})
+            duration = float((video_rec.get("validation") or {}).get("duration_seconds") or 0.0)
+            if duration <= 0:
+                try:
+                    duration = float(self.validate_output(chapter, "video").get("duration_seconds") or 0.0)
+                except Exception:
+                    duration = 0.0
+            video_path = self.output_path(chapter, "video")
+            srt_path = self.output_path(chapter, "subtitle")
+            chapters.append({
+                "chap_num": int(chapter),
+                "dur": duration,
+                "artifact": artifact_name,
+                "video_relpath": os.path.relpath(video_path, self.workspace_dir).replace("\\", "/"),
+                "srt_relpath": os.path.relpath(srt_path, self.workspace_dir).replace("\\", "/"),
+            })
+
+        manifest = {
+            "schema_version": 1,
+            "worker_id": self.worker_id,
+            "artifact": artifact_name,
+            "book_title": self.book_title,
+            "chapters": chapters,
+            "source_missing": source_missing,
+            "updated_at": _utc_now(),
+        }
+        with open(destination_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, indent=2)
+        return manifest
+
+    def manifest_path(self):
+        return os.path.join(self.workspace_dir, "Manifests", f"manifest-worker-{self.worker_id}.json")
+
+    def validate_manifest(self):
+        return validate_worker_manifest(
+            self.manifest_path(),
+            expected_worker_id=self.worker_id,
+            expected_chapters=self.chapter_numbers,
+            confirmed_missing=self.source_missing_chapters(),
+        )
+
     def markdown_summary(self):
         # NOTE: reconcile() is NOT called here; the caller or __init__
         # should have already called it.  See incomplete_chapters() note.
@@ -351,13 +407,31 @@ class PipelineCheckpoint:
             (stage, record) for stage, record in self.data.get("worker_stages", {}).items()
             if record.get("status") != "completed"
         ]
-        all_complete = completed_chapters + len(missing_chapters) == total and not worker_failures
+        manifest_val = None
+        manifest_error = None
+        try:
+            manifest_val = self.validate_manifest()
+            manifest_status = f"✅ 驗收通過 (共 {manifest_val['chapter_count']} 章時長，總計 {manifest_val['total_duration_seconds']:.1f} 秒)"
+        except Exception as e:
+            manifest_error = str(e)
+            if completed_chapters + len(missing_chapters) == total:
+                manifest_status = f"❌ 驗證失敗: {e}"
+            else:
+                manifest_status = "⏳ 等待所有章節產出後生成"
+
+        all_complete = (
+            completed_chapters + len(missing_chapters) == total
+            and not worker_failures
+            and (manifest_val is not None)
+        )
+
         lines = [
             f"## Worker {self.worker_id} Pipeline Status",
             "",
             f"- Overall: **{'COMPLETED' if all_complete else 'FAILED'}**",
             f"- Complete chapters: **{completed_chapters} / {total}**",
             f"- Origin website missing: **{len(missing_chapters)}**",
+            f"- 時長規劃清單 (Manifest): **{manifest_status}**",
             "",
             "| 章節 | 來源／抓文 | 清理切段 | 語音 | 字幕 | 章節圖 | 影片 | 最終驗收 |",
             "|---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|",

@@ -63,10 +63,14 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
     def test_worker_artifacts_cannot_be_empty(self):
         steps = self.jobs["process_chapters"]["steps"]
         upload_steps = [step for step in steps if step.get("uses") == "actions/upload-artifact@v4"]
-        self.assertEqual(len(upload_steps), 2)
+        self.assertEqual(len(upload_steps), 3)
         self.assertTrue(all(step["with"]["if-no-files-found"] == "error" for step in upload_steps))
         self.assertTrue(all(step.get("if") == "always()" for step in upload_steps))
-        self.assertIn("Workspace/*/SourceStatus/", upload_steps[0]["with"]["path"])
+        mp4_step = next(step for step in upload_steps if "mp4-worker" in step["with"]["name"])
+        self.assertIn("Workspace/*/SourceStatus/", mp4_step["with"]["path"])
+        self.assertIn("Workspace/*/Manifests/", mp4_step["with"]["path"])
+        manifest_step = next(step for step in upload_steps if "manifest-worker" in step["with"]["name"])
+        self.assertIn("manifest-worker-", manifest_step["with"]["path"])
 
     def test_youtube_job_waits_for_plan_and_every_merge_worker(self):
         steps = self.jobs["upload_to_youtube"]["steps"]

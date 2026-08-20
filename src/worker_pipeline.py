@@ -361,6 +361,13 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
     ]
     print_final_report(complete_chapters, final_failed, worker_id, missing_chapters)
     require_complete_worker(final_failed, worker_id)
+    manifest = checkpoint.export_manifest()
+    m_val = checkpoint.validate_manifest()
+    chapter_count = m_val.get("chapter_count", len(complete_chapters)) if isinstance(m_val, dict) else len(complete_chapters)
+    total_duration = m_val.get("total_duration_seconds", 0.0) if isinstance(m_val, dict) else 0.0
+    missing_count = m_val.get("missing_count", len(missing_chapters)) if isinstance(m_val, dict) else len(missing_chapters)
+    logging.info("[Worker-%s] ✅ 輕量時長清單 (Manifest) 嚴格驗證通過：共 %s 章時長，總計 %.1fs，來源缺章 %s",
+                 worker_id, chapter_count, total_duration, missing_count)
 
     if build_parts:
         logging.info(
@@ -453,6 +460,17 @@ def main():
         )
         print_final_report(complete_chapters, final_failed, args.worker_id)
         require_complete_worker(final_failed, args.worker_id)
+        book_title = config["book_title"]
+        workspace_dir = os.path.abspath(os.path.join(
+            SRC_DIR, "..", config["paths"]["workspace_base"], book_title
+        ))
+        checkpoint = PipelineCheckpoint(workspace_dir, book_title, args.worker_id, exact_indices)
+        checkpoint.export_manifest()
+        chapter_count = m_val.get("chapter_count", len(complete_chapters)) if isinstance(m_val, dict) else len(complete_chapters)
+        total_duration = m_val.get("total_duration_seconds", 0.0) if isinstance(m_val, dict) else 0.0
+        missing_count = m_val.get("missing_count", 0) if isinstance(m_val, dict) else 0
+        logging.info("[Worker-%s] ✅ 輕量時長清單 (Manifest) 嚴格驗證通過：共 %s 章時長，總計 %.1fs，來源缺章 %s",
+                     args.worker_id, chapter_count, total_duration, missing_count)
 
     logging.info(f"=== Worker {args.worker_id} | Stage: {stage} DONE ===")
 

@@ -163,6 +163,22 @@ class PipelineCheckpointTests(unittest.TestCase):
         self.assertEqual(restored.data["chapters"]["1"]["stages"]["tts"]["status"], "pending")
         self.assertIn("upstream artifact changed", restored.data["chapters"]["1"]["stages"]["tts"]["validation_error"])
 
+    def test_export_manifest_creates_valid_lightweight_json(self):
+        checkpoint = PipelineCheckpoint(self.workspace, self.book, 0, [1, 2])
+        for stage in STAGES:
+            self._write_output(checkpoint, 1, stage)
+        checkpoint.mark_source_missing(2, "missing from origin")
+        checkpoint.reconcile()
+
+        manifest = checkpoint.export_manifest()
+        self.assertEqual(manifest["worker_id"], 0)
+        self.assertEqual(manifest["artifact"], "mp4-worker-0")
+        self.assertEqual(len(manifest["chapters"]), 1)
+        self.assertEqual(manifest["chapters"][0]["chap_num"], 1)
+        self.assertEqual(manifest["source_missing"], [2])
+        manifest_path = os.path.join(self.workspace, "Manifests", "manifest-worker-0.json")
+        self.assertTrue(os.path.exists(manifest_path))
+
 
 if __name__ == "__main__":
     unittest.main()
