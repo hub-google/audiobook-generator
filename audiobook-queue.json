@@ -156,11 +156,11 @@
         2816,
         2870
       ],
-      "status": "needs_attention",
+      "status": "waiting_retry",
       "run_id": 32326794640,
       "run_attempt": 1,
-      "retry_at": null,
-      "reason": "run_failure",
+      "retry_at": "2026-08-20T11:13:46.578846+00:00",
+      "reason": "rateLimitExceeded",
       "hf_progress": {
         "completed": 38,
         "total": 38
