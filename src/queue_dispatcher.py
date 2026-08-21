@@ -14,9 +14,9 @@ from zoneinfo import ZoneInfo
 import requests
 
 try:
-    from .cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
+    from .cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
 except ImportError:
-    from cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
+    from cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
 
 
 def _find_gh() -> str:
@@ -60,7 +60,6 @@ class Dispatcher:
         self.repo = repo
         self.token = token
         self.store = GitHubQueueStore(repo, token, branch=branch)
-
 
         self.headers = {
             "Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
@@ -225,14 +224,22 @@ class Dispatcher:
         task_id = task["task_id"]
         task.update({"status": "dispatching", "reason": None, "retry_at": None, "dispatched_at": datetime.now(timezone.utc).isoformat()})
         self.store.save(queue, sha=self.store.load()[1], message=f"Reserve audiobook task {task_id}")
+
+        start_int = int(task.get("start_chapter") or 1)
+        end_int = int(task.get("end_chapter") or 999999)
+        excluded = task.get("excluded_chapters") or []
+        renumber = bool(task.get("renumber_selected"))
+        chapter_label = format_chapter_label(start_int, end_int, excluded_chapters=excluded, renumber_selected=renumber)
+
         inputs = {
             "book_title": task.get("book_title") or "待解析書名",
+            "chapter_label": chapter_label,
             "queue_task_id": task_id,
             "catalog_url": task["catalog_url"],
-            "start_chap": str(task.get("start_chapter") or 1),
-            "end_chap": str(task.get("end_chapter") or 999999),
-            "exclude_chapters": ",".join(str(value) for value in task.get("excluded_chapters") or []),
-            "renumber_selected": "true" if task.get("renumber_selected") else "false",
+            "start_chap": str(start_int),
+            "end_chap": str(end_int),
+            "exclude_chapters": ",".join(str(value) for value in sorted(task.get("excluded_chapters") or [])),
+            "renumber_selected": "true" if renumber else "false",
             "zip_password": "",
         }
         try:

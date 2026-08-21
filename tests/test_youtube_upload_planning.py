@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from src.youtube_api_uploader import (
+    resolve_part_srt,
+    is_valid_chinese_caption,
     artifact_worker_index,
     build_part_plan_from_inventory,
     classify_daily_limit,
@@ -532,6 +534,61 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
                 checkpoint.data["parts"]["1"]["steps"]["archive_hf"]["status"],
                 "completed",
             )
+
+
+    def test_is_valid_chinese_caption(self):
+        self.assertTrue(is_valid_chinese_caption({"language": "zh-TW"}))
+        self.assertTrue(is_valid_chinese_caption({"language": "zh-Hant"}))
+        self.assertTrue(is_valid_chinese_caption({"language": "zh-HK"}))
+        self.assertTrue(is_valid_chinese_caption({"language": "zh"}))
+        self.assertTrue(is_valid_chinese_caption({"language": "cmn"}))
+        self.assertFalse(is_valid_chinese_caption({"language": "en"}))
+        self.assertFalse(is_valid_chinese_caption({}))
+
+    def test_resolve_part_srt_finds_file_by_part_and_range(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            srt_dir = os.path.join(temp_dir, "Upload_Subtitles")
+            os.makedirs(srt_dir, exist_ok=True)
+            srt_path = os.path.join(srt_dir, "Book_Part_17_Ch2977_to_Ch3156.srt")
+            with open(srt_path, "w", encoding="utf-8") as handle:
+                handle.write("1\n00:00:00,000 --> 00:00:01,000\n測試字幕內容\n")
+
+            found = resolve_part_srt(
+                title="《測試書》有聲小說 全集 第17部 (第2977~3156章)",
+                part_num=17,
+                search_dirs=[srt_dir],
+            )
+            self.assertIsNotNone(found)
+            self.assertEqual(os.path.abspath(found), os.path.abspath(srt_path))
+
+    @patch("src.youtube_api_uploader.upload_caption_file", return_value=True)
+    @patch("src.youtube_api_uploader.get_playlist_video_index", return_value={"Part 17": "video-17"})
+    def test_final_readback_self_heals_missing_caption(self, playlist_index, upload_caption):
+        youtube = MagicMock()
+        youtube.videos.return_value.list.return_value.execute.return_value = {
+            "items": [{
+                "status": {"privacyStatus": "public"},
+                "snippet": {"thumbnails": {"high": {"url": "https://example/cover.jpg"}}},
+            }]
+        }
+        # First captions list call returns empty, second returns valid caption after upload
+        youtube.captions.return_value.list.return_value.execute.side_effect = [
+            {"items": []},
+            {"items": [{"snippet": {"language": "zh-TW", "status": "serving"}}]},
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            srt_path = os.path.join(temp_dir, "test.srt")
+            with open(srt_path, "w", encoding="utf-8") as handle:
+                handle.write("1\n00:00:00,000 --> 00:00:01,000\n測試字幕\n")
+
+            result = verify_published_part(
+                youtube, "video-17", "playlist-17", "public", attempts=1,
+                srt_path=srt_path, part_title="Part 17", part_num=17,
+            )
+
+        self.assertEqual(result["youtube_video_id"], "video-17")
+        upload_caption.assert_called_once_with(youtube, "video-17", os.path.abspath(srt_path))
 
 
 if __name__ == "__main__":

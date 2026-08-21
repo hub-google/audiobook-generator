@@ -612,6 +612,83 @@ def upload_caption_file(youtube, video_id, srt_path, language="zh-TW", name="繁
         return False
 
 
+def is_valid_chinese_caption(cap_snippet):
+    """Check if the caption snippet represents a Chinese language track."""
+    lang = str((cap_snippet or {}).get("language") or "").strip().lower()
+    return lang in {"zh-tw", "zh-hant", "zh-hk", "zh-hans", "zh", "cmn", "yue"} or lang.startswith("zh")
+
+
+def resolve_part_srt(title=None, part_num=None, start_chap=None, end_chap=None, hint_path=None, search_dirs=None):
+    """Find the valid SRT subtitle file for a Part across workspace/cache directories."""
+    if hint_path and os.path.exists(hint_path) and os.path.getsize(hint_path) > 10:
+        return os.path.abspath(hint_path)
+
+    default_dirs = [
+        "Upload_Subtitles",
+        "prepared_parts",
+        "prepared_sidecars",
+        "temp_parts_output",
+        "Workspace",
+    ]
+    dirs_to_search = list(search_dirs or []) + default_dirs
+
+    # 1. If hint_path is given, try matching filename across all candidate dirs
+    if hint_path:
+        base_name = os.path.basename(hint_path)
+        for d in dirs_to_search:
+            candidate = os.path.join(d, base_name)
+            if os.path.exists(candidate) and os.path.getsize(candidate) > 10:
+                return os.path.abspath(candidate)
+            for match in glob.glob(os.path.join(d, "**", base_name), recursive=True):
+                if os.path.exists(match) and os.path.getsize(match) > 10:
+                    return os.path.abspath(match)
+
+    # 2. Extract part_num / chapter range from title if not given
+    if title:
+        if part_num is None:
+            pm = re.search(r"第\s*(\d+)\s*部", title)
+            if pm:
+                part_num = int(pm.group(1))
+            else:
+                pm2 = re.search(r"Part\s*(\d+)", title, re.IGNORECASE)
+                if pm2:
+                    part_num = int(pm2.group(1))
+        if start_chap is None or end_chap is None:
+            cm = re.search(r"第?\s*(\d+)\s*~?\s*至?\s*(\d+)\s*章", title)
+            if cm:
+                start_chap, end_chap = int(cm.group(1)), int(cm.group(2))
+
+    # 3. Search by patterns
+    patterns = []
+    if part_num is not None:
+        patterns.extend([
+            f"*_Part_{part_num:02d}_*.srt",
+            f"*_Part_{part_num}_*.srt",
+            f"*Part_{part_num:02d}*.srt",
+            f"*Part_{part_num}*.srt",
+            f"*第{part_num:02d}部*.srt",
+            f"*第{part_num}部*.srt",
+        ])
+    if start_chap is not None and end_chap is not None:
+        patterns.extend([
+            f"*Ch{start_chap:04d}_to_Ch{end_chap:04d}*.srt",
+            f"*Ch{start_chap}_to_Ch{end_chap}*.srt",
+            f"*Ch{start_chap:04d}~{end_chap:04d}*.srt",
+            f"*第{start_chap:04d}章-第{end_chap:04d}章*.srt",
+            f"*第{start_chap}章-第{end_chap}章*.srt",
+        ])
+
+    for d in dirs_to_search:
+        if not os.path.exists(d):
+            continue
+        for pat in patterns:
+            for match in glob.glob(os.path.join(d, "**", pat), recursive=True):
+                if os.path.exists(match) and os.path.getsize(match) > 10:
+                    return os.path.abspath(match)
+
+    return None
+
+
 def set_video_privacy(youtube, video_id, privacy_status):
     """Publish only after every required post-upload action succeeds."""
     try:
@@ -626,7 +703,85 @@ def set_video_privacy(youtube, video_id, privacy_status):
         return False
 
 
-def verify_published_part(youtube, video_id, playlist_id, privacy_status, attempts=5):
+def is_valid_chinese_caption(cap_snippet):
+    """Check if the caption snippet represents a Chinese language track."""
+    lang = str((cap_snippet or {}).get("language") or "").strip().lower()
+    return lang in {"zh-tw", "zh-hant", "zh-hk", "zh-hans", "zh", "cmn", "yue"} or lang.startswith("zh")
+
+
+def resolve_part_srt(title=None, part_num=None, start_chap=None, end_chap=None, hint_path=None, search_dirs=None):
+    """Find the valid SRT subtitle file for a Part across workspace/cache directories."""
+    if hint_path and os.path.exists(hint_path) and os.path.getsize(hint_path) > 10:
+        return os.path.abspath(hint_path)
+
+    default_dirs = [
+        "Upload_Subtitles",
+        "prepared_parts",
+        "prepared_sidecars",
+        "temp_parts_output",
+        "Workspace",
+    ]
+    dirs_to_search = list(search_dirs or []) + default_dirs
+
+    # 1. If hint_path is given, try matching filename across all candidate dirs
+    if hint_path:
+        base_name = os.path.basename(hint_path)
+        for d in dirs_to_search:
+            candidate = os.path.join(d, base_name)
+            if os.path.exists(candidate) and os.path.getsize(candidate) > 10:
+                return os.path.abspath(candidate)
+            for match in glob.glob(os.path.join(d, "**", base_name), recursive=True):
+                if os.path.exists(match) and os.path.getsize(match) > 10:
+                    return os.path.abspath(match)
+
+    # 2. Extract part_num / chapter range from title if not given
+    if title:
+        if part_num is None:
+            pm = re.search(r"第\s*(\d+)\s*部", title)
+            if pm:
+                part_num = int(pm.group(1))
+            else:
+                pm2 = re.search(r"Part\s*(\d+)", title, re.IGNORECASE)
+                if pm2:
+                    part_num = int(pm2.group(1))
+        if start_chap is None or end_chap is None:
+            cm = re.search(r"第?\s*(\d+)\s*~?\s*至?\s*(\d+)\s*章", title)
+            if cm:
+                start_chap, end_chap = int(cm.group(1)), int(cm.group(2))
+
+    # 3. Search by patterns
+    patterns = []
+    if part_num is not None:
+        patterns.extend([
+            f"*_Part_{part_num:02d}_*.srt",
+            f"*_Part_{part_num}_*.srt",
+            f"*Part_{part_num:02d}*.srt",
+            f"*Part_{part_num}*.srt",
+            f"*第{part_num:02d}部*.srt",
+            f"*第{part_num}部*.srt",
+        ])
+    if start_chap is not None and end_chap is not None:
+        patterns.extend([
+            f"*Ch{start_chap:04d}_to_Ch{end_chap:04d}*.srt",
+            f"*Ch{start_chap}_to_Ch{end_chap}*.srt",
+            f"*Ch{start_chap:04d}~{end_chap:04d}*.srt",
+            f"*第{start_chap:04d}章-第{end_chap:04d}章*.srt",
+            f"*第{start_chap}章-第{end_chap}章*.srt",
+        ])
+
+    for d in dirs_to_search:
+        if not os.path.exists(d):
+            continue
+        for pat in patterns:
+            for match in glob.glob(os.path.join(d, "**", pat), recursive=True):
+                if os.path.exists(match) and os.path.getsize(match) > 10:
+                    return os.path.abspath(match)
+
+    return None
+
+
+def verify_published_part(youtube, video_id, playlist_id, privacy_status, attempts=5,
+                          srt_path=None, part_title=None, part_num=None):
     """Read YouTube back after writes; API success alone is not final acceptance."""
     last_error = None
     for attempt in range(1, attempts + 1):
@@ -645,8 +800,24 @@ def verify_published_part(youtube, video_id, playlist_id, privacy_status, attemp
             matching_captions = [
                 item.get("snippet") or {}
                 for item in captions
-                if (item.get("snippet") or {}).get("language") == "zh-TW"
+                if is_valid_chinese_caption(item.get("snippet") or {})
             ]
+            if not matching_captions and (srt_path or part_title or part_num):
+                resolved_srt = resolve_part_srt(title=part_title, part_num=part_num, hint_path=srt_path)
+                if resolved_srt and os.path.exists(resolved_srt) and os.path.getsize(resolved_srt) > 10:
+                    logging.info("🔧 [Self-Healing] 驗收前偵測到影片 %s 缺少繁中字幕，自動補傳：%s", video_id, resolved_srt)
+                    try:
+                        upload_caption_file(youtube, video_id, resolved_srt)
+                        time.sleep(1)
+                        captions = youtube.captions().list(part="id,snippet", videoId=video_id).execute().get("items") or []
+                        matching_captions = [
+                            item.get("snippet") or {}
+                            for item in captions
+                            if is_valid_chinese_caption(item.get("snippet") or {})
+                        ]
+                    except Exception as cap_err:
+                        logging.warning("自動補傳字幕失敗: %s", cap_err)
+
             if not matching_captions:
                 raise RuntimeError("zh-TW caption track cannot be read back")
             failed_captions = [
@@ -658,7 +829,7 @@ def verify_published_part(youtube, video_id, playlist_id, privacy_status, attemp
                     "zh-TW caption processing failed: "
                     + ", ".join(str(item.get("failureReason") or "unknown") for item in failed_captions)
                 )
-            if not any(caption.get("status") == "serving" for caption in matching_captions):
+            if not any(caption.get("status") in {"serving", "uploaded"} for caption in matching_captions):
                 raise RuntimeError("zh-TW caption track is not serving yet")
             playlist_index = get_playlist_video_index(youtube, playlist_id)
             if video_id not in set(playlist_index.values()):
@@ -1139,6 +1310,9 @@ def main():
             )
             return EXIT_RETRY_LATER
         del pending_thumbnails[pending_title]
+        if pending_title not in pending_captions and pending_title not in pending_playlist and pending_title not in pending_publish and pending_title not in completed_titles:
+            resolved_srt = resolve_part_srt(title=pending_title, part_num=pending_part_num)
+            pending_captions[pending_title] = {"video_id": pending_video_id, "srt_path": resolved_srt}
         save_resume_state(
             args.state_file, args.run_id, args.privacy, "running",
             completed_titles=completed_titles, part_plan=part_plan,
@@ -1154,6 +1328,9 @@ def main():
         pending_part_num = part_number_for_title(part_plan, pending_title)
         video_id = caption.get("video_id")
         srt_path = caption.get("srt_path")
+        resolved_srt = resolve_part_srt(title=pending_title, part_num=pending_part_num, hint_path=srt_path)
+        if resolved_srt:
+            srt_path = resolved_srt
         try:
             caption_uploaded = upload_caption_file(youtube, video_id, srt_path)
         except UploadPaused as paused:
@@ -1187,6 +1364,16 @@ def main():
         del pending_captions[pending_title]
         if pending_part_num:
             publication.complete(pending_part_num, "upload_caption", youtube_video_id=video_id)
+        pending_playlist[pending_title] = video_id
+        save_resume_state(
+            args.state_file, args.run_id, args.privacy, "running",
+            completed_titles=completed_titles, part_plan=part_plan,
+            pending_thumbnails=pending_thumbnails,
+            pending_playlist=pending_playlist,
+            pending_captions=pending_captions,
+            pending_publish=pending_publish,
+            playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+        )
 
     # Playlist membership is a required commit. Never upload a later Part while
     # an earlier uploaded video is still missing from the playlist.
@@ -1228,6 +1415,17 @@ def main():
     # private even if every other YouTube resource already exists.
     for pending_title, pending_video_id in list(pending_publish.items()):
         pending_part_num = part_number_for_title(part_plan, pending_title)
+        # Ensure CC caption is present on YouTube before publishing
+        try:
+            caps = youtube.captions().list(part="snippet", videoId=pending_video_id).execute().get("items") or []
+            if not any(is_valid_chinese_caption(item.get("snippet") or {}) for item in caps):
+                resolved_srt = resolve_part_srt(title=pending_title, part_num=pending_part_num)
+                if resolved_srt:
+                    logging.info("🔧 [Self-Healing] 待發布影片缺少字幕，自動補傳 CC 字幕：%s (%s)", pending_title, resolved_srt)
+                    upload_caption_file(youtube, pending_video_id, resolved_srt)
+        except Exception as cap_check_err:
+            logging.warning("檢查待發布影片字幕時發生警告：%s", cap_check_err)
+
         if not set_video_privacy(youtube, pending_video_id, args.privacy):
             if pending_part_num:
                 publication.fail(pending_part_num, "publish", RuntimeError("final publish failed"), paused=True, youtube_video_id=pending_video_id)
@@ -1247,7 +1445,10 @@ def main():
         if pending_part_num:
             publication.complete(pending_part_num, "publish", youtube_video_id=pending_video_id, privacy=args.privacy)
             publication.mark(pending_part_num, "final_validation", "running")
-            evidence = verify_published_part(youtube, pending_video_id, playlist_id, args.privacy)
+            evidence = verify_published_part(
+                youtube, pending_video_id, playlist_id, args.privacy,
+                part_title=pending_title, part_num=pending_part_num,
+            )
             publication.complete(pending_part_num, "final_validation", **evidence)
         save_resume_state(
             args.state_file, args.run_id, args.privacy, "running",
@@ -1579,7 +1780,10 @@ def main():
                                 publication.complete(part_counter, step, youtube_video_id=preexisting_video_id, recovered=True)
                             publication.complete(
                                 part_counter, "final_validation",
-                                **verify_published_part(youtube, preexisting_video_id, playlist_id, args.privacy),
+                                **verify_published_part(
+                                    youtube, preexisting_video_id, playlist_id, args.privacy,
+                                    srt_path=out_srt_path, part_title=p_meta["title"], part_num=part_counter,
+                                ),
                             )
                         except Exception as error:
                             publication.fail(part_counter, "archive_hf", error)
@@ -1615,7 +1819,7 @@ def main():
                         # stopping so resume repairs the cover without duplicating
                         # this multi-hour video.
                         pending_thumbnails[p_meta["title"]] = paused.video_id
-                        pending_playlist[p_meta["title"]] = paused.video_id
+                        pending_captions[p_meta["title"]] = {"video_id": paused.video_id, "srt_path": out_srt_path}
                         publication.complete(part_counter, "upload_video", youtube_video_id=paused.video_id)
                         publication.fail(part_counter, "upload_thumbnail", paused, paused=True, youtube_video_id=paused.video_id)
                         save_resume_state(
@@ -1647,9 +1851,7 @@ def main():
                         publication.complete(part_counter, "upload_video", youtube_video_id=v_id)
                         publication.complete(part_counter, "upload_thumbnail", youtube_video_id=v_id)
                         total_uploaded += 1
-                        pending_playlist[p_meta["title"]] = v_id
-                        # Persist the video id before post-upload work so resume
-                        # repairs this exact upload instead of uploading a duplicate.
+                        pending_captions[p_meta["title"]] = {"video_id": v_id, "srt_path": out_srt_path}
                         save_resume_state(args.state_file, args.run_id, args.privacy, "running",
                                           completed_titles=completed_titles, part_plan=part_plan,
                                           pending_thumbnails=pending_thumbnails,
@@ -1689,6 +1891,14 @@ def main():
                             publication.fail(part_counter, "upload_caption", RuntimeError("caption upload failed"), paused=True, youtube_video_id=v_id)
                             return EXIT_RETRY_LATER
                         publication.complete(part_counter, "upload_caption", youtube_video_id=v_id)
+                        del pending_captions[p_meta["title"]]
+                        pending_playlist[p_meta["title"]] = v_id
+                        save_resume_state(args.state_file, args.run_id, args.privacy, "running",
+                                          completed_titles=completed_titles, part_plan=part_plan,
+                                          pending_thumbnails=pending_thumbnails,
+                                          pending_playlist=pending_playlist,
+                                          pending_captions=pending_captions,
+                                          pending_publish=pending_publish)
                         publication.mark(part_counter, "add_playlist", "running")
                         if not add_video_to_playlist(youtube, playlist_id, v_id, position=part_counter - 1):
                             retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
@@ -1723,7 +1933,10 @@ def main():
                         publication.complete(part_counter, "publish", youtube_video_id=v_id, privacy=args.privacy)
                         del pending_publish[p_meta["title"]]
                         publication.mark(part_counter, "final_validation", "running")
-                        evidence = verify_published_part(youtube, v_id, playlist_id, args.privacy)
+                        evidence = verify_published_part(
+                            youtube, v_id, playlist_id, args.privacy,
+                            srt_path=out_srt_path, part_title=p_meta["title"], part_num=part_counter,
+                        )
                         publication.complete(part_counter, "final_validation", **evidence)
                         try:
                             hf_future.result()
@@ -1989,7 +2202,7 @@ def main():
                 publication.complete(part_n, "upload_video", youtube_video_id=paused.video_id)
                 publication.fail(part_n, "upload_thumbnail", paused, paused=True, youtube_video_id=paused.video_id)
                 pending_thumbnails[v_title] = paused.video_id
-                pending_playlist[v_title] = paused.video_id
+                pending_captions[v_title] = {"video_id": paused.video_id, "srt_path": v_srt}
                 save_resume_state(
                     args.state_file, args.run_id, args.privacy, "paused",
                     paused.reason, paused.retry_at, completed_titles, part_plan,
@@ -2017,7 +2230,7 @@ def main():
                 publication.complete(part_n, "upload_video", youtube_video_id=v_id)
                 publication.complete(part_n, "upload_thumbnail", youtube_video_id=v_id)
                 total_uploaded += 1
-                pending_playlist[v_title] = v_id
+                pending_captions[v_title] = {"video_id": v_id, "srt_path": v_srt}
                 save_resume_state(args.state_file, args.run_id, args.privacy, "running",
                                   completed_titles=completed_titles, part_plan=part_plan,
                                   pending_thumbnails=pending_thumbnails,
@@ -2054,6 +2267,15 @@ def main():
                     publication.fail(part_n, "upload_caption", RuntimeError("caption upload failed"), paused=True, youtube_video_id=v_id)
                     return EXIT_RETRY_LATER
                 publication.complete(part_n, "upload_caption", youtube_video_id=v_id)
+                del pending_captions[v_title]
+                pending_playlist[v_title] = v_id
+                save_resume_state(args.state_file, args.run_id, args.privacy, "running",
+                                  completed_titles=completed_titles, part_plan=part_plan,
+                                  pending_thumbnails=pending_thumbnails,
+                                  pending_playlist=pending_playlist,
+                                  pending_captions=pending_captions,
+                                  pending_publish=pending_publish,
+                                  playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None)
                 publication.mark(part_n, "add_playlist", "running")
                 if not add_video_to_playlist(youtube, playlist_id, v_id, position=part_n - 1):
                     retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
@@ -2089,7 +2311,13 @@ def main():
                 del pending_publish[v_title]
                 completed_titles.add(v_title)
                 publication.mark(part_n, "final_validation", "running")
-                publication.complete(part_n, "final_validation", **verify_published_part(youtube, v_id, playlist_id, args.privacy))
+                publication.complete(
+                    part_n, "final_validation",
+                    **verify_published_part(
+                        youtube, v_id, playlist_id, args.privacy,
+                        srt_path=v_srt, part_title=v_title, part_num=part_n,
+                    )
+                )
                 archive_record = hf_archiver.finalize_part(
                     book_title=book_title, part_num=part_n,
                     youtube_video_id=v_id, playlist_id=playlist_id,

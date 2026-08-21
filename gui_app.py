@@ -22,7 +22,7 @@ try:
     from crawler import fetch_chapter_text
     from cloud_queue import (
         BLOCKING_STATES, GitHubQueueStore, TERMINAL_STATES, add_tasks, delete_task,
-        is_task_active, mark_task_interrupted, mark_task_needs_attention, mark_task_waiting_retry, move_task,
+        format_chapter_label, is_task_active, mark_task_interrupted, mark_task_needs_attention, mark_task_waiting_retry, move_task,
         move_tasks, new_task, requeue_task_after_active, update_task, update_task_chapters,
     )
     from github_run_status import (
@@ -1812,11 +1812,19 @@ class AudiobookGUIApp:
                     "Authorization": f"Bearer {token}",
                     "X-GitHub-Api-Version": "2022-11-28"
                 }
+                start_int = int(start_chap)
+                end_int = int(end_chap)
+                chapter_label = format_chapter_label(
+                    start_int, end_int,
+                    excluded_chapters=self.excluded_chapters,
+                    renumber_selected=self.renumber_selected_chapters,
+                )
                 dispatch_url = f"https://api.github.com/repos/{repo}/actions/workflows/audiobook.yml/dispatches"
                 payload = {
                     "ref": "master",
                     "inputs": {
                         "book_title": self.catalog_data.get("book_title", "待解析書名"),
+                        "chapter_label": chapter_label,
                         "catalog_url": url,
                         "start_chap": start_chap,
                         "end_chap": end_chap,

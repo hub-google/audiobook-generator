@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from src.cloud_queue import (
-    add_tasks, current_task, empty_queue, move_task, move_tasks, new_task, next_task,
+    add_tasks, current_task, empty_queue, format_chapter_label, move_task, move_tasks, new_task, next_task,
     mark_task_interrupted, mark_task_needs_attention, requeue_task_after_active, update_task,
     update_task_chapters,
 )
@@ -359,6 +359,21 @@ class CloudQueueTests(unittest.TestCase):
             if call.args[:2] == ("POST", "/actions/workflows/audiobook.yml/dispatches")
         )
         self.assertEqual(dispatch_call.kwargs["json"]["inputs"]["book_title"], "凡人修仙傳")
+        self.assertEqual(dispatch_call.kwargs["json"]["inputs"]["chapter_label"], "Ch1-100")
+
+    def test_format_chapter_label(self):
+        # 1. No exclusion
+        self.assertEqual(format_chapter_label(1, 100), "Ch1-100")
+        # 2. Excluded without renumber
+        self.assertEqual(format_chapter_label(1, 3300, excluded_chapters=list(range(1, 145))), "Ch1-3300 (實做3156章)")
+        # 3. Excluded with renumber
+        self.assertEqual(format_chapter_label(1, 3300, excluded_chapters=list(range(1, 145)), renumber_selected=True), "Ch1-3156 (共3156章)")
+        # 4. Partial range without renumber
+        self.assertEqual(format_chapter_label(101, 200, excluded_chapters=[150, 151]), "Ch101-200 (實做98章)")
+        # 5. Partial range with renumber
+        self.assertEqual(format_chapter_label(101, 200, excluded_chapters=[150, 151], renumber_selected=True), "Ch1-98 (共98章)")
+        # 6. Unbounded end
+        self.assertEqual(format_chapter_label(1, 999999), "Ch1-全部")
 
     def test_active_task_is_always_position_1(self):
         first = new_task("https://example/1", "吞噬星空")

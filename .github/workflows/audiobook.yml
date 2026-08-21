@@ -1,6 +1,6 @@
 name: Audiobook Automation Pipeline (Parallel)
 
-run-name: "有聲小說製作｜${{ inputs.book_title || '待解析書名' }}｜Ch${{ inputs.start_chap }}-${{ inputs.end_chap }}｜${{ inputs.queue_task_id || 'GUI直接執行' }}"
+run-name: "有聲小說製作｜${{ inputs.book_title || '待解析書名' }}｜${{ inputs.chapter_label != '' && inputs.chapter_label || format('Ch{0}-{1}', inputs.start_chap, inputs.end_chap) }}｜${{ inputs.queue_task_id || 'GUI直接執行' }}"
 
 on:
   workflow_dispatch:
@@ -9,6 +9,10 @@ on:
         description: '小說書名（只用於可讀的 Run 名稱）'
         required: false
         default: '待解析書名'
+      chapter_label:
+        description: '顯示用的實際章節標籤（例如：Ch1-3156 或 Ch1-3300(實做3156章)；留空時自動用 Ch{start}-{end}）'
+        required: false
+        default: ''
       queue_task_id:
         description: '雲端佇列任務 ID；手動執行可留空'
         required: false
@@ -240,6 +244,7 @@ jobs:
           echo "## 📚 Audiobook Pipeline Started" >> "$GITHUB_STEP_SUMMARY"
           echo "✅ **Target URL:** ${{ github.event.inputs.catalog_url }}" >> "$GITHUB_STEP_SUMMARY"
           echo "✅ **Chapter Range:** ${START} ~ ${END}" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ **Actual Selected Chapters:** $(python -c "import yaml; c = yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}; print(len(c.get('selected_indices') or []))")" >> "$GITHUB_STEP_SUMMARY"
           echo "✅ **Workers Created:** $(jq '.include | length' matrix.json)" >> "$GITHUB_STEP_SUMMARY"
         env:
           START: ${{ github.event.inputs.start_chap }}

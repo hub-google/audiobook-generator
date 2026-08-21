@@ -64,6 +64,24 @@ def normalize_queue(value):
     return queue
 
 
+def format_chapter_label(start_chap, end_chap, excluded_chapters=None, renumber_selected=False):
+    start = int(start_chap)
+    end = int(end_chap) if end_chap is not None else 999999
+    if end >= 999999:
+        return f"Ch{start}-全部"
+    excluded = {int(x) for x in (excluded_chapters or []) if start <= int(x) <= end}
+    total_selected = max(0, (end - start + 1) - len(excluded))
+
+    if renumber_selected:
+        if excluded:
+            return f"Ch1-{total_selected} (共{total_selected}章)"
+        return f"Ch1-{total_selected}"
+    else:
+        if excluded:
+            return f"Ch{start}-{end} (實做{total_selected}章)"
+        return f"Ch{start}-{end}"
+
+
 def new_task(catalog_url, book_title="", start_chapter=1, end_chapter=None, excluded_chapters=None,
              renumber_selected=False, duplicate_chapter_count=None):
     now = utc_now()
