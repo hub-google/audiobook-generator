@@ -21,21 +21,21 @@ SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SRC_DIR)
 
 def get_ffmpeg_path():
+    env_path = os.environ.get("FFMPEG_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
     cmd = shutil.which("ffmpeg")
     if cmd:
         return cmd
-    local_path = r"C:\Users\cyt18\anaconda3\Library\bin\ffmpeg.exe"
-    if os.path.exists(local_path):
-        return local_path
     return "ffmpeg"
 
 def get_ffprobe_path():
+    env_path = os.environ.get("FFPROBE_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
     cmd = shutil.which("ffprobe")
     if cmd:
         return cmd
-    local_path = r"C:\Users\cyt18\anaconda3\Library\bin\ffprobe.exe"
-    if os.path.exists(local_path):
-        return local_path
     return "ffprobe"
 
 FFMPEG_PATH = get_ffmpeg_path()

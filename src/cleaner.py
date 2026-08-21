@@ -94,11 +94,13 @@ def chunk_text(text, max_length=18):
         if current_chunk:
             chunks.append(current_chunk.strip())
                 
-    # 排除無意義標點孤行
+    # 排除無意義純標點孤行 (需含有中文字元、英數字，非純標點符號)
     valid_chunks = []
     for c in chunks:
         c_clean = c.strip()
-        if len(c_clean) > 1 or c_clean in "。！？":
+        if not c_clean:
+            continue
+        if re.search(r'[\u4e00-\u9fa5a-zA-Z0-9]', c_clean):
             valid_chunks.append(c_clean)
             
     return "\n".join(valid_chunks)

@@ -703,81 +703,6 @@ def set_video_privacy(youtube, video_id, privacy_status):
         return False
 
 
-def is_valid_chinese_caption(cap_snippet):
-    """Check if the caption snippet represents a Chinese language track."""
-    lang = str((cap_snippet or {}).get("language") or "").strip().lower()
-    return lang in {"zh-tw", "zh-hant", "zh-hk", "zh-hans", "zh", "cmn", "yue"} or lang.startswith("zh")
-
-
-def resolve_part_srt(title=None, part_num=None, start_chap=None, end_chap=None, hint_path=None, search_dirs=None):
-    """Find the valid SRT subtitle file for a Part across workspace/cache directories."""
-    if hint_path and os.path.exists(hint_path) and os.path.getsize(hint_path) > 10:
-        return os.path.abspath(hint_path)
-
-    default_dirs = [
-        "Upload_Subtitles",
-        "prepared_parts",
-        "prepared_sidecars",
-        "temp_parts_output",
-        "Workspace",
-    ]
-    dirs_to_search = list(search_dirs or []) + default_dirs
-
-    # 1. If hint_path is given, try matching filename across all candidate dirs
-    if hint_path:
-        base_name = os.path.basename(hint_path)
-        for d in dirs_to_search:
-            candidate = os.path.join(d, base_name)
-            if os.path.exists(candidate) and os.path.getsize(candidate) > 10:
-                return os.path.abspath(candidate)
-            for match in glob.glob(os.path.join(d, "**", base_name), recursive=True):
-                if os.path.exists(match) and os.path.getsize(match) > 10:
-                    return os.path.abspath(match)
-
-    # 2. Extract part_num / chapter range from title if not given
-    if title:
-        if part_num is None:
-            pm = re.search(r"第\s*(\d+)\s*部", title)
-            if pm:
-                part_num = int(pm.group(1))
-            else:
-                pm2 = re.search(r"Part\s*(\d+)", title, re.IGNORECASE)
-                if pm2:
-                    part_num = int(pm2.group(1))
-        if start_chap is None or end_chap is None:
-            cm = re.search(r"第?\s*(\d+)\s*~?\s*至?\s*(\d+)\s*章", title)
-            if cm:
-                start_chap, end_chap = int(cm.group(1)), int(cm.group(2))
-
-    # 3. Search by patterns
-    patterns = []
-    if part_num is not None:
-        patterns.extend([
-            f"*_Part_{part_num:02d}_*.srt",
-            f"*_Part_{part_num}_*.srt",
-            f"*Part_{part_num:02d}*.srt",
-            f"*Part_{part_num}*.srt",
-            f"*第{part_num:02d}部*.srt",
-            f"*第{part_num}部*.srt",
-        ])
-    if start_chap is not None and end_chap is not None:
-        patterns.extend([
-            f"*Ch{start_chap:04d}_to_Ch{end_chap:04d}*.srt",
-            f"*Ch{start_chap}_to_Ch{end_chap}*.srt",
-            f"*Ch{start_chap:04d}~{end_chap:04d}*.srt",
-            f"*第{start_chap:04d}章-第{end_chap:04d}章*.srt",
-            f"*第{start_chap}章-第{end_chap}章*.srt",
-        ])
-
-    for d in dirs_to_search:
-        if not os.path.exists(d):
-            continue
-        for pat in patterns:
-            for match in glob.glob(os.path.join(d, "**", pat), recursive=True):
-                if os.path.exists(match) and os.path.getsize(match) > 10:
-                    return os.path.abspath(match)
-
-    return None
 
 
 def verify_published_part(youtube, video_id, playlist_id, privacy_status, attempts=5,
@@ -1660,6 +1585,8 @@ def main():
                 s_c = sliced_items[0]["chap_num"]
                 e_c = sliced_items[-1]["chap_num"]
                 expected_title = generate_video_title(book_title, start_chap=s_c, end_chap=e_c, part_num=part_counter)
+                matching_candidate = next((p for p in candidate_plan if int(p.get("part_num", 0)) == part_counter), None)
+                omitted = list(matching_candidate.get("source_missing_chapters", [])) if matching_candidate else list(locked_part.get("source_missing_chapters", [])) if locked_part else []
 
                 if not locked_part:
                     locked_part = {
@@ -1667,6 +1594,7 @@ def main():
                         "start_chap": s_c,
                         "end_chap": e_c,
                         "chapters": [int(item["chap_num"]) for item in sliced_items],
+                        "source_missing_chapters": omitted,
                         "title": expected_title,
                     }
                     part_plan.append(locked_part)
@@ -2377,8 +2305,9 @@ def main():
             video_id = final_playlist_index.get(title)
             if not video_id:
                 raise RuntimeError(f"final YouTube validation cannot find planned Part in playlist: {title}")
-            evidence = verify_published_part(youtube, video_id, playlist_id, args.privacy)
             part_num = int(planned["part_num"])
+            part_srt = resolve_part_srt(title=title, part_num=part_num, start_chap=planned.get("start_chap"), end_chap=planned.get("end_chap"))
+            evidence = verify_published_part(youtube, video_id, playlist_id, args.privacy, srt_path=part_srt, part_title=title, part_num=part_num)
             record = publication.data.get("parts", {}).get(str(part_num), {})
             steps = record.get("steps") or {}
             for step in PART_STEPS:

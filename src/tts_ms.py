@@ -22,16 +22,17 @@ def load_config():
 
 
 def get_ffmpeg_path():
+    env_path = os.environ.get("FFMPEG_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
     cmd = shutil.which("ffmpeg")
     if cmd:
         return cmd
-    local_path = r"C:\Users\cyt18\anaconda3\Library\bin\ffmpeg.exe"
-    if os.path.exists(local_path):
-        return local_path
     return "ffmpeg"
 
 
 import re
+
 
 def sanitize_text(text):
     if not text:
