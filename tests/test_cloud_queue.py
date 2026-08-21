@@ -424,5 +424,24 @@ class CloudQueueTests(unittest.TestCase):
         self.assertEqual(queue["tasks"][1]["position"], 2)
 
 
+    @patch.object(Dispatcher, "request")
+    def test_force_dispatch_ignores_retry_at(self, request):
+        task = new_task("https://example/1", "修真聊天群")
+        queue = add_tasks(empty_queue(), [task])
+        queue = update_task(
+            queue, task["task_id"],
+            status="waiting_retry",
+            retry_at="2099-01-01T00:00:00+00:00",
+            reason="run_failure",
+        )
+        dispatcher = Dispatcher("owner/repo", "token", force=True)
+        dispatcher.store.load = Mock(return_value=(queue, "sha-1"))
+        dispatcher.store.save = Mock(return_value="sha-2")
+        dispatcher.runs = Mock(return_value=[])
+
+        summary = dispatcher.run()
+        self.assertIn("已啟動", summary)
+
+
 if __name__ == "__main__":
     unittest.main()

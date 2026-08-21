@@ -53,10 +53,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           QUEUE_STATE_BRANCH: automation-state
+          IS_MANUAL: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
         shell: bash
         run: |
           set -o pipefail
-          python src/queue_dispatcher.py 2>&1 | tee dispatcher-result.txt
+          EXTRA_ARGS=""
+          if [ "$IS_MANUAL" = "true" ]; then
+            EXTRA_ARGS="--force"
+          fi
+          python src/queue_dispatcher.py $EXTRA_ARGS 2>&1 | tee dispatcher-result.txt
 
       - name: Write dispatcher result to job summary
         if: always()

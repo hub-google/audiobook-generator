@@ -56,10 +56,11 @@ def parse_time(value):
 
 
 class Dispatcher:
-    def __init__(self, repo, token, branch="automation-state"):
+    def __init__(self, repo, token, branch="automation-state", force=False):
         self.repo = repo
         self.token = token
         self.store = GitHubQueueStore(repo, token, branch=branch)
+        self.force = bool(force)
 
         self.headers = {
             "Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
@@ -365,16 +366,24 @@ class Dispatcher:
                 if attempt == 4:
                     raise
         active = current_task(queue)
-        if active and active.get("status") == "waiting_retry":
+        if active and active.get("status") in {"waiting_retry", "interrupted"}:
             retry_at = parse_time(active.get("retry_at"))
-            if retry_at and datetime.now(timezone.utc) >= retry_at:
+            is_ready = self.force or not retry_at or (datetime.now(timezone.utc) >= retry_at)
+            if is_ready:
                 run_id = active.get("run_id")
-                if run_id:
-                    self.request("POST", f"/actions/runs/{run_id}/rerun-failed-jobs")
-                    updated = update_task(queue, active["task_id"], status="running", run_attempt=int(active.get("run_attempt") or 1) + 1)
-                    self.store.save(updated, sha=sha, message=f"Retry audiobook task {active['task_id']}")
-                    return self.summary(updated, "retried", current_task(updated))
-            return self.summary(queue, "waiting", active)
+                if run_id and not self.force:
+                    try:
+                        self.request("POST", f"/actions/runs/{run_id}/rerun-failed-jobs")
+                        updated = update_task(queue, active["task_id"], status="running", run_attempt=int(active.get("run_attempt") or 1) + 1, retry_at=None, reason=None)
+                        self.store.save(updated, sha=sha, message=f"Retry audiobook task {active['task_id']}")
+                        return self.summary(updated, "retried", current_task(updated))
+                    except Exception as rerun_err:
+                        logging.warning("Rerun failed; will dispatch fresh run: %s", rerun_err)
+                # If rerun failed or self.force, unblock to queued for immediate fresh dispatch
+                queue = update_task(queue, active["task_id"], status="queued", retry_at=None, reason=None)
+                sha = self.store.save(queue, sha=sha, message=f"Unblock task {active['task_id']} for immediate dispatch")
+                active = None
+
         if active:
             return self.summary(queue, "active", active)
         prospective = next_task(queue)
@@ -389,11 +398,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
     parser.add_argument("--branch", default=os.environ.get("QUEUE_STATE_BRANCH", "automation-state"))
+    parser.add_argument("--force", action="store_true", help="Force immediate dispatch ignoring retry_at")
     args = parser.parse_args()
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if not args.repo or not token:
         raise SystemExit("GITHUB_REPOSITORY and GH_TOKEN are required")
-    print(Dispatcher(args.repo, token, args.branch).run())
+    print(Dispatcher(args.repo, token, args.branch, force=args.force).run())
 
 
 if __name__ == "__main__":
