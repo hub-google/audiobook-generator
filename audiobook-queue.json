@@ -156,18 +156,18 @@
         2816,
         2870
       ],
-      "status": "running",
+      "status": "waiting_retry",
       "run_id": 32468603047,
       "run_attempt": 45,
-      "retry_at": null,
-      "reason": null,
+      "retry_at": "2026-08-21T12:01:59.067861+00:00",
+      "reason": "otherError",
       "hf_progress": {
-        "completed": 0,
-        "total": 0
+        "completed": 33,
+        "total": 38
       },
       "youtube_progress": {
         "completed": 0,
-        "total": 0
+        "total": 38
       },
       "created_at": "2026-08-19T02:46:39.148885+00:00",
       "updated_at": "2026-08-21T09:25:40.778048+00:00",
