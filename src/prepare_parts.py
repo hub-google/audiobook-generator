@@ -124,7 +124,8 @@ def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir):
         if not hf_token: raise RuntimeError("HF_TOKEN is required for every merge worker")
         api=HfApi(token=hf_token)
         if not hf_repo: hf_repo=f"{api.whoami()['name']}/audiobook-archive"
-        api.create_repo(hf_repo,repo_type="dataset",private=True,exist_ok=True)
+        is_private = os.environ.get("HF_DATASET_PRIVATE", "false").lower() == "true"
+        api.create_repo(hf_repo, repo_type="dataset", private=is_private, exist_ok=True)
         api.create_commit(repo_id=hf_repo,repo_type="dataset",operations=hf_operations,commit_message=f"Archive merged Parts for {plan['book_title']}: {','.join(map(str,sorted(wanted)))}")
     for item in completed:
         print(f"[HF_MEDIA_MARKER] DONE | Part {item['part_num']} | Ch {item['start_chap']}~{item['end_chap']} | {item['hf_video_path']}",flush=True)

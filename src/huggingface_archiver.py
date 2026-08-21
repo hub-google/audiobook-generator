@@ -44,9 +44,11 @@ def media_info(path):
 
 
 class HuggingFaceArchiver:
-    def __init__(self, repo_id, token, state_file, project="有聲小說", private=True):
+    def __init__(self, repo_id, token, state_file, project="有聲小說", private=False):
         if not repo_id:
             raise ValueError("HF_ARCHIVE_REPO is required")
+        if private is None:
+            private = os.environ.get("HF_DATASET_PRIVATE", "false").lower() == "true"
         self.repo_id = repo_id
         self.project = safe_name(project)
         self.api = HfApi(token=token)

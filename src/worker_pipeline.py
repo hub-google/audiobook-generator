@@ -22,6 +22,8 @@ import re
 import yaml
 import logging
 import argparse
+import shutil
+import subprocess
 
 try:
     from pipeline_checkpoint import PipelineCheckpoint, STAGES
@@ -318,6 +320,182 @@ def run_resumable_chapter(config, checkpoint, chapter_url, chapter_num, worker_i
             raise
 
 
+
+def _find_gh():
+    gh_candidates = [
+        r"C:\Program Files\GitHub CLI\gh.exe",
+        shutil.which("gh"),
+        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "GitHub CLI", "gh.exe"),
+    ]
+    for p in gh_candidates:
+        if p and os.path.exists(p):
+            return p
+    return "gh"
+
+
+def _copy_artifact_files_to_workspace(src_dir, workspace_dir, book_title):
+    """Safely map and copy chapter artifacts into the canonical Workspace structure."""
+    subfolder_map = {
+        ".mp4": "Video",
+        ".srt": "Subtitles",
+        ".wav": "Audio",
+        ".jpg": "Images",
+        ".jpeg": "Images",
+        "_raw.txt": "RawText",
+        "_clean.txt": "CleanText",
+    }
+    for root, _, files in os.walk(src_dir):
+        for f in files:
+            src_path = os.path.join(root, f)
+            if not os.path.isfile(src_path) or os.path.getsize(src_path) == 0:
+                continue
+            dest_folder = None
+            if f.endswith("_raw.txt"):
+                dest_folder = "RawText"
+            elif f.endswith("_clean.txt"):
+                dest_folder = "CleanText"
+            elif "manifest-worker" in f and f.endswith(".json"):
+                dest_folder = "Manifests"
+            elif "source_missing" in f and f.endswith(".json"):
+                dest_folder = "SourceStatus"
+            else:
+                ext = os.path.splitext(f)[1].lower()
+                dest_folder = subfolder_map.get(ext)
+
+            if dest_folder and "chapter_" in f:
+                target_dir = os.path.join(workspace_dir, dest_folder)
+                os.makedirs(target_dir, exist_ok=True)
+                dest_path = os.path.join(target_dir, f)
+                if not os.path.exists(dest_path) or os.path.getsize(dest_path) < os.path.getsize(src_path):
+                    shutil.copy2(src_path, dest_path)
+
+
+def inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices):
+    """Scan and download completed chapter artifacts from previous runs of the same novel."""
+    incomplete = set(checkpoint.incomplete_chapters())
+    if not incomplete:
+        logging.info("[Inherit] Worker %s 所有章節已由本機快取命中，無需拉取歷史 Artifacts。", worker_id)
+        return
+
+    book_title = config.get("book_title", "")
+    task_id = config.get("queue_task_id") or os.environ.get("QUEUE_TASK_ID", "")
+    current_run_id = os.environ.get("GITHUB_RUN_ID", "")
+    repo = os.environ.get("GITHUB_REPOSITORY", "hub-google/audiobook-generator")
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+
+    logging.info("🔍 [Inherit] 正在為 Worker %s 搜尋同本小說（%s）的歷史 Run Artifacts...", worker_id, book_title)
+
+    # 1. 取得歷史 Run ID 列表 (倒序，從最新到最舊)
+    candidate_runs = []
+
+    # 嘗試從 automation-state 的 audiobook-queue.json 讀取 run_history
+    try:
+        from .cloud_queue import GitHubQueueStore
+    except ImportError:
+        try:
+            from cloud_queue import GitHubQueueStore
+        except ImportError:
+            GitHubQueueStore = None
+
+    if GitHubQueueStore and token:
+        try:
+            store = GitHubQueueStore(repo, token, branch=os.environ.get("QUEUE_STATE_BRANCH", "automation-state"))
+            queue, _ = store.load()
+            for t in queue.get("tasks", []):
+                if (task_id and t.get("task_id") == task_id) or (book_title and t.get("book_title") == book_title):
+                    history = t.get("run_history") or []
+                    for item in reversed(history):
+                        rid = item.get("run_id")
+                        if rid and str(rid) != str(current_run_id) and rid not in candidate_runs:
+                            candidate_runs.append(rid)
+        except Exception as queue_err:
+            logging.warning("[Inherit] 讀取雲端隊列歷史失敗: %s", queue_err)
+
+    # 補充：如果從隊列沒拿到足夠的候選，或者手動執行沒有 task_id，用 gh api 查詢該 workflow 的歷史 runs
+    gh_bin = _find_gh()
+    if gh_bin or token:
+        try:
+            cmd = [
+                gh_bin, "api",
+                f"repos/{repo}/actions/workflows/audiobook.yml/runs?per_page=30",
+                "--jq", ".workflow_runs[] | {id: .id, title: (.display_title // .name)}"
+            ]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                for line in res.stdout.strip().split("\n"):
+                    if not line.strip():
+                        continue
+                    item = json.loads(line)
+                    rid = item.get("id")
+                    rtitle = item.get("title") or ""
+                    # 匹配 task_id 或 book_title
+                    match = False
+                    if task_id and task_id in rtitle:
+                        match = True
+                    elif book_title and book_title in rtitle:
+                        match = True
+                    if match and rid and str(rid) != str(current_run_id) and rid not in candidate_runs:
+                        candidate_runs.append(rid)
+        except Exception as api_err:
+            logging.warning("[Inherit] API 查詢歷史 Runs 失敗: %s", api_err)
+
+    if not candidate_runs:
+        logging.info("[Inherit] 未找到同本小說的歷史 Run，將依序檢查本地 Cache 或執行全新運算。")
+        return
+
+    logging.info("📋 [Inherit] 找到 %d 個歷史 Run 候選：%s", len(candidate_runs), candidate_runs)
+
+    # 2. 依序倒序遍歷所有歷史 Run
+    target_artifacts = [
+        f"mp4-worker-{worker_id}",
+        f"video-worker-{worker_id}",
+    ]
+
+    try:
+        from .youtube_api_uploader import download_artifact_task
+    except ImportError:
+        try:
+            from youtube_api_uploader import download_artifact_task
+        except ImportError:
+            download_artifact_task = None
+
+    if not download_artifact_task:
+        logging.warning("[Inherit] download_artifact_task 不可用，略過歷史 Artifact 下載")
+        return
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as temp_dir:
+        for past_run_id in candidate_runs:
+            if not incomplete:
+                break
+            logging.info("🔎 [Inherit] 正在檢查歷史 Run %s 的產物...", past_run_id)
+            downloaded = False
+            for art_name in target_artifacts:
+                art_dest = os.path.join(temp_dir, f"run_{past_run_id}_{art_name}")
+                try:
+                    success = download_artifact_task(str(past_run_id), repo, art_name, art_dest)
+                except Exception as dl_err:
+                    logging.warning("[Inherit] 下載 Run %s 產物 %s 失敗（可能已被手動刪除）: %s", past_run_id, art_name, dl_err)
+                    continue
+
+                if success and os.path.exists(art_dest):
+                    downloaded = True
+                    _copy_artifact_files_to_workspace(art_dest, checkpoint.workspace_dir, book_title)
+
+            if downloaded:
+                checkpoint.reconcile()
+                incomplete = set(checkpoint.incomplete_chapters())
+                recovered_count = len(exact_indices) - len(incomplete)
+                logging.info("📥 [Inherit] 從歷史 Run %s 成功還原！目前 Worker %s 進度：%d/%d 章",
+                             past_run_id, worker_id, recovered_count, len(exact_indices))
+
+    if not incomplete:
+        logging.info("🎉 [Inherit] Worker %s 所有章節（%d 章）已全數從歷史 Run 還原完畢，100%% 齊全！",
+                     worker_id, len(exact_indices))
+    else:
+        logging.info("⚠️ [Inherit] 經過歷史回溯，Worker %s 仍有 %d 章缺失，將由 TTS 引擎自動補齊。",
+                     worker_id, len(incomplete))
+
 def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
                  build_parts=True, force=False):
     """Run the strict resumable pipeline for local and Actions callers alike."""
@@ -335,6 +513,8 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
     checkpoint = PipelineCheckpoint(
         workspace_dir, book_title, worker_id, exact_indices
     )
+    # ── 跨 Run 歷史 Artifacts 優先繼承 ───────────────────────────
+    inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices)
     logging.info("=== Worker %s resumable per-stage pipeline (%s chapters) ===",
                  worker_id, len(exact_indices))
 
