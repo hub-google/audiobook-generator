@@ -21,21 +21,21 @@ SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SRC_DIR)
 
 def get_ffmpeg_path():
-    env_path = os.environ.get("FFMPEG_PATH")
-    if env_path and os.path.exists(env_path):
-        return env_path
     cmd = shutil.which("ffmpeg")
     if cmd:
         return cmd
+    local_path = r"C:\Users\cyt18\anaconda3\Library\bin\ffmpeg.exe"
+    if os.path.exists(local_path):
+        return local_path
     return "ffmpeg"
 
 def get_ffprobe_path():
-    env_path = os.environ.get("FFPROBE_PATH")
-    if env_path and os.path.exists(env_path):
-        return env_path
     cmd = shutil.which("ffprobe")
     if cmd:
         return cmd
+    local_path = r"C:\Users\cyt18\anaconda3\Library\bin\ffprobe.exe"
+    if os.path.exists(local_path):
+        return local_path
     return "ffprobe"
 
 FFMPEG_PATH = get_ffmpeg_path()
@@ -48,8 +48,34 @@ def parse_chapter_num(filename):
         return int(m.group(1))
     return 999999
 
+def duration_from_srt(file_path):
+    """嘗試從同名或相應的 .srt 字幕取得最後時間戳（秒）"""
+    if not file_path:
+        return 0.0
+    srt_candidates = []
+    base, _ = os.path.splitext(file_path)
+    srt_candidates.append(base + ".srt")
+    srt_candidates.append(file_path.replace("/Video/", "/Subtitles/").replace("\\Video\\", "\\Subtitles\\").replace(".mp4", ".srt"))
+    for srt_path in srt_candidates:
+        if os.path.isfile(srt_path) and os.path.getsize(srt_path) > 0:
+            try:
+                with open(srt_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                matches = re.findall(r'(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})', content)
+                if matches:
+                    last = matches[-1]
+                    h, m, s, ms = int(last[4]), int(last[5]), int(last[6]), int(last[7])
+                    dur = h * 3600.0 + m * 60.0 + s + ms / 1000.0
+                    if dur > 0:
+                        return dur
+            except Exception:
+                pass
+    return 0.0
+
 def get_media_duration(file_path):
     """取得 WAV / MP4 的精準時長（秒）"""
+    if not file_path or not os.path.exists(file_path):
+        return 0.0
     ext = os.path.splitext(file_path)[1].lower()
     if ext == ".wav":
         try:
@@ -61,30 +87,45 @@ def get_media_duration(file_path):
         except Exception:
             pass
 
-    # fallback 到 ffprobe
+    # 1. ffprobe 查詢 format duration 與 stream duration
     cmd = [
         FFPROBE_PATH, "-v", "error",
-        "-show_entries", "format=duration",
+        "-show_entries", "format=duration:stream=duration",
         "-of", "default=noprint_wrappers=1:nokey=1",
         file_path
     ]
     try:
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
         if res.returncode == 0 and res.stdout.strip():
-            return float(res.stdout.strip())
+            for line in res.stdout.strip().splitlines():
+                val = line.strip()
+                if val and val.upper() != "N/A":
+                    try:
+                        dur = float(val)
+                        if dur > 0:
+                            return dur
+                    except (ValueError, TypeError):
+                        pass
     except Exception as e:
         logging.warning(f"ffprobe 無法讀取時長 {file_path}: {e}")
 
-    # fallback 2: ffmpeg -i 解析 Duration
+    # 2. fallback: ffmpeg -i 解析 Duration
     try:
         cmd_ffmpeg = [FFMPEG_PATH, "-i", file_path]
-        res_ff = subprocess.run(cmd_ffmpeg, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        m = re.search(r'Duration:\s*(\d+):(\d+):(\d+\.\d+)', res_ff.stderr)
+        res_ff = subprocess.run(cmd_ffmpeg, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
+        m = re.search(r'Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)', res_ff.stderr)
         if m:
             h, m_m, s = float(m.group(1)), float(m.group(2)), float(m.group(3))
-            return h * 3600.0 + m_m * 60.0 + s
+            dur = h * 3600.0 + m_m * 60.0 + s
+            if dur > 0:
+                return dur
     except Exception:
         pass
+
+    # 3. fallback: 從相應 .srt 字幕取得最後時間戳
+    srt_dur = duration_from_srt(file_path)
+    if srt_dur > 0:
+        return srt_dur
 
     return 0.0
 

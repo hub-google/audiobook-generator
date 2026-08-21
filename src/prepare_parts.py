@@ -93,6 +93,16 @@ def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir):
         missing_chapters=[int(c) for c in part["chapters"] if int(c) not in by_chapter]
         if missing_chapters: raise RuntimeError(f"Part {number} is missing chapter media: {missing_chapters}")
         items=[by_chapter[int(c)] for c in part["chapters"]]
+        for x in items:
+            if float(x.get("dur") or 0) <= 0:
+                srt_p = x.get("srt_path")
+                if srt_p and Path(srt_p).is_file():
+                    try:
+                        srt_val = validate_srt(srt_p)
+                        if srt_val.get("end_seconds", 0) > 0:
+                            x["dur"] = float(srt_val["end_seconds"])
+                    except Exception:
+                        pass
         missing_videos=[int(x["chap_num"]) for x in items if not x.get("path") or not Path(x["path"]).is_file()]
         missing_subtitles=[int(x["chap_num"]) for x in items if not x.get("srt_path") or not Path(x["srt_path"]).is_file() or Path(x["srt_path"]).stat().st_size == 0]
         invalid_durations=[int(x["chap_num"]) for x in items if float(x.get("dur") or 0) <= 0]
@@ -124,8 +134,7 @@ def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir):
         if not hf_token: raise RuntimeError("HF_TOKEN is required for every merge worker")
         api=HfApi(token=hf_token)
         if not hf_repo: hf_repo=f"{api.whoami()['name']}/audiobook-archive"
-        is_private = os.environ.get("HF_DATASET_PRIVATE", "false").lower() == "true"
-        api.create_repo(hf_repo, repo_type="dataset", private=is_private, exist_ok=True)
+        api.create_repo(hf_repo,repo_type="dataset",private=True,exist_ok=True)
         api.create_commit(repo_id=hf_repo,repo_type="dataset",operations=hf_operations,commit_message=f"Archive merged Parts for {plan['book_title']}: {','.join(map(str,sorted(wanted)))}")
     for item in completed:
         print(f"[HF_MEDIA_MARKER] DONE | Part {item['part_num']} | Ch {item['start_chap']}~{item['end_chap']} | {item['hf_video_path']}",flush=True)

@@ -8,6 +8,7 @@ import yaml
 
 from src.prepare_parts import merge_assigned_parts, plan_parts
 from src.youtube_api_uploader import scan_artifact_chapters
+from src.part_builder import get_media_duration
 
 
 class PreparePartsTests(unittest.TestCase):
@@ -181,6 +182,107 @@ class PreparePartsTests(unittest.TestCase):
             saved = json.loads((root / 'out' / 'parts-plan.json').read_text(encoding='utf-8'))
             self.assertEqual(saved['source_run_id'], '123')
             self.assertEqual(saved['chapter_artifacts'], {'1': 'mp4-worker-0', '2': 'mp4-worker-1'})
+
+    def test_scan_artifact_chapters_manifest_first(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            video_dir = root / 'Video'
+            video_dir.mkdir(parents=True, exist_ok=True)
+            srt_dir = root / 'Subtitles'
+            srt_dir.mkdir(parents=True, exist_ok=True)
+            manifest_dir = root / 'Manifests'
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+
+            video_file = video_dir / '測試書_chapter_15.mp4'
+            video_file.write_bytes(b'video-bytes')
+            srt_file = srt_dir / '測試書_chapter_15.srt'
+            srt_file.write_text('1\n00:00:00,000 --> 00:06:53,000\n字幕內容\n', encoding='utf-8')
+
+            manifest_data = {
+                'worker_id': 0,
+                'chapters': [{
+                    'chap_num': 15,
+                    'dur': 413.0,
+                    'artifact': 'mp4-worker-0',
+                    'video_relpath': 'Video/測試書_chapter_15.mp4',
+                    'srt_relpath': 'Subtitles/測試書_chapter_15.srt',
+                }],
+            }
+            (manifest_dir / 'manifest-worker-0.json').write_text(
+                json.dumps(manifest_data, ensure_ascii=False), encoding='utf-8'
+            )
+
+            # Probing should not be needed because duration is taken directly from manifest
+            with patch('src.youtube_api_uploader.get_media_duration') as mock_probe:
+                items = scan_artifact_chapters(str(root), 'mp4-worker-0')
+
+            mock_probe.assert_not_called()
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0]['chap_num'], 15)
+            self.assertEqual(items[0]['dur'], 413.0)
+            self.assertEqual(Path(items[0]['path']), video_file.resolve())
+            self.assertEqual(Path(items[0]['srt_path']), srt_file.resolve())
+
+    def test_get_media_duration_handles_na_and_srt_fallback(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            video_file = root / 'test_chapter_1.mp4'
+            video_file.write_bytes(b'fake-video')
+            srt_file = root / 'test_chapter_1.srt'
+            srt_file.write_text('1\n00:00:00,000 --> 00:05:30,500\nHello\n', encoding='utf-8')
+
+            # Mock ffprobe returning N/A for format but 330.5 for stream
+            mock_res_stream = MagicMock(returncode=0, stdout='N/A\n330.5\n')
+            with patch('subprocess.run', return_value=mock_res_stream):
+                dur = get_media_duration(str(video_file))
+            self.assertAlmostEqual(dur, 330.5)
+
+            # Mock ffprobe and ffmpeg failing completely -> fallback to SRT
+            mock_res_fail = MagicMock(returncode=1, stdout='', stderr='')
+            with patch('subprocess.run', return_value=mock_res_fail):
+                dur_srt = get_media_duration(str(video_file))
+            self.assertAlmostEqual(dur_srt, 330.5)
+
+    def test_merge_recovers_zero_duration_from_srt(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            plan = root / 'parts-plan.json'
+            plan.write_text(json.dumps({
+                'source_run_id': '123', 'book_title': '測試書',
+                'source_missing_chapters': [],
+                'chapter_artifacts': {'1': 'mp4-worker-0'},
+                'parts': [{'part_num': 1, 'start_chap': 1, 'end_chap': 1,
+                           'chapters': [1], 'duration': 300.0}],
+            }), encoding='utf-8')
+            chapter_video = root / 'chapter_1.mp4'
+            chapter_srt = root / 'chapter_1.srt'
+            chapter_video.write_bytes(b'chapter-video')
+            chapter_srt.write_text('1\n00:00:00,000 --> 00:05:00,000\n字幕\n', encoding='utf-8')
+            # scanned has dur: 0.0 (simulating ffprobe glitch)
+            scanned = [{'artifact': 'mp4-worker-0', 'chap_num': 1, 'dur': 0.0,
+                        'path': str(chapter_video), 'srt_path': str(chapter_srt)}]
+            api = MagicMock()
+
+            def make_srt(_items, destination):
+                Path(destination).write_text('1\n00:00:00,000 --> 00:05:00,000\n字幕\n', encoding='utf-8')
+                return True
+
+            def make_video(_part, destination):
+                Path(destination).write_bytes(b'merged video')
+                return True
+
+            with patch.dict('os.environ', {'HF_TOKEN': 'token', 'HF_ARCHIVE_REPO': 'owner/archive'}), \
+                 patch('huggingface_hub.HfApi', return_value=api), \
+                 patch('src.prepare_parts.download_artifact_task', return_value=True), \
+                 patch('src.prepare_parts.scan_artifact_chapters', return_value=scanned), \
+                 patch('src.prepare_parts.generate_part_srt', side_effect=make_srt), \
+                 patch('src.prepare_parts.merge_part_videos', side_effect=make_video), \
+                 patch('src.prepare_parts.validate_video', return_value={'valid': True}), \
+                 patch('src.prepare_parts._media_info', return_value={'format': {'duration': '300'}}):
+                # Should not raise RuntimeError because dur is recovered from SRT
+                merge_assigned_parts(plan, [1], 'owner/repo', root / 'out', root / 'work')
+
+            api.create_commit.assert_called_once()
 
 
 if __name__ == '__main__':
