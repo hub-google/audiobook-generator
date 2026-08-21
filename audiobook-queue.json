@@ -71,11 +71,11 @@
         1453,
         1475
       ],
-      "status": "canceling",
+      "status": "running",
       "run_id": 32465816230,
       "run_attempt": 1,
       "retry_at": null,
-      "reason": "user_cancelled",
+      "reason": null,
       "hf_progress": {
         "completed": 0,
         "total": 0
