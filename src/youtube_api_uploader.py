@@ -1545,16 +1545,9 @@ def main():
                         title=p_meta["title"], cover=p_meta["cover_file"], cover_sha256=cover_validation["sha256"],
                     )
                     full_desc = (
-                        f"{p_meta['description']}\n\n"
-                        f"播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
+                        f"播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}\n"
+                        f"{p_meta['description']}"
                     )
-
-                    omitted = [int(value) for value in locked_part.get("source_missing_chapters", [])]
-                    if omitted:
-                        full_desc += (
-                            "\n\n來源網站缺失章節（原頁面無文章，故未製作）："
-                            + "、".join(str(value) for value in omitted)
-                        )
 
                     publication.mark(part_counter, "archive_hf", "running")
                     hf_future = hf_executor.submit(
@@ -1918,11 +1911,7 @@ def main():
                         v_srt = v_path.replace(".mp4", ".srt")
                         if not os.path.exists(v_srt):
                             v_srt = None
-                    full_desc = f"{v_desc}\n\n播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
-                    if item.get("source_missing_chapters"):
-                        full_desc += "\n\n來源網站缺失章節（原頁面無文章，故未製作）：" + "、".join(
-                            str(value) for value in item["source_missing_chapters"]
-                        )
+                    full_desc = f"播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}\n{v_desc}"
                     publication.mark(part_n, "archive_hf", "running")
                     archive_method = (
                         hf_archiver.register_preuploaded_part
@@ -1968,11 +1957,7 @@ def main():
             cover_validation = validate_image(v_cover, expected_size=(1280, 720))
             publication.complete(part_n, "generate_metadata_cover", title=v_title, cover_sha256=cover_validation["sha256"])
 
-            full_desc = f"{v_desc}\n\n播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
-            if item.get("source_missing_chapters"):
-                full_desc += "\n\n來源網站缺失章節（原頁面無文章，故未製作）：" + "、".join(
-                    str(value) for value in item["source_missing_chapters"]
-                )
+            full_desc = f"播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}\n{v_desc}"
             publication.mark(part_n, "archive_hf", "running")
             archive_method = (
                 hf_archiver.register_preuploaded_part

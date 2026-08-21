@@ -702,25 +702,16 @@ AI 封面全自動生成過程記錄 Log
     return log_filename
 
 def generate_video_title(book_title, start_chap=1, end_chap=2400, part_num=None):
-    if part_num:
-        return f"《{book_title}》第 {start_chap:04d}~{end_chap:04d} 章【第 {part_num} 部】"
-    return f"《{book_title}》| 已完結 | 第 {start_chap}~{end_chap} 章 (超長有聲小說全集)"
+    part_str = f"【第 {part_num} 部】" if part_num else ""
+    return f"[已完結]《{book_title}》第 {int(start_chap)}~{int(end_chap)} 章{part_str}"
 
 def generate_video_description(book_title, start_chap=1, end_chap=2400, pure_plot=None, part_num=None):
-    if not pure_plot:
-        pure_plot = fetch_book_summary_online(book_title)
-
     part_str = f"【第 {part_num} 部】" if part_num else ""
-    desc = f"""【超長有聲小說大合集】《{book_title}》{part_str}廣播劇收聽
+    desc = f"""歡迎訂閱、點讚、開啟小鈴鐺並分享給同好朋友！
 
 📖 小說名稱：《{book_title}》
 📌 包含章節：第 {start_chap} 章 至 第 {end_chap} 章 {part_str}
 🎧 播放長度：完整連續播放無中斷 (約 10~11 小時)
-
-【故事整體大綱簡介】：
-{pure_plot}
-
-歡迎訂閱、點讚、開啟小鈴鐺並分享給同好朋友！
 """
     return desc.strip()
 
