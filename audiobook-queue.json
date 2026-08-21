@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 390,
-  "updated_at": "2026-08-21T08:25:59.329696+00:00",
+  "revision": 391,
+  "updated_at": "2026-08-21T08:52:41.431349+00:00",
   "tasks": [
     {
       "task_id": "book-20260819-630acc92",
@@ -156,11 +156,11 @@
         2816,
         2870
       ],
-      "status": "running",
+      "status": "waiting_retry",
       "run_id": 32326794640,
       "run_attempt": 44,
       "retry_at": "2026-08-20T11:33:05.530027+00:00",
-      "reason": "otherError",
+      "reason": "run_failure",
       "hf_progress": {
         "completed": 0,
         "total": 0
@@ -170,9 +170,9 @@
         "total": 0
       },
       "created_at": "2026-08-19T02:46:39.148885+00:00",
-      "updated_at": "2026-08-21T08:25:59.329673+00:00",
-      "run_conclusion": null,
-      "run_completed_at": "2026-08-21T01:47:08Z",
+      "updated_at": "2026-08-21T08:52:41.431349+00:00",
+      "run_conclusion": "failure",
+      "run_completed_at": "2026-08-21T08:30:36Z",
       "run_history": [
         {
           "run_id": 32214245540,
