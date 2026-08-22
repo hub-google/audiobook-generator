@@ -17,6 +17,10 @@ on:
         description: '雲端佇列任務 ID；手動執行可留空'
         required: false
         default: ''
+      resume_source_run_id:
+        description: '接續既有失敗 Run 的數字 ID；一般新任務留空'
+        required: false
+        default: ''
       catalog_url:
         description: '小說目錄網址 (e.g. https://tw.hjwzw.com/Book/Chapter/1644)'
         required: true
@@ -520,9 +524,9 @@ jobs:
             upload_resume_state/
             Workspace/*/Cover/
             Upload_Subtitles/
-          key: youtube-upload-state-source-${{ github.run_id }}-${{ github.run_attempt }}
+          key: youtube-upload-state-source-${{ inputs.resume_source_run_id || github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            youtube-upload-state-source-${{ github.run_id }}-
+            youtube-upload-state-source-${{ inputs.resume_source_run_id || github.run_id }}-
 
       - name: Download immutable Part plan
         uses: actions/download-artifact@v4
@@ -578,7 +582,7 @@ jobs:
 
         run: |
           set +e
-          python src/youtube_api_uploader.py --run-id "${{ github.run_id }}" --input-dir prepared_parts --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
+          python src/youtube_api_uploader.py --run-id "${{ inputs.resume_source_run_id || github.run_id }}" --input-dir prepared_parts --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
           code=$?
           set -e
 
@@ -597,7 +601,7 @@ jobs:
 
       - name: Enforce strict publication evidence
         env:
-          SOURCE_RUN_ID: ${{ github.run_id }}
+          SOURCE_RUN_ID: ${{ inputs.resume_source_run_id || github.run_id }}
         run: |
           python - <<'PY'
           import os
@@ -690,7 +694,7 @@ jobs:
             upload_resume_state/
             Workspace/*/Cover/
             Upload_Subtitles/
-          key: youtube-upload-state-source-${{ github.run_id }}-${{ github.run_attempt }}
+          key: youtube-upload-state-source-${{ inputs.resume_source_run_id || github.run_id }}-${{ github.run_attempt }}
 
       # The merge GUI must reuse the exact title source and thumbnail that this
       # run used.  Keep them as a normal Actions artifact (not only a cache), so

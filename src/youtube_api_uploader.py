@@ -70,6 +70,7 @@ SCOPES = [
 ]
 
 EXIT_RETRY_LATER = 75
+YOUTUBE_SLOT_ROTATION_ROUNDS = 3
 
 
 def configured_youtube_account_slots():
@@ -205,6 +206,7 @@ class YouTubeServicePool:
     def __init__(self):
         self.accounts = []
         self.active_index = 0
+        self.rotation_round = 1
         self.discover_accounts()
 
     def discover_accounts(self):
@@ -451,26 +453,62 @@ class YouTubeServicePool:
         return srv
 
     def rotate_on_quota(self, error=None) -> bool:
-        """當遇到 quotaExceeded 時將當前專案標記為耗盡，並自動切換至下一個可用專案"""
+        """依 slot 順序輪替；完整嘗試三輪後才宣告所有專案失敗。"""
         if not self.accounts:
             return False
 
         current = self.active_account
         if current:
             current["exhausted"] = True
-            logging.warning(f"🚨 【專案 #{current['slot']} 配額耗盡】 (quotaExceeded)")
+            logging.warning(
+                "🚨 【專案 #%s 第 %s/%s 輪失敗】 (%s)",
+                current["slot"], self.rotation_round,
+                YOUTUBE_SLOT_ROTATION_ROUNDS, error or "quotaExceeded",
+            )
 
-        for idx in range(len(self.accounts)):
-            if not self.accounts[idx]["exhausted"]:
-                old_slot = current["slot"] if current else "N/A"
-                next_acc = self.accounts[idx]
+        old_slot = current["slot"] if current else "N/A"
+        while self.rotation_round <= YOUTUBE_SLOT_ROTATION_ROUNDS:
+            for idx, next_acc in enumerate(self.accounts):
+                if next_acc["exhausted"]:
+                    continue
                 srv = self.get_service(idx)
                 if srv is not None:
                     self.active_index = idx
-                    logging.info(f"🔄 【多專案自動輪替】已成功由專案 #{old_slot} 切換至專案 #{next_acc['slot']} 繼續發布！")
+                    logging.info(
+                        "🔄 【多專案自動輪替】第 %s/%s 輪：已由專案 #%s "
+                        "切換至專案 #%s 繼續發布！",
+                        self.rotation_round, YOUTUBE_SLOT_ROTATION_ROUNDS,
+                        old_slot, next_acc["slot"],
+                    )
                     return True
 
-        logging.error("🚨 【所有 YouTube 專案配額皆已用盡】！無法切換至其他專案。")
+                # 授權或 Service 初始化失敗也只算本輪該 slot 失敗，繼續下一個。
+                next_acc["exhausted"] = True
+                logging.warning(
+                    "⚠️ 專案 #%s 第 %s/%s 輪初始化失敗，繼續下一個 slot。",
+                    next_acc["slot"], self.rotation_round,
+                    YOUTUBE_SLOT_ROTATION_ROUNDS,
+                )
+
+            if self.rotation_round >= YOUTUBE_SLOT_ROTATION_ROUNDS:
+                break
+
+            self.rotation_round += 1
+            for acc in self.accounts:
+                acc["exhausted"] = False
+                # 強制重新驗證，避免沿用上一輪失效的授權狀態。
+                acc["service"] = None
+                acc["creds"] = None
+            logging.warning(
+                "🔁 所有 slot 第 %s 輪均失敗，重新由 slot1 開始第 %s/%s 輪。",
+                self.rotation_round - 1, self.rotation_round,
+                YOUTUBE_SLOT_ROTATION_ROUNDS,
+            )
+
+        logging.error(
+            "🚨 【所有 YouTube 專案皆切換失敗】已依序完成 %s 輪，停止重試。",
+            YOUTUBE_SLOT_ROTATION_ROUNDS,
+        )
         return False
 
     def authorize_all_local(self, sync_github=True):
@@ -2218,7 +2256,10 @@ def main():
                         # this multi-hour video.
                         pending_thumbnails[p_meta["title"]] = paused.video_id
                         pending_playlist[p_meta["title"]] = paused.video_id
-                        publication.complete(part_counter, "upload_video", youtube_video_id=paused.video_id)
+                        publication.complete(
+                            part_counter, "upload_video", youtube_video_id=paused.video_id,
+                            youtube_slot=youtube.active_account["slot"],
+                        )
                         publication.fail(part_counter, "upload_thumbnail", paused, paused=True, youtube_video_id=paused.video_id)
                         save_resume_state(
                             args.state_file, args.run_id, args.privacy, "paused",
@@ -2246,7 +2287,10 @@ def main():
                         return EXIT_RETRY_LATER
 
                     if v_id:
-                        publication.complete(part_counter, "upload_video", youtube_video_id=v_id)
+                        publication.complete(
+                            part_counter, "upload_video", youtube_video_id=v_id,
+                            youtube_slot=youtube.active_account["slot"],
+                        )
                         publication.complete(part_counter, "upload_thumbnail", youtube_video_id=v_id)
                         total_uploaded += 1
                         pending_playlist[p_meta["title"]] = v_id
@@ -2596,7 +2640,10 @@ def main():
                     cover_path=v_cover
                 )
             except ThumbnailUploadPaused as paused:
-                publication.complete(part_n, "upload_video", youtube_video_id=paused.video_id)
+                publication.complete(
+                    part_n, "upload_video", youtube_video_id=paused.video_id,
+                    youtube_slot=youtube.active_account["slot"],
+                )
                 publication.fail(part_n, "upload_thumbnail", paused, paused=True, youtube_video_id=paused.video_id)
                 pending_thumbnails[v_title] = paused.video_id
                 pending_playlist[v_title] = paused.video_id
@@ -2624,7 +2671,10 @@ def main():
                 )
                 return EXIT_RETRY_LATER
             if v_id:
-                publication.complete(part_n, "upload_video", youtube_video_id=v_id)
+                publication.complete(
+                    part_n, "upload_video", youtube_video_id=v_id,
+                    youtube_slot=youtube.active_account["slot"],
+                )
                 publication.complete(part_n, "upload_thumbnail", youtube_video_id=v_id)
                 total_uploaded += 1
                 pending_playlist[v_title] = v_id
@@ -2764,7 +2814,12 @@ def main():
                     pending_publish=pending_publish,
                     playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
                 )
-                logging.info(f"[API_UPLOAD_MARKER] DONE | Part {part_n}/{len(parts_to_upload)} | Ch {item['start_chap']}~{item['end_chap']} | VideoID {v_id}, total {total_uploaded}")
+                upload_slot = publication.data["parts"][str(part_n)]["steps"]["upload_video"].get("youtube_slot", "unknown")
+                logging.info(
+                    "[API_UPLOAD_MARKER] DONE | Part %s/%s | Ch %s~%s | VideoID %s | Slot %s | total %s",
+                    part_n, len(parts_to_upload), item["start_chap"], item["end_chap"],
+                    v_id, upload_slot, total_uploaded,
+                )
 
     if pending_thumbnails:
         raise RuntimeError(f"仍有 {len(pending_thumbnails)} 部影片等待補封面，禁止標記 complete")

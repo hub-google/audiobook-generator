@@ -76,10 +76,49 @@ class YouTubeServicePoolTests(unittest.TestCase):
         self.assertTrue(pool.accounts[0]["exhausted"])
         self.assertFalse(pool.accounts[1]["exhausted"])
         
-        # Trigger rotation again when all exhausted
-        rotated2 = pool.rotate_on_quota(Exception("403 quotaExceeded"))
-        self.assertFalse(rotated2)
-        self.assertTrue(pool.accounts[1]["exhausted"])
+        # 一輪全失敗後不可立刻放棄，必須重新由 Slot 1 開始，共跑三輪。
+        expected_slots = [1, 2, 1, 2, 1, 2]
+        observed_slots = [1, pool.active_account["slot"]]
+        results = [rotated]
+        with patch.object(
+            pool, "_authenticate_account",
+            side_effect=lambda account: (MagicMock(), MagicMock()),
+        ):
+            for _ in range(4):
+                results.append(pool.rotate_on_quota(Exception("403 quotaExceeded")))
+                observed_slots.append(pool.active_account["slot"])
+            final_result = pool.rotate_on_quota(Exception("403 quotaExceeded"))
+
+        self.assertEqual(observed_slots, expected_slots)
+        self.assertTrue(all(results))
+        self.assertFalse(final_result)
+        self.assertEqual(pool.rotation_round, 3)
+        self.assertTrue(all(account["exhausted"] for account in pool.accounts))
+
+    def test_rotation_retries_failed_authentication_for_three_full_rounds(self):
+        pool = YouTubeServicePool()
+        pool.accounts = [
+            {"slot": slot, "cs_path": None, "tok_path": None,
+             "client_id": f"c{slot}", "client_secret": f"s{slot}",
+             "refresh_token": f"r{slot}", "service": None, "creds": None,
+             "exhausted": False}
+            for slot in range(1, 6)
+        ]
+        pool.active_index = 0
+
+        attempted_slots = []
+        def fail_auth(account):
+            attempted_slots.append(account["slot"])
+            return None, None
+
+        with patch.object(pool, "_authenticate_account", side_effect=fail_auth):
+            self.assertFalse(pool.rotate_on_quota(Exception("authorization failed")))
+
+        # 首次呼叫時 slot1 已是觸發切換的失敗者；後兩輪會再試 slot1。
+        self.assertEqual(
+            attempted_slots,
+            [2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5],
+        )
 
     def test_pool_accepts_projects_authorized_for_same_channel(self):
         pool = YouTubeServicePool()

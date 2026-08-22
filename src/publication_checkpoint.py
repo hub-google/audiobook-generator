@@ -156,15 +156,17 @@ class PublicationCheckpoint:
             lines.append(f"| {GLOBAL_LABELS[step]} | {global_icons[status]} |")
         lines.extend([
             "", "## 後製與 YouTube 發布狀態", "",
-            "| 影片編號 | 小說章節 | 準備章節 | 產生字幕 | 合併影片 | 驗證影片 | 資料／封面 | HF 備份 | 上傳影片 | 上傳封面 | 上傳字幕 | 播放清單 | 最終發布 | 最終驗收 |",
-            "|---:|---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|",
+            "| 影片編號 | 小說章節 | 上傳成功 Slot | 準備章節 | 產生字幕 | 合併影片 | 驗證影片 | 資料／封面 | HF 備份 | 上傳影片 | 上傳封面 | 上傳字幕 | 播放清單 | 最終發布 | 最終驗收 |",
+            "|---:|---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|",
         ])
         icons = {"completed": "✅", "running": "🔄", "failed": "❌", "paused": "⏸️", "pending": "⏳"}
         for planned in plan:
             part = self.data["parts"][str(planned["part_num"])]
             cells = [icons.get(part["steps"][step].get("status"), "⏳") for step in PART_STEPS]
+            upload_slot = part["steps"]["upload_video"].get("youtube_slot")
+            slot_label = f"slot{upload_slot}" if upload_slot else "—"
             lines.append(
-                f"| Part {planned['part_num']:02d} | 第 {planned['start_chap']}–{planned['end_chap']} 章 | "
+                f"| Part {planned['part_num']:02d} | 第 {planned['start_chap']}–{planned['end_chap']} 章 | {slot_label} | "
                 + " | ".join(cells) + " |"
             )
         failures = []
