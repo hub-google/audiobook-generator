@@ -16,7 +16,10 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
 
     @patch("src.worker_pipeline.PipelineCheckpoint")
     @patch("src.worker_pipeline.run_resumable_chapter")
-    def test_partial_local_run_is_never_reported_as_success(self, run_chapter, checkpoint_type):
+    @patch("src.worker_pipeline.inherit_historical_artifacts")
+    def test_partial_local_run_is_never_reported_as_success(
+        self, inherit, run_chapter, checkpoint_type
+    ):
         checkpoint = Mock()
         checkpoint.incomplete_chapters.return_value = [2]
         checkpoint.source_missing_chapters.return_value = []

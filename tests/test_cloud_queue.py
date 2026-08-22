@@ -470,6 +470,27 @@ class CloudQueueTests(unittest.TestCase):
         summary = dispatcher.run()
         self.assertIn("已啟動", summary)
 
+    @patch.object(Dispatcher, "dispatch_next")
+    def test_retry_on_stale_commit_dispatches_fresh_run(self, dispatch_next):
+        task = new_task("https://example/1", "修真聊天群")
+        queue = add_tasks(empty_queue(), [task])
+        queue = update_task(
+            queue, task["task_id"], status="waiting_retry", run_id=123,
+            retry_at="2020-01-01T00:00:00+00:00",
+        )
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.store.load = Mock(return_value=(queue, "sha-1"))
+        dispatcher.store.save = Mock(return_value="sha-2")
+        dispatcher.reconcile = Mock(return_value=(queue, False))
+        dispatcher.run_uses_current_master = Mock(return_value=False)
+        dispatch_next.side_effect = lambda value: (value, "fresh")
+
+        dispatcher.run()
+
+        dispatcher.run_uses_current_master.assert_called_once_with(123)
+        dispatched_queue = dispatch_next.call_args.args[0]
+        self.assertEqual(dispatched_queue["tasks"][0]["status"], "queued")
+
 
 if __name__ == "__main__":
     unittest.main()

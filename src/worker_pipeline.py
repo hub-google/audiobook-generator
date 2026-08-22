@@ -420,7 +420,10 @@ def inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices):
                 f"repos/{repo}/actions/workflows/audiobook.yml/runs?per_page=30",
                 "--jq", ".workflow_runs[] | {id: .id, title: (.display_title // .name)}"
             ]
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            res = subprocess.run(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                encoding="utf-8", errors="replace",
+            )
             if res.returncode == 0 and res.stdout.strip():
                 for line in res.stdout.strip().split("\n"):
                     if not line.strip():

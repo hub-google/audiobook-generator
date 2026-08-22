@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import re
 import shutil
@@ -84,6 +85,15 @@ class Dispatcher:
         if response.status_code >= 400:
             raise RuntimeError(f"GitHub API GET /actions/runs/{run_id} failed ({response.status_code}): {response.text}")
         return response.json()
+
+    def run_uses_current_master(self, run_id):
+        """Only rerun in place when GitHub would execute the current code."""
+        run = self.run_by_id(run_id)
+        if not run or not run.get("head_sha"):
+            return False
+        master = self.request("GET", "/git/ref/heads/master").json()
+        master_sha = ((master.get("object") or {}).get("sha") or "").strip()
+        return bool(master_sha and run["head_sha"] == master_sha)
 
     def retry_marker(self, run_id):
         try:
@@ -377,7 +387,7 @@ class Dispatcher:
             is_ready = self.force or not retry_at or (datetime.now(timezone.utc) >= retry_at)
             if is_ready:
                 run_id = active.get("run_id")
-                if run_id and not self.force:
+                if run_id and not self.force and self.run_uses_current_master(run_id):
                     try:
                         self.request("POST", f"/actions/runs/{run_id}/rerun-failed-jobs")
                         updated = update_task(queue, active["task_id"], status="running", run_attempt=int(active.get("run_attempt") or 1) + 1, retry_at=None, reason=None)
@@ -385,6 +395,8 @@ class Dispatcher:
                         return self.summary(updated, "retried", current_task(updated))
                     except Exception as rerun_err:
                         logging.warning("Rerun failed; will dispatch fresh run: %s", rerun_err)
+                elif run_id and not self.force:
+                    logging.info("Run %s does not use current master; dispatching a fresh run.", run_id)
                 # If rerun failed or self.force, unblock to queued for immediate fresh dispatch
                 queue = update_task(queue, active["task_id"], status="queued", retry_at=None, reason=None)
                 sha = self.store.save(queue, sha=sha, message=f"Unblock task {active['task_id']} for immediate dispatch")

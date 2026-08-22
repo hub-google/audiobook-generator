@@ -75,13 +75,12 @@ EXIT_RETRY_LATER = 75
 def configured_youtube_account_slots():
     """Return complete environment-backed credential slots without authenticating."""
     slots = set()
-    base = all(os.environ.get(name, "").strip() for name in (
-        "YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN",
-    ))
-    numbered_one = all(os.environ.get(f"{name}_1", "").strip() for name in (
-        "YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN",
-    ))
-    if base or numbered_one:
+    # Slot 1 accepts either spelling and, like discovery, may mix the numbered
+    # and legacy names field-by-field during a secret-name migration.
+    if all(
+        (os.environ.get(f"{name}_1") or os.environ.get(name, "")).strip()
+        for name in ("YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN")
+    ):
         slots.add(1)
     for slot in range(2, 11):
         if all(os.environ.get(f"{name}_{slot}", "").strip() for name in (
@@ -265,11 +264,12 @@ class YouTubeServicePool:
             raise RuntimeError(
                 "YOUTUBE_EXPECTED_ACCOUNT_COUNT must be an integer"
             ) from exc
-        discovered = len(self.accounts)
+        complete_slots = configured_youtube_account_slots()
+        discovered = len(complete_slots)
         if discovered < expected:
             missing = [
                 str(slot) for slot in range(1, expected + 1)
-                if not any(account["slot"] == slot for account in self.accounts)
+                if slot not in complete_slots
             ]
             raise RuntimeError(
                 f"YouTube credential pool is incomplete: found {discovered}/{expected} "

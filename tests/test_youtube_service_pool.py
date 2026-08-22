@@ -15,6 +15,23 @@ class YouTubeServicePoolTests(unittest.TestCase):
         self.assertEqual(configured_youtube_account_slots(), {1, 2})
 
     @patch.dict(os.environ, {
+        "YOUTUBE_CLIENT_ID_1": "c1", "YOUTUBE_CLIENT_SECRET": "s1",
+        "YOUTUBE_REFRESH_TOKEN_1": "r1",
+    }, clear=True)
+    def test_slot_one_allows_mixed_legacy_and_numbered_names(self):
+        self.assertEqual(configured_youtube_account_slots(), {1})
+
+    @patch.dict(os.environ, {
+        "YOUTUBE_EXPECTED_ACCOUNT_COUNT": "2",
+        "YOUTUBE_CLIENT_ID": "c1", "YOUTUBE_CLIENT_SECRET": "s1", "YOUTUBE_REFRESH_TOKEN": "r1",
+        "YOUTUBE_CLIENT_ID_2": "c2", "YOUTUBE_CLIENT_SECRET_2": "s2",
+    }, clear=True)
+    def test_expected_pool_rejects_partially_configured_slot(self):
+        pool = YouTubeServicePool()
+        with self.assertRaisesRegex(RuntimeError, "found 1/2 accounts; missing slots: 2"):
+            pool.require_expected_accounts()
+
+    @patch.dict(os.environ, {
         "YOUTUBE_EXPECTED_ACCOUNT_COUNT": "5",
         "YOUTUBE_CLIENT_ID": "c1",
         "YOUTUBE_CLIENT_SECRET": "s1",
