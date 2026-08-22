@@ -248,6 +248,7 @@ class YouTubeServicePool:
                     "refresh_token": ref_token,
                     "service": None,
                     "creds": None,
+                    "channel_id": None,
                     "exhausted": False
                 })
 
@@ -368,6 +369,52 @@ class YouTubeServicePool:
         service = build("youtube", "v3", credentials=creds)
         return service, creds
 
+    def require_same_channel(self):
+        """Verify every configured credential controls the same YouTube channel."""
+        if len(self.accounts) < 2:
+            return None
+
+        channel_slots = {}
+        for index, acc in enumerate(self.accounts):
+            service = self.get_service(index)
+            if service is None:
+                raise RuntimeError(
+                    f"YouTube credential slot {acc['slot']} could not be authenticated"
+                )
+            try:
+                items = service.channels().list(part="id", mine=True).execute().get("items") or []
+            except Exception as error:
+                paused = classify_daily_limit(error)
+                if paused:
+                    raise paused from error
+                raise RuntimeError(
+                    f"Could not verify YouTube channel for credential slot {acc['slot']}: {error}"
+                ) from error
+            if len(items) != 1 or not items[0].get("id"):
+                raise RuntimeError(
+                    f"YouTube credential slot {acc['slot']} does not resolve to exactly one channel"
+                )
+            channel_id = str(items[0]["id"])
+            acc["channel_id"] = channel_id
+            channel_slots.setdefault(channel_id, []).append(acc["slot"])
+
+        if len(channel_slots) != 1:
+            details = "; ".join(
+                f"{channel_id}: slots {','.join(map(str, slots))}"
+                for channel_id, slots in sorted(channel_slots.items())
+            )
+            raise RuntimeError(
+                "YouTube credential pool spans different channels; quota rotation would lose "
+                f"access to uploaded videos ({details}). Re-authorize every slot for the same channel."
+            )
+
+        channel_id = next(iter(channel_slots))
+        logging.info(
+            "✅ [YouTube-Pool] 已驗證 %s 組憑證均管理同一頻道 %s。",
+            len(self.accounts), channel_id,
+        )
+        return channel_id
+
     def get_service(self, slot_idx=None):
         if not self.accounts:
             logging.error("❌ 未找到任何可用的 YouTube API 專案設定！")
@@ -466,6 +513,7 @@ def get_authenticated_service():
     """獲取與授權 YouTube API v3 Service Pool (支援多專案輪替)"""
     pool = YouTubeServicePool()
     pool.require_expected_accounts()
+    pool.require_same_channel()
     if pool.active_service is None:
         logging.error("❌ 無法初始化任何 YouTube API Service！")
         sys.exit(1)

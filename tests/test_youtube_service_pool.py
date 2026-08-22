@@ -81,6 +81,53 @@ class YouTubeServicePoolTests(unittest.TestCase):
         self.assertFalse(rotated2)
         self.assertTrue(pool.accounts[1]["exhausted"])
 
+    def test_pool_accepts_projects_authorized_for_same_channel(self):
+        pool = YouTubeServicePool()
+        services = [MagicMock(), MagicMock()]
+        for service in services:
+            service.channels.return_value.list.return_value.execute.return_value = {
+                "items": [{"id": "channel-1"}]
+            }
+        pool.accounts = [
+            {"slot": slot, "service": service, "creds": MagicMock(), "channel_id": None,
+             "exhausted": False}
+            for slot, service in enumerate(services, 1)
+        ]
+
+        self.assertEqual(pool.require_same_channel(), "channel-1")
+        self.assertEqual([account["channel_id"] for account in pool.accounts], ["channel-1", "channel-1"])
+
+    def test_pool_rejects_projects_authorized_for_different_channels(self):
+        pool = YouTubeServicePool()
+        services = [MagicMock(), MagicMock()]
+        for service, channel_id in zip(services, ["channel-1", "channel-2"]):
+            service.channels.return_value.list.return_value.execute.return_value = {
+                "items": [{"id": channel_id}]
+            }
+        pool.accounts = [
+            {"slot": slot, "service": service, "creds": MagicMock(), "channel_id": None,
+             "exhausted": False}
+            for slot, service in enumerate(services, 1)
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "spans different channels"):
+            pool.require_same_channel()
+
+    def test_pool_channel_validation_preserves_quota_pause(self):
+        from src.youtube_api_uploader import UploadPaused
+        pool = YouTubeServicePool()
+        service = MagicMock()
+        service.channels.return_value.list.return_value.execute.side_effect = Exception("quotaExceeded")
+        pool.accounts = [
+            {"slot": 1, "service": service, "creds": MagicMock(), "channel_id": None,
+             "exhausted": False},
+            {"slot": 2, "service": MagicMock(), "creds": MagicMock(), "channel_id": None,
+             "exhausted": False},
+        ]
+
+        with self.assertRaises(UploadPaused):
+            pool.require_same_channel()
+
     def test_get_playlist_video_index_rotates_and_recovers(self):
         from src.youtube_api_uploader import get_playlist_video_index
         pool = YouTubeServicePool()
