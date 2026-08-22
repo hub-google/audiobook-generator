@@ -81,6 +81,7 @@ def normalize_profiles(value):
         profile["duplicate_detection"] = {
             "use_normalized_number": bool(detection.get("use_normalized_number", True)),
             "use_chapter_name": bool(detection.get("use_chapter_name", True)),
+            "use_number_and_name": bool(detection.get("use_number_and_name", False)),
         }
         profile.setdefault("chapter_title_overrides", {})
         profile["chapter_normalized_number_overrides"] = {
@@ -103,7 +104,7 @@ def get_book_profile(data, catalog_url, book_title=""):
         "catalog_url": normalized_url,
         "book_title": str(book_title or "待解析"),
         "cleaner_remove_patterns": [],
-        "duplicate_detection": {"use_normalized_number": True, "use_chapter_name": True},
+        "duplicate_detection": {"use_normalized_number": True, "use_chapter_name": True, "use_number_and_name": False},
         "chapter_title_overrides": {},
         "chapter_normalized_number_overrides": {},
         "profile_revision": 0,
@@ -126,6 +127,7 @@ def update_book_profile(data, catalog_url, book_title="", cleaner_remove_pattern
         changes["duplicate_detection"] = {
             "use_normalized_number": bool(duplicate_detection.get("use_normalized_number", True)),
             "use_chapter_name": bool(duplicate_detection.get("use_chapter_name", True)),
+            "use_number_and_name": bool(duplicate_detection.get("use_number_and_name", False)),
         }
     if chapter_title_overrides is not None:
         changes["chapter_title_overrides"] = {

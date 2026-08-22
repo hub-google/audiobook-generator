@@ -120,6 +120,21 @@ class CatalogParserMatrixTests(unittest.TestCase):
                 )
         self.assertEqual(split_chapter_title("地下城")["normalized_number"], "")
 
+    def test_recovers_damaged_leading_ordinal_and_missing_unit(self):
+        cases = {
+            "毒695章 邪惡禮袍": ("毒695章", "695", "邪惡禮袍"),
+            "都3011章 星橋彼岸": ("都3011章", "3011", "星橋彼岸"),
+            "帝3172章 自我辯護": ("帝3172章", "3172", "自我辯護"),
+            "第1313亮晶晶大雷暴": ("第1313", "1313", "亮晶晶大雷暴"),
+        }
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                parts = split_chapter_title(title)
+                self.assertEqual(
+                    (parts["display_number"], parts["normalized_number"], parts["chapter_name"]),
+                    expected,
+                )
+
     def test_normalized_override_drives_duplicates_and_production_title(self):
         parsed = _parsed_catalog(2)
         parsed["chapter_titles"] = ["第一千七八零二章 開殺戒", "第1783章 下一章"]
@@ -191,6 +206,18 @@ class CatalogParserMatrixTests(unittest.TestCase):
             "normalized_chapter_number", "chapter_name_without_whitespace",
         ])
         self.assertEqual(result["duplicate_chapters"][0]["original_indices"], [1, 2])
+
+    def test_number_and_name_condition_requires_both_values_to_match(self):
+        result = analyze_duplicate_chapters(
+            ["第一章 甲", "第一章 乙", "第二章 甲", "第一章 甲"],
+            use_normalized_number=False,
+            use_chapter_name=False,
+            use_number_and_name=True,
+        )
+        self.assertEqual(result["duplicate_indices"], [4])
+        self.assertEqual(result["duplicate_chapters"][0]["reasons"], [
+            "normalized_chapter_number_and_name_without_whitespace",
+        ])
 
     def test_empty_duplicate_values_are_ignored(self):
         result = analyze_duplicate_chapters(["", "", "無編號標題", "另一個標題"])

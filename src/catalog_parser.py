@@ -136,7 +136,19 @@ def split_chapter_title(title, normalized_override=None):
         rf"^(?P<identifier>(?:第|地)\s*{spaced_number})(?=\s|[.．、:：\-—]|$)",
         value,
     )
-    match = structural or special or missing_unit or plain
+    # Some source catalogs contain a damaged replacement for the leading `第`
+    # (for example `毒695章`).  Recover only the narrow, unambiguous shape of
+    # one non-numeric character + number + chapter unit.  Also accept a genuine
+    # `第1234標題` whose chapter unit alone was omitted.
+    damaged_leading_ordinal = re.match(
+        rf"^(?P<identifier>[^\W\d_]\s*{spaced_number}\s*(?:章|回|節|节|集|話|话))(?=\s|[.．、:：\-—]|$)",
+        value,
+    )
+    missing_unit_before_name = re.match(
+        rf"^(?P<identifier>第\s*{spaced_number})(?=[^\d\s.．、:：\-—])",
+        value,
+    )
+    match = structural or special or missing_unit or plain or damaged_leading_ordinal or missing_unit_before_name
     if not match:
         return {
             "display_number": "",
@@ -153,6 +165,9 @@ def split_chapter_title(title, normalized_override=None):
     simple = re.fullmatch(rf"(?:第|地)?({_NUMBER_TOKEN})(?:章|回|節|节|集|話|话)?", re.sub(r"\s+", "", display_number))
     if simple:
         normalized_number = str(_chinese_number_to_int(simple.group(1)))
+    elif match is damaged_leading_ordinal:
+        damaged_number = re.search(_NUMBER_TOKEN, display_number)
+        normalized_number = str(_chinese_number_to_int(damaged_number.group(0)))
 
     if normalized_override is not None:
         override = str(normalized_override).strip()
@@ -181,12 +196,13 @@ def parse_chapter_number(title):
 
 def analyze_duplicate_chapters(
     chapter_titles, chapter_urls=None, use_normalized_number=True, use_chapter_name=True,
-    normalized_number_overrides=None,
+    normalized_number_overrides=None, use_number_and_name=False,
 ):
     """Mark later entries matching any enabled, non-empty duplicate condition."""
     urls = list(chapter_urls or [])
     seen_numbers = {}
     seen_names = {}
+    seen_number_and_names = {}
     duplicate_indices = []
     duplicates = []
     chapter_numbers = []
@@ -205,6 +221,11 @@ def analyze_duplicate_chapters(
         if use_chapter_name and normalized_name and normalized_name in seen_names:
             reasons.append("chapter_name_without_whitespace")
             original_indices.add(seen_names[normalized_name])
+        pair = (normalized_number, normalized_name)
+        if (use_number_and_name and normalized_number and normalized_name and
+                pair in seen_number_and_names):
+            reasons.append("normalized_chapter_number_and_name_without_whitespace")
+            original_indices.add(seen_number_and_names[pair])
 
         if original_indices:
             duplicate_indices.append(index)
@@ -222,6 +243,8 @@ def analyze_duplicate_chapters(
             seen_numbers.setdefault(normalized_number, index)
         if use_chapter_name and normalized_name:
             seen_names.setdefault(normalized_name, index)
+        if use_number_and_name and normalized_number and normalized_name:
+            seen_number_and_names.setdefault(pair, index)
 
     return {
         "chapter_numbers": chapter_numbers,

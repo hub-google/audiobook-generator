@@ -48,7 +48,7 @@ class BookProfileTests(unittest.TestCase):
     def test_snapshot_fingerprint_changes_only_with_cleaner_rules(self):
         profile = {
             "profile_revision": 1, "cleaner_remove_patterns": ["廣告"],
-            "duplicate_detection": {"use_normalized_number": True, "use_chapter_name": True},
+            "duplicate_detection": {"use_normalized_number": True, "use_chapter_name": True, "use_number_and_name": False},
             "chapter_title_overrides": {},
         }
         first = profile_snapshot("id", profile)

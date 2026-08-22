@@ -66,7 +66,7 @@ class AudiobookGUIApp:
         self.chapter_title_overrides = {}
         self.chapter_normalized_number_overrides = {}
         self.cleaner_remove_patterns = []
-        self.duplicate_detection = {"use_normalized_number": True, "use_chapter_name": True}
+        self.duplicate_detection = {"use_normalized_number": True, "use_chapter_name": True, "use_number_and_name": False}
 
         self._setup_style()
         self._build_ui()
@@ -850,7 +850,7 @@ class AudiobookGUIApp:
         self.chapter_title_overrides = {}
         self.chapter_normalized_number_overrides = {}
         self.cleaner_remove_patterns = []
-        self.duplicate_detection = {"use_normalized_number": True, "use_chapter_name": True}
+        self.duplicate_detection = {"use_normalized_number": True, "use_chapter_name": True, "use_number_and_name": False}
         self.excluded_chapters.clear()
         self.renumber_selected_chapters = False
         self.chapter_order = []
@@ -1724,7 +1724,7 @@ class AudiobookGUIApp:
             )
             self.cleaner_remove_patterns = list(profile.get("cleaner_remove_patterns") or [])
             self.duplicate_detection = dict(profile.get("duplicate_detection") or {
-                "use_normalized_number": True, "use_chapter_name": True,
+                "use_normalized_number": True, "use_chapter_name": True, "use_number_and_name": False,
             })
             book_title = res["book_title"]
             total = res["total_chapters"]
@@ -1764,6 +1764,7 @@ class AudiobookGUIApp:
         titles = self.catalog_data.get("chapter_titles", [])
         duplicate_use_number = tk.BooleanVar(value=self.duplicate_detection.get("use_normalized_number", True))
         duplicate_use_name = tk.BooleanVar(value=self.duplicate_detection.get("use_chapter_name", True))
+        duplicate_use_number_and_name = tk.BooleanVar(value=self.duplicate_detection.get("use_number_and_name", False))
         duplicate_indices = set()
         if not titles:
             messagebox.showinfo("提示", "目前沒有章節標題資訊可供篩選。")
@@ -1876,6 +1877,7 @@ class AudiobookGUIApp:
                 use_normalized_number=duplicate_use_number.get(),
                 use_chapter_name=duplicate_use_name.get(),
                 normalized_number_overrides=self.chapter_normalized_number_overrides,
+                use_number_and_name=duplicate_use_number_and_name.get(),
             )
             duplicate_indices = {int(value) for value in duplicate_analysis["duplicate_indices"]}
             self.catalog_data.update(duplicate_analysis)
@@ -2206,6 +2208,7 @@ class AudiobookGUIApp:
             body.pack(fill=tk.BOTH, expand=True)
             pending_use_number = tk.BooleanVar(value=duplicate_use_number.get())
             pending_use_name = tk.BooleanVar(value=duplicate_use_name.get())
+            pending_use_number_and_name = tk.BooleanVar(value=duplicate_use_number_and_name.get())
             ttk.Label(body, text="勾選任一符合即視為重複的條件：").pack(anchor=tk.W, pady=(0, 8))
             ttk.Checkbutton(
                 body, text="網站章節數正規化", variable=pending_use_number,
@@ -2213,16 +2216,22 @@ class AudiobookGUIApp:
             ttk.Checkbutton(
                 body, text="章節名稱（去除空白）", variable=pending_use_name,
             ).pack(anchor=tk.W, pady=3)
+            ttk.Checkbutton(
+                body, text="網站章節數正規化 & 章節名稱（去除空白）",
+                variable=pending_use_number_and_name,
+            ).pack(anchor=tk.W, pady=3)
 
             def _apply_conditions():
-                if not pending_use_number.get() and not pending_use_name.get():
+                if not (pending_use_number.get() or pending_use_name.get() or pending_use_number_and_name.get()):
                     messagebox.showwarning("重複判斷條件", "請至少勾選一個判斷條件。", parent=dialog)
                     return
                 duplicate_use_number.set(pending_use_number.get())
                 duplicate_use_name.set(pending_use_name.get())
+                duplicate_use_number_and_name.set(pending_use_number_and_name.get())
                 self.duplicate_detection = {
                     "use_normalized_number": duplicate_use_number.get(),
                     "use_chapter_name": duplicate_use_name.get(),
+                    "use_number_and_name": duplicate_use_number_and_name.get(),
                 }
                 _refresh_duplicates()
                 _update_listbox()
