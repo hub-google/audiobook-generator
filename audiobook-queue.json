@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 411,
-  "updated_at": "2026-08-22T09:49:06.493587+00:00",
+  "revision": 412,
+  "updated_at": "2026-08-22T09:51:10.454949+00:00",
   "tasks": [
     {
       "task_id": "book-20260819-cfdccaa4",
@@ -399,6 +399,180 @@
       "renumber_selected": true,
       "duplicate_chapter_count": 144,
       "completed_at": "2026-08-22T08:56:35Z"
+    },
+    {
+      "task_id": "book-20260822-e697f308",
+      "position": 3,
+      "book_title": "完美世界",
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
+      "start_chapter": 1,
+      "end_chapter": 2016,
+      "excluded_chapters": [],
+      "renumber_selected": false,
+      "duplicate_chapter_count": 128,
+      "status": "queued",
+      "run_id": null,
+      "run_attempt": 0,
+      "execution_generation": 1,
+      "retry_requested_at": null,
+      "run_history": [],
+      "retry_at": null,
+      "reason": null,
+      "hf_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "youtube_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "created_at": "2026-08-22T09:51:02.489262+00:00",
+      "updated_at": "2026-08-22T09:51:02.489262+00:00"
+    },
+    {
+      "task_id": "book-20260822-27eedcc7",
+      "position": 4,
+      "book_title": "大主宰",
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33644",
+      "start_chapter": 1,
+      "end_chapter": 1567,
+      "excluded_chapters": [],
+      "renumber_selected": false,
+      "duplicate_chapter_count": 144,
+      "status": "queued",
+      "run_id": null,
+      "run_attempt": 0,
+      "execution_generation": 1,
+      "retry_requested_at": null,
+      "run_history": [],
+      "retry_at": null,
+      "reason": null,
+      "hf_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "youtube_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "created_at": "2026-08-22T09:51:03.814563+00:00",
+      "updated_at": "2026-08-22T09:51:03.814563+00:00"
+    },
+    {
+      "task_id": "book-20260822-a49e60a1",
+      "position": 5,
+      "book_title": "斗破蒼穹",
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/1642",
+      "start_chapter": 1,
+      "end_chapter": 1640,
+      "excluded_chapters": [],
+      "renumber_selected": false,
+      "duplicate_chapter_count": 160,
+      "status": "queued",
+      "run_id": null,
+      "run_attempt": 0,
+      "execution_generation": 1,
+      "retry_requested_at": null,
+      "run_history": [],
+      "retry_at": null,
+      "reason": null,
+      "hf_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "youtube_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "created_at": "2026-08-22T09:51:05.124646+00:00",
+      "updated_at": "2026-08-22T09:51:05.124646+00:00"
+    },
+    {
+      "task_id": "book-20260822-af7a5cec",
+      "position": 6,
+      "book_title": "牧神記",
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/36278",
+      "start_chapter": 1,
+      "end_chapter": 1836,
+      "excluded_chapters": [],
+      "renumber_selected": false,
+      "duplicate_chapter_count": 47,
+      "status": "queued",
+      "run_id": null,
+      "run_attempt": 0,
+      "execution_generation": 1,
+      "retry_requested_at": null,
+      "run_history": [],
+      "retry_at": null,
+      "reason": null,
+      "hf_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "youtube_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "created_at": "2026-08-22T09:51:06.400395+00:00",
+      "updated_at": "2026-08-22T09:51:06.400395+00:00"
+    },
+    {
+      "task_id": "book-20260822-6afa2c2c",
+      "position": 7,
+      "book_title": "全職法師",
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/35593",
+      "start_chapter": 1,
+      "end_chapter": 3126,
+      "excluded_chapters": [],
+      "renumber_selected": false,
+      "duplicate_chapter_count": 286,
+      "status": "queued",
+      "run_id": null,
+      "run_attempt": 0,
+      "execution_generation": 1,
+      "retry_requested_at": null,
+      "run_history": [],
+      "retry_at": null,
+      "reason": null,
+      "hf_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "youtube_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "created_at": "2026-08-22T09:51:07.805751+00:00",
+      "updated_at": "2026-08-22T09:51:07.805751+00:00"
+    },
+    {
+      "task_id": "book-20260822-091e3b9f",
+      "position": 8,
+      "book_title": "傲世丹神",
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/30906",
+      "start_chapter": 1,
+      "end_chapter": 3817,
+      "excluded_chapters": [],
+      "renumber_selected": false,
+      "duplicate_chapter_count": 29,
+      "status": "queued",
+      "run_id": null,
+      "run_attempt": 0,
+      "execution_generation": 1,
+      "retry_requested_at": null,
+      "run_history": [],
+      "retry_at": null,
+      "reason": null,
+      "hf_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "youtube_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "created_at": "2026-08-22T09:51:09.284346+00:00",
+      "updated_at": "2026-08-22T09:51:09.284346+00:00"
     }
   ]
 }
