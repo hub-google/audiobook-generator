@@ -156,18 +156,18 @@
         2816,
         2870
       ],
-      "status": "running",
+      "status": "completed",
       "run_id": 32561684605,
       "run_attempt": 1,
-      "retry_at": "2026-08-22T09:25:47.386920+00:00",
+      "retry_at": null,
       "reason": null,
       "hf_progress": {
-        "completed": 0,
-        "total": 0
+        "completed": 38,
+        "total": 38
       },
       "youtube_progress": {
-        "completed": 0,
-        "total": 0
+        "completed": 19,
+        "total": 38
       },
       "created_at": "2026-08-19T02:46:39.148885+00:00",
       "updated_at": "2026-08-22T06:42:22.662946+00:00",
@@ -218,7 +218,8 @@
       "retry_requested_at": "2026-08-22T03:18:21.124948+00:00",
       "execution_generation": 8,
       "renumber_selected": true,
-      "duplicate_chapter_count": 144
+      "duplicate_chapter_count": 144,
+      "completed_at": "2026-08-22T08:56:35Z"
     },
     {
       "task_id": "book-20260819-cfdccaa4",
