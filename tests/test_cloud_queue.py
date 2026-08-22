@@ -491,6 +491,19 @@ class CloudQueueTests(unittest.TestCase):
         dispatched_queue = dispatch_next.call_args.args[0]
         self.assertEqual(dispatched_queue["tasks"][0]["status"], "queued")
 
+    @patch.object(Dispatcher, "dispatch_next")
+    def test_unobserved_dispatch_is_not_reported_as_launched(self, dispatch_next):
+        task = new_task("https://example/1", "修真聊天群")
+        queue = add_tasks(empty_queue(), [task])
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.store.load = Mock(return_value=(queue, "sha-1"))
+        dispatcher.reconcile = Mock(return_value=(queue, False))
+        dispatch_next.side_effect = lambda value: (value, "not observed")
+
+        summary = dispatcher.run()
+
+        self.assertNotIn("已啟動《", summary)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -404,11 +404,11 @@ class Dispatcher:
 
         if active:
             return self.summary(queue, "active", active)
-        prospective = next_task(queue)
         queue, _message = self.dispatch_next(queue)
         dispatched = current_task(queue)
-        if not dispatched and prospective:
-            dispatched = next((item for item in queue.get("tasks", []) if item.get("task_id") == prospective.get("task_id")), prospective)
+        # A 204 dispatch response is not proof that GitHub created a run. Never
+        # label the still-queued prospective task as launched unless a run was
+        # observed and attached by dispatch_next().
         return self.summary(queue, "dispatched", dispatched) if dispatched else self.summary(queue, "idle")
 
 
