@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 12,
-  "updated_at": "2026-08-22T16:03:11.644221+00:00",
+  "revision": 13,
+  "updated_at": "2026-08-22T16:06:40.039431+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -79,7 +79,10 @@
     "a75e9c51c7d2494d": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/1642",
       "book_title": "斗破蒼穹",
-      "cleaner_remove_patterns": [],
+      "cleaner_remove_patterns": [
+        "以后，落落會陪伴大家，武動乾坤，續寫輝煌",
+        "（第一更！\n\n最后九天時間，請手中有"
+      ],
       "duplicate_detection": {
         "use_normalized_number": true,
         "use_chapter_name": true,
@@ -87,8 +90,8 @@
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 1,
-      "updated_at": "2026-08-22T16:03:11.644221+00:00"
+      "profile_revision": 2,
+      "updated_at": "2026-08-22T16:06:40.039431+00:00"
     }
   }
 }
