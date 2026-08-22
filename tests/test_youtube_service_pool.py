@@ -32,7 +32,7 @@ class YouTubeServicePoolTests(unittest.TestCase):
             pool.require_expected_accounts()
 
     @patch.dict(os.environ, {
-        "YOUTUBE_EXPECTED_ACCOUNT_COUNT": "5",
+        "YOUTUBE_EXPECTED_ACCOUNT_COUNT": "10",
         "YOUTUBE_CLIENT_ID": "c1",
         "YOUTUBE_CLIENT_SECRET": "s1",
         "YOUTUBE_REFRESH_TOKEN": "r1",
@@ -40,21 +40,21 @@ class YouTubeServicePoolTests(unittest.TestCase):
     def test_expected_pool_size_rejects_silent_single_account_fallback(self):
         with patch("src.youtube_api_uploader.os.path.exists", return_value=False):
             pool = YouTubeServicePool()
-        with self.assertRaisesRegex(RuntimeError, "found 1/5 accounts"):
+        with self.assertRaisesRegex(RuntimeError, "found 1/10 accounts"):
             pool.require_expected_accounts()
 
     @patch.dict(os.environ, {
-        "YOUTUBE_EXPECTED_ACCOUNT_COUNT": "5",
+        "YOUTUBE_EXPECTED_ACCOUNT_COUNT": "10",
         **{
             f"YOUTUBE_{field}_{slot}": f"{field.lower()}-{slot}"
-            for slot in range(1, 6)
+            for slot in range(1, 11)
             for field in ("CLIENT_ID", "CLIENT_SECRET", "REFRESH_TOKEN")
         },
     }, clear=True)
-    def test_discovers_all_five_numbered_accounts(self):
+    def test_discovers_all_ten_numbered_accounts(self):
         with patch("src.youtube_api_uploader.os.path.exists", return_value=False):
             pool = YouTubeServicePool()
-        self.assertEqual([account["slot"] for account in pool.accounts], [1, 2, 3, 4, 5])
+        self.assertEqual([account["slot"] for account in pool.accounts], list(range(1, 11)))
         pool.require_expected_accounts()
 
     def test_pool_rotation_on_quota(self):
@@ -102,7 +102,7 @@ class YouTubeServicePoolTests(unittest.TestCase):
              "client_id": f"c{slot}", "client_secret": f"s{slot}",
              "refresh_token": f"r{slot}", "service": None, "creds": None,
              "exhausted": False}
-            for slot in range(1, 6)
+            for slot in range(1, 11)
         ]
         pool.active_index = 0
 
@@ -117,7 +117,7 @@ class YouTubeServicePoolTests(unittest.TestCase):
         # 首次呼叫時 slot1 已是觸發切換的失敗者；後兩輪會再試 slot1。
         self.assertEqual(
             attempted_slots,
-            [2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5],
+            list(range(2, 11)) + list(range(1, 11)) + list(range(1, 11)),
         )
 
     def test_pool_accepts_projects_authorized_for_same_channel(self):

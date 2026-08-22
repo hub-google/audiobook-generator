@@ -71,6 +71,7 @@ SCOPES = [
 ]
 
 EXIT_RETRY_LATER = 75
+MAX_YOUTUBE_ACCOUNT_SLOTS = 10
 YOUTUBE_SLOT_ROTATION_ROUNDS = 3
 
 
@@ -84,7 +85,7 @@ def configured_youtube_account_slots():
         for name in ("YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN")
     ):
         slots.add(1)
-    for slot in range(2, 11):
+    for slot in range(2, MAX_YOUTUBE_ACCOUNT_SLOTS + 1):
         if all(os.environ.get(f"{name}_{slot}", "").strip() for name in (
             "YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN",
         )):
@@ -216,7 +217,7 @@ class YouTubeServicePool:
         BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         cs_dir = os.path.join(BASE_DIR, "client_secret")
 
-        for slot in range(1, 11):
+        for slot in range(1, MAX_YOUTUBE_ACCOUNT_SLOTS + 1):
             # 1. 檔案路徑檢查
             cs_path = os.path.join(cs_dir, f"client_secret_{slot}.json")
             if slot == 1 and not os.path.exists(cs_path):
@@ -266,6 +267,10 @@ class YouTubeServicePool:
             raise RuntimeError(
                 "YOUTUBE_EXPECTED_ACCOUNT_COUNT must be an integer"
             ) from exc
+        if not 1 <= expected <= MAX_YOUTUBE_ACCOUNT_SLOTS:
+            raise RuntimeError(
+                f"YOUTUBE_EXPECTED_ACCOUNT_COUNT must be between 1 and {MAX_YOUTUBE_ACCOUNT_SLOTS}"
+            )
         complete_slots = configured_youtube_account_slots()
         discovered = len(complete_slots)
         if discovered < expected:
