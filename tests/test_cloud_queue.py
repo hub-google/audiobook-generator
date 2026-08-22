@@ -453,7 +453,7 @@ class CloudQueueTests(unittest.TestCase):
 
 
     @patch.object(Dispatcher, "request")
-    def test_force_dispatch_ignores_retry_at(self, request):
+    def test_force_dispatch_ignores_retry_at_without_claiming_unobserved_run(self, request):
         task = new_task("https://example/1", "修真聊天群")
         queue = add_tasks(empty_queue(), [task])
         queue = update_task(
@@ -468,7 +468,9 @@ class CloudQueueTests(unittest.TestCase):
         dispatcher.runs = Mock(return_value=[])
 
         summary = dispatcher.run()
-        self.assertIn("已啟動", summary)
+        request.assert_called_once()
+        self.assertNotIn("已啟動", summary)
+        self.assertIn("沒有可啟動的任務", summary)
 
     @patch.object(Dispatcher, "dispatch_next")
     def test_retry_on_stale_commit_dispatches_fresh_run(self, dispatch_next):

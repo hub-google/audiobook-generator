@@ -21,6 +21,13 @@ class StrictSuccessCriteriaTests(unittest.TestCase):
             "pending_captions": {},
             "pending_publish": {},
             "playlist_url": "https://www.youtube.com/playlist?list=PL123",
+            "final_playlist_validation": {
+                "status": "passed",
+                "item_count": 1,
+                "ordered_parts": [1],
+                "unique_video_ids": 1,
+                "canonical_cover_sha256": "a" * 64,
+            },
         }
         execution = {
             "source_run_id": "123",
@@ -71,6 +78,17 @@ class StrictSuccessCriteriaTests(unittest.TestCase):
             with open(execution_path, "w", encoding="utf-8") as handle:
                 json.dump(execution, handle)
             with self.assertRaisesRegex(RuntimeError, "archive_hf"):
+                validate_upload_success(state_path, expected_run_id="123")
+
+    def test_rejects_missing_user_facing_playlist_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = self.write_evidence(directory)
+            with open(state_path, encoding="utf-8") as handle:
+                state = json.load(handle)
+            state["final_playlist_validation"] = {}
+            with open(state_path, "w", encoding="utf-8") as handle:
+                json.dump(state, handle)
+            with self.assertRaisesRegex(RuntimeError, "user-facing playlist"):
                 validate_upload_success(state_path, expected_run_id="123")
 
 

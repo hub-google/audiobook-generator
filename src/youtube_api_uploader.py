@@ -11,6 +11,7 @@ import ssl
 import time
 import shutil
 import argparse
+import hashlib
 import logging
 import subprocess
 import json
@@ -122,7 +123,8 @@ def _atomic_write_json(path, data):
 def save_resume_state(path, run_id, privacy, status, reason="", retry_at=None,
                       completed_titles=None, part_plan=None, pending_thumbnails=None,
                       playlist_url=None, pending_playlist=None,
-                      pending_captions=None, pending_publish=None):
+                      pending_captions=None, pending_publish=None,
+                      final_playlist_validation=None):
     data = {
         "version": 4,
         "run_id": str(run_id) if run_id else "",
@@ -145,6 +147,7 @@ def save_resume_state(path, run_id, privacy, status, reason="", retry_at=None,
         "pending_captions": dict(pending_captions or {}),
         "pending_publish": dict(pending_publish or {}),
         "playlist_url": playlist_url,
+        "final_playlist_validation": dict(final_playlist_validation or {}),
         "credential_pool_size": len(configured_youtube_account_slots()),
     }
     _atomic_write_json(path, data)
@@ -576,8 +579,12 @@ def parse_chapter_info(filename):
 
     return 999999, 999999
 
-def get_or_create_playlist(youtube, playlist_title, playlist_desc=""):
+def get_or_create_playlist(youtube, playlist_title, playlist_desc="", alternate_titles=None):
     """Return ``(playlist_id, created)`` for the requested playlist."""
+    accepted_titles = {str(playlist_title).strip()}
+    accepted_titles.update(
+        str(title).strip() for title in (alternate_titles or []) if str(title).strip()
+    )
     while True:
         logging.info(f"🔍 檢查 YouTube 頻道是否存在播放清單:【{playlist_title}】...")
         try:
@@ -588,7 +595,7 @@ def get_or_create_playlist(youtube, playlist_title, playlist_desc=""):
                     pageToken=page_token,
                 ).execute()
                 for item in response.get("items", []):
-                    if item["snippet"]["title"].strip() == playlist_title.strip():
+                    if item["snippet"]["title"].strip() in accepted_titles:
                         playlist_id = item["id"]
                         logging.info(f"✅ 找到已有播放清單 (ID: {playlist_id}):【{playlist_title}】")
                         return playlist_id, False
@@ -623,6 +630,42 @@ def get_or_create_playlist(youtube, playlist_title, playlist_desc=""):
             if paused:
                 raise paused from e
             return None, False
+
+
+def completed_playlist_title(book_title, total_duration_seconds):
+    """Build the final title from measured video duration; never estimate it."""
+    total_seconds = float(total_duration_seconds)
+    if total_seconds < 0:
+        raise ValueError("total playlist duration cannot be negative")
+    whole_hours = int(total_seconds // 3600)
+    return f"[已完結]《{book_title}》{whole_hours}小時 全集"
+
+
+def update_playlist_metadata(youtube, playlist_id, title, description):
+    """Update an existing playlist after every video has passed final validation."""
+    while True:
+        try:
+            youtube.playlists().update(
+                part="snippet",
+                body={
+                    "id": playlist_id,
+                    "snippet": {
+                        "title": title,
+                        "description": description,
+                        "defaultLanguage": "zh-TW",
+                    },
+                },
+            ).execute()
+            logging.info("✅ 播放清單正式標題已更新：【%s】", title)
+            return True
+        except Exception as e:
+            if ("quotaExceeded" in str(e) or "dailyLimitExceeded" in str(e)) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e) is True:
+                logging.info("🔄 配額已切換至下一專案，重新更新播放清單標題...")
+                continue
+            paused = classify_daily_limit(e)
+            if paused:
+                raise paused from e
+            raise RuntimeError(f"更新播放清單正式標題失敗：{e}") from e
 
 
 def add_video_to_playlist(youtube, playlist_id, video_id, position=None):
@@ -741,6 +784,126 @@ def get_playlist_video_index(youtube, playlist_id, attempts=5, initial_delay=2):
         next_page_token = res.get("nextPageToken")
         if not next_page_token:
             return index
+
+
+def get_ordered_playlist_items(youtube, playlist_id):
+    """依照實際位置讀取使用者看到的完整清單，不可吞掉重複或失效項目。"""
+    items = []
+    page_token = None
+    while True:
+        response = youtube.playlistItems().list(
+            part="snippet", playlistId=playlist_id, maxResults=50,
+            pageToken=page_token,
+        ).execute()
+        for raw in response.get("items", []):
+            snippet = raw.get("snippet") or {}
+            items.append({
+                "playlist_item_id": str(raw.get("id") or ""),
+                "position": int(snippet.get("position", len(items))),
+                "title": str(snippet.get("title") or "").strip(),
+                "video_id": str((snippet.get("resourceId") or {}).get("videoId") or "").strip(),
+            })
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            return sorted(items, key=lambda item: item["position"])
+
+
+def _file_sha256(path):
+    with open(path, "rb") as handle:
+        return hashlib.sha256(handle.read()).hexdigest()
+
+
+def normalize_playlist_covers_to_last_part(youtube, playlist_items, parts_to_upload):
+    """封面不一致時，以最後一部封面覆蓋清單內每一部影片的縮圖。"""
+    ordered_parts = sorted(parts_to_upload, key=lambda item: int(item["part_num"]))
+    cover_paths = [item.get("cover_path") for item in ordered_parts]
+    for path in cover_paths:
+        if not path or not os.path.isfile(path):
+            raise RuntimeError(f"使用者播放清單驗收失敗：Part 封面不存在：{path}")
+    hashes = {_file_sha256(path) for path in cover_paths}
+    canonical_cover = cover_paths[-1]
+    repaired = len(hashes) != 1
+    if repaired:
+        logging.warning("偵測到封面不一致；以最後一部封面覆蓋播放清單內全部 %s 部影片。", len(playlist_items))
+        if len(playlist_items) != len(ordered_parts):
+            raise RuntimeError("使用者播放清單驗收失敗：項目數不符，禁止在對應不明時批次替換封面")
+        for playlist_item, part in zip(playlist_items, ordered_parts):
+            video_id = str(playlist_item.get("video_id") or "").strip()
+            if not video_id:
+                raise RuntimeError("使用者播放清單驗收失敗：存在已刪除或不可用影片，無法替換封面")
+            set_video_thumbnail(youtube, video_id, canonical_cover)
+        # 全部遠端縮圖更新成功後才同步本地檔案；若中途失敗，下一次仍能偵測差異並完整重試。
+        for part in ordered_parts:
+            target_cover = part["cover_path"]
+            if os.path.abspath(target_cover) != os.path.abspath(canonical_cover):
+                shutil.copyfile(canonical_cover, target_cover)
+        hashes = {_file_sha256(path) for path in cover_paths}
+    if len(hashes) != 1:
+        raise RuntimeError("使用者播放清單驗收失敗：批次替換後封面仍不一致")
+    return {
+        "cover_repair_applied": repaired,
+        "canonical_cover_source_part": int(ordered_parts[-1]["part_num"]),
+        "canonical_cover_sha256": next(iter(hashes)),
+        "cover_count": len(cover_paths),
+    }
+
+
+def validate_user_facing_playlist(playlist_items, part_plan, cover_paths, cover_normalization=None):
+    """驗證使用者看到的排序，以及每一部實際上傳封面完全一致。"""
+    ordered_plan = sorted(part_plan, key=lambda part: int(part["part_num"]))
+    expected_numbers = list(range(1, len(ordered_plan) + 1))
+    actual_numbers = [int(part["part_num"]) for part in ordered_plan]
+    if actual_numbers != expected_numbers:
+        raise RuntimeError(
+            f"user-facing playlist validation failed: Part plan must be contiguous 1..{len(ordered_plan)}; "
+            f"got {actual_numbers}"
+        )
+
+    expected_titles = [str(part.get("title") or "").strip() for part in ordered_plan]
+    actual_titles = [str(item.get("title") or "").strip() for item in playlist_items]
+    if len(actual_titles) != len(expected_titles):
+        raise RuntimeError(
+            "user-facing playlist validation failed: playlist must contain exactly "
+            f"{len(expected_titles)} Parts, but viewers see {len(actual_titles)} items"
+        )
+    if actual_titles != expected_titles:
+        mismatch = next(
+            (index for index, pair in enumerate(zip(expected_titles, actual_titles), 1)
+             if pair[0] != pair[1]), None,
+        )
+        raise RuntimeError(
+            "user-facing playlist validation failed: Parts are missing, duplicated, or out of order"
+            + (f"; first mismatch is position {mismatch}" if mismatch else "")
+        )
+
+    positions = [int(item.get("position", -1)) for item in playlist_items]
+    if positions != list(range(len(expected_titles))):
+        raise RuntimeError(f"user-facing playlist validation failed: invalid positions {positions}")
+    video_ids = [str(item.get("video_id") or "").strip() for item in playlist_items]
+    if any(not video_id for video_id in video_ids) or len(set(video_ids)) != len(video_ids):
+        raise RuntimeError(
+            "user-facing playlist validation failed: deleted/unavailable or duplicate videos are present"
+        )
+
+    cover_hashes = set()
+    for path in cover_paths:
+        if not path or not os.path.isfile(path):
+            raise RuntimeError(f"user-facing playlist validation failed: cover is missing: {path}")
+        cover_hashes.add(_file_sha256(path))
+    if not cover_hashes or len(cover_hashes) != 1:
+        raise RuntimeError(
+            f"user-facing playlist validation failed: Parts use {len(cover_hashes)} different master covers"
+        )
+
+    return {
+        "status": "passed",
+        "item_count": len(playlist_items),
+        "ordered_parts": expected_numbers,
+        "unique_video_ids": len(set(video_ids)),
+        "canonical_cover_sha256": next(iter(cover_hashes)),
+        "cover_repair_applied": bool((cover_normalization or {}).get("cover_repair_applied")),
+        "canonical_cover_source_part": (cover_normalization or {}).get("canonical_cover_source_part"),
+    }
 
 
 def get_channel_upload_video_index(youtube):
@@ -1586,12 +1749,21 @@ def main():
     if part_plan:
         publication.lock_plan(part_plan, run_id=args.run_id, book_title=book_title)
 
-    playlist_name = f"《{book_title}》有聲小說全集"
+    # Do not publish an invented duration before all videos are measured.
+    playlist_name = f"[處理中]《{book_title}》全集"
+    legacy_playlist_name = f"《{book_title}》有聲小說全集"
+    resumable_playlist_titles = [legacy_playlist_name]
+    if part_plan and all(float(part.get("duration") or 0) > 0 for part in part_plan):
+        resumable_playlist_titles.append(completed_playlist_title(
+            book_title,
+            sum(float(part["duration"]) for part in part_plan),
+        ))
     playlist_desc = f"《{book_title}》完整版有聲書全集 (第 {start_chap} 至 {end_chap} 章)，高音質連續播映版。\n歡迎訂閱開啟小鈴鐺！"
     publication.mark_global("playlist", "running")
     try:
         playlist_id, playlist_created = get_or_create_playlist(
-            youtube, playlist_name, playlist_desc
+            youtube, playlist_name, playlist_desc,
+            alternate_titles=resumable_playlist_titles,
         )
     except UploadPaused as paused:
         publication.mark_global("playlist", "paused", error=paused.reason)
@@ -2829,6 +3001,7 @@ def main():
         raise RuntimeError(f"仍有 {len(pending_captions)} 部影片缺少 YouTube CC 字幕，禁止標記 complete")
     if pending_publish:
         raise RuntimeError(f"仍有 {len(pending_publish)} 部影片尚未完成最終發布，禁止標記 complete")
+    final_playlist_validation = None
     if args.run_id:
         expected_titles = {str(part.get("title") or "").strip() for part in part_plan}
         expected_titles.discard("")
@@ -2853,7 +3026,11 @@ def main():
         # itself; the public video, CC track, thumbnail and playlist entry must
         # all still be readable.
         try:
-            final_playlist_index = get_playlist_video_index(youtube, playlist_id)
+            final_playlist_items = get_ordered_playlist_items(youtube, playlist_id)
+            final_playlist_index = {
+                item["title"]: item["video_id"] for item in final_playlist_items
+                if item["title"] and item["video_id"]
+            }
         except UploadPaused as paused:
             save_resume_state(
                 args.state_file, args.run_id, args.privacy, "paused",
@@ -2900,6 +3077,15 @@ def main():
                     )
             publication.complete(part_num, "final_validation", **evidence)
 
+        cover_normalization = normalize_playlist_covers_to_last_part(
+            youtube, final_playlist_items, parts_to_upload,
+        )
+        final_playlist_validation = validate_user_facing_playlist(
+            final_playlist_items,
+            part_plan,
+            [item.get("cover_path") for item in parts_to_upload],
+            cover_normalization,
+        )
         hf_evidence = hf_archiver.verify_book(book_title, len(part_plan))
         for planned in part_plan:
             part_num = int(planned["part_num"])
@@ -2914,19 +3100,54 @@ def main():
             hf_evidence["parts"], len(part_plan), hf_evidence["repo_id"], hf_evidence["book_root"],
         )
 
+    if final_playlist_validation is None:
+        final_playlist_items = get_ordered_playlist_items(youtube, playlist_id)
+        cover_normalization = normalize_playlist_covers_to_last_part(
+            youtube, final_playlist_items, parts_to_upload,
+        )
+        final_playlist_validation = validate_user_facing_playlist(
+            final_playlist_items,
+            part_plan,
+            [item.get("cover_path") for item in parts_to_upload],
+            cover_normalization,
+        )
+
+    measured_duration_seconds = sum(
+        float(part.get("duration") or 0) for part in part_plan
+    )
+    if not part_plan or measured_duration_seconds <= 0:
+        raise RuntimeError("缺少全部影片的實測時長，禁止填寫播放清單正式標題")
+    final_playlist_title = completed_playlist_title(
+        book_title, measured_duration_seconds,
+    )
+    update_playlist_metadata(
+        youtube, playlist_id, final_playlist_title, playlist_desc,
+    )
+    final_playlist_validation["title"] = final_playlist_title
+    final_playlist_validation["total_duration_seconds"] = measured_duration_seconds
+
     logging.info("="*60)
     logging.info(f"🎉 全部影片極速上傳完畢！共上傳 {total_uploaded} 部分部影片至 YouTube 播放清單！")
     if playlist_id:
         logging.info(f"👉 播放清單網址: https://www.youtube.com/playlist?list={playlist_id}")
     logging.info("="*60)
+    publication.mark_global(
+        "final_book_validation", "completed",
+        completed_parts=len(completed_titles),
+        playlist_items=final_playlist_validation["item_count"],
+        ordered_parts=True,
+        canonical_cover_sha256=final_playlist_validation["canonical_cover_sha256"],
+        cover_repair_applied=final_playlist_validation["cover_repair_applied"],
+        canonical_cover_source_part=final_playlist_validation["canonical_cover_source_part"],
+    )
     save_resume_state(args.state_file, args.run_id, args.privacy, "complete",
                       completed_titles=completed_titles, part_plan=part_plan,
                       pending_thumbnails=pending_thumbnails,
                       pending_playlist=pending_playlist,
                       pending_captions=pending_captions,
                       pending_publish=pending_publish,
-                      playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None)
-    publication.mark_global("final_book_validation", "completed", completed_parts=len(completed_titles))
+                      playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None,
+                      final_playlist_validation=final_playlist_validation)
     hf_executor.shutdown(wait=True)
     logging.info(
         "[API_UPLOAD_STATUS] COMPLETE | uploaded=%s | total=%s | source_run=%s",

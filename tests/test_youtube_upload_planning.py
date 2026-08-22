@@ -29,6 +29,10 @@ from src.youtube_api_uploader import (
     UploadPaused,
     validate_chapter_inventory,
     parse_chapter_info,
+    normalize_playlist_covers_to_last_part,
+    validate_user_facing_playlist,
+    completed_playlist_title,
+    update_playlist_metadata,
 )
 from googleapiclient.errors import HttpError
 from httplib2 import Response
@@ -40,6 +44,33 @@ from src.worker_pipeline import (
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
+    def test_completed_playlist_title_floors_measured_total_without_zero_padding(self):
+        self.assertEqual(
+            completed_playlist_title("修真聊天群", 327 * 3600 + 48 * 60),
+            "[已完結]《修真聊天群》327小時 全集",
+        )
+        self.assertEqual(
+            completed_playlist_title("測試書", 7 * 3600 + 3599),
+            "[已完結]《測試書》7小時 全集",
+        )
+
+    def test_update_playlist_metadata_updates_existing_playlist(self):
+        youtube = MagicMock()
+        update_playlist_metadata(
+            youtube, "PL123", "[已完結]《測試書》7小時 全集", "說明",
+        )
+        youtube.playlists.return_value.update.assert_called_once_with(
+            part="snippet",
+            body={
+                "id": "PL123",
+                "snippet": {
+                    "title": "[已完結]《測試書》7小時 全集",
+                    "description": "說明",
+                    "defaultLanguage": "zh-TW",
+                },
+            },
+        )
+
     @patch("src.youtube_api_uploader.get_playlist_video_index", return_value={"Part 1": "video-1"})
     def test_final_readback_requires_video_thumbnail_caption_and_playlist(self, playlist_index):
         youtube = MagicMock()
@@ -637,6 +668,48 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
 
         self.assertEqual(result["youtube_video_id"], "video-17")
         upload_caption.assert_called_once_with(youtube, "video-17", os.path.abspath(srt_path))
+
+    @patch("src.youtube_api_uploader.set_video_thumbnail", return_value=True)
+    def test_cover_difference_replaces_every_video_with_last_part_cover(self, set_thumbnail):
+        with tempfile.TemporaryDirectory() as directory:
+            first = os.path.join(directory, "part-1.jpg")
+            last = os.path.join(directory, "part-2.jpg")
+            with open(first, "wb") as handle:
+                handle.write(b"old-cover")
+            with open(last, "wb") as handle:
+                handle.write(b"last-part-cover")
+            items = [
+                {"position": 0, "title": "Part 1", "video_id": "video-1"},
+                {"position": 1, "title": "Part 2", "video_id": "video-2"},
+            ]
+            parts = [
+                {"part_num": 1, "cover_path": first},
+                {"part_num": 2, "cover_path": last},
+            ]
+
+            result = normalize_playlist_covers_to_last_part(MagicMock(), items, parts)
+
+            self.assertTrue(result["cover_repair_applied"])
+            self.assertEqual(result["canonical_cover_source_part"], 2)
+            self.assertEqual(open(first, "rb").read(), open(last, "rb").read())
+            self.assertEqual(set_thumbnail.call_count, 2)
+            self.assertEqual({call.args[2] for call in set_thumbnail.call_args_list}, {last})
+
+    def test_user_facing_gate_rejects_out_of_order_parts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cover = os.path.join(directory, "cover.jpg")
+            with open(cover, "wb") as handle:
+                handle.write(b"same-cover")
+            plan = [
+                {"part_num": 1, "title": "Part 1"},
+                {"part_num": 2, "title": "Part 2"},
+            ]
+            items = [
+                {"position": 0, "title": "Part 2", "video_id": "video-2"},
+                {"position": 1, "title": "Part 1", "video_id": "video-1"},
+            ]
+            with self.assertRaisesRegex(RuntimeError, "out of order"):
+                validate_user_facing_playlist(items, plan, [cover, cover])
 
 
 if __name__ == "__main__":
