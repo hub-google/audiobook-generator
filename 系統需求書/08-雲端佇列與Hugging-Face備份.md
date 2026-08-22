@@ -6,7 +6,27 @@
 
 ## 2. 正式佇列
 
-正式狀態位於 `automation-state` 分支的 `audiobook-queue.json`。本地資料只可作快取，不得成為唯一真相來源。每筆任務至少包含 `task_id`、position、book title、catalog URL、選章設定、status、run ID/attempt、HF/YouTube progress、reason、retry_at 與 timestamps。
+正式狀態位於 `automation-state` 分支的 `audiobook-queue.json`。本地資料只可作快取，不得成為唯一真相來源。檔案 schema 現行版本為 2；同一份 JSON 內必須使用兩個彼此獨立的陣列：
+
+- `queue`：只保存尚未嚴格成功完成的任務。每筆任務至少包含 `task_id`、`position`、book title、catalog URL、選章設定、status、run ID/attempt、HF/YouTube progress、reason、retry_at 與 timestamps。
+- `completed`：只保存已通過 strict success gate 的完成紀錄，保留 task/run、章節、進度及完成時間，但不得包含 `position`，也不得參與調度。
+
+同一個 `task_id` 不得同時存在於 `queue` 與 `completed`。schema v1 的單一 `tasks` 陣列在讀取時必須依 `status == completed` 分流，移除完成項目的順位，將未完成項目重新連續編號，並在下一次狀態寫入時保存為 schema v2。不得繼續將兩類任務保存在同一個底層陣列後僅由 GUI 篩選。
+
+```json
+{
+  "schema_version": 2,
+  "revision": 414,
+  "updated_at": "2026-08-22T10:00:00+00:00",
+  "queue": [
+    {"task_id": "book-...", "position": 1, "book_title": "吞噬星空", "status": "running"},
+    {"task_id": "book-...", "position": 2, "book_title": "完美世界", "status": "queued"}
+  ],
+  "completed": [
+    {"task_id": "book-...", "book_title": "修真聊天群", "status": "completed"}
+  ]
+}
+```
 
 狀態語意如下：
 
@@ -19,11 +39,27 @@
 | paused | paused | paused | 否 | 跳過並尋找下一個待命任務 |
 | interrupted / stopped | interrupted | interrupted | 否 | 跳過並尋找下一個待命任務；不自動重跑 |
 | canceling | — | canceling | 是 | 等 GitHub Run 真正 cancelled 後轉 interrupted |
-| completed | completed | completed | 否 | strict success 已通過，釋放下一部 |
+| completed | completed | completed | 否 | strict success 已通過；只存在於 `completed`，不占排程順位 |
 
 ### 順位規則（Position Rules）
-1. **執行中任務強制鎖定第 1 順位**：任何處於活躍執行狀態（`running`, `dispatching`, `waiting_retry`, `canceling` 或持有未結束之 GitHub Run）的任務，在正規化（`normalize_queue`）與保存（`touch`）時必定自動排在 **順位 1**。
-2. **重新排程（Requeue）精確下移**：對任何中斷或需重排的任務點擊「重新排程」時，該任務會自動插入於目前正在執行的活躍任務正下方（**順位 2**），絕不搶佔正在跑的任務。
+1. **順位只屬於未完成任務**：只有 `queue` 內的任務可以有 `position`；`completed` 內所有項目都必須移除該欄位。
+2. **順位必須連續**：`queue` 的順位必須恰為 `1..N`，不得缺號、重複或受 `completed` 項目占位影響。新增、移動、刪除、重新排程及成功完成後均須重排。
+3. **執行中任務強制鎖定第 1 順位**：任何處於活躍執行狀態（`running`, `dispatching`, `waiting_retry`, `canceling` 或持有未結束之 GitHub Run）的任務，在正規化（`normalize_queue`）與保存（`touch`）時必定自動排在 **順位 1**。
+4. **重新排程（Requeue）精確下移**：對任何中斷或需重排的任務點擊「重新排程」時，該任務會自動插入於目前正在執行的活躍任務正下方（**順位 2**），絕不搶佔正在跑的任務。
+
+### 寫入與完成搬移規則
+
+GUI 定時同步、切換頁籤、選取任務或重複取得相同 Run 狀態只可讀取，不得無條件改寫狀態檔。只有新增／移動／刪除、使用者控制、Run ID 綁定、持久狀態改變、進度改變或 schema 遷移等實際資料變更才可更新 `audiobook-queue.json`。
+
+當對應 GitHub Run 的結論為 `success` 且通過完整 strict success gate 時，必須在記憶體中完成以下操作，並以一次 GitHub Contents API 寫入提交整份 JSON：
+
+1. 從 `queue` 移除完成任務。
+2. 移除該任務的 `position`，補齊 `completed_at` 及最終進度資料。
+3. 依 `task_id` 去重後加入 `completed`。
+4. 對剩餘 `queue` 重新編為連續 `1..N`。
+5. 寫入失敗時不得留下半套搬移；GitHub blob SHA 衝突時必須重讀並重新套用同一操作。
+
+`failure`、`cancelled`、`interrupted`、`waiting_retry`、`needs_attention` 或 `paused` 都不構成成功完成，不得移入 `completed`。例如原順位 2 的任務成功完成後，原順位 3 必須在同一次更新中成為順位 2。
 
 更新使用 GitHub Contents API 的 blob SHA 作樂觀鎖；衝突時必須重讀並重套操作。調度 workflow 使用固定 concurrency group，且 dispatch 前將任務原子保留為 `dispatching`。
 
@@ -65,7 +101,12 @@ SRT 必須是實際送交 YouTube Caption API 的同一檔案。`master_cover.jp
 
 ## 7. GUI 契約
 
-GUI 主表顯示順位、小說、章節、重複章節、狀態、GitHub 查證時間、HF、YouTube 與 Run ID；支援批量加入、上下移、暫停／恢復、停止、刪除、同步及立即調度。
+GUI 使用兩個頁籤，但頁籤必須直接對應不同底層陣列，不得再從單一任務陣列依 status 篩選：
+
+- 「進行中／尚未完成」只讀取 `queue`，顯示連續順位，並支援批量加入、上下移、暫停／恢復、停止、刪除、同步及立即調度。
+- 「已完成（Success）」只讀取 `completed`，順位顯示 `—`，不得提供上下移、暫停或重新排程等排程操作。
+
+兩頁均可顯示小說、章節、重複章節、狀態、GitHub 查證時間、HF、YouTube 與 Run ID。
 - **狀態顯示契約**：
   - 未向 GitHub 發布 Run 之待命任務，狀態一律顯示為 **`idle`**（非 `queued`），明確區隔未發布與 GitHub Actions Run 排隊。
   - GitHub 真正發布 Run 且等待 Runner 時顯示 **`queued`** / **`pending`**（此時必有 Run ID）。
