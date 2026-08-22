@@ -1,12 +1,14 @@
 {
   "schema_version": 2,
-  "revision": 2,
-  "updated_at": "2026-08-22T15:02:49.560667+00:00",
+  "revision": 3,
+  "updated_at": "2026-08-22T15:03:24.473930+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
       "book_title": "完美世界",
-      "cleaner_remove_patterns": [],
+      "cleaner_remove_patterns": [
+        "頂點小說ww.2３w.om"
+      ],
       "duplicate_detection": {
         "use_normalized_number": true,
         "use_chapter_name": true
@@ -15,8 +17,8 @@
       "chapter_normalized_number_overrides": {
         "1": 1
       },
-      "profile_revision": 2,
-      "updated_at": "2026-08-22T15:02:49.560667+00:00"
+      "profile_revision": 3,
+      "updated_at": "2026-08-22T15:03:24.473930+00:00"
     }
   }
 }
