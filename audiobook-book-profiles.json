@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 4,
-  "updated_at": "2026-08-22T15:27:18.740524+00:00",
+  "revision": 5,
+  "updated_at": "2026-08-22T15:27:26.875926+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -32,6 +32,19 @@
       "chapter_normalized_number_overrides": {},
       "profile_revision": 1,
       "updated_at": "2026-08-22T15:27:18.740524+00:00"
+    },
+    "e6bd78f052f4906f": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/30906",
+      "book_title": "傲世丹神",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "updated_at": "2026-08-22T15:27:26.875926+00:00"
     }
   }
 }
