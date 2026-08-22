@@ -45,6 +45,10 @@ on:
         description: 'GUI 編輯後的章節名稱（Base64 JSON；固定目錄 UUID 對應完整標題）'
         required: false
         default: ''
+      chapter_order_b64:
+        description: 'GUI 排定的實際製作順序（Base64 JSON UUID 陣列）'
+        required: false
+        default: ''
       book_profile_snapshot_b64:
         description: '書籍長期設定快照（Base64 JSON；由 GUI／調度器產生）'
         required: false
@@ -211,6 +215,7 @@ jobs:
               --exclude-chapters "${{ github.event.inputs.exclude_chapters }}" \
               --renumber-selected "${{ github.event.inputs.renumber_selected }}" \
               --chapter-title-overrides-b64 "${{ github.event.inputs.chapter_title_overrides_b64 }}" \
+              --chapter-order-b64 "${{ github.event.inputs.chapter_order_b64 }}" \
               --book-profile-snapshot-b64 "${{ github.event.inputs.book_profile_snapshot_b64 }}"; then
               break
             fi

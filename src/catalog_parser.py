@@ -304,7 +304,8 @@ def parse_catalog(catalog_url):
 
 def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="config.yaml",
                           exclude_chapters=None, chapters_per_worker=5,
-                          parsed_result=None, renumber_selected=False, book_profile_snapshot=None):
+                          parsed_result=None, renumber_selected=False, book_profile_snapshot=None,
+                          chapter_order=None):
     """
     根據解析結果生成 config.yaml 檔案。
     parsed_result: 可傳入已爬取的 parse_catalog() 結果，避免重複爬取。
@@ -325,23 +326,34 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
     if start_chap > end_chap:
         raise ValueError(f"開始章節({start_chap})大於結束章節({end_chap})！")
 
-    start_idx = start_chap - 1  # 轉為 0-based
+    # chapter_order stores stable 1-based catalog UUIDs.  It is the production
+    # order selected in the GUI; UUIDs only locate source URLs.
+    requested_order = [int(value) for value in (chapter_order or [])]
+    valid_order = []
+    seen = set()
+    for source_index in requested_order:
+        if start_chap <= source_index <= end_chap and source_index not in seen:
+            valid_order.append(source_index)
+            seen.add(source_index)
+    for source_index in range(start_chap, end_chap + 1):
+        if source_index not in seen:
+            valid_order.append(source_index)
 
-    # 包含標題與 URL，並過濾排除的章節
+    # 包含標題與 URL，依實際製作順序過濾排除的章節
     selected_chapters = []
     source_indices = []
     selected_titles = []
-    for i in range(start_idx, end_chap):
-        if (i + 1) not in exclude_chapters:
-            selected_chapters.append(res["chapters"][i])
-            source_indices.append(i + 1)
-            selected_titles.append(res["chapter_titles"][i])
+    for source_index in valid_order:
+        if source_index not in exclude_chapters:
+            selected_chapters.append(res["chapters"][source_index - 1])
+            source_indices.append(source_index)
+            selected_titles.append(res["chapter_titles"][source_index - 1])
 
     # selected_indices is the output numbering used by RawText and every later
     # pipeline stage. source_indices remains tied to the origin catalog.
     selected_indices = (
         list(range(1, len(selected_chapters) + 1))
-        if renumber_selected else list(source_indices)
+        if renumber_selected or requested_order else list(source_indices)
     )
 
     snapshot = dict(book_profile_snapshot or {})
@@ -363,6 +375,7 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
             if str(source_index) in (res.get("chapter_title_overrides") or {})
         },
         "renumber_selected": bool(renumber_selected),
+        "chapter_order": source_indices,
         "chapters_per_worker": chapters_per_worker,  # 新增：讓 Worker 知道每台機器的額度
         "book_profile_id": snapshot.get("book_profile_id", ""),
         "profile_revision": int(snapshot.get("profile_revision") or 0),
@@ -389,7 +402,8 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
 
 
 def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=5,
-                    exclude_chapters=None, parsed_result=None, renumber_selected=False):
+                    exclude_chapters=None, parsed_result=None, renumber_selected=False,
+                    chapter_order=None):
     """
     解析目錄並計算每台 GitHub Actions worker 負責的章節子集。
     回傳符合 GitHub Actions matrix 格式的 dict：
@@ -413,15 +427,24 @@ def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=
     if start_chap > end_chap:
         raise ValueError(f"開始章節({start_chap})大於結束章節({end_chap})！")
 
-    start_idx = start_chap - 1  # 轉為 0-based
+    requested_order = [int(value) for value in (chapter_order or [])]
+    valid_order = []
+    seen = set()
+    for source_index in requested_order:
+        if start_chap <= source_index <= end_chap and source_index not in seen:
+            valid_order.append(source_index)
+            seen.add(source_index)
+    for source_index in range(start_chap, end_chap + 1):
+        if source_index not in seen:
+            valid_order.append(source_index)
 
-    # 建立過濾後的章節列表，保留真實的 1-based global_idx
+    # 建立過濾後的章節列表；global_idx 就是實際「編號章節數」。
     selected_with_idx = []
-    for i in range(start_idx, end_chap):
-        if (i + 1) not in exclude_chapters:
-            output_idx = len(selected_with_idx) + 1 if renumber_selected else i + 1
+    for source_index in valid_order:
+        if source_index not in exclude_chapters:
+            output_idx = len(selected_with_idx) + 1 if renumber_selected or requested_order else source_index
             selected_with_idx.append({
-                "url": res["chapters"][i], "source_idx": i + 1,
+                "url": res["chapters"][source_index - 1], "source_idx": source_index,
                 "global_idx": output_idx,
             })
 
@@ -470,6 +493,7 @@ if __name__ == "__main__":
     parser.add_argument("--exclude-chapters", type=str, default="", help="Comma separated 1-based indices to exclude")
     parser.add_argument("--renumber-selected", type=str, default="false", help="Renumber selected chapters consecutively")
     parser.add_argument("--chapter-title-overrides-b64", type=str, default="", help="Base64 JSON mapping stable catalog UUIDs to edited full titles")
+    parser.add_argument("--chapter-order-b64", type=str, default="", help="Base64 JSON array of stable catalog UUIDs in production order")
     parser.add_argument("--book-profile-snapshot-b64", type=str, default="", help="Base64 JSON immutable per-book settings snapshot")
     args = parser.parse_args()
 
@@ -482,6 +506,15 @@ if __name__ == "__main__":
 
     chapters_per_worker_input = args.workers if args.workers > 0 else 10
     renumber_selected = args.renumber_selected.strip().lower() in {"1", "true", "yes", "on"}
+    chapter_order = []
+    if args.chapter_order_b64:
+        try:
+            chapter_order = json.loads(base64.b64decode(args.chapter_order_b64).decode("utf-8"))
+            if not isinstance(chapter_order, list):
+                raise ValueError("章節順序必須是 JSON 陣列")
+            chapter_order = [int(value) for value in chapter_order]
+        except Exception as error:
+            raise ValueError(f"無法解碼實際章節順序：{error}") from error
 
     # ── 只爬取一次目錄，共用於 config 與 matrix ──
     print(f"[CatalogParser] 正在解析目錄：{args.url}")
@@ -507,6 +540,7 @@ if __name__ == "__main__":
             exclude_chapters=exclude_list,
             parsed_result=parsed,
             renumber_selected=renumber_selected,
+            chapter_order=chapter_order,
         )
         with open(args.matrix_output, "w", encoding="utf-8") as f:
             json.dump(matrix, f, ensure_ascii=False)
@@ -520,4 +554,5 @@ if __name__ == "__main__":
         parsed_result=parsed,
         renumber_selected=renumber_selected,
         book_profile_snapshot=snapshot,
+        chapter_order=chapter_order,
     )

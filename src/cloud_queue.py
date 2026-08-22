@@ -115,7 +115,8 @@ def format_chapter_label(start_chap, end_chap, excluded_chapters=None, renumber_
 
 
 def new_task(catalog_url, book_title="", start_chapter=1, end_chapter=None, excluded_chapters=None,
-             renumber_selected=False, duplicate_chapter_count=None, chapter_title_overrides=None):
+             renumber_selected=False, duplicate_chapter_count=None, chapter_title_overrides=None,
+             chapter_order=None):
     now = utc_now()
     return {
         "task_id": f"book-{datetime.now(timezone.utc):%Y%m%d}-{uuid.uuid4().hex[:8]}",
@@ -133,6 +134,7 @@ def new_task(catalog_url, book_title="", start_chapter=1, end_chapter=None, excl
             str(int(key)): str(value) for key, value in (chapter_title_overrides or {}).items()
             if str(key).isdigit() and str(value).strip()
         },
+        "chapter_order": [int(value) for value in (chapter_order or [])],
         "status": "queued",
         "run_id": None,
         "run_attempt": 0,
@@ -207,7 +209,8 @@ def update_task(queue, task_id, **changes):
 
 def update_task_chapters(queue, task_id, start_chapter, end_chapter, excluded_chapters=None,
                          requeue_after_cancel=False, renumber_selected=False,
-                         duplicate_chapter_count=None, chapter_title_overrides=None):
+                         duplicate_chapter_count=None, chapter_title_overrides=None,
+                         chapter_order=None):
     """Persist an edited chapter plan and optionally restart after cancellation."""
     start = int(start_chapter)
     end = int(end_chapter)
@@ -226,6 +229,8 @@ def update_task_chapters(queue, task_id, start_chapter, end_chapter, excluded_ch
             str(int(key)): str(value) for key, value in chapter_title_overrides.items()
             if str(key).isdigit() and str(value).strip()
         }
+    if chapter_order is not None:
+        changes["chapter_order"] = [int(value) for value in chapter_order]
     if requeue_after_cancel:
         changes.update({"status": "canceling", "reason": "chapter_plan_updated", "requeue_after_edit": True})
     return update_task(queue, task_id, **changes)

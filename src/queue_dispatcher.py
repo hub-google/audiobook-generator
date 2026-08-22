@@ -273,6 +273,9 @@ class Dispatcher:
             "chapter_title_overrides_b64": base64.b64encode(
                 json.dumps(snapshot.get("chapter_title_overrides") or {}, ensure_ascii=False).encode("utf-8")
             ).decode("ascii"),
+            "chapter_order_b64": base64.b64encode(
+                json.dumps(task.get("chapter_order") or []).encode("utf-8")
+            ).decode("ascii"),
             "book_profile_snapshot_b64": base64.b64encode(
                 json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
             ).decode("ascii"),

@@ -194,6 +194,30 @@ class CatalogParserMatrixTests(unittest.TestCase):
                 {"worker_id": 1, "book_title": "測試小說", "start_chap": 3, "end_chap": 3},
             ])
 
+    def test_explicit_chapter_order_is_the_actual_production_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = generate_config_yaml(
+                "https://example.com/catalog", 1, 5,
+                os.path.join(directory, "config.yaml"),
+                exclude_chapters=[2], parsed_result=_parsed_catalog(),
+                chapter_order=[3, 1, 5, 2, 4],
+            )
+
+        self.assertEqual(config["source_indices"], [3, 1, 5, 4])
+        self.assertEqual(config["selected_indices"], [1, 2, 3, 4])
+        self.assertEqual(config["chapters"], ["/read/3", "/read/1", "/read/5", "/read/4"])
+        self.assertEqual(config["chapter_order"], [3, 1, 5, 4])
+
+        matrix, _, _ = generate_matrix(
+            "https://example.com/catalog", 1, 5, 2,
+            exclude_chapters=[2], parsed_result=_parsed_catalog(),
+            chapter_order=[3, 1, 5, 2, 4],
+        )
+        self.assertEqual(matrix["include"], [
+            {"worker_id": 0, "book_title": "測試小說", "start_chap": 1, "end_chap": 2},
+            {"worker_id": 1, "book_title": "測試小說", "start_chap": 3, "end_chap": 4},
+        ])
+
     def test_large_book_creates_no_more_workers_than_can_run_in_parallel(self):
         matrix, _, chapters_per_worker = generate_matrix(
             "https://example.test/catalog",

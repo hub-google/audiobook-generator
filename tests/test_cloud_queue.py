@@ -79,6 +79,20 @@ class CloudQueueTests(unittest.TestCase):
         self.assertEqual(edited["excluded_chapters"], [2, 4])
         self.assertTrue(edited["renumber_selected"])
 
+    def test_chapter_plan_persists_actual_production_order(self):
+        task = new_task(
+            "https://example/1", "第一部", 1, 5,
+            chapter_order=[3, 1, 5, 2, 4],
+        )
+        self.assertEqual(task["chapter_order"], [3, 1, 5, 2, 4])
+        queue = add_tasks(empty_queue(), [task])
+
+        queue = update_task_chapters(
+            queue, task["task_id"], 1, 5,
+            chapter_order=[5, 3, 1, 4, 2],
+        )
+        self.assertEqual(queue["queue"][0]["chapter_order"], [5, 3, 1, 4, 2])
+
     def test_active_chapter_plan_update_waits_for_cancel_before_requeue(self):
         task = new_task("https://example/1", "第一部", 1, 100)
         queue = add_tasks(empty_queue(), [task])

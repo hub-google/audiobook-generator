@@ -61,6 +61,7 @@ class AudiobookGUIApp:
         self.editing_task_id = None
         self.catalog_load_token = 0
         self.renumber_selected_chapters = False
+        self.chapter_order = []
         self.chapter_title_overrides = {}
         self.cleaner_remove_patterns = []
         self.duplicate_detection = {"use_normalized_number": True, "use_chapter_name": True}
@@ -600,7 +601,14 @@ class AudiobookGUIApp:
         start = max(1, int(task.get("start_chapter") or 1))
         end = min(total, int(task.get("end_chapter") or total))
         excluded = {int(value) for value in task.get("excluded_chapters") or []}
-        source_indices = [value for value in range(start, end + 1) if value not in excluded]
+        requested = [int(value) for value in task.get("chapter_order") or []]
+        ordered = []
+        seen = set()
+        for value in requested + list(range(start, end + 1)):
+            if start <= value <= end and value not in seen:
+                ordered.append(value)
+                seen.add(value)
+        source_indices = [value for value in ordered if value not in excluded]
         if not source_indices:
             raise ValueError("這項任務的章節範圍已全部排除，沒有可抽查的章節。")
         positions = [0, (len(source_indices) - 1) // 2, len(source_indices) - 1]
@@ -608,7 +616,7 @@ class AudiobookGUIApp:
         samples = []
         for label, position in zip(labels, positions):
             source_index = source_indices[position]
-            output_index = position + 1 if task.get("renumber_selected") else source_index
+            output_index = position + 1 if task.get("renumber_selected") or requested else source_index
             samples.append({
                 "label": label,
                 "source_index": source_index,
@@ -825,6 +833,7 @@ class AudiobookGUIApp:
         self.duplicate_detection = {"use_normalized_number": True, "use_chapter_name": True}
         self.excluded_chapters.clear()
         self.renumber_selected_chapters = False
+        self.chapter_order = []
         for tree in (self.pending_queue_tree, self.success_queue_tree):
             tree.selection_remove(*tree.selection())
         self.edit_mode_var.set("新增小說")
@@ -881,6 +890,7 @@ class AudiobookGUIApp:
         self.entry_end.insert(0, str(end))
         self.excluded_chapters = {int(value) for value in task.get("excluded_chapters") or []}
         self.renumber_selected_chapters = bool(task.get("renumber_selected"))
+        self.chapter_order = [int(value) for value in task.get("chapter_order") or []]
         profile = profile or {}
         self.chapter_title_overrides = dict(profile.get("chapter_title_overrides") or task.get("chapter_title_overrides") or {})
         self.cleaner_remove_patterns = list(profile.get("cleaner_remove_patterns") or [])
@@ -1257,6 +1267,7 @@ class AudiobookGUIApp:
             self.url_entry.get().strip(), self.catalog_data.get("book_title", ""), start, end,
             sorted(self.excluded_chapters), self.renumber_selected_chapters,
             self.catalog_data.get("duplicate_chapter_count"), self.chapter_title_overrides,
+            self.chapter_order,
         )
         self._mutate_queue_async(
             lambda queue: add_tasks(queue, [task]),
@@ -1338,6 +1349,7 @@ class AudiobookGUIApp:
                         renumber_selected,
                         (self.catalog_data or {}).get("duplicate_chapter_count"),
                         chapter_title_overrides,
+                        self.chapter_order,
                     ),
                     f"Update chapter plan for audiobook task {task_id}",
                 )
@@ -1667,7 +1679,8 @@ class AudiobookGUIApp:
             
             self.btn_filter.config(state=tk.NORMAL)
             self.excluded_chapters.clear()
-            self.renumber_selected_chapters = False
+            self.renumber_selected_chapters = True
+            self.chapter_order = list(range(1, total + 1))
             self._update_chapter_selection_summary(1, total)
 
             self.lbl_status.config(text="解析完成", foreground="#27ae60")
@@ -1706,8 +1719,8 @@ class AudiobookGUIApp:
         
         top = tk.Toplevel(self.root)
         top.title("選擇要轉換的章節")
-        top.geometry("1080x620")
-        top.minsize(900, 400)
+        top.geometry("1280x680")
+        top.minsize(1050, 480)
         top.transient(self.root)
         top.grab_set()
 
@@ -1738,7 +1751,7 @@ class AudiobookGUIApp:
         container.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
 
         columns = ("uuid", "output_number", "normalized_number", "display_number", "chapter_name", "duplicate")
-        chapter_tree = ttk.Treeview(container, columns=columns, show="headings", selectmode="browse")
+        chapter_tree = ttk.Treeview(container, columns=columns, show="headings", selectmode="extended")
         headings = {
             "uuid": "UUID",
             "output_number": "編號章節數",
@@ -1772,6 +1785,14 @@ class AudiobookGUIApp:
         for i in range(1, total_chapters + 1):
             chapter_state[i] = (i not in self.excluded_chapters)
 
+        saved_order = [int(value) for value in self.chapter_order if 1 <= int(value) <= total_chapters]
+        chapter_order = []
+        seen_order = set()
+        for value in saved_order + list(range(1, total_chapters + 1)):
+            if value not in seen_order:
+                chapter_order.append(value)
+                seen_order.add(value)
+
         chapter_parts = [split_chapter_title(title) for title in titles]
         duplicate_analysis = {"duplicate_indices": [], "duplicate_chapters": []}
 
@@ -1792,7 +1813,8 @@ class AudiobookGUIApp:
 
         def _output_numbers():
             selected = [
-                idx for idx in range(cur_start, cur_end + 1)
+                idx for idx in chapter_order
+                if cur_start <= idx <= cur_end
                 if chapter_state.get(idx, True)
             ]
             return {source_idx: output_idx for output_idx, source_idx in enumerate(selected, 1)}
@@ -1807,18 +1829,17 @@ class AudiobookGUIApp:
             
             filter_text = search_entry.get().strip().lower()
 
-            for i in range(s_idx, e_idx + 1):
-                global_idx = i
+            output_numbers = _output_numbers()
+            for global_idx in chapter_order:
+                if not s_idx <= global_idx <= e_idx:
+                    continue
                 if show_duplicates_only_var.get() and global_idx not in duplicate_indices:
                     continue
                 parts = chapter_parts[global_idx - 1]
                 is_checked = chapter_state.get(global_idx, True)
                 output_number = ""
                 if is_checked and cur_start <= global_idx <= cur_end:
-                    output_number = (
-                        _output_numbers().get(global_idx, "")
-                        if self.renumber_selected_chapters else global_idx
-                    )
+                    output_number = output_numbers.get(global_idx, "")
                 values = (
                     global_idx,
                     f"{'☑' if is_checked else '☐'} {output_number}".rstrip(),
@@ -1908,17 +1929,24 @@ class AudiobookGUIApp:
                     return
                 if column == "#5":
                     return
+                # Mouse clicks only toggle the checkbox column.  Other columns
+                # remain available for Ctrl/Shift multi-selection and dragging.
+                if column != "#2":
+                    return
             sel = chapter_tree.selection()
             if not sel:
                 return
-            g_idx = int(sel[0])
-            if g_idx in visible_indices:
-                chapter_state[g_idx] = not chapter_state[g_idx]
+            selected_indices = [int(value) for value in sel if int(value) in visible_indices]
+            if selected_indices:
+                new_value = not chapter_state[selected_indices[0]]
+                for g_idx in selected_indices:
+                    chapter_state[g_idx] = new_value
                 # 勾選變更可能讓後面所有製作章號前移或後移。
                 _update_listbox()
-                if chapter_tree.exists(str(g_idx)):
-                    chapter_tree.selection_set(str(g_idx))
-                    chapter_tree.focus(str(g_idx))
+                existing = [str(value) for value in selected_indices if chapter_tree.exists(str(value))]
+                if existing:
+                    chapter_tree.selection_set(existing)
+                    chapter_tree.focus(existing[0])
 
         # 單擊選取或按空白鍵切換狀態
         chapter_tree.bind("<ButtonRelease-1>", _toggle_item)
@@ -1966,12 +1994,60 @@ class AudiobookGUIApp:
 
         chapter_tree.bind("<Double-1>", _edit_chapter_name)
 
+        drag_state = {"active": False, "items": []}
+
+        def _drag_start(event):
+            if chapter_tree.identify_region(event.x, event.y) != "cell":
+                return
+            row = chapter_tree.identify_row(event.y)
+            if not row or chapter_tree.identify_column(event.x) != "#1":
+                return
+            if row not in chapter_tree.selection():
+                chapter_tree.selection_set(row)
+            selected = {int(value) for value in chapter_tree.selection()}
+            drag_state["items"] = [value for value in chapter_order if value in selected]
+            drag_state["active"] = bool(drag_state["items"])
+
+        def _drag_motion(event):
+            if drag_state["active"]:
+                row = chapter_tree.identify_row(event.y)
+                if row:
+                    chapter_tree.selection_set([str(value) for value in drag_state["items"]])
+                    chapter_tree.focus(row)
+            return "break"
+
+        def _drag_end(event):
+            if not drag_state["active"]:
+                return
+            moving = list(drag_state["items"])
+            drag_state["active"] = False
+            target_row = chapter_tree.identify_row(event.y)
+            if not target_row or int(target_row) in moving:
+                return
+            remaining = [value for value in chapter_order if value not in set(moving)]
+            target = int(target_row)
+            insert_at = remaining.index(target)
+            chapter_order[:] = remaining[:insert_at] + moving + remaining[insert_at:]
+            self.renumber_selected_chapters = True
+            _update_listbox()
+            existing = [str(value) for value in moving if chapter_tree.exists(str(value))]
+            if existing:
+                chapter_tree.selection_set(existing)
+                chapter_tree.see(existing[0])
+            info_lbl.config(text=f"已移動 {len(moving)} 章｜編號章節數已依目前順序重算")
+
+        chapter_tree.bind("<ButtonPress-1>", _drag_start, add="+")
+        chapter_tree.bind("<B1-Motion>", _drag_motion, add="+")
+        chapter_tree.bind("<ButtonRelease-1>", _drag_end, add="+")
+
         _refresh_duplicates()
         _update_listbox()
 
         # 底部按鈕區
         btn_frame = ttk.Frame(top)
-        btn_frame.pack(fill=tk.X, padx=15, pady=15)
+        btn_frame.pack(fill=tk.X, padx=15, pady=(4, 15))
+        order_frame = ttk.Frame(top)
+        order_frame.pack(fill=tk.X, padx=15, pady=(8, 2), before=btn_frame)
 
         def _select_all():
             for g_idx in visible_indices:
@@ -2061,11 +2137,60 @@ class AudiobookGUIApp:
                 text="已依勾選順序重新編號｜網站索引仍保留供下載定位"
             )
 
+        def _selected_in_order():
+            selected = {int(value) for value in chapter_tree.selection()}
+            return [value for value in chapter_order if value in selected]
+
+        def _move_selected(delta):
+            selected = set(_selected_in_order())
+            if not selected:
+                info_lbl.config(text="請先選取要移動的章節（可用 Ctrl／Shift 多選）")
+                return
+            if delta < 0:
+                for index in range(1, len(chapter_order)):
+                    if chapter_order[index] in selected and chapter_order[index - 1] not in selected:
+                        chapter_order[index - 1], chapter_order[index] = chapter_order[index], chapter_order[index - 1]
+            else:
+                for index in range(len(chapter_order) - 2, -1, -1):
+                    if chapter_order[index] in selected and chapter_order[index + 1] not in selected:
+                        chapter_order[index], chapter_order[index + 1] = chapter_order[index + 1], chapter_order[index]
+            self.renumber_selected_chapters = True
+            _update_listbox()
+            existing = [str(value) for value in chapter_order if value in selected and chapter_tree.exists(str(value))]
+            if existing:
+                chapter_tree.selection_set(existing)
+                chapter_tree.see(existing[0])
+            info_lbl.config(text=f"已{'上' if delta < 0 else '下'}移 {len(selected)} 章｜編號章節數已重算")
+
+        def _sort_by_normalized_number():
+            original_positions = {value: index for index, value in enumerate(chapter_order)}
+
+            def sort_key(source_index):
+                normalized = chapter_parts[source_index - 1]["normalized_number"]
+                if str(normalized).isdigit():
+                    return (0, int(normalized), original_positions[source_index])
+                return (1, 0, original_positions[source_index])
+
+            chapter_order.sort(key=sort_key)
+            self.renumber_selected_chapters = True
+            _update_listbox()
+            info_lbl.config(text="已依網站章節正規化順序排列｜編號章節數即為實際製作順序")
+
+        def _restore_source_order():
+            chapter_order[:] = list(range(1, total_chapters + 1))
+            self.renumber_selected_chapters = True
+            _update_listbox()
+            info_lbl.config(text="已還原網站原始 UUID 順序｜編號章節數已重算")
+
         def _close_dialog():
             self.excluded_chapters.clear()
             for g_idx, is_checked in chapter_state.items():
                 if not is_checked:
                     self.excluded_chapters.add(g_idx)
+            self.chapter_order = list(chapter_order)
+            # Once an explicit order is saved, output numbering is always the
+            # actual consecutive production order shown in this dialog.
+            self.renumber_selected_chapters = True
             self._update_chapter_selection_summary(cur_start, cur_end)
             top.destroy()
 
@@ -2076,8 +2201,15 @@ class AudiobookGUIApp:
         ttk.Button(btn_frame, text="反選", command=_invert_select).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="重複判斷條件", command=_choose_duplicate_conditions).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="排除重複章節", command=_exclude_duplicates).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frame, text="重新排序已選章節", command=_renumber_selected).pack(side=tk.LEFT, padx=4)
+        ttk.Label(order_frame, text="實際製作順序：").pack(side=tk.LEFT, padx=(4, 2))
+        ttk.Button(order_frame, text="依網站章節正規化順序排列", command=_sort_by_normalized_number).pack(side=tk.LEFT, padx=4)
+        ttk.Button(order_frame, text="上移 ▲", command=lambda: _move_selected(-1)).pack(side=tk.LEFT, padx=4)
+        ttk.Button(order_frame, text="下移 ▼", command=lambda: _move_selected(1)).pack(side=tk.LEFT, padx=4)
+        ttk.Button(order_frame, text="還原原始順序", command=_restore_source_order).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="確定", style="Accent.TButton", command=_close_dialog).pack(side=tk.RIGHT, padx=5)
+
+        chapter_tree.bind("<Alt-Up>", lambda _event: (_move_selected(-1), "break"))
+        chapter_tree.bind("<Alt-Down>", lambda _event: (_move_selected(1), "break"))
 
     # ── 觸發 GitHub Actions ──
     def trigger_github_actions(self):
@@ -2146,6 +2278,9 @@ class AudiobookGUIApp:
                         "renumber_selected": "true" if self.renumber_selected_chapters else "false",
                         "chapter_title_overrides_b64": base64.b64encode(
                             json.dumps(self.chapter_title_overrides, ensure_ascii=False).encode("utf-8")
+                        ).decode("ascii"),
+                        "chapter_order_b64": base64.b64encode(
+                            json.dumps(self.chapter_order).encode("utf-8")
                         ).decode("ascii"),
                         "book_profile_snapshot_b64": base64.b64encode(
                             json.dumps(profile_snapshot(
