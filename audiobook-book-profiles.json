@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 13,
-  "updated_at": "2026-08-22T16:06:40.039431+00:00",
+  "revision": 14,
+  "updated_at": "2026-08-22T16:09:27.332498+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -92,6 +92,22 @@
       "chapter_normalized_number_overrides": {},
       "profile_revision": 2,
       "updated_at": "2026-08-22T16:06:40.039431+00:00"
+    },
+    "f7b4fca623476708": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/36278",
+      "book_title": "牧神記",
+      "cleaner_remove_patterns": [
+        "PSS：牧神記的番外篇會在宅豬的公眾號上更新，請搜索公眾號宅豬，早點關注。\n\nPSSS：宅豬準備做一次完本直播，抖音(douyin)上搜索zhaizhu2008，先關注了再說。\n"
+      ],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "updated_at": "2026-08-22T16:09:27.332498+00:00"
     }
   }
 }
