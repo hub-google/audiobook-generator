@@ -1769,7 +1769,7 @@ class AudiobookGUIApp:
                     chapter_tree.focus(str(g_idx))
 
         # 單擊選取或按空白鍵切換狀態
-        chapter_tree.bind("<ButtonRelease-1>", lambda e: _toggle_item())
+        chapter_tree.bind("<ButtonRelease-1>", _toggle_item)
         chapter_tree.bind("<space>", lambda e: (_toggle_item(), "break"))
 
         def _edit_chapter_name(event):
