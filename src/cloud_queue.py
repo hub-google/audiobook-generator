@@ -12,6 +12,11 @@ from datetime import datetime, timezone
 
 import requests
 
+try:
+    from .chapter_numbers import normalize_chapter_number_overrides
+except ImportError:
+    from chapter_numbers import normalize_chapter_number_overrides
+
 
 QUEUE_SCHEMA_VERSION = 2
 BLOCKING_STATES = {"dispatching", "running", "waiting_retry", "needs_attention", "canceling"}
@@ -133,11 +138,9 @@ def normalize_queue(value):
         task["chapter_order"] = normalize_chapter_order(
             task.get("chapter_order"), task.get("start_chapter") or 1, task.get("end_chapter"),
         )
-        task["chapter_normalized_number_overrides"] = {
-            str(int(key)): int(value)
-            for key, value in (task.get("chapter_normalized_number_overrides") or {}).items()
-            if str(key).isdigit() and str(value).isdigit() and int(key) > 0 and int(value) > 0
-        }
+        task["chapter_normalized_number_overrides"] = normalize_chapter_number_overrides(
+            task.get("chapter_normalized_number_overrides"), strict=False,
+        )
     queue["schema_version"] = QUEUE_SCHEMA_VERSION
     return queue
 
@@ -180,11 +183,9 @@ def new_task(catalog_url, book_title="", start_chapter=1, end_chapter=None, excl
             str(int(key)): str(value) for key, value in (chapter_title_overrides or {}).items()
             if str(key).isdigit() and str(value).strip()
         },
-        "chapter_normalized_number_overrides": {
-            str(int(key)): int(value)
-            for key, value in (chapter_normalized_number_overrides or {}).items()
-            if str(key).isdigit() and str(value).isdigit() and int(key) > 0 and int(value) > 0
-        },
+        "chapter_normalized_number_overrides": normalize_chapter_number_overrides(
+            chapter_normalized_number_overrides,
+        ),
         "chapter_order": normalize_chapter_order(chapter_order, start_chapter, end_chapter),
         "status": "queued",
         "run_id": None,
@@ -281,11 +282,9 @@ def update_task_chapters(queue, task_id, start_chapter, end_chapter, excluded_ch
             if str(key).isdigit() and str(value).strip()
         }
     if chapter_normalized_number_overrides is not None:
-        changes["chapter_normalized_number_overrides"] = {
-            str(int(key)): int(value)
-            for key, value in chapter_normalized_number_overrides.items()
-            if str(key).isdigit() and str(value).isdigit() and int(key) > 0 and int(value) > 0
-        }
+        changes["chapter_normalized_number_overrides"] = normalize_chapter_number_overrides(
+            chapter_normalized_number_overrides,
+        )
     if chapter_order is not None:
         changes["chapter_order"] = normalize_chapter_order(chapter_order, start, end)
     if requeue_after_cancel:

@@ -11,8 +11,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 try:
     from .cloud_queue import GitHubQueueStore
+    from .chapter_numbers import normalize_chapter_number_overrides
 except ImportError:
     from cloud_queue import GitHubQueueStore
+    from chapter_numbers import normalize_chapter_number_overrides
 
 
 PROFILE_PATH = "audiobook-book-profiles.json"
@@ -84,11 +86,9 @@ def normalize_profiles(value):
             "use_number_and_name": bool(detection.get("use_number_and_name", False)),
         }
         profile.setdefault("chapter_title_overrides", {})
-        profile["chapter_normalized_number_overrides"] = {
-            str(int(key)): int(value)
-            for key, value in (profile.get("chapter_normalized_number_overrides") or {}).items()
-            if str(key).isdigit() and str(value).isdigit() and int(key) > 0 and int(value) > 0
-        }
+        profile["chapter_normalized_number_overrides"] = normalize_chapter_number_overrides(
+            profile.get("chapter_normalized_number_overrides"), strict=False,
+        )
         profile.setdefault("profile_revision", 1)
     data["schema_version"] = PROFILE_SCHEMA_VERSION
     data.setdefault("revision", 0)
@@ -135,16 +135,9 @@ def update_book_profile(data, catalog_url, book_title="", cleaner_remove_pattern
             if str(k).isdigit() and str(v).strip()
         }
     if chapter_normalized_number_overrides is not None:
-        invalid = [
-            (key, value) for key, value in chapter_normalized_number_overrides.items()
-            if not str(key).isdigit() or not str(value).isdigit() or int(key) < 1 or int(value) < 1
-        ]
-        if invalid:
-            raise ValueError("章節 UUID 與網站章節數正規化都必須是正整數")
-        changes["chapter_normalized_number_overrides"] = {
-            str(int(key)): int(value)
-            for key, value in chapter_normalized_number_overrides.items()
-        }
+        changes["chapter_normalized_number_overrides"] = normalize_chapter_number_overrides(
+            chapter_normalized_number_overrides,
+        )
     for name, value in changes.items():
         if profile.get(name) != value:
             profile[name] = value

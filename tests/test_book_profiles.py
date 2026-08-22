@@ -13,13 +13,13 @@ class BookProfileTests(unittest.TestCase):
         data = update_book_profile(
             empty_profiles(), "https://example.com/book/1", "A",
             cleaner_remove_patterns=["廣告"],
-            chapter_normalized_number_overrides={"1698": 1782},
+            chapter_normalized_number_overrides={"1698": "1782.50"},
         )
         _, profile = get_book_profile(data, "https://example.com/book/1")
         self.assertEqual(profile["cleaner_remove_patterns"], ["廣告"])
-        self.assertEqual(profile["chapter_normalized_number_overrides"], {"1698": 1782})
+        self.assertEqual(profile["chapter_normalized_number_overrides"], {"1698": "1782.5"})
         snapshot = profile_snapshot("book-id", profile)
-        self.assertEqual(snapshot["chapter_normalized_number_overrides"], {"1698": 1782})
+        self.assertEqual(snapshot["chapter_normalized_number_overrides"], {"1698": "1782.5"})
 
     def test_normalized_url_has_stable_book_id(self):
         left = "HTTPS://TW.HJWZW.COM/Book/Chapter/1644/"

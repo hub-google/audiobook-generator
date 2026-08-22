@@ -148,6 +148,28 @@ class CatalogParserMatrixTests(unittest.TestCase):
         self.assertEqual(config["chapter_titles"][0], "第1888章 開殺戒")
         self.assertEqual(config["chapter_title_by_index"]["1"], "第1888章 開殺戒")
 
+    def test_decimal_override_works_when_original_display_number_is_empty(self):
+        parts = split_chapter_title("上古戰帝法身", "1249.50")
+        self.assertEqual(parts, {
+            "display_number": "",
+            "normalized_number": "1249.5",
+            "chapter_name": "上古戰帝法身",
+        })
+
+        parsed = _parsed_catalog(2)
+        parsed["chapter_titles"] = ["上古戰帝法身", "第1249章 上古戰帝法身"]
+        apply_chapter_title_overrides(parsed, {}, {"1": "1249.50", "2": "1249.5"})
+        self.assertEqual(parsed["chapter_normalized_number_overrides"], {
+            "1": "1249.5", "2": "1249.5",
+        })
+        self.assertEqual(parsed["duplicate_indices"], [2])
+        self.assertEqual(parsed["chapter_numbers"], ["1249.5", "1249.5"])
+
+    def test_invalid_decimal_overrides_are_rejected(self):
+        for value in ("0", "-1", "1e3", "1.2.3", "文字"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                split_chapter_title("無章號標題", value)
+
     def test_chapter_identifier_normalization_does_not_touch_name_numbers(self):
         cases = {
             "第 十二 章 2026年的約定": ("第 十二 章", "12", "2026年的約定"),

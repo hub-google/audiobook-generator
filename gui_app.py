@@ -8,6 +8,7 @@ import subprocess
 import requests
 import threading
 import tkinter as tk
+from decimal import Decimal, InvalidOperation
 from tkinter import ttk, messagebox, scrolledtext
 from dotenv import load_dotenv
 import re
@@ -20,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 try:
     from catalog_parser import analyze_duplicate_chapters, apply_chapter_title_overrides, parse_catalog, split_chapter_title
+    from chapter_numbers import normalize_positive_chapter_number
     from cleaner import chunk_text, clean_text_content
     from book_profiles import (
         GitHubBookProfileStore, book_profile_id, get_book_profile, profile_snapshot,
@@ -1923,7 +1925,7 @@ class AudiobookGUIApp:
                     parts["normalized_number"],
                     parts["display_number"],
                     parts["chapter_name"],
-                    "重複" if global_idx in duplicate_indices else "",
+                    "重複" if global_idx in duplicate_group_indices else "",
                 )
                 display_text = " ".join(str(value) for value in values)
 
@@ -1978,6 +1980,23 @@ class AudiobookGUIApp:
             dialog.transient(top)
             body = ttk.Frame(dialog, padding=10)
             body.pack(fill=tk.BOTH, expand=True)
+            reason_labels = {
+                "normalized_chapter_number": "網站章節數正規化",
+                "chapter_name_without_whitespace": "章節名稱（去除空白）",
+                "normalized_chapter_number_and_name_without_whitespace": "網站章節數正規化 & 章節名稱（去除空白）",
+            }
+            group_set = set(group)
+            group_reasons = []
+            for item in duplicate_analysis.get("duplicate_chapters") or []:
+                if int(item["index"]) not in group_set:
+                    continue
+                for reason in item.get("reasons") or []:
+                    label = reason_labels.get(reason, reason)
+                    if label not in group_reasons:
+                        group_reasons.append(label)
+            ttk.Label(
+                body, text="目前符合條件：" + "、".join(group_reasons),
+            ).pack(anchor=tk.W, pady=(0, 8))
             detail_columns = ("uuid", "normalized", "display", "name")
             detail = ttk.Treeview(body, columns=detail_columns, show="headings")
             for key, label, width in (
@@ -2001,7 +2020,7 @@ class AudiobookGUIApp:
                 if not row:
                     return
                 if column == "#6":
-                    if int(row) in duplicate_indices:
+                    if int(row) in duplicate_group_indices:
                         _show_duplicate_details(int(row))
                     return
                 if column == "#5":
@@ -2093,14 +2112,16 @@ class AudiobookGUIApp:
                 if save:
                     value = editor.get().strip()
                     if value:
-                        if not value.isdigit() or int(value) < 1:
+                        try:
+                            normalized_value = normalize_positive_chapter_number(value)
+                        except ValueError:
                             messagebox.showwarning(
-                                "網站章節數正規化", "請輸入大於 0 的整數；留白可恢復自動解析。", parent=top,
+                                "網站章節數正規化", "請輸入大於 0 的整數或小數；留白可恢復自動解析。", parent=top,
                             )
                             closed = False
                             editor.focus_set()
                             return
-                        self.chapter_normalized_number_overrides[str(index)] = int(value)
+                        self.chapter_normalized_number_overrides[str(index)] = normalized_value
                     else:
                         self.chapter_normalized_number_overrides.pop(str(index), None)
                     self.catalog_data["chapter_normalized_number_overrides"] = dict(
@@ -2297,8 +2318,10 @@ class AudiobookGUIApp:
 
             def sort_key(source_index):
                 normalized = chapter_parts[source_index - 1]["normalized_number"]
-                if str(normalized).isdigit():
-                    return (0, int(normalized), original_positions[source_index])
+                try:
+                    return (0, Decimal(str(normalized)), original_positions[source_index])
+                except (InvalidOperation, ValueError):
+                    pass
                 return (1, 0, original_positions[source_index])
 
             chapter_order.sort(key=sort_key)

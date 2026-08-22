@@ -14,16 +14,16 @@ class CloudQueueTests(unittest.TestCase):
     def test_normalized_number_overrides_follow_stable_uuid(self):
         task = new_task(
             "https://example/1", "第一部", 1, 2000,
-            chapter_normalized_number_overrides={"1698": 1782},
+            chapter_normalized_number_overrides={"1698": "1782.50"},
         )
-        self.assertEqual(task["chapter_normalized_number_overrides"], {"1698": 1782})
+        self.assertEqual(task["chapter_normalized_number_overrides"], {"1698": "1782.5"})
         queue = add_tasks(empty_queue(), [task])
         queue = update_task_chapters(
             queue, task["task_id"], 1, 2000,
-            chapter_normalized_number_overrides={"1698": 1888},
+            chapter_normalized_number_overrides={"1698": "1888.25"},
         )
         self.assertEqual(
-            queue["queue"][0]["chapter_normalized_number_overrides"], {"1698": 1888},
+            queue["queue"][0]["chapter_normalized_number_overrides"], {"1698": "1888.25"},
         )
 
     def test_schema_v1_migration_splits_completed_from_ranked_queue(self):

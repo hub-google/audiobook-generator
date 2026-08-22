@@ -7,13 +7,16 @@ import argparse
 import base64
 import requests
 import unicodedata
+from decimal import Decimal
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
 try:
     from .book_profiles import validate_remove_patterns
+    from .chapter_numbers import normalize_chapter_number_overrides, normalize_positive_chapter_number
 except ImportError:
     from book_profiles import validate_remove_patterns
+    from chapter_numbers import normalize_chapter_number_overrides, normalize_positive_chapter_number
 
 
 MAX_PARALLEL_WORKERS = 17
@@ -112,6 +115,10 @@ def split_chapter_title(title, normalized_override=None):
     are deliberately left untouched.
     """
     value = normalize_chapter_title(title)
+    override = (
+        normalize_positive_chapter_number(normalized_override)
+        if normalized_override is not None else None
+    )
     spaced_number = rf"(?:{_NUMBER_TOKEN})(?:\s*(?:{_NUMBER_TOKEN}))*"
     first_ordinal = rf"(?:(?:第|地)?\s*{spaced_number}\s*(?:{_ORDINAL_UNIT})\s*)"
     # A following ordinal must explicitly start with `第`. This preserves
@@ -152,7 +159,7 @@ def split_chapter_title(title, normalized_override=None):
     if not match:
         return {
             "display_number": "",
-            "normalized_number": "",
+            "normalized_number": override or "",
             "chapter_name": value,
         }
 
@@ -169,11 +176,8 @@ def split_chapter_title(title, normalized_override=None):
         damaged_number = re.search(_NUMBER_TOKEN, display_number)
         normalized_number = str(_chinese_number_to_int(damaged_number.group(0)))
 
-    if normalized_override is not None:
-        override = str(normalized_override).strip()
-        if not override.isdigit() or int(override) < 1:
-            raise ValueError("網站章節數正規化必須是正整數")
-        normalized_number = str(int(override))
+    if override is not None:
+        normalized_number = override
 
     chapter_name = value[match.end():].lstrip(" \t-—:：、.．")
     return {
@@ -210,7 +214,13 @@ def analyze_duplicate_chapters(
     for index, raw_title in enumerate(chapter_titles, 1):
         parts = split_chapter_title(raw_title, (normalized_number_overrides or {}).get(str(index)))
         normalized_number = parts["normalized_number"]
-        number = int(normalized_number) if normalized_number.isdigit() else None
+        if normalized_number.isdigit():
+            number = int(normalized_number)
+        else:
+            try:
+                number = normalized_number if Decimal(normalized_number) > 0 else None
+            except (ValueError, ArithmeticError):
+                number = None
         chapter_numbers.append(number)
         normalized_name = normalize_chapter_name_for_comparison(parts["chapter_name"])
         reasons = []
@@ -256,14 +266,7 @@ def analyze_duplicate_chapters(
 
 def normalize_number_overrides(overrides=None):
     """Validate stable catalog UUID -> positive normalized chapter number."""
-    accepted = {}
-    for raw_index, raw_number in (overrides or {}).items():
-        key = str(raw_index).strip()
-        value = str(raw_number).strip()
-        if not key.isdigit() or int(key) < 1 or not value.isdigit() or int(value) < 1:
-            raise ValueError("章節 UUID 與網站章節數正規化都必須是正整數")
-        accepted[str(int(key))] = str(int(value))
-    return accepted
+    return normalize_chapter_number_overrides(overrides)
 
 
 def apply_chapter_title_overrides(parsed_result, overrides=None, normalized_number_overrides=None):
