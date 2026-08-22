@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 3,
-  "updated_at": "2026-08-22T15:03:24.473930+00:00",
+  "revision": 4,
+  "updated_at": "2026-08-22T15:27:18.740524+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -19,6 +19,19 @@
       },
       "profile_revision": 3,
       "updated_at": "2026-08-22T15:03:24.473930+00:00"
+    },
+    "775556040cc321fe": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/35593",
+      "book_title": "全職法師",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "updated_at": "2026-08-22T15:27:18.740524+00:00"
     }
   }
 }
