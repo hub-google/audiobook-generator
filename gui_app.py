@@ -673,11 +673,10 @@ class AudiobookGUIApp:
         actions = ttk.Frame(body)
         actions.pack(fill=tk.X)
         ttk.Button(actions, text="刪除選取項目", command=delete_selected).pack(side=tk.LEFT)
-        ttk.Button(actions, text="取消", command=dialog.destroy).pack(side=tk.RIGHT, padx=(0, 6))
-        apply_button = ttk.Button(actions, text="套用到預覽（尚未儲存）", style="Accent.TButton")
-        apply_button.pack(side=tk.RIGHT)
+        finish_button = ttk.Button(actions, text="完成", style="Accent.TButton")
+        finish_button.pack(side=tk.RIGHT)
 
-        def apply_draft():
+        def finish_editing():
             try:
                 validated = validate_remove_patterns(patterns)
             except ValueError as error:
@@ -687,7 +686,8 @@ class AudiobookGUIApp:
             on_applied(self.cleaner_remove_patterns)
             dialog.destroy()
 
-        apply_button.config(command=apply_draft)
+        finish_button.config(command=finish_editing)
+        dialog.protocol("WM_DELETE_WINDOW", finish_editing)
         render()
         entry.focus_set()
 
