@@ -643,12 +643,14 @@ class AudiobookGUIApp:
         body = ttk.Frame(dialog, padding=12)
         body.pack(fill=tk.BOTH, expand=True)
         status_var = tk.StringVar(
-            value="以下規則只套用於目前這本小說；套用後會先保留為草稿，尚未寫入 GitHub。"
+            value="貼入要刪除的完整原文（特殊符號視為普通文字）；每條最多 10,000 字。"
         )
         ttk.Label(body, textvariable=status_var).pack(anchor=tk.W, pady=(0, 8))
         add_row = ttk.Frame(body)
         add_row.pack(fill=tk.X)
-        entry = ttk.Entry(add_row)
+        entry = scrolledtext.ScrolledText(
+            add_row, height=5, wrap=tk.WORD, font=("Microsoft JhengHei", 10),
+        )
         entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
         listbox = tk.Listbox(body, selectmode=tk.EXTENDED, font=("Microsoft JhengHei", 10))
         listbox.pack(fill=tk.BOTH, expand=True, pady=8)
@@ -657,11 +659,14 @@ class AudiobookGUIApp:
         def render():
             listbox.delete(0, tk.END)
             for pattern in patterns:
-                listbox.insert(tk.END, pattern)
+                summary = pattern.replace("\n", " ↵ ")
+                if len(summary) > 120:
+                    summary = summary[:117] + "…"
+                listbox.insert(tk.END, f"{len(pattern):,} 字｜{summary}")
 
         def add_pattern():
-            value = entry.get().strip()
-            if not value:
+            value = entry.get("1.0", "end-1c")
+            if not value.strip():
                 return
             try:
                 validated = validate_remove_patterns(patterns + [value])
@@ -669,7 +674,7 @@ class AudiobookGUIApp:
                 messagebox.showwarning("刪除關鍵字", str(error), parent=dialog)
                 return
             patterns[:] = validated
-            entry.delete(0, tk.END)
+            entry.delete("1.0", tk.END)
             render()
 
         def delete_selected():
@@ -678,7 +683,7 @@ class AudiobookGUIApp:
             render()
 
         ttk.Button(add_row, text="＋新增", command=add_pattern).pack(side=tk.RIGHT)
-        entry.bind("<Return>", lambda _event: add_pattern())
+        entry.bind("<Control-Return>", lambda _event: (add_pattern(), "break")[1])
         actions = ttk.Frame(body)
         actions.pack(fill=tk.X)
         ttk.Button(actions, text="刪除選取項目", command=delete_selected).pack(side=tk.LEFT)

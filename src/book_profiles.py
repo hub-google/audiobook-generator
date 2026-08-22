@@ -6,7 +6,6 @@ import copy
 import base64
 import hashlib
 import json
-import re
 from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
 
@@ -19,7 +18,7 @@ except ImportError:
 PROFILE_PATH = "audiobook-book-profiles.json"
 PROFILE_SCHEMA_VERSION = 2
 MAX_PATTERNS = 100
-MAX_PATTERN_LENGTH = 500
+MAX_PATTERN_LENGTH = 10_000
 
 
 def utc_now():
@@ -42,17 +41,14 @@ def book_profile_id(catalog_url):
 def validate_remove_patterns(patterns):
     result = []
     for raw in patterns or []:
-        pattern = str(raw).strip()
-        if not pattern or pattern in result:
+        # The field name is retained for persisted-profile compatibility, but
+        # entries are literal text (never regular expressions).  Normalize only
+        # line endings so text pasted on Windows matches downloaded chapter text.
+        pattern = str(raw).replace("\r\n", "\n").replace("\r", "\n")
+        if not pattern.strip() or pattern in result:
             continue
         if len(pattern) > MAX_PATTERN_LENGTH:
             raise ValueError(f"刪除關鍵字不可超過 {MAX_PATTERN_LENGTH} 個字元")
-        try:
-            compiled = re.compile(pattern)
-        except re.error as error:
-            raise ValueError(f"正則表達式無效：{pattern}（{error}）") from error
-        if compiled.search(""):
-            raise ValueError(f"刪除規則不可匹配空字串：{pattern}")
         result.append(pattern)
     if len(result) > MAX_PATTERNS:
         raise ValueError(f"每本小說最多 {MAX_PATTERNS} 條刪除規則")
@@ -172,7 +168,7 @@ def profile_snapshot(profile_id, profile):
         ),
     }
     canonical = json.dumps(snapshot["cleaner_remove_patterns"], ensure_ascii=False, separators=(",", ":"))
-    snapshot["cleaner_fingerprint"] = hashlib.sha256(("cleaner-v2|" + canonical).encode("utf-8")).hexdigest()
+    snapshot["cleaner_fingerprint"] = hashlib.sha256(("cleaner-v3-literal|" + canonical).encode("utf-8")).hexdigest()
     return snapshot
 
 

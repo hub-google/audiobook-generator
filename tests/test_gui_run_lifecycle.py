@@ -79,6 +79,9 @@ def test_cleaner_pattern_dialog_only_applies_a_local_draft():
     assert "儲存到 GitHub" not in dialog_source
     assert "._profile_store(" not in dialog_source
     assert "on_applied(self.cleaner_remove_patterns)" in dialog_source
+    assert "scrolledtext.ScrolledText" in dialog_source
+    assert 'entry.get("1.0", "end-1c")' in dialog_source
+    assert "特殊符號視為普通文字" in dialog_source
 
 
 def test_text_preview_uses_current_draft_and_ignores_stale_refreshes():

@@ -14,12 +14,13 @@ def load_config():
         return yaml.safe_load(f)
 
 def clean_text_content(text, title, book_title, remove_patterns=None):
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
     # 更嚴格的清理規則，把整句包含「請記住本站域名」的文字移除
     text = re.sub(r'請記住本站域名.*?(?=\n|$)', '', text)
     text = re.sub(r'快捷鍵:.*?返回書頁', '', text)
     text = text.replace('黃金屋', '')
-    for pattern in validate_remove_patterns(remove_patterns):
-        text = re.sub(pattern, '', text)
+    for unwanted_text in validate_remove_patterns(remove_patterns):
+        text = text.replace(unwanted_text, '')
     text = text.replace('\xa0', '').strip()
     
     # 移除重複的空白行
