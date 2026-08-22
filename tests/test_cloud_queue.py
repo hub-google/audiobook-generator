@@ -11,6 +11,19 @@ from src.queue_dispatcher import Dispatcher
 
 
 class CloudQueueTests(unittest.TestCase):
+    def test_chapter_title_overrides_are_persisted_by_stable_uuid(self):
+        task = new_task(
+            "https://example/1", "第一部", 1, 3,
+            chapter_title_overrides={"2": "第二章 修正"},
+        )
+        self.assertEqual(task["chapter_title_overrides"], {"2": "第二章 修正"})
+        queue = add_tasks(empty_queue(), [task])
+        queue = update_task_chapters(
+            queue, task["task_id"], 1, 3,
+            chapter_title_overrides={"2": "第二章 再修正"},
+        )
+        self.assertEqual(queue["tasks"][0]["chapter_title_overrides"], {"2": "第二章 再修正"})
+
     def test_duplicate_chapter_count_is_persisted_and_updated(self):
         task = new_task(
             "https://example/1", "第一部", 1, 100,

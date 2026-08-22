@@ -8,6 +8,7 @@ import yaml
 
 from src.catalog_parser import (
     MAX_PARALLEL_WORKERS,
+    apply_chapter_title_overrides,
     analyze_duplicate_chapters,
     generate_config_yaml,
     generate_matrix,
@@ -38,6 +39,20 @@ def parsed_catalog(chapter_count):
 
 
 class CatalogParserMatrixTests(unittest.TestCase):
+    def test_stable_uuid_title_override_survives_renumbering(self):
+        parsed = _parsed_catalog(3)
+        parsed["chapter_titles"] = ["第一章 甲", "地二章 錯字", "第三章 丙"]
+        apply_chapter_title_overrides(parsed, {"2": "第二章 修正"})
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = generate_config_yaml(
+                "https://example.com/catalog", 1, 3,
+                os.path.join(temp_dir, "config.yaml"), exclude_chapters=[1],
+                parsed_result=parsed, renumber_selected=True,
+            )
+        self.assertEqual(config["source_indices"], [2, 3])
+        self.assertEqual(config["selected_indices"], [1, 2])
+        self.assertEqual(config["chapter_title_by_index"], {"1": "第二章 修正"})
+
     @patch("src.catalog_parser.requests.get")
     def test_catalog_preserves_repeated_links_for_user_review(self, get):
         response = Mock()

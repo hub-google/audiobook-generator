@@ -203,6 +203,7 @@ def apply_chapter_title_overrides(parsed_result, overrides=None):
     if not isinstance(parsed_result, dict):
         return parsed_result
     titles = list(parsed_result.get("chapter_titles") or [])
+    accepted = {}
     for raw_index, title in (overrides or {}).items():
         try:
             index = int(raw_index)
@@ -210,7 +211,9 @@ def apply_chapter_title_overrides(parsed_result, overrides=None):
             continue
         if 1 <= index <= len(titles) and str(title or "").strip():
             titles[index - 1] = normalize_chapter_title(title)
+            accepted[str(index)] = titles[index - 1]
     parsed_result["chapter_titles"] = titles
+    parsed_result["chapter_title_overrides"] = accepted
     analysis = analyze_duplicate_chapters(titles, parsed_result.get("chapters") or [])
     for key, value in analysis.items():
         parsed_result[key] = value
@@ -322,10 +325,12 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
     # 包含標題與 URL，並過濾排除的章節
     selected_chapters = []
     source_indices = []
+    selected_titles = []
     for i in range(start_idx, end_chap):
         if (i + 1) not in exclude_chapters:
             selected_chapters.append(res["chapters"][i])
             source_indices.append(i + 1)
+            selected_titles.append(res["chapter_titles"][i])
 
     # selected_indices is the output numbering used by RawText and every later
     # pipeline stage. source_indices remains tied to the origin catalog.
@@ -344,6 +349,12 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
         "chapters": selected_chapters,
         "source_indices": source_indices,
         "selected_indices": selected_indices,
+        "chapter_titles": selected_titles,
+        "chapter_title_by_index": {
+            str(output_index): title
+            for output_index, source_index, title in zip(selected_indices, source_indices, selected_titles)
+            if str(source_index) in (res.get("chapter_title_overrides") or {})
+        },
         "renumber_selected": bool(renumber_selected),
         "chapters_per_worker": chapters_per_worker,  # 新增：讓 Worker 知道每台機器的額度
         "tts": {

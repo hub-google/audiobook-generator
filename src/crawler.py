@@ -198,6 +198,8 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
 
                 title_h1  = soup.find('h1')
                 title     = title_h1.text.strip() if title_h1 else f"Unknown_Chapter_{global_idx}"
+                edited_titles = config.get("chapter_title_by_index") or {}
+                title = str(edited_titles.get(str(global_idx), edited_titles.get(global_idx, title)))
 
                 content_div = soup.find('div', style=lambda v: v and 'word-wrap: break-word' in v and 'text-indent: 2em' in v)
                 raw_text    = content_div.get_text(separator='\n') if content_div else ""
