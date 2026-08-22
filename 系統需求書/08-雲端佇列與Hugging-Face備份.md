@@ -8,7 +8,7 @@
 
 正式狀態位於 `automation-state` 分支的 `audiobook-queue.json`。本地資料只可作快取，不得成為唯一真相來源。檔案 schema 現行版本為 2；同一份 JSON 內必須使用兩個彼此獨立的陣列：
 
-- `queue`：只保存尚未嚴格成功完成的任務。每筆任務至少包含 `task_id`、`position`、book title、catalog URL、選章設定、status、run ID/attempt、HF/YouTube progress、reason、retry_at 與 timestamps。
+- `queue`：只保存尚未嚴格成功完成的任務。每筆任務至少包含 `task_id`、`position`、book title、catalog URL、選章設定、固定 UUID 對應的 `chapter_title_overrides`、status、run ID/attempt、HF/YouTube progress、reason、retry_at 與 timestamps。
 - `completed`：只保存已通過 strict success gate 的完成紀錄，保留 task/run、章節、進度及完成時間，但不得包含 `position`，也不得參與調度。
 
 同一個 `task_id` 不得同時存在於 `queue` 與 `completed`。schema v1 的單一 `tasks` 陣列在讀取時必須依 `status == completed` 分流，移除完成項目的順位，將未完成項目重新連續編號，並在下一次狀態寫入時保存為 schema v2。不得繼續將兩類任務保存在同一個底層陣列後僅由 GUI 篩選。
@@ -107,6 +107,13 @@ GUI 使用兩個頁籤，但頁籤必須直接對應不同底層陣列，不得�
 - 「已完成（Success）」只讀取 `completed`，順位顯示 `—`，不得提供上下移、暫停或重新排程等排程操作。
 
 兩頁均可顯示小說、章節、重複章節、狀態、GitHub 查證時間、HF、YouTube 與 Run ID。
+
+選章對話框另須遵守以下操作契約：
+
+- 第一欄 UUID 為原始目錄固定 1-based 流水號；輸出章號重排不得改動它。
+- 章節名稱可雙擊編輯，且修改必須以 UUID 保存並傳入雲端 worker 實際覆蓋標題。
+- 最右欄只有「重複」文字具有明細動作；單擊文字必須彈出包含 UUID、網站章節數正規化、網站顯示章節數及章節名稱的完整重複群組。
+- Success 頁籤只讀 `completed`；非成功任務不得因 GUI 顯示狀態而被誤分類。
 - **狀態顯示契約**：
   - 未向 GitHub 發布 Run 之待命任務，狀態一律顯示為 **`idle`**（非 `queued`），明確區隔未發布與 GitHub Actions Run 排隊。
   - GitHub 真正發布 Run 且等待 Runner 時顯示 **`queued`** / **`pending`**（此時必有 Run ID）。
