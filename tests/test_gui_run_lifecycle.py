@@ -75,9 +75,30 @@ def test_cleaner_pattern_dialog_only_applies_a_local_draft():
     assert 'text="取消"' not in dialog_source
     assert "套用到預覽（尚未儲存）" not in dialog_source
     assert 'dialog.protocol("WM_DELETE_WINDOW", finish_editing)' in dialog_source
+    assert "dialog.grab_set()" not in dialog_source
     assert "儲存到 GitHub" not in dialog_source
     assert "._profile_store(" not in dialog_source
     assert "on_applied(self.cleaner_remove_patterns)" in dialog_source
+
+
+def test_text_preview_uses_current_draft_and_ignores_stale_refreshes():
+    tree = ast.parse(GUI_SOURCE.read_text(encoding="utf-8"))
+    preview = next(
+        node for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "AudiobookGUIApp"
+        for node in node.body
+        if isinstance(node, ast.FunctionDef) and node.name == "open_text_sample"
+    )
+    preview_source = ast.get_source_segment(GUI_SOURCE.read_text(encoding="utf-8"), preview)
+
+    assert "refresh_preview(self.cleaner_remove_patterns)" in preview_source
+    assert 'generation != preview_generation["value"]' in preview_source
+    assert 'profile.get("cleaner_remove_patterns")' not in preview_source
+    normal = preview_source.index("box.config(state=tk.NORMAL)")
+    delete = preview_source.index('box.delete("1.0", tk.END)')
+    insert = preview_source.index('box.insert("1.0", content)')
+    disabled = preview_source.index("box.config(state=tk.DISABLED)", insert)
+    assert normal < delete < insert < disabled
 
 
 def test_chapter_update_persists_the_cleaner_pattern_snapshot():

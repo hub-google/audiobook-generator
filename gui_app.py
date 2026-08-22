@@ -630,7 +630,6 @@ class AudiobookGUIApp:
         dialog.geometry("680x430")
         dialog.minsize(560, 360)
         dialog.transient(parent)
-        dialog.grab_set()
         body = ttk.Frame(dialog, padding=12)
         body.pack(fill=tk.BOTH, expand=True)
         status_var = tk.StringVar(
@@ -708,6 +707,7 @@ class AudiobookGUIApp:
         notebook = ttk.Notebook(frame)
         notebook.pack(fill=tk.BOTH, expand=True)
         views = {}
+        preview_generation = {"value": 0}
         for label in ("第一章", "中間章", "最後一章"):
             page = ttk.Frame(notebook, padding=6)
             notebook.add(page, text=label)
@@ -735,7 +735,9 @@ class AudiobookGUIApp:
             status_var.set("抽查失敗")
             messagebox.showerror("抽查文字失敗", detail, parent=top)
 
-        def render(results):
+        def render(results, generation):
+            if generation != preview_generation["value"]:
+                return
             warnings = 0
             for sample, raw_text, clean_text in results:
                 info_var, raw_box, clean_box = views[sample["label"]]
@@ -759,20 +761,19 @@ class AudiobookGUIApp:
                     f"{mapping}｜{sample['catalog_title']}｜Raw {raw_chars:,} 字｜Clean {clean_chars:,} 字｜約清除 {ratio:.1f}%{warning}"
                 )
                 for box, content in ((raw_box, raw_text), (clean_box, clean_text)):
+                    # ScrolledText ignores delete/insert while disabled. Re-enable it
+                    # before every preview refresh, then return it to read-only mode.
+                    box.config(state=tk.NORMAL)
                     box.delete("1.0", tk.END)
                     box.insert("1.0", content)
                     box.config(state=tk.DISABLED)
             status_var.set(f"抽查完成：3 個位置，{warnings} 個需要留意。左右內容可直接捲動比對。")
 
-        def worker(remove_patterns=None):
+        def worker(remove_patterns, generation):
             try:
                 catalog = parse_catalog(task.get("catalog_url") or "")
                 profiles, _ = self._profile_store()[0].load()
                 _, profile = get_book_profile(profiles, task.get("catalog_url") or "", task.get("book_title") or "")
-                active_patterns = (
-                    remove_patterns if remove_patterns is not None
-                    else profile.get("cleaner_remove_patterns") or []
-                )
                 apply_chapter_title_overrides(
                     catalog, profile.get("chapter_title_overrides") or task.get("chapter_title_overrides") or {},
                 )
@@ -782,17 +783,25 @@ class AudiobookGUIApp:
                     title, body = fetch_chapter_text(sample["url"])
                     raw_text, clean_text = self._build_text_sample(
                         title, body, task.get("book_title") or catalog.get("book_title") or "",
-                        remove_patterns=active_patterns,
+                        remove_patterns=remove_patterns,
                     )
                     results.append((sample, raw_text, clean_text))
-                self.root.after(0, lambda: render(results) if top.winfo_exists() else None)
+                self.root.after(
+                    0, lambda: render(results, generation) if top.winfo_exists() else None,
+                )
             except Exception as error:
-                self.root.after(0, lambda detail=str(error): show_error(detail) if top.winfo_exists() else None)
+                self.root.after(
+                    0,
+                    lambda detail=str(error): show_error(detail)
+                    if top.winfo_exists() and generation == preview_generation["value"] else None,
+                )
         def refresh_preview(patterns):
+            preview_generation["value"] += 1
+            generation = preview_generation["value"]
             status_var.set("關鍵字草稿已套用；正在重新取得三個取樣章節…（按下更新章節設定後才會儲存）")
-            threading.Thread(target=worker, args=(patterns,), daemon=True).start()
+            threading.Thread(target=worker, args=(list(patterns), generation), daemon=True).start()
 
-        threading.Thread(target=worker, daemon=True).start()
+        refresh_preview(self.cleaner_remove_patterns)
 
     def _update_selected_task_status(self, task):
         hf = task.get("hf_progress") or {}
