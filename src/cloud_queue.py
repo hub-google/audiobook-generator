@@ -133,6 +133,11 @@ def normalize_queue(value):
         task["chapter_order"] = normalize_chapter_order(
             task.get("chapter_order"), task.get("start_chapter") or 1, task.get("end_chapter"),
         )
+        task["chapter_normalized_number_overrides"] = {
+            str(int(key)): int(value)
+            for key, value in (task.get("chapter_normalized_number_overrides") or {}).items()
+            if str(key).isdigit() and str(value).isdigit() and int(key) > 0 and int(value) > 0
+        }
     queue["schema_version"] = QUEUE_SCHEMA_VERSION
     return queue
 
@@ -157,7 +162,7 @@ def format_chapter_label(start_chap, end_chap, excluded_chapters=None, renumber_
 
 def new_task(catalog_url, book_title="", start_chapter=1, end_chapter=None, excluded_chapters=None,
              renumber_selected=False, duplicate_chapter_count=None, chapter_title_overrides=None,
-             chapter_order=None):
+             chapter_order=None, chapter_normalized_number_overrides=None):
     now = utc_now()
     return {
         "task_id": f"book-{datetime.now(timezone.utc):%Y%m%d}-{uuid.uuid4().hex[:8]}",
@@ -174,6 +179,11 @@ def new_task(catalog_url, book_title="", start_chapter=1, end_chapter=None, excl
         "chapter_title_overrides": {
             str(int(key)): str(value) for key, value in (chapter_title_overrides or {}).items()
             if str(key).isdigit() and str(value).strip()
+        },
+        "chapter_normalized_number_overrides": {
+            str(int(key)): int(value)
+            for key, value in (chapter_normalized_number_overrides or {}).items()
+            if str(key).isdigit() and str(value).isdigit() and int(key) > 0 and int(value) > 0
         },
         "chapter_order": normalize_chapter_order(chapter_order, start_chapter, end_chapter),
         "status": "queued",
@@ -251,7 +261,7 @@ def update_task(queue, task_id, **changes):
 def update_task_chapters(queue, task_id, start_chapter, end_chapter, excluded_chapters=None,
                          requeue_after_cancel=False, renumber_selected=False,
                          duplicate_chapter_count=None, chapter_title_overrides=None,
-                         chapter_order=None):
+                         chapter_order=None, chapter_normalized_number_overrides=None):
     """Persist an edited chapter plan and optionally restart after cancellation."""
     start = int(start_chapter)
     end = int(end_chapter)
@@ -269,6 +279,12 @@ def update_task_chapters(queue, task_id, start_chapter, end_chapter, excluded_ch
         changes["chapter_title_overrides"] = {
             str(int(key)): str(value) for key, value in chapter_title_overrides.items()
             if str(key).isdigit() and str(value).strip()
+        }
+    if chapter_normalized_number_overrides is not None:
+        changes["chapter_normalized_number_overrides"] = {
+            str(int(key)): int(value)
+            for key, value in chapter_normalized_number_overrides.items()
+            if str(key).isdigit() and str(value).isdigit() and int(key) > 0 and int(value) > 0
         }
     if chapter_order is not None:
         changes["chapter_order"] = normalize_chapter_order(chapter_order, start, end)

@@ -64,6 +64,7 @@ class AudiobookGUIApp:
         self.renumber_selected_chapters = False
         self.chapter_order = []
         self.chapter_title_overrides = {}
+        self.chapter_normalized_number_overrides = {}
         self.cleaner_remove_patterns = []
         self.duplicate_detection = {"use_normalized_number": True, "use_chapter_name": True}
 
@@ -785,6 +786,8 @@ class AudiobookGUIApp:
                 _, profile = get_book_profile(profiles, task.get("catalog_url") or "", task.get("book_title") or "")
                 apply_chapter_title_overrides(
                     catalog, profile.get("chapter_title_overrides") or task.get("chapter_title_overrides") or {},
+                    profile.get("chapter_normalized_number_overrides") or
+                    task.get("chapter_normalized_number_overrides") or {},
                 )
                 samples = self._text_sample_chapters(task, catalog)
                 results = []
@@ -830,6 +833,7 @@ class AudiobookGUIApp:
         self.editing_task_id = None
         self.catalog_data = None
         self.chapter_title_overrides = {}
+        self.chapter_normalized_number_overrides = {}
         self.cleaner_remove_patterns = []
         self.duplicate_detection = {"use_normalized_number": True, "use_chapter_name": True}
         self.excluded_chapters.clear()
@@ -867,7 +871,11 @@ class AudiobookGUIApp:
                 profiles, _ = self._profile_store()[0].load()
                 _, profile = get_book_profile(profiles, task.get("catalog_url") or "", task.get("book_title") or "")
                 overrides = profile.get("chapter_title_overrides") or task.get("chapter_title_overrides") or {}
-                apply_chapter_title_overrides(result, overrides)
+                normalized_overrides = (
+                    profile.get("chapter_normalized_number_overrides") or
+                    task.get("chapter_normalized_number_overrides") or {}
+                )
+                apply_chapter_title_overrides(result, overrides, normalized_overrides)
                 self.root.after(0, lambda: self._finish_queue_task_load(token, task["task_id"], result, profile))
             except Exception as error:
                 self.root.after(0, lambda detail=str(error): self._on_parse_failed(detail))
@@ -896,6 +904,10 @@ class AudiobookGUIApp:
         )
         profile = profile or {}
         self.chapter_title_overrides = dict(profile.get("chapter_title_overrides") or task.get("chapter_title_overrides") or {})
+        self.chapter_normalized_number_overrides = dict(
+            profile.get("chapter_normalized_number_overrides") or
+            task.get("chapter_normalized_number_overrides") or {}
+        )
         self.cleaner_remove_patterns = list(profile.get("cleaner_remove_patterns") or [])
         self.duplicate_detection = dict(profile.get("duplicate_detection") or self.duplicate_detection)
         self._update_chapter_selection_summary(start, end)
@@ -1267,10 +1279,16 @@ class AudiobookGUIApp:
             messagebox.showwarning("提示", "章節範圍必須是數字")
             return
         task = new_task(
-            self.url_entry.get().strip(), self.catalog_data.get("book_title", ""), start, end,
-            sorted(self.excluded_chapters), self.renumber_selected_chapters,
-            self.catalog_data.get("duplicate_chapter_count"), self.chapter_title_overrides,
-            self.chapter_order,
+            catalog_url=self.url_entry.get().strip(),
+            book_title=self.catalog_data.get("book_title", ""),
+            start_chapter=start,
+            end_chapter=end,
+            excluded_chapters=sorted(self.excluded_chapters),
+            renumber_selected=self.renumber_selected_chapters,
+            duplicate_chapter_count=self.catalog_data.get("duplicate_chapter_count"),
+            chapter_title_overrides=self.chapter_title_overrides,
+            chapter_order=self.chapter_order,
+            chapter_normalized_number_overrides=self.chapter_normalized_number_overrides,
         )
         self._mutate_queue_async(
             lambda queue: add_tasks(queue, [task]),
@@ -1301,6 +1319,7 @@ class AudiobookGUIApp:
             return
         duplicate_detection = dict(self.duplicate_detection)
         chapter_title_overrides = dict(self.chapter_title_overrides)
+        chapter_normalized_number_overrides = dict(self.chapter_normalized_number_overrides)
         renumber_selected = bool(self.renumber_selected_chapters)
         original_button_text = self.btn_update_queue.cget("text")
         self.btn_update_queue.config(state=tk.DISABLED, text="⏳ 正在更新雲端佇列…")
@@ -1337,6 +1356,7 @@ class AudiobookGUIApp:
                         cleaner_remove_patterns=cleaner_patterns,
                         duplicate_detection=duplicate_detection,
                         chapter_title_overrides=chapter_title_overrides,
+                        chapter_normalized_number_overrides=chapter_normalized_number_overrides,
                     ),
                     f"Update book profile for {task.get('book_title') or task_id}",
                 )
@@ -1350,11 +1370,14 @@ class AudiobookGUIApp:
                         raise RuntimeError(f"取消舊 Run 失敗 ({response.status_code}): {response.text}")
                 queue = store.mutate(
                     lambda value: update_task_chapters(
-                        value, task_id, start, end, excluded, active,
-                        renumber_selected,
-                        (self.catalog_data or {}).get("duplicate_chapter_count"),
-                        chapter_title_overrides,
-                        self.chapter_order,
+                        value, task_id, start, end,
+                        excluded_chapters=excluded,
+                        requeue_after_cancel=active,
+                        renumber_selected=renumber_selected,
+                        duplicate_chapter_count=(self.catalog_data or {}).get("duplicate_chapter_count"),
+                        chapter_title_overrides=chapter_title_overrides,
+                        chapter_order=self.chapter_order,
+                        chapter_normalized_number_overrides=chapter_normalized_number_overrides,
                     ),
                     f"Update chapter plan for audiobook task {task_id}",
                 )
@@ -1662,20 +1685,32 @@ class AudiobookGUIApp:
         def _worker():
             try:
                 res = parse_catalog(url)
-                self.root.after(0, lambda: self._on_parse_success(res))
+                profiles, _ = self._profile_store()[0].load()
+                _, profile = get_book_profile(profiles, url, res.get("book_title") or "")
+                apply_chapter_title_overrides(
+                    res, profile.get("chapter_title_overrides") or {},
+                    profile.get("chapter_normalized_number_overrides") or {},
+                )
+                self.root.after(0, lambda: self._on_parse_success(res, profile))
             except Exception as e:
                 error_message = str(e)
                 self.root.after(0, lambda message=error_message: self._on_parse_failed(message))
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _on_parse_success(self, res):
+    def _on_parse_success(self, res, profile=None):
         self.btn_parse.config(state=tk.NORMAL)
         if res and res.get("success"):
             self.catalog_data = res
-            self.chapter_title_overrides = {}
-            self.cleaner_remove_patterns = []
-            self.duplicate_detection = {"use_normalized_number": True, "use_chapter_name": True}
+            profile = profile or {}
+            self.chapter_title_overrides = dict(profile.get("chapter_title_overrides") or {})
+            self.chapter_normalized_number_overrides = dict(
+                profile.get("chapter_normalized_number_overrides") or {}
+            )
+            self.cleaner_remove_patterns = list(profile.get("cleaner_remove_patterns") or [])
+            self.duplicate_detection = dict(profile.get("duplicate_detection") or {
+                "use_normalized_number": True, "use_chapter_name": True,
+            })
             book_title = res["book_title"]
             total = res["total_chapters"]
             duplicate_count = int(res.get("duplicate_chapter_count") or 0)
@@ -1805,7 +1840,10 @@ class AudiobookGUIApp:
                 chapter_order.append(value)
                 seen_order.add(value)
 
-        chapter_parts = [split_chapter_title(title) for title in titles]
+        chapter_parts = [
+            split_chapter_title(title, self.chapter_normalized_number_overrides.get(str(index)))
+            for index, title in enumerate(titles, 1)
+        ]
         duplicate_analysis = {"duplicate_indices": [], "duplicate_chapters": []}
 
         # 紀錄目前表格顯示的章節編號列表
@@ -1813,12 +1851,16 @@ class AudiobookGUIApp:
 
         def _refresh_duplicates():
             nonlocal duplicate_indices, duplicate_analysis, chapter_parts
-            chapter_parts = [split_chapter_title(title) for title in titles]
+            chapter_parts = [
+                split_chapter_title(title, self.chapter_normalized_number_overrides.get(str(index)))
+                for index, title in enumerate(titles, 1)
+            ]
             duplicate_analysis = analyze_duplicate_chapters(
                 titles,
                 self.catalog_data.get("chapters", []),
                 use_normalized_number=duplicate_use_number.get(),
                 use_chapter_name=duplicate_use_name.get(),
+                normalized_number_overrides=self.chapter_normalized_number_overrides,
             )
             duplicate_indices = {int(value) for value in duplicate_analysis["duplicate_indices"]}
             self.catalog_data.update(duplicate_analysis)
@@ -2004,7 +2046,59 @@ class AudiobookGUIApp:
             editor.bind("<Escape>", lambda _event: finish(False))
             editor.bind("<FocusOut>", lambda _event: finish(True))
 
-        chapter_tree.bind("<Double-1>", _edit_chapter_name)
+        def _edit_normalized_number(event):
+            if (chapter_tree.identify_region(event.x, event.y) != "cell" or
+                    chapter_tree.identify_column(event.x) != "#3"):
+                return
+            row = chapter_tree.identify_row(event.y)
+            if not row:
+                return
+            index = int(row)
+            x, y, width, height = chapter_tree.bbox(row, "normalized_number")
+            editor = ttk.Entry(chapter_tree)
+            editor.insert(0, chapter_parts[index - 1]["normalized_number"])
+            editor.place(x=x, y=y, width=width, height=height)
+            editor.focus_set()
+            editor.select_range(0, tk.END)
+            closed = False
+
+            def finish(save=True):
+                nonlocal closed
+                if closed:
+                    return
+                closed = True
+                if save:
+                    value = editor.get().strip()
+                    if value:
+                        if not value.isdigit() or int(value) < 1:
+                            messagebox.showwarning(
+                                "網站章節數正規化", "請輸入大於 0 的整數；留白可恢復自動解析。", parent=top,
+                            )
+                            closed = False
+                            editor.focus_set()
+                            return
+                        self.chapter_normalized_number_overrides[str(index)] = int(value)
+                    else:
+                        self.chapter_normalized_number_overrides.pop(str(index), None)
+                    self.catalog_data["chapter_normalized_number_overrides"] = dict(
+                        self.chapter_normalized_number_overrides
+                    )
+                    _refresh_duplicates()
+                    _update_listbox()
+                    info_lbl.config(text=f"UUID {index} 的網站章節數正規化已更新；按排序按鈕才會移動章節")
+                editor.destroy()
+
+            editor.bind("<Return>", lambda _event: finish(True))
+            editor.bind("<Escape>", lambda _event: finish(False))
+            editor.bind("<FocusOut>", lambda _event: finish(True))
+
+        def _edit_chapter_cell(event):
+            if chapter_tree.identify_column(event.x) == "#3":
+                _edit_normalized_number(event)
+            elif chapter_tree.identify_column(event.x) == "#5":
+                _edit_chapter_name(event)
+
+        chapter_tree.bind("<Double-1>", _edit_chapter_cell)
 
         drag_state = {"active": False, "items": []}
 
@@ -2131,6 +2225,7 @@ class AudiobookGUIApp:
                                     cleaner_remove_patterns=self.cleaner_remove_patterns,
                                     duplicate_detection=self.duplicate_detection,
                                     chapter_title_overrides=self.chapter_title_overrides,
+                                    chapter_normalized_number_overrides=self.chapter_normalized_number_overrides,
                                 ),
                                 f"Update duplicate detection for {task.get('book_title') or 'audiobook'}",
                             )
@@ -2198,6 +2293,37 @@ class AudiobookGUIApp:
             self.renumber_selected_chapters = True
             self._update_chapter_selection_summary(cur_start, cur_end)
             top.destroy()
+
+            # Persist per-book edits independently of whether this is a new or
+            # already queued book. GitHubBookProfileStore performs SHA-guarded
+            # read/merge/write retries, so cleaner rules and unrelated books are preserved.
+            catalog_url = self.url_entry.get().strip()
+            book_title = (self.catalog_data or {}).get("book_title", "")
+            title_overrides = dict(self.chapter_title_overrides)
+            number_overrides = dict(self.chapter_normalized_number_overrides)
+            cleaner_patterns = list(self.cleaner_remove_patterns)
+            detection = dict(self.duplicate_detection)
+
+            def save_profile():
+                try:
+                    store, _, _ = self._profile_store()
+                    store.mutate(
+                        lambda data: update_book_profile(
+                            data, catalog_url, book_title,
+                            cleaner_remove_patterns=cleaner_patterns,
+                            duplicate_detection=detection,
+                            chapter_title_overrides=title_overrides,
+                            chapter_normalized_number_overrides=number_overrides,
+                        ),
+                        f"Update chapter overrides for {book_title or 'audiobook'}",
+                    )
+                    self.root.after(0, lambda: self.log("✓ 每本小說永久章節設定已儲存"))
+                except Exception as error:
+                    self.root.after(0, lambda detail=str(error): messagebox.showerror(
+                        "儲存永久章節設定失敗", detail,
+                    ))
+
+            threading.Thread(target=save_profile, daemon=True).start()
 
         top.protocol("WM_DELETE_WINDOW", _close_dialog)
 
@@ -2302,6 +2428,7 @@ class AudiobookGUIApp:
                                     "cleaner_remove_patterns": self.cleaner_remove_patterns,
                                     "duplicate_detection": self.duplicate_detection,
                                     "chapter_title_overrides": self.chapter_title_overrides,
+                                    "chapter_normalized_number_overrides": self.chapter_normalized_number_overrides,
                                 }
                             ), ensure_ascii=False).encode("utf-8")
                         ).decode("ascii"),

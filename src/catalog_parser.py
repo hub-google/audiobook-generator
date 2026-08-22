@@ -56,6 +56,21 @@ def _chinese_number_to_int(value):
     if any(not char.isdigit() and char not in _CHINESE_DIGITS and char not in _CHINESE_UNITS for char in value):
         return None
 
+    # Tolerate a recurring catalog typo such as `一千七八零二`, which is a
+    # shortened/malformed spelling of `一千七百八十二`.  Keep this deliberately
+    # narrow so ordinary zeroes in valid Chinese numbers retain their meaning.
+    malformed_thousands = re.fullmatch(
+        r"([1-9一二兩两三四五六七八九壹貳贰參叁肆伍陸陆柒捌玖])[千仟]"
+        r"([1-9一二兩两三四五六七八九壹貳贰參叁肆伍陸陆柒捌玖])"
+        r"([1-9一二兩两三四五六七八九壹貳贰參叁肆伍陸陆柒捌玖])"
+        r"[零〇0]([1-9一二兩两三四五六七八九壹貳贰參叁肆伍陸陆柒捌玖])",
+        value,
+    )
+    if malformed_thousands:
+        digits = [int(char) if char.isdigit() else _CHINESE_DIGITS[char]
+                  for char in malformed_thousands.groups()]
+        return digits[0] * 1000 + digits[1] * 100 + digits[2] * 10 + digits[3]
+
     # Strings without units (for example 二〇一) are digit sequences.
     if not any(char in _CHINESE_UNITS for char in value):
         return int("".join(char if char.isdigit() else str(_CHINESE_DIGITS[char]) for char in value))
@@ -90,7 +105,7 @@ def _normalize_number_tokens(value):
     return re.sub(_NUMBER_TOKEN, replace, compact)
 
 
-def split_chapter_title(title):
+def split_chapter_title(title, normalized_override=None):
     """Split a catalog label into display identifier, normalized identifier and name.
 
     Only a recognized leading identifier is normalized. Digits in the chapter name
@@ -98,7 +113,7 @@ def split_chapter_title(title):
     """
     value = normalize_chapter_title(title)
     spaced_number = rf"(?:{_NUMBER_TOKEN})(?:\s*(?:{_NUMBER_TOKEN}))*"
-    first_ordinal = rf"(?:第?\s*{spaced_number}\s*(?:{_ORDINAL_UNIT})\s*)"
+    first_ordinal = rf"(?:(?:第|地)?\s*{spaced_number}\s*(?:{_ORDINAL_UNIT})\s*)"
     # A following ordinal must explicitly start with `第`. This preserves
     # identifiers such as `第一季第一集`, while preventing a title such as
     # `第141章 一千萬話費` from treating `一千萬話` as another ordinal.
@@ -115,7 +130,13 @@ def split_chapter_title(title):
         rf"^(?P<identifier>{spaced_number})(?=\s|[.．、:：\-—])",
         value,
     )
-    match = structural or special or plain
+    # A leading 第/地 plus a number is also accepted when the final 章 is
+    # missing, but only at a safe boundary so title text is never consumed.
+    missing_unit = re.match(
+        rf"^(?P<identifier>(?:第|地)\s*{spaced_number})(?=\s|[.．、:：\-—]|$)",
+        value,
+    )
+    match = structural or special or missing_unit or plain
     if not match:
         return {
             "display_number": "",
@@ -129,9 +150,15 @@ def split_chapter_title(title):
 
     # A single ordinary chapter unit is represented by its number alone. More
     # descriptive identifiers (season/volume/special chapter) retain their labels.
-    simple = re.fullmatch(rf"第?({_NUMBER_TOKEN})(?:章|回|節|节|集|話|话)", re.sub(r"\s+", "", display_number))
+    simple = re.fullmatch(rf"(?:第|地)?({_NUMBER_TOKEN})(?:章|回|節|节|集|話|话)?", re.sub(r"\s+", "", display_number))
     if simple:
         normalized_number = str(_chinese_number_to_int(simple.group(1)))
+
+    if normalized_override is not None:
+        override = str(normalized_override).strip()
+        if not override.isdigit() or int(override) < 1:
+            raise ValueError("網站章節數正規化必須是正整數")
+        normalized_number = str(int(override))
 
     chapter_name = value[match.end():].lstrip(" \t-—:：、.．")
     return {
@@ -154,6 +181,7 @@ def parse_chapter_number(title):
 
 def analyze_duplicate_chapters(
     chapter_titles, chapter_urls=None, use_normalized_number=True, use_chapter_name=True,
+    normalized_number_overrides=None,
 ):
     """Mark later entries matching any enabled, non-empty duplicate condition."""
     urls = list(chapter_urls or [])
@@ -164,9 +192,9 @@ def analyze_duplicate_chapters(
     chapter_numbers = []
 
     for index, raw_title in enumerate(chapter_titles, 1):
-        parts = split_chapter_title(raw_title)
+        parts = split_chapter_title(raw_title, (normalized_number_overrides or {}).get(str(index)))
         normalized_number = parts["normalized_number"]
-        number = parse_chapter_number(raw_title)
+        number = int(normalized_number) if normalized_number.isdigit() else None
         chapter_numbers.append(number)
         normalized_name = normalize_chapter_name_for_comparison(parts["chapter_name"])
         reasons = []
@@ -203,8 +231,20 @@ def analyze_duplicate_chapters(
     }
 
 
-def apply_chapter_title_overrides(parsed_result, overrides=None):
-    """Apply immutable 1-based catalog UUID -> full title overrides in place."""
+def normalize_number_overrides(overrides=None):
+    """Validate stable catalog UUID -> positive normalized chapter number."""
+    accepted = {}
+    for raw_index, raw_number in (overrides or {}).items():
+        key = str(raw_index).strip()
+        value = str(raw_number).strip()
+        if not key.isdigit() or int(key) < 1 or not value.isdigit() or int(value) < 1:
+            raise ValueError("章節 UUID 與網站章節數正規化都必須是正整數")
+        accepted[str(int(key))] = str(int(value))
+    return accepted
+
+
+def apply_chapter_title_overrides(parsed_result, overrides=None, normalized_number_overrides=None):
+    """Apply immutable catalog UUID title and normalized-number overrides."""
     if not isinstance(parsed_result, dict):
         return parsed_result
     titles = list(parsed_result.get("chapter_titles") or [])
@@ -219,7 +259,15 @@ def apply_chapter_title_overrides(parsed_result, overrides=None):
             accepted[str(index)] = titles[index - 1]
     parsed_result["chapter_titles"] = titles
     parsed_result["chapter_title_overrides"] = accepted
-    analysis = analyze_duplicate_chapters(titles, parsed_result.get("chapters") or [])
+    normalized = {
+        key: value for key, value in normalize_number_overrides(normalized_number_overrides).items()
+        if int(key) <= len(titles)
+    }
+    parsed_result["chapter_normalized_number_overrides"] = normalized
+    analysis = analyze_duplicate_chapters(
+        titles, parsed_result.get("chapters") or [],
+        normalized_number_overrides=normalized,
+    )
     for key, value in analysis.items():
         parsed_result[key] = value
     return parsed_result
@@ -236,6 +284,23 @@ def decode_chapter_title_overrides(value):
     if not isinstance(data, dict):
         raise ValueError("章節名稱修改資料必須是物件")
     return {str(key): str(title) for key, title in data.items() if str(title).strip()}
+
+
+def effective_chapter_parts(parsed_result, source_uuid):
+    index = int(source_uuid)
+    title = (parsed_result.get("chapter_titles") or [])[index - 1]
+    override = (parsed_result.get("chapter_normalized_number_overrides") or {}).get(str(index))
+    return split_chapter_title(title, override)
+
+
+def effective_chapter_title(parsed_result, source_uuid):
+    """Return the production title, using an edited normalized number as 第N章."""
+    parts = effective_chapter_parts(parsed_result, source_uuid)
+    if str(source_uuid) not in (parsed_result.get("chapter_normalized_number_overrides") or {}):
+        return (parsed_result.get("chapter_titles") or [])[int(source_uuid) - 1]
+    return " ".join(value for value in (
+        f"第{parts['normalized_number']}章", parts["chapter_name"],
+    ) if value).strip()
 
 def parse_catalog(catalog_url):
     """
@@ -347,7 +412,7 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
         if source_index not in exclude_chapters:
             selected_chapters.append(res["chapters"][source_index - 1])
             source_indices.append(source_index)
-            selected_titles.append(res["chapter_titles"][source_index - 1])
+            selected_titles.append(effective_chapter_title(res, source_index))
 
     # selected_indices is the output numbering used by RawText and every later
     # pipeline stage. source_indices remains tied to the origin catalog.
@@ -372,7 +437,8 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
         "chapter_title_by_index": {
             str(output_index): title
             for output_index, source_index, title in zip(selected_indices, source_indices, selected_titles)
-            if str(source_index) in (res.get("chapter_title_overrides") or {})
+            if (str(source_index) in (res.get("chapter_title_overrides") or {}) or
+                str(source_index) in (res.get("chapter_normalized_number_overrides") or {}))
         },
         "renumber_selected": bool(renumber_selected),
         "chapter_order": source_indices,
@@ -529,7 +595,9 @@ if __name__ == "__main__":
             raise ValueError("書籍設定快照必須是 JSON 物件")
         validate_remove_patterns(snapshot.get("cleaner_remove_patterns") or [])
     overrides = snapshot.get("chapter_title_overrides") or decode_chapter_title_overrides(args.chapter_title_overrides_b64)
-    apply_chapter_title_overrides(parsed, overrides)
+    apply_chapter_title_overrides(
+        parsed, overrides, snapshot.get("chapter_normalized_number_overrides") or {},
+    )
 
     # ── 若需要 matrix，先計算以取得可能自動調整後的 chapters_per_worker ──
     effective_cpw = chapters_per_worker_input

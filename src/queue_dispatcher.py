@@ -250,6 +250,11 @@ class Dispatcher:
         # until the first explicit profile save migrates them.
         if not snapshot.get("chapter_title_overrides") and task.get("chapter_title_overrides"):
             snapshot["chapter_title_overrides"] = dict(task.get("chapter_title_overrides") or {})
+        if (not snapshot.get("chapter_normalized_number_overrides") and
+                task.get("chapter_normalized_number_overrides")):
+            snapshot["chapter_normalized_number_overrides"] = dict(
+                task.get("chapter_normalized_number_overrides") or {}
+            )
         task["book_profile_id"] = profile_id
         task["profile_snapshot"] = snapshot
         task.update({"status": "dispatching", "reason": None, "retry_at": None, "dispatched_at": datetime.now(timezone.utc).isoformat()})

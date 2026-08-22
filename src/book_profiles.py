@@ -17,7 +17,7 @@ except ImportError:
 
 
 PROFILE_PATH = "audiobook-book-profiles.json"
-PROFILE_SCHEMA_VERSION = 1
+PROFILE_SCHEMA_VERSION = 2
 MAX_PATTERNS = 100
 MAX_PATTERN_LENGTH = 500
 
@@ -87,6 +87,11 @@ def normalize_profiles(value):
             "use_chapter_name": bool(detection.get("use_chapter_name", True)),
         }
         profile.setdefault("chapter_title_overrides", {})
+        profile["chapter_normalized_number_overrides"] = {
+            str(int(key)): int(value)
+            for key, value in (profile.get("chapter_normalized_number_overrides") or {}).items()
+            if str(key).isdigit() and str(value).isdigit() and int(key) > 0 and int(value) > 0
+        }
         profile.setdefault("profile_revision", 1)
     data["schema_version"] = PROFILE_SCHEMA_VERSION
     data.setdefault("revision", 0)
@@ -104,13 +109,15 @@ def get_book_profile(data, catalog_url, book_title=""):
         "cleaner_remove_patterns": [],
         "duplicate_detection": {"use_normalized_number": True, "use_chapter_name": True},
         "chapter_title_overrides": {},
+        "chapter_normalized_number_overrides": {},
         "profile_revision": 0,
     })
     return key, profile
 
 
 def update_book_profile(data, catalog_url, book_title="", cleaner_remove_patterns=None,
-                        duplicate_detection=None, chapter_title_overrides=None):
+                        duplicate_detection=None, chapter_title_overrides=None,
+                        chapter_normalized_number_overrides=None):
     data = normalize_profiles(data)
     key, profile = get_book_profile(data, catalog_url, book_title)
     changed = False
@@ -128,6 +135,17 @@ def update_book_profile(data, catalog_url, book_title="", cleaner_remove_pattern
         changes["chapter_title_overrides"] = {
             str(int(k)): str(v) for k, v in chapter_title_overrides.items()
             if str(k).isdigit() and str(v).strip()
+        }
+    if chapter_normalized_number_overrides is not None:
+        invalid = [
+            (key, value) for key, value in chapter_normalized_number_overrides.items()
+            if not str(key).isdigit() or not str(value).isdigit() or int(key) < 1 or int(value) < 1
+        ]
+        if invalid:
+            raise ValueError("章節 UUID 與網站章節數正規化都必須是正整數")
+        changes["chapter_normalized_number_overrides"] = {
+            str(int(key)): int(value)
+            for key, value in chapter_normalized_number_overrides.items()
         }
     for name, value in changes.items():
         if profile.get(name) != value:
@@ -149,6 +167,9 @@ def profile_snapshot(profile_id, profile):
         "cleaner_remove_patterns": validate_remove_patterns(profile.get("cleaner_remove_patterns")),
         "duplicate_detection": copy.deepcopy(profile.get("duplicate_detection") or {}),
         "chapter_title_overrides": copy.deepcopy(profile.get("chapter_title_overrides") or {}),
+        "chapter_normalized_number_overrides": copy.deepcopy(
+            profile.get("chapter_normalized_number_overrides") or {}
+        ),
     }
     canonical = json.dumps(snapshot["cleaner_remove_patterns"], ensure_ascii=False, separators=(",", ":"))
     snapshot["cleaner_fingerprint"] = hashlib.sha256(("cleaner-v2|" + canonical).encode("utf-8")).hexdigest()

@@ -104,6 +104,35 @@ class CatalogParserMatrixTests(unittest.TestCase):
         self.assertEqual(parse_chapter_number("第二〇一章"), 201)
         self.assertIsNone(parse_chapter_number("番外篇 喋血藍原谷"))
 
+    def test_tolerates_known_malformed_thousands_ordinal(self):
+        cases = {
+            "第一千七八零二章 開殺戒": ("第一千七八零二章", "1782", "開殺戒"),
+            "地一千七八零二章 開殺戒": ("地一千七八零二章", "1782", "開殺戒"),
+            "第一千七八零二 開殺戒": ("第一千七八零二", "1782", "開殺戒"),
+            "地1782 開殺戒": ("地1782", "1782", "開殺戒"),
+        }
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                parts = split_chapter_title(title)
+                self.assertEqual(
+                    (parts["display_number"], parts["normalized_number"], parts["chapter_name"]),
+                    expected,
+                )
+        self.assertEqual(split_chapter_title("地下城")["normalized_number"], "")
+
+    def test_normalized_override_drives_duplicates_and_production_title(self):
+        parsed = _parsed_catalog(2)
+        parsed["chapter_titles"] = ["第一千七八零二章 開殺戒", "第1783章 下一章"]
+        apply_chapter_title_overrides(parsed, {}, {"1": 1888})
+        self.assertEqual(parsed["chapter_numbers"], [1888, 1783])
+        with tempfile.TemporaryDirectory() as directory:
+            config = generate_config_yaml(
+                "https://example.com/catalog", 1, 2,
+                os.path.join(directory, "config.yaml"), parsed_result=parsed,
+            )
+        self.assertEqual(config["chapter_titles"][0], "第1888章 開殺戒")
+        self.assertEqual(config["chapter_title_by_index"]["1"], "第1888章 開殺戒")
+
     def test_chapter_identifier_normalization_does_not_touch_name_numbers(self):
         cases = {
             "第 十二 章 2026年的約定": ("第 十二 章", "12", "2026年的約定"),
