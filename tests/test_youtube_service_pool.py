@@ -1,7 +1,5 @@
 import unittest
 import os
-import tempfile
-import json
 from unittest.mock import patch, MagicMock
 from src.youtube_api_uploader import YouTubeServicePool, configured_youtube_account_slots
 

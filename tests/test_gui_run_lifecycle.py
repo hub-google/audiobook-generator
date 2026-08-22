@@ -106,3 +106,29 @@ def test_chapter_update_persists_the_cleaner_pattern_snapshot():
 
     assert "cleaner_patterns = validate_remove_patterns(self.cleaner_remove_patterns)" in source
     assert "cleaner_remove_patterns=cleaner_patterns" in source
+
+
+def test_chapter_order_shortcuts_return_tk_break_directly():
+    source = GUI_SOURCE.read_text(encoding="utf-8")
+
+    assert 'return "break"' in source
+    assert 'lambda _event: (_move_selected(-1), "break")' not in source
+    assert 'lambda _event: (_move_selected(1), "break")' not in source
+
+
+def test_batch_add_uses_the_same_explicit_order_and_numbering_as_single_add():
+    source = GUI_SOURCE.read_text(encoding="utf-8")
+    batch_start = source.index("def open_batch_queue_dialog")
+    batch_end = source.index("def move_selected_task", batch_start)
+    batch_source = source[batch_start:batch_end]
+
+    assert "renumber_selected=True" in batch_source
+    assert 'chapter_order=list(range(1, result["total_chapters"] + 1))' in batch_source
+
+
+def test_partial_chapter_update_reports_completed_cloud_writes():
+    source = GUI_SOURCE.read_text(encoding="utf-8")
+
+    assert 'completed_steps.append("書籍清理設定")' in source
+    assert 'completed_steps.append("章節範圍與順序")' in source
+    assert "已成功寫入" in source

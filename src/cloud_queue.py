@@ -26,6 +26,43 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def normalize_chapter_order(values, start_chapter=1, end_chapter=None):
+    """Return unique, in-range 1-based catalog indices from persisted input."""
+    start = max(1, int(start_chapter or 1))
+    end = int(end_chapter) if end_chapter is not None else None
+    normalized = []
+    seen = set()
+    for raw_value in values or []:
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if value < start or (end is not None and value > end) or value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+    return normalized
+
+
+def move_chapter_order(chapter_order, selected_indices, delta):
+    """Move a possibly non-contiguous chapter selection by one position."""
+    order = list(chapter_order)
+    selected = {int(value) for value in selected_indices}
+    if int(delta) < 0:
+        indices = range(1, len(order))
+        neighbor_offset = -1
+    elif int(delta) > 0:
+        indices = range(len(order) - 2, -1, -1)
+        neighbor_offset = 1
+    else:
+        return order
+    for index in indices:
+        neighbor = index + neighbor_offset
+        if order[index] in selected and order[neighbor] not in selected:
+            order[neighbor], order[index] = order[index], order[neighbor]
+    return order
+
+
 def empty_queue():
     return {
         "schema_version": QUEUE_SCHEMA_VERSION,
@@ -92,6 +129,10 @@ def normalize_queue(value):
             completed.append(task)
             seen.add(task_id)
     queue["completed"] = completed
+    for task in queue["queue"] + queue["completed"]:
+        task["chapter_order"] = normalize_chapter_order(
+            task.get("chapter_order"), task.get("start_chapter") or 1, task.get("end_chapter"),
+        )
     queue["schema_version"] = QUEUE_SCHEMA_VERSION
     return queue
 
@@ -134,7 +175,7 @@ def new_task(catalog_url, book_title="", start_chapter=1, end_chapter=None, excl
             str(int(key)): str(value) for key, value in (chapter_title_overrides or {}).items()
             if str(key).isdigit() and str(value).strip()
         },
-        "chapter_order": [int(value) for value in (chapter_order or [])],
+        "chapter_order": normalize_chapter_order(chapter_order, start_chapter, end_chapter),
         "status": "queued",
         "run_id": None,
         "run_attempt": 0,
@@ -230,7 +271,7 @@ def update_task_chapters(queue, task_id, start_chapter, end_chapter, excluded_ch
             if str(key).isdigit() and str(value).strip()
         }
     if chapter_order is not None:
-        changes["chapter_order"] = [int(value) for value in chapter_order]
+        changes["chapter_order"] = normalize_chapter_order(chapter_order, start, end)
     if requeue_after_cancel:
         changes.update({"status": "canceling", "reason": "chapter_plan_updated", "requeue_after_edit": True})
     return update_task(queue, task_id, **changes)

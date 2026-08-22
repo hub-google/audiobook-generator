@@ -10,7 +10,6 @@ import os
 import sys
 import glob
 import re
-import yaml
 import wave
 import contextlib
 import subprocess

@@ -3,9 +3,9 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 from src.cloud_queue import (
-    add_tasks, current_task, empty_queue, format_chapter_label, move_task, move_tasks, new_task, next_task,
+    add_tasks, current_task, empty_queue, format_chapter_label, move_chapter_order, move_task, move_tasks, new_task, next_task,
     mark_task_interrupted, mark_task_needs_attention, requeue_task_after_active, update_task,
-    update_task_chapters, normalize_queue,
+    update_task_chapters, normalize_chapter_order, normalize_queue,
 )
 from src.queue_dispatcher import Dispatcher
 
@@ -92,6 +92,30 @@ class CloudQueueTests(unittest.TestCase):
             chapter_order=[5, 3, 1, 4, 2],
         )
         self.assertEqual(queue["queue"][0]["chapter_order"], [5, 3, 1, 4, 2])
+
+    def test_chapter_order_discards_invalid_duplicate_and_out_of_range_values(self):
+        self.assertEqual(
+            normalize_chapter_order(["3", 3, 0, -1, "bad", None, 6, 2], 1, 5),
+            [3, 2],
+        )
+        task = new_task(
+            "https://example/1", "第一部", 2, 5,
+            chapter_order=[1, 5, 5, "3", "bad", 9],
+        )
+        self.assertEqual(task["chapter_order"], [5, 3])
+
+    def test_normalize_queue_repairs_legacy_chapter_order(self):
+        task = new_task("https://example/1", "第一部", 1, 5)
+        task["chapter_order"] = [3, 3, 0, "bad", 6, 1]
+        queue = normalize_queue({"queue": [task], "completed": []})
+        self.assertEqual(queue["queue"][0]["chapter_order"], [3, 1])
+
+    def test_move_chapter_order_preserves_multi_selection_order(self):
+        order = [1, 2, 3, 4, 5, 6]
+        self.assertEqual(move_chapter_order(order, [2, 4], -1), [2, 1, 4, 3, 5, 6])
+        self.assertEqual(move_chapter_order(order, [2, 4], 1), [1, 3, 2, 5, 4, 6])
+        self.assertEqual(move_chapter_order(order, [2, 3], -1), [2, 3, 1, 4, 5, 6])
+        self.assertEqual(move_chapter_order(order, [2, 3], 1), [1, 4, 2, 3, 5, 6])
 
     def test_active_chapter_plan_update_waits_for_cancel_before_requeue(self):
         task = new_task("https://example/1", "第一部", 1, 100)

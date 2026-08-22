@@ -1,14 +1,12 @@
 import os
-import sys
 import re
 import json
-import random
 import urllib.parse
 import requests
 import logging
 import time
 from datetime import datetime
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+from PIL import Image, ImageDraw, ImageFont
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -315,7 +313,6 @@ def auto_generate_prompt_from_summary(book_title, workspace_dir=None, analyzer=N
 
 
 def download_ai_image(prompt, width=1280, height=720):
-    import time
     import io
     logging.info(f"🖼️ 連線 Hugging Face AI 繪圖伺服器 (FLUX.1-schnell) 生成 HD 封面底圖 ({width}x{height})...")
     

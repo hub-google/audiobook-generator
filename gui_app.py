@@ -8,7 +8,7 @@ import subprocess
 import requests
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext, simpledialog
+from tkinter import ttk, messagebox, scrolledtext
 from dotenv import load_dotenv
 import re
 import webbrowser
@@ -27,9 +27,10 @@ try:
     )
     from crawler import fetch_chapter_text
     from cloud_queue import (
-        BLOCKING_STATES, GitHubQueueStore, TERMINAL_STATES, add_tasks, delete_task,
-        format_chapter_label, is_task_active, mark_task_interrupted, mark_task_needs_attention, mark_task_waiting_retry, move_task,
-        move_tasks, new_task, requeue_task_after_active, update_task, update_task_chapters,
+        BLOCKING_STATES, GitHubQueueStore, add_tasks, delete_task,
+        format_chapter_label, is_task_active, mark_task_interrupted, mark_task_waiting_retry,
+        move_chapter_order, move_tasks, new_task, normalize_chapter_order, requeue_task_after_active,
+        update_task, update_task_chapters,
     )
     from github_run_status import (
         error_observation, missing_observation, observation_text,
@@ -890,7 +891,9 @@ class AudiobookGUIApp:
         self.entry_end.insert(0, str(end))
         self.excluded_chapters = {int(value) for value in task.get("excluded_chapters") or []}
         self.renumber_selected_chapters = bool(task.get("renumber_selected"))
-        self.chapter_order = [int(value) for value in task.get("chapter_order") or []]
+        self.chapter_order = normalize_chapter_order(
+            task.get("chapter_order"), task.get("start_chapter") or 1, task.get("end_chapter"),
+        )
         profile = profile or {}
         self.chapter_title_overrides = dict(profile.get("chapter_title_overrides") or task.get("chapter_title_overrides") or {})
         self.cleaner_remove_patterns = list(profile.get("cleaner_remove_patterns") or [])
@@ -1324,6 +1327,7 @@ class AudiobookGUIApp:
             messagebox.showerror("更新章節失敗", detail)
 
         def worker():
+            completed_steps = []
             try:
                 store, repo, token = self._queue_store()
                 profile_store, _, _ = self._profile_store()
@@ -1336,6 +1340,7 @@ class AudiobookGUIApp:
                     ),
                     f"Update book profile for {task.get('book_title') or task_id}",
                 )
+                completed_steps.append("書籍清理設定")
                 if active and run_id:
                     response = requests.post(
                         f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel",
@@ -1353,6 +1358,7 @@ class AudiobookGUIApp:
                     ),
                     f"Update chapter plan for audiobook task {task_id}",
                 )
+                completed_steps.append("章節範圍與順序")
                 self.cloud_queue = queue
                 dispatch_error = None
                 try:
@@ -1361,7 +1367,11 @@ class AudiobookGUIApp:
                     dispatch_error = str(error)
                 self.root.after(0, lambda q=queue, e=dispatch_error: finish_update(q, e))
             except Exception as error:
-                self.root.after(0, lambda detail=str(error): fail_update(detail))
+                completed = "、".join(completed_steps)
+                detail = str(error)
+                if completed:
+                    detail = f"{detail}\n\n已成功寫入：{completed}。請重試以完成其餘設定。"
+                self.root.after(0, lambda message=detail: fail_update(message))
         threading.Thread(target=worker, daemon=True).start()
 
     def open_batch_queue_dialog(self):
@@ -1386,7 +1396,9 @@ class AudiobookGUIApp:
                             raise RuntimeError(f"解析失敗：{url}：{result.get('error')}")
                         tasks.append(new_task(
                             url, result["book_title"], 1, result["total_chapters"],
+                            renumber_selected=True,
                             duplicate_chapter_count=result.get("duplicate_chapter_count"),
+                            chapter_order=list(range(1, result["total_chapters"] + 1)),
                         ))
                     store, _, _ = self._queue_store()
                     queue = store.mutate(lambda value: add_tasks(value, tasks), f"Batch add {len(tasks)} audiobook tasks")
@@ -2146,14 +2158,7 @@ class AudiobookGUIApp:
             if not selected:
                 info_lbl.config(text="請先選取要移動的章節（可用 Ctrl／Shift 多選）")
                 return
-            if delta < 0:
-                for index in range(1, len(chapter_order)):
-                    if chapter_order[index] in selected and chapter_order[index - 1] not in selected:
-                        chapter_order[index - 1], chapter_order[index] = chapter_order[index], chapter_order[index - 1]
-            else:
-                for index in range(len(chapter_order) - 2, -1, -1):
-                    if chapter_order[index] in selected and chapter_order[index + 1] not in selected:
-                        chapter_order[index], chapter_order[index + 1] = chapter_order[index + 1], chapter_order[index]
+            chapter_order[:] = move_chapter_order(chapter_order, selected, delta)
             self.renumber_selected_chapters = True
             _update_listbox()
             existing = [str(value) for value in chapter_order if value in selected and chapter_tree.exists(str(value))]
@@ -2208,8 +2213,16 @@ class AudiobookGUIApp:
         ttk.Button(order_frame, text="還原原始順序", command=_restore_source_order).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="確定", style="Accent.TButton", command=_close_dialog).pack(side=tk.RIGHT, padx=5)
 
-        chapter_tree.bind("<Alt-Up>", lambda _event: (_move_selected(-1), "break"))
-        chapter_tree.bind("<Alt-Down>", lambda _event: (_move_selected(1), "break"))
+        def _move_up_shortcut(_event):
+            _move_selected(-1)
+            return "break"
+
+        def _move_down_shortcut(_event):
+            _move_selected(1)
+            return "break"
+
+        chapter_tree.bind("<Alt-Up>", _move_up_shortcut)
+        chapter_tree.bind("<Alt-Down>", _move_down_shortcut)
 
     # ── 觸發 GitHub Actions ──
     def trigger_github_actions(self):
