@@ -1941,6 +1941,28 @@ class AudiobookGUIApp:
         duplicate_filter_button = ttk.Button(control_frame, text="只看重複章節")
         duplicate_filter_button.pack(side=tk.LEFT, padx=(0, 10))
 
+        catalog_url = self.url_entry.get().strip()
+
+        def _open_catalog_page():
+            if not catalog_url:
+                messagebox.showwarning("提示", "目前沒有可開啟的目錄網址！", parent=top)
+                return
+            try:
+                if not webbrowser.open(catalog_url):
+                    raise RuntimeError("系統未能啟動預設瀏覽器")
+            except Exception as error:
+                messagebox.showerror(
+                    "開啟目錄網頁失敗",
+                    f"無法使用預設瀏覽器開啟目錄網址：\n{catalog_url}\n\n{error}",
+                    parent=top,
+                )
+
+        ttk.Button(
+            control_frame,
+            text="查看目錄網頁",
+            command=_open_catalog_page,
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
         def _toggle_duplicate_filter():
             show_duplicates_only_var.set(not show_duplicates_only_var.get())
             duplicate_filter_button.config(
