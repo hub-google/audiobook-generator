@@ -1861,12 +1861,13 @@ class AudiobookGUIApp:
             for index, title in enumerate(titles, 1)
         ]
         duplicate_analysis = {"duplicate_indices": [], "duplicate_chapters": []}
+        duplicate_group_indices = set()
 
         # 紀錄目前表格顯示的章節編號列表
         visible_indices = []
 
         def _refresh_duplicates():
-            nonlocal duplicate_indices, duplicate_analysis, chapter_parts
+            nonlocal duplicate_indices, duplicate_group_indices, duplicate_analysis, chapter_parts
             chapter_parts = [
                 split_chapter_title(title, self.chapter_normalized_number_overrides.get(str(index)))
                 for index, title in enumerate(titles, 1)
@@ -1880,6 +1881,11 @@ class AudiobookGUIApp:
                 use_number_and_name=duplicate_use_number_and_name.get(),
             )
             duplicate_indices = {int(value) for value in duplicate_analysis["duplicate_indices"]}
+            duplicate_group_indices = set(duplicate_indices)
+            for item in duplicate_analysis.get("duplicate_chapters") or []:
+                duplicate_group_indices.update(
+                    int(value) for value in (item.get("original_indices") or [])
+                )
             self.catalog_data.update(duplicate_analysis)
 
         def _output_numbers():
@@ -1904,7 +1910,7 @@ class AudiobookGUIApp:
             for global_idx in chapter_order:
                 if not s_idx <= global_idx <= e_idx:
                     continue
-                if show_duplicates_only_var.get() and global_idx not in duplicate_indices:
+                if show_duplicates_only_var.get() and global_idx not in duplicate_group_indices:
                     continue
                 parts = chapter_parts[global_idx - 1]
                 is_checked = chapter_state.get(global_idx, True)
