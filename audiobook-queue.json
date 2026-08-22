@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 430,
-  "updated_at": "2026-08-22T16:09:45.789085+00:00",
+  "revision": 431,
+  "updated_at": "2026-08-22T16:14:04.669784+00:00",
   "queue": [
     {
       "task_id": "book-20260822-e697f308",
@@ -7233,39 +7233,8 @@
       "chapter_title_overrides": {}
     },
     {
-      "task_id": "book-20260822-6afa2c2c",
-      "position": 5,
-      "book_title": "全職法師",
-      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/35593",
-      "start_chapter": 1,
-      "end_chapter": 3126,
-      "excluded_chapters": [],
-      "renumber_selected": false,
-      "duplicate_chapter_count": 286,
-      "status": "queued",
-      "run_id": null,
-      "run_attempt": 0,
-      "execution_generation": 1,
-      "retry_requested_at": null,
-      "run_history": [],
-      "retry_at": null,
-      "reason": null,
-      "hf_progress": {
-        "completed": 0,
-        "total": 0
-      },
-      "youtube_progress": {
-        "completed": 0,
-        "total": 0
-      },
-      "created_at": "2026-08-22T09:51:07.805751+00:00",
-      "updated_at": "2026-08-22T09:51:07.805751+00:00",
-      "chapter_order": [],
-      "chapter_normalized_number_overrides": {}
-    },
-    {
       "task_id": "book-20260822-091e3b9f",
-      "position": 6,
+      "position": 5,
       "book_title": "傲世丹神",
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/30906",
       "start_chapter": 1,
