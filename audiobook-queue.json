@@ -1,190 +1,11 @@
 {
   "schema_version": 2,
-  "revision": 414,
-  "updated_at": "2026-08-22T10:43:18.147683+00:00",
+  "revision": 415,
+  "updated_at": "2026-08-22T12:56:34.092958+00:00",
   "queue": [
     {
-      "task_id": "book-20260819-cfdccaa4",
-      "position": 1,
-      "book_title": "吞噬星空",
-      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/2263",
-      "start_chapter": 1,
-      "end_chapter": 1486,
-      "excluded_chapters": [
-        20,
-        36,
-        137,
-        168,
-        296,
-        302,
-        320,
-        345,
-        402,
-        418,
-        515,
-        528,
-        552,
-        556,
-        603,
-        605,
-        611,
-        627,
-        649,
-        660,
-        694,
-        707,
-        710,
-        738,
-        752,
-        806,
-        818,
-        857,
-        859,
-        865,
-        918,
-        933,
-        957,
-        972,
-        973,
-        1001,
-        1024,
-        1065,
-        1066,
-        1076,
-        1113,
-        1114,
-        1132,
-        1147,
-        1166,
-        1235,
-        1289,
-        1292,
-        1297,
-        1311,
-        1334,
-        1374,
-        1416,
-        1421,
-        1422,
-        1426,
-        1447,
-        1453,
-        1475
-      ],
-      "status": "running",
-      "run_id": 32565954027,
-      "run_attempt": 1,
-      "retry_at": null,
-      "reason": null,
-      "hf_progress": {
-        "completed": 0,
-        "total": 0
-      },
-      "youtube_progress": {
-        "completed": 0,
-        "total": 0
-      },
-      "created_at": "2026-08-19T02:46:37.628018+00:00",
-      "updated_at": "2026-08-22T09:49:06.493568+00:00",
-      "run_conclusion": null,
-      "run_completed_at": null,
-      "run_history": [
-        {
-          "run_id": 32209790373,
-          "conclusion": "missing",
-          "ended_at": "2026-08-19T03:58:01.064926+00:00"
-        },
-        {
-          "run_id": 32214049849,
-          "conclusion": "cancelled",
-          "ended_at": "2026-08-19T04:01:18Z"
-        },
-        {
-          "run_id": 32215455813,
-          "conclusion": "cancelled",
-          "ended_at": "2026-08-19T07:01:13.245015+00:00"
-        },
-        {
-          "run_id": 32225925047,
-          "conclusion": "cancelled",
-          "ended_at": "2026-08-19T08:07:16Z"
-        },
-        {
-          "run_id": 32231412989,
-          "conclusion": "cancelled",
-          "ended_at": "2026-08-19T08:07:16Z"
-        },
-        {
-          "run_id": 32231716966,
-          "conclusion": "cancelled",
-          "ended_at": "2026-08-19T10:12:32Z"
-        },
-        {
-          "run_id": 32264477776,
-          "conclusion": "failure",
-          "ended_at": "2026-08-19T23:44:26Z"
-        },
-        {
-          "run_id": 32319224629,
-          "conclusion": "failure",
-          "ended_at": "2026-08-20T01:07:09Z"
-        },
-        {
-          "run_id": 32321148919,
-          "conclusion": "failure",
-          "ended_at": "2026-08-20T01:32:20Z"
-        },
-        {
-          "run_id": 32322921633,
-          "conclusion": "failure",
-          "ended_at": "2026-08-20T02:02:08Z"
-        },
-        {
-          "run_id": 32324149254,
-          "conclusion": "failure",
-          "ended_at": "2026-08-20T02:22:07Z"
-        },
-        {
-          "run_id": 32325705308,
-          "conclusion": "cancelled",
-          "ended_at": "2026-08-20T03:05:22.343357+00:00"
-        },
-        {
-          "run_id": 32326992608,
-          "conclusion": "cancelled",
-          "ended_at": "2026-08-20T03:05:51Z"
-        },
-        {
-          "run_id": 32327215625,
-          "conclusion": "cancelled",
-          "ended_at": "2026-08-20T03:24:32Z"
-        },
-        {
-          "run_id": 32328228840,
-          "conclusion": "cancelled",
-          "ended_at": "2026-08-20T03:42:40Z"
-        },
-        {
-          "run_id": 32344424987,
-          "conclusion": "cancelled",
-          "ended_at": "2026-08-20T08:13:08Z"
-        },
-        {
-          "run_id": 32465816230,
-          "conclusion": "cancelled",
-          "ended_at": "2026-08-21T09:01:00Z"
-        }
-      ],
-      "retry_requested_at": "2026-08-22T09:48:37.017788+00:00",
-      "execution_generation": 18,
-      "renumber_selected": true,
-      "duplicate_chapter_count": 1366,
-      "requeue_after_edit": false,
-      "completed_at": "2026-08-20T02:48:17Z"
-    },
-    {
       "task_id": "book-20260822-e697f308",
-      "position": 2,
+      "position": 1,
       "book_title": "完美世界",
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
       "start_chapter": 1,
@@ -342,7 +163,7 @@
     },
     {
       "task_id": "book-20260822-27eedcc7",
-      "position": 3,
+      "position": 2,
       "book_title": "大主宰",
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33644",
       "start_chapter": 1,
@@ -371,7 +192,7 @@
     },
     {
       "task_id": "book-20260822-a49e60a1",
-      "position": 4,
+      "position": 3,
       "book_title": "斗破蒼穹",
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/1642",
       "start_chapter": 1,
@@ -400,7 +221,7 @@
     },
     {
       "task_id": "book-20260822-af7a5cec",
-      "position": 5,
+      "position": 4,
       "book_title": "牧神記",
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/36278",
       "start_chapter": 1,
@@ -429,7 +250,7 @@
     },
     {
       "task_id": "book-20260822-6afa2c2c",
-      "position": 6,
+      "position": 5,
       "book_title": "全職法師",
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/35593",
       "start_chapter": 1,
@@ -458,7 +279,7 @@
     },
     {
       "task_id": "book-20260822-091e3b9f",
-      "position": 7,
+      "position": 6,
       "book_title": "傲世丹神",
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/30906",
       "start_chapter": 1,
@@ -703,6 +524,184 @@
       "renumber_selected": true,
       "duplicate_chapter_count": 144,
       "completed_at": "2026-08-22T08:56:35Z"
+    },
+    {
+      "task_id": "book-20260819-cfdccaa4",
+      "book_title": "吞噬星空",
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/2263",
+      "start_chapter": 1,
+      "end_chapter": 1486,
+      "excluded_chapters": [
+        20,
+        36,
+        137,
+        168,
+        296,
+        302,
+        320,
+        345,
+        402,
+        418,
+        515,
+        528,
+        552,
+        556,
+        603,
+        605,
+        611,
+        627,
+        649,
+        660,
+        694,
+        707,
+        710,
+        738,
+        752,
+        806,
+        818,
+        857,
+        859,
+        865,
+        918,
+        933,
+        957,
+        972,
+        973,
+        1001,
+        1024,
+        1065,
+        1066,
+        1076,
+        1113,
+        1114,
+        1132,
+        1147,
+        1166,
+        1235,
+        1289,
+        1292,
+        1297,
+        1311,
+        1334,
+        1374,
+        1416,
+        1421,
+        1422,
+        1426,
+        1447,
+        1453,
+        1475
+      ],
+      "status": "completed",
+      "run_id": 32565954027,
+      "run_attempt": 1,
+      "retry_at": null,
+      "reason": null,
+      "hf_progress": {
+        "completed": 21,
+        "total": 21
+      },
+      "youtube_progress": {
+        "completed": 21,
+        "total": 21
+      },
+      "created_at": "2026-08-19T02:46:37.628018+00:00",
+      "updated_at": "2026-08-22T12:56:34.092913+00:00",
+      "run_conclusion": null,
+      "run_completed_at": null,
+      "run_history": [
+        {
+          "run_id": 32209790373,
+          "conclusion": "missing",
+          "ended_at": "2026-08-19T03:58:01.064926+00:00"
+        },
+        {
+          "run_id": 32214049849,
+          "conclusion": "cancelled",
+          "ended_at": "2026-08-19T04:01:18Z"
+        },
+        {
+          "run_id": 32215455813,
+          "conclusion": "cancelled",
+          "ended_at": "2026-08-19T07:01:13.245015+00:00"
+        },
+        {
+          "run_id": 32225925047,
+          "conclusion": "cancelled",
+          "ended_at": "2026-08-19T08:07:16Z"
+        },
+        {
+          "run_id": 32231412989,
+          "conclusion": "cancelled",
+          "ended_at": "2026-08-19T08:07:16Z"
+        },
+        {
+          "run_id": 32231716966,
+          "conclusion": "cancelled",
+          "ended_at": "2026-08-19T10:12:32Z"
+        },
+        {
+          "run_id": 32264477776,
+          "conclusion": "failure",
+          "ended_at": "2026-08-19T23:44:26Z"
+        },
+        {
+          "run_id": 32319224629,
+          "conclusion": "failure",
+          "ended_at": "2026-08-20T01:07:09Z"
+        },
+        {
+          "run_id": 32321148919,
+          "conclusion": "failure",
+          "ended_at": "2026-08-20T01:32:20Z"
+        },
+        {
+          "run_id": 32322921633,
+          "conclusion": "failure",
+          "ended_at": "2026-08-20T02:02:08Z"
+        },
+        {
+          "run_id": 32324149254,
+          "conclusion": "failure",
+          "ended_at": "2026-08-20T02:22:07Z"
+        },
+        {
+          "run_id": 32325705308,
+          "conclusion": "cancelled",
+          "ended_at": "2026-08-20T03:05:22.343357+00:00"
+        },
+        {
+          "run_id": 32326992608,
+          "conclusion": "cancelled",
+          "ended_at": "2026-08-20T03:05:51Z"
+        },
+        {
+          "run_id": 32327215625,
+          "conclusion": "cancelled",
+          "ended_at": "2026-08-20T03:24:32Z"
+        },
+        {
+          "run_id": 32328228840,
+          "conclusion": "cancelled",
+          "ended_at": "2026-08-20T03:42:40Z"
+        },
+        {
+          "run_id": 32344424987,
+          "conclusion": "cancelled",
+          "ended_at": "2026-08-20T08:13:08Z"
+        },
+        {
+          "run_id": 32465816230,
+          "conclusion": "cancelled",
+          "ended_at": "2026-08-21T09:01:00Z"
+        }
+      ],
+      "retry_requested_at": "2026-08-22T09:48:37.017788+00:00",
+      "execution_generation": 18,
+      "renumber_selected": true,
+      "duplicate_chapter_count": 1366,
+      "requeue_after_edit": false,
+      "completed_at": "2026-08-22T12:42:47Z"
     }
   ]
 }
