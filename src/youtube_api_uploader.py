@@ -813,12 +813,14 @@ def upload_video_file(youtube, video_path, title, description, category_id="22",
 
         return video_id
 
-def upload_caption_file(youtube, video_id, srt_path, language="zh-TW", name="繁體中文"):
+def upload_caption_file(youtube, video_id, srt_path, language="zh-TW", name="繁體中文",
+                        visibility_attempts=5, initial_visibility_delay=2):
     """使用 YouTube Captions API 上傳 CC 字幕軌檔 (SRT)"""
     if not srt_path or not os.path.exists(srt_path) or os.path.getsize(srt_path) < 10:
         logging.warning(f"⚠️ [Caption] 字幕檔不存在或為空: {srt_path}")
         return False
 
+    visibility_failures = 0
     while True:
         # 1. 清除該影片歷史舊字幕軌 (避免舊測試檔殘留)
         try:
@@ -835,6 +837,19 @@ def upload_caption_file(youtube, video_id, srt_path, language="zh-TW", name="繁
             if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e) is True:
                 logging.info("🔄 配額已切換至下一專案，重新發起 CC 字幕清理與上傳...")
                 continue
+            if "videoNotFound" in err_str:
+                # A video created through one API project can briefly be
+                # invisible after the pool rotates to another project, even
+                # when both credentials manage the same channel.
+                visibility_failures += 1
+                if visibility_failures < visibility_attempts:
+                    delay = min(initial_visibility_delay * (2 ** (visibility_failures - 1)), 16)
+                    logging.warning(
+                        "影片尚未對新 API 專案可見；%s 秒後重試字幕上傳 (%s/%s)。",
+                        delay, visibility_failures, visibility_attempts,
+                    )
+                    time.sleep(delay)
+                    continue
             logging.warning(f"  無法列出既有字幕軌: {e}")
 
         # 2. 上傳全新 SRT 字幕檔
@@ -862,6 +877,16 @@ def upload_caption_file(youtube, video_id, srt_path, language="zh-TW", name="繁
             if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e) is True:
                 logging.info("🔄 配額已切換至下一專案，重新嘗試上傳 CC 字幕...")
                 continue
+            if "videoNotFound" in err_str:
+                visibility_failures += 1
+                if visibility_failures < visibility_attempts:
+                    delay = min(initial_visibility_delay * (2 ** (visibility_failures - 1)), 16)
+                    logging.warning(
+                        "影片尚未對新 API 專案可見；%s 秒後重試字幕上傳 (%s/%s)。",
+                        delay, visibility_failures, visibility_attempts,
+                    )
+                    time.sleep(delay)
+                    continue
             logging.error(f"❌ 上傳 CC 字幕失敗 [Video ID: {video_id}]: {e}")
             paused = classify_daily_limit(e)
             if paused:

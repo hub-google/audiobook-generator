@@ -107,6 +107,41 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         youtube.captions.return_value.insert.assert_called_once()
 
     @patch("src.youtube_api_uploader.MediaFileUpload")
+    @patch("src.youtube_api_uploader.time.sleep")
+    def test_caption_retries_visibility_after_project_rotation(self, sleep, media_upload):
+        youtube = MagicMock()
+        youtube.captions.return_value.list.return_value.execute.side_effect = [
+            Exception("videoNotFound"),
+            {"items": []},
+        ]
+        youtube.captions.return_value.insert.return_value.execute.return_value = {"id": "caption-20"}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            srt_path = os.path.join(temp_dir, "part-20.srt")
+            with open(srt_path, "w", encoding="utf-8") as handle:
+                handle.write("1\n00:00:00,000 --> 00:00:01,000\ncaption\n")
+
+            self.assertTrue(upload_caption_file(youtube, "video-20", srt_path))
+
+        sleep.assert_called_once_with(2)
+        self.assertEqual(youtube.captions.return_value.list.return_value.execute.call_count, 2)
+
+    @patch("src.youtube_api_uploader.MediaFileUpload")
+    @patch("src.youtube_api_uploader.time.sleep")
+    def test_caption_still_fails_for_persistent_video_not_found(self, sleep, media_upload):
+        youtube = MagicMock()
+        youtube.captions.return_value.list.return_value.execute.side_effect = Exception("videoNotFound")
+        youtube.captions.return_value.insert.return_value.execute.side_effect = Exception("videoNotFound")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            srt_path = os.path.join(temp_dir, "missing.srt")
+            with open(srt_path, "w", encoding="utf-8") as handle:
+                handle.write("1\n00:00:00,000 --> 00:00:01,000\ncaption\n")
+
+            self.assertFalse(upload_caption_file(
+                youtube, "missing-video", srt_path,
+                visibility_attempts=2, initial_visibility_delay=0,
+            ))
+
+    @patch("src.youtube_api_uploader.MediaFileUpload")
     def test_caption_daily_quota_requests_safe_pause(self, media_upload):
         youtube = MagicMock()
         youtube.captions.return_value.list.return_value.execute.return_value = {"items": []}
