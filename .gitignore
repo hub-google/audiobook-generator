@@ -3,7 +3,10 @@
 .env.*
 !.env.example
 client_secret*.json
-token.json
+client_secret/
+token*.json
+token_*.json
+tokens/
 *.pem
 
 # Python

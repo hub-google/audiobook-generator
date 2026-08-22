@@ -180,102 +180,253 @@ def is_transient_upload_error(error):
     # evaluated only around next_chunk(), so retrying is safe and bounded.
     return isinstance(error, OSError)
 
-def get_authenticated_service():
-    """獲取與授權 YouTube API v3 Service (支援 client_secret.json / token.json / env refresh token)"""
-    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    token_path = os.path.join(BASE_DIR, "token.json")
-    client_secret_path = os.path.join(BASE_DIR, "client_secret.json")
+class YouTubeServicePool:
+    """管理多組 YouTube API 專案金鑰，支援自動探索、單一介面調用與 403 quotaExceeded 無縫輪替"""
 
-    creds = None
+    def __init__(self):
+        self.accounts = []
+        self.active_index = 0
+        self.discover_accounts()
 
-    # 1. 嘗試從 token.json 讀取
-    if os.path.exists(token_path):
-        try:
-            creds = Credentials.from_authorized_user_file(token_path)
-        except Exception as e:
-            logging.warning(f"無法讀取 token.json: {e}")
+    def discover_accounts(self):
+        BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cs_dir = os.path.join(BASE_DIR, "client_secret")
 
-    # 2. 嘗試從環境變數 (YOUTUBE_REFRESH_TOKEN, YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET) 讀取
-    ref_token = os.environ.get("YOUTUBE_REFRESH_TOKEN", "").strip()
-    client_id = os.environ.get("YOUTUBE_CLIENT_ID", "").strip()
-    client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET", "").strip()
+        for slot in range(1, 11):
+            # 1. 檔案路徑檢查
+            cs_path = os.path.join(cs_dir, f"client_secret_{slot}.json")
+            if slot == 1 and not os.path.exists(cs_path):
+                root_cs = os.path.join(BASE_DIR, "client_secret.json")
+                if os.path.exists(root_cs):
+                    cs_path = root_cs
 
-    if (not creds or not creds.valid) and ref_token and client_id and client_secret:
-        creds = Credentials(
-            token=None,
-            refresh_token=ref_token,
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=client_id,
-            client_secret=client_secret,
-            scopes=None
-        )
+            tok_path = os.path.join(cs_dir, f"token_{slot}.json")
+            if slot == 1 and not os.path.exists(tok_path):
+                root_tok = os.path.join(BASE_DIR, "token.json")
+                if os.path.exists(root_tok):
+                    tok_path = root_tok
 
-    # 3. 嘗試動態合成 client_secret.json (如果 CI/CD 或環境中不存在)
-    if not os.path.exists(client_secret_path) and client_id and client_secret:
-        try:
-            import json
-            cs_data = {
-                "installed": {
+            # 2. 環境變數檢查 (Slot 1 支援標準 YOUTUBE_*，Slot 2..10 支援 YOUTUBE_*_N)
+            if slot == 1:
+                ref_token = os.environ.get("YOUTUBE_REFRESH_TOKEN_1") or os.environ.get("YOUTUBE_REFRESH_TOKEN", "").strip()
+                client_id = os.environ.get("YOUTUBE_CLIENT_ID_1") or os.environ.get("YOUTUBE_CLIENT_ID", "").strip()
+                client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET_1") or os.environ.get("YOUTUBE_CLIENT_SECRET", "").strip()
+            else:
+                ref_token = os.environ.get(f"YOUTUBE_REFRESH_TOKEN_{slot}", "").strip()
+                client_id = os.environ.get(f"YOUTUBE_CLIENT_ID_{slot}", "").strip()
+                client_secret = os.environ.get(f"YOUTUBE_CLIENT_SECRET_{slot}", "").strip()
+
+            has_file = (os.path.exists(cs_path) or os.path.exists(tok_path))
+            has_env = bool((client_id and client_secret) or ref_token)
+
+            if has_file or has_env:
+                self.accounts.append({
+                    "slot": slot,
+                    "cs_path": cs_path,
+                    "tok_path": tok_path,
                     "client_id": client_id,
                     "client_secret": client_secret,
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token"
+                    "refresh_token": ref_token,
+                    "service": None,
+                    "creds": None,
+                    "exhausted": False
+                })
+
+        logging.info("🔑 [YouTube-Pool] 偵測到 %s 組 YouTube API 專案金鑰/憑證設定。", len(self.accounts))
+
+    def _authenticate_account(self, acc):
+        slot = acc["slot"]
+        tok_path = acc["tok_path"]
+        cs_path = acc["cs_path"]
+        ref_token = acc["refresh_token"]
+        client_id = acc["client_id"]
+        client_secret = acc["client_secret"]
+
+        creds = None
+
+        # 1. 嘗試從 token 檔案讀取
+        if tok_path and os.path.exists(tok_path):
+            try:
+                creds = Credentials.from_authorized_user_file(tok_path)
+            except Exception as e:
+                logging.warning(f"[專案 #{slot}] 無法讀取 {tok_path}: {e}")
+
+        # 2. 嘗試從環境變數讀取
+        if (not creds or not creds.valid) and ref_token and client_id and client_secret:
+            creds = Credentials(
+                token=None,
+                refresh_token=ref_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=client_id,
+                client_secret=client_secret,
+                scopes=None
+            )
+
+        # 3. 嘗試動態合成 client_secret 檔
+        if cs_path and not os.path.exists(cs_path) and client_id and client_secret:
+            try:
+                cs_data = {
+                    "installed": {
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "token_uri": "https://oauth2.googleapis.com/token"
+                    }
                 }
-            }
-            with open(client_secret_path, "w", encoding="utf-8") as f:
-                json.dump(cs_data, f)
-            logging.info(f"✅ 已由環境變數動態生成 {client_secret_path}")
-        except Exception as e:
-            logging.warning(f"無法寫入 client_secret.json: {e}")
+                _atomic_write_json(cs_path, cs_data)
+                logging.info(f"✅ [專案 #{slot}] 已由環境變數動態生成 {cs_path}")
+            except Exception as e:
+                logging.warning(f"[專案 #{slot}] 無法寫入 client_secret JSON: {e}")
 
-    # 4. 重新整理 Token
-    if creds and creds.refresh_token:
-        try:
-            creds.refresh(Request())
-            with open(token_path, "w", encoding="utf-8") as token_file:
-                token_file.write(creds.to_json())
-        except Exception as e:
-            logging.warning(f"重新整理 Refresh Token 失敗: {e}")
-            if "invalid_scope" in str(e):
-                logging.info("🔄 嘗試清除顯式 Scope 重新刷新憑證...")
-                try:
-                    creds._scopes = None
-                    creds.refresh(Request())
-                    with open(token_path, "w", encoding="utf-8") as token_file:
-                        token_file.write(creds.to_json())
-                    logging.info("✅ 成功使用 Refresh Token 原始授權刷新 Access Token！")
-                except Exception as ex2:
-                    logging.error(f"❌ 再次刷新失敗: {ex2}")
+        # 4. 重新整理 Token
+        if creds and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                if tok_path:
+                    _atomic_write_json(tok_path, json.loads(creds.to_json()))
+            except Exception as e:
+                logging.warning(f"[專案 #{slot}] 重新整理 Refresh Token 失敗: {e}")
+                if "invalid_scope" in str(e):
+                    logging.info(f"🔄 [專案 #{slot}] 嘗試清除顯式 Scope 重新刷新憑證...")
+                    try:
+                        creds._scopes = None
+                        creds.refresh(Request())
+                        if tok_path:
+                            _atomic_write_json(tok_path, json.loads(creds.to_json()))
+                        logging.info(f"✅ [專案 #{slot}] 成功刷新 Access Token！")
+                    except Exception as ex2:
+                        logging.error(f"❌ [專案 #{slot}] 再次刷新失敗: {ex2}")
+                        creds = None
+                else:
                     creds = None
-            else:
-                creds = None
 
-    # 5. 如果沒有有效憑證，判斷是否為 CI/CD 無頭環境
-    if not creds or not creds.valid:
-        is_ci = os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")
-        if is_ci:
-            logging.error("❌ GitHub Actions 無頭環境無法開啟瀏覽器進行互動式授權！")
-            logging.error("👉 請檢查 GitHub Secrets 中的 YOUTUBE_REFRESH_TOKEN / YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET 是否正確。")
-            logging.error("👉 若 Refresh Token 已失效，請在本地 GUI 重新進行 YouTube 授權並將新 Token 更新至 GitHub Secrets。")
+        # 5. 若無有效憑證
+        if not creds or not creds.valid:
+            is_ci = os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")
+            if is_ci:
+                logging.warning(f"❌ [專案 #{slot}] 在 CI/CD 無頭環境中無有效憑證，跳過此專案。")
+                return None, None
+
+            if not cs_path or not os.path.exists(cs_path):
+                logging.error(f"❌ [專案 #{slot}] 找不到 client_secret 檔案且未設定環境變數！")
+                return None, None
+
+            try:
+                logging.info(f"🔑 [專案 #{slot}] 正在開啟瀏覽器進行 YouTube OAuth2 登入授權...")
+                flow = InstalledAppFlow.from_client_secrets_file(cs_path, SCOPES)
+                creds = flow.run_local_server(port=0)
+                if tok_path:
+                    _atomic_write_json(tok_path, json.loads(creds.to_json()))
+                logging.info(f"✅ [專案 #{slot}] 授權成功！憑證已儲存至 {tok_path}")
+            except Exception as e:
+                logging.error(f"❌ [專案 #{slot}] 無法完成 YouTube API 授權: {e}")
+                return None, None
+
+        service = build("youtube", "v3", credentials=creds)
+        return service, creds
+
+    def get_service(self, slot_idx=None):
+        if not self.accounts:
+            logging.error("❌ 未找到任何可用的 YouTube API 專案設定！")
             sys.exit(1)
 
-        if not os.path.exists(client_secret_path):
-            logging.error(f"❌ 找不到 client_secret.json 且未設定 YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET！請在 GitHub Secrets 設定憑證。")
-            sys.exit(1)
+        if slot_idx is None:
+            slot_idx = self.active_index
 
-        try:
-            logging.info("🔑 正在開啟瀏覽器進行 YouTube OAuth2 登入授權...")
-            flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
-            creds = flow.run_local_server(port=0)
+        if slot_idx >= len(self.accounts):
+            return None
 
-            with open(token_path, "w", encoding="utf-8") as token_file:
-                token_file.write(creds.to_json())
-            logging.info(f"✅ 授權成功！憑證已儲存至 {token_path}")
-        except Exception as e:
-            logging.error(f"❌ 無法完成 YouTube API 授權: {e}")
-            sys.exit(1)
+        acc = self.accounts[slot_idx]
+        if acc["service"] is None:
+            acc["service"], acc["creds"] = self._authenticate_account(acc)
+        return acc["service"]
 
-    return build("youtube", "v3", credentials=creds)
+    @property
+    def active_account(self):
+        if 0 <= self.active_index < len(self.accounts):
+            return self.accounts[self.active_index]
+        return None
+
+    @property
+    def active_service(self):
+        srv = self.get_service(self.active_index)
+        if srv is None:
+            # Try next unexhausted account if current failed to initialize
+            for idx in range(len(self.accounts)):
+                if not self.accounts[idx]["exhausted"]:
+                    self.active_index = idx
+                    srv = self.get_service(idx)
+                    if srv is not None:
+                        return srv
+        return srv
+
+    def rotate_on_quota(self, error=None) -> bool:
+        """當遇到 quotaExceeded 時將當前專案標記為耗盡，並自動切換至下一個可用專案"""
+        if not self.accounts:
+            return False
+
+        current = self.active_account
+        if current:
+            current["exhausted"] = True
+            logging.warning(f"🚨 【專案 #{current['slot']} 配額耗盡】 (quotaExceeded)")
+
+        for idx in range(len(self.accounts)):
+            if not self.accounts[idx]["exhausted"]:
+                old_slot = current["slot"] if current else "N/A"
+                next_acc = self.accounts[idx]
+                srv = self.get_service(idx)
+                if srv is not None:
+                    self.active_index = idx
+                    logging.info(f"🔄 【多專案自動輪替】已成功由專案 #{old_slot} 切換至專案 #{next_acc['slot']} 繼續發布！")
+                    return True
+
+        logging.error("🚨 【所有 YouTube 專案配額皆已用盡】！無法切換至其他專案。")
+        return False
+
+    def authorize_all_local(self, sync_github=True):
+        """本地一次授權所有 client_secrets 並生成對應的 tokens"""
+        logging.info("🚀 開始檢查並授權所有 YouTube 專案...")
+        success_count = 0
+        for acc in self.accounts:
+            slot = acc["slot"]
+            srv, creds = self._authenticate_account(acc)
+            if srv and creds:
+                success_count += 1
+                logging.info(f"✅ 專案 #{slot} 授權有效！")
+                if sync_github and creds.refresh_token and acc["cs_path"] and os.path.exists(acc["cs_path"]):
+                    try:
+                        with open(acc["cs_path"], "r", encoding="utf-8") as f:
+                            cs_info = json.load(f).get("installed", {})
+                        cid = cs_info.get("client_id", "")
+                        csec = cs_info.get("client_secret", "")
+                        if cid and csec:
+                            gh_bin = _find_gh()
+                            suffix = f"_{slot}" if slot > 1 else ""
+                            # Set secrets via gh
+                            subprocess.run([gh_bin, "secret", "set", f"YOUTUBE_CLIENT_ID{suffix}", "--body", cid], check=False)
+                            subprocess.run([gh_bin, "secret", "set", f"YOUTUBE_CLIENT_SECRET{suffix}", "--body", csec], check=False)
+                            subprocess.run([gh_bin, "secret", "set", f"YOUTUBE_REFRESH_TOKEN{suffix}", "--body", creds.refresh_token], check=False)
+                            logging.info(f"☁️ 已自動將專案 #{slot} 憑證同步至 GitHub Secrets (YOUTUBE_*_{slot})！")
+                    except Exception as e:
+                        logging.warning(f"同步至 GitHub Secrets 失敗: {e}")
+        logging.info(f"🎉 授權檢測完成：共 {success_count}/{len(self.accounts)} 個專案可用！")
+        return success_count
+
+    def __getattr__(self, name):
+        srv = self.active_service
+        if srv is None:
+            raise AttributeError(f"No active YouTube service available for '{name}'")
+        return getattr(srv, name)
+
+
+def get_authenticated_service():
+    """獲取與授權 YouTube API v3 Service Pool (支援多專案輪替)"""
+    pool = YouTubeServicePool()
+    if pool.active_service is None:
+        logging.error("❌ 無法初始化任何 YouTube API Service！")
+        sys.exit(1)
+    return pool
+
 
 def parse_chapter_info(filename):
     """從檔名解析起始與結束章節號碼，供升序排序"""
@@ -297,47 +448,52 @@ def parse_chapter_info(filename):
 
 def get_or_create_playlist(youtube, playlist_title, playlist_desc=""):
     """Return ``(playlist_id, created)`` for the requested playlist."""
-    logging.info(f"🔍 檢查 YouTube 頻道是否存在播放清單:【{playlist_title}】...")
-    try:
-        page_token = None
-        while True:
-            response = youtube.playlists().list(
-                part="snippet,status", mine=True, maxResults=50,
-                pageToken=page_token,
-            ).execute()
-            for item in response.get("items", []):
-                if item["snippet"]["title"].strip() == playlist_title.strip():
-                    playlist_id = item["id"]
-                    logging.info(f"✅ 找到已有播放清單 (ID: {playlist_id}):【{playlist_title}】")
-                    return playlist_id, False
-            page_token = response.get("nextPageToken")
-            if not page_token:
-                break
+    while True:
+        logging.info(f"🔍 檢查 YouTube 頻道是否存在播放清單:【{playlist_title}】...")
+        try:
+            page_token = None
+            while True:
+                response = youtube.playlists().list(
+                    part="snippet,status", mine=True, maxResults=50,
+                    pageToken=page_token,
+                ).execute()
+                for item in response.get("items", []):
+                    if item["snippet"]["title"].strip() == playlist_title.strip():
+                        playlist_id = item["id"]
+                        logging.info(f"✅ 找到已有播放清單 (ID: {playlist_id}):【{playlist_title}】")
+                        return playlist_id, False
+                page_token = response.get("nextPageToken")
+                if not page_token:
+                    break
 
-        logging.info(f"➕ 正在建立全新播放清單:【{playlist_title}】...")
-        body = {
-            "snippet": {
-                "title": playlist_title,
-                "description": playlist_desc,
-                "defaultLanguage": "zh-TW"
-            },
-            "status": {
-                "privacyStatus": "public"
+            logging.info(f"➕ 正在建立全新播放清單:【{playlist_title}】...")
+            body = {
+                "snippet": {
+                    "title": playlist_title,
+                    "description": playlist_desc,
+                    "defaultLanguage": "zh-TW"
+                },
+                "status": {
+                    "privacyStatus": "public"
+                }
             }
-        }
-        create_res = youtube.playlists().insert(
-            part="snippet,status",
-            body=body
-        ).execute()
-        playlist_id = create_res["id"]
-        logging.info(f"🎉 成功建立播放清單 (ID: {playlist_id}):【{playlist_title}】")
-        return playlist_id, True
-    except Exception as e:
-        logging.error(f"❌ 查詢/建立播放清單失敗: {e}")
-        paused = classify_daily_limit(e)
-        if paused:
-            raise paused from e
-        return None, False
+            create_res = youtube.playlists().insert(
+                part="snippet,status",
+                body=body
+            ).execute()
+            playlist_id = create_res["id"]
+            logging.info(f"🎉 成功建立播放清單 (ID: {playlist_id}):【{playlist_title}】")
+            return playlist_id, True
+        except Exception as e:
+            if ("quotaExceeded" in str(e) or "dailyLimitExceeded" in str(e)) and hasattr(youtube, "rotate_on_quota") and youtube.rotate_on_quota(e):
+                logging.info("🔄 配額已切換至下一專案，重新查詢/建立播放清單...")
+                continue
+            logging.error(f"❌ 查詢/建立播放清單失敗: {e}")
+            paused = classify_daily_limit(e)
+            if paused:
+                raise paused from e
+            return None, False
+
 
 def add_video_to_playlist(youtube, playlist_id, video_id, position=None):
     """將影片加到指定的播放清單中 (依呼叫順序追加)"""
@@ -458,7 +614,11 @@ def set_video_thumbnail(youtube, video_id, cover_path, attempts=5):
             return True
         except Exception as e:
             last_error = e
-            if "uploadRateLimitExceeded" in str(e) or "429" in str(e):
+            err_str = str(e)
+            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and hasattr(youtube, "rotate_on_quota") and youtube.rotate_on_quota(e):
+                logging.info("🔄 配額已切換至下一專案，重新嘗試設定封面縮圖...")
+                continue
+            if "uploadRateLimitExceeded" in err_str or "429" in err_str:
                 wait_sec = (attempt + 1) * 10
                 logging.warning(
                     "⚠️ 設定縮圖觸發速率限制 (429)，等待 %s 秒後重試 (%s/%s)...",
@@ -481,89 +641,94 @@ def upload_video_file(youtube, video_path, title, description, category_id="22",
                       privacy_status="public", cover_path=None,
                       network_attempts=8, initial_retry_delay=2):
     """使用 Resumable 上傳 MP4 到 YouTube"""
-    file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
-    logging.info(f"📤 開始 API 極速上傳影片: {title} (檔案大小: {file_size_mb:.1f} MB)...")
-    sys.stdout.flush()
+    while True:
+        file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
+        logging.info(f"📤 開始 API 極速上傳影片: {title} (檔案大小: {file_size_mb:.1f} MB)...")
+        sys.stdout.flush()
 
-    body = {
-        "snippet": {
-            "title": title[:100],
-            "description": description[:5000],
-            "categoryId": category_id
-        },
-        "status": {
-            "privacyStatus": privacy_status,
-            "selfDeclaredMadeForKids": False
+        body = {
+            "snippet": {
+                "title": title[:100],
+                "description": description[:5000],
+                "categoryId": category_id
+            },
+            "status": {
+                "privacyStatus": privacy_status,
+                "selfDeclaredMadeForKids": False
+            }
         }
-    }
 
-    media = MediaFileUpload(video_path, chunksize=10*1024*1024, resumable=True)
-    request = youtube.videos().insert(
-        part="snippet,status",
-        body=body,
-        media_body=media
-    )
+        media = MediaFileUpload(video_path, chunksize=10*1024*1024, resumable=True)
+        request = youtube.videos().insert(
+            part="snippet,status",
+            body=body,
+            media_body=media
+        )
 
-    response = None
-    last_logged_pct = -10
-    start_time = time.time()
-    consecutive_network_failures = 0
+        response = None
+        last_logged_pct = -10
+        start_time = time.time()
+        consecutive_network_failures = 0
 
-    try:
-        while response is None:
-            try:
-                # Let googleapiclient retry short failures internally first.
-                # The outer loop preserves and resumes the same upload session
-                # when TLS/socket failures outlive those internal attempts.
-                status, response = request.next_chunk(num_retries=3)
-                consecutive_network_failures = 0
-            except Exception as error:
-                if not is_transient_upload_error(error):
-                    raise
-                consecutive_network_failures += 1
-                if consecutive_network_failures >= network_attempts:
-                    raise
-                delay = min(
-                    initial_retry_delay * (2 ** (consecutive_network_failures - 1)),
-                    60,
-                )
-                logging.warning(
-                    "上傳連線暫時中斷：%s；%s 秒後從斷點重試 (%s/%s)。",
-                    error, delay, consecutive_network_failures, network_attempts,
-                )
-                time.sleep(delay)
+        try:
+            while response is None:
+                try:
+                    # Let googleapiclient retry short failures internally first.
+                    # The outer loop preserves and resumes the same upload session
+                    # when TLS/socket failures outlive those internal attempts.
+                    status, response = request.next_chunk(num_retries=3)
+                    consecutive_network_failures = 0
+                except Exception as error:
+                    if not is_transient_upload_error(error):
+                        raise
+                    consecutive_network_failures += 1
+                    if consecutive_network_failures >= network_attempts:
+                        raise
+                    delay = min(
+                        initial_retry_delay * (2 ** (consecutive_network_failures - 1)),
+                        60,
+                    )
+                    logging.warning(
+                        "上傳連線暫時中斷：%s；%s 秒後從斷點重試 (%s/%s)。",
+                        error, delay, consecutive_network_failures, network_attempts,
+                    )
+                    time.sleep(delay)
+                    continue
+                if status:
+                    pct = int(status.progress() * 100)
+                    if pct - last_logged_pct >= 20 or pct == 100:
+                        last_logged_pct = pct
+                        elapsed = time.time() - start_time
+                        speed_mb = (os.path.getsize(video_path) * status.progress() / (1024 * 1024)) / (elapsed if elapsed > 0 else 1)
+                        logging.info(f"   └─ 上傳進度: {pct}% ({speed_mb:.1f} MB/s)")
+                        sys.stdout.flush()
+        except Exception as e:
+            err_str = str(e)
+            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and hasattr(youtube, "rotate_on_quota") and youtube.rotate_on_quota(e):
+                logging.info("🔄 配額已切換至下一專案，重新發起本次影片上傳作業...")
                 continue
-            if status:
-                pct = int(status.progress() * 100)
-                if pct - last_logged_pct >= 20 or pct == 100:
-                    last_logged_pct = pct
-                    elapsed = time.time() - start_time
-                    speed_mb = (os.path.getsize(video_path) * status.progress() / (1024 * 1024)) / (elapsed if elapsed > 0 else 1)
-                    logging.info(f"   └─ 上傳進度: {pct}% ({speed_mb:.1f} MB/s)")
-                    sys.stdout.flush()
-    except Exception as e:
-        err_str = str(e)
-        paused = classify_daily_limit(e)
-        if "uploadLimitExceeded" in err_str:
-            logging.error("🚨 【YouTube 頻道每日影片上傳數量限制】 (uploadLimitExceeded)")
-            logging.error("👉 您的 YouTube 頻道今日上傳影片數量已達上限（此為 YouTube 頻道安全防範限制，與 API 配額無關）。")
-            logging.error("👉 請等待 24 小時後重試，或前往 YouTube Studio 開通「手機號碼驗證 / 高級功能」以提升每日上傳上限！")
-        elif "quotaExceeded" in err_str or "dailyLimitExceeded" in err_str:
-            logging.error("🚨 【YouTube API 每日配額用盡】 (quotaExceeded)")
-            logging.error("👉 YouTube Data API 配額會在太平洋時間午夜重置；程式已依 PDT/PST 自動換算並預留 15 分鐘。")
-        else:
-            logging.error(f"❌ 影片上傳失敗: {e}")
-        if paused:
-            raise paused from e
-        raise
 
-    video_id = response.get("id")
-    logging.info(f"✅ 上傳成功！影片 ID: {video_id} (網址: https://www.youtube.com/watch?v={video_id})")
-    sys.stdout.flush()
+            paused = classify_daily_limit(e)
+            if "uploadLimitExceeded" in err_str:
+                logging.error("🚨 【YouTube 頻道每日影片上傳數量限制】 (uploadLimitExceeded)")
+                logging.error("👉 您的 YouTube 頻道今日上傳影片數量已達上限（此為 YouTube 頻道安全防範限制，與 API 配額無關）。")
+                logging.error("👉 請等待 24 小時後重試，或前往 YouTube Studio 開通「手機號碼驗證 / 高級功能」以提升每日上傳上限！")
+            elif "quotaExceeded" in err_str or "dailyLimitExceeded" in err_str:
+                logging.error("🚨 【YouTube API 每日配額用盡】 (quotaExceeded)")
+                logging.error("👉 所有專案配額皆已用盡；將在太平洋時間午夜重置後自動重試。")
+            else:
+                logging.error(f"❌ 影片上傳失敗: {e}")
+            if paused:
+                raise paused from e
+            raise
 
-    set_video_thumbnail(youtube, video_id, cover_path)
+        video_id = response.get("id")
+        logging.info(f"✅ 上傳成功！影片 ID: {video_id} (網址: https://www.youtube.com/watch?v={video_id})")
+        sys.stdout.flush()
 
-    return video_id
+        set_video_thumbnail(youtube, video_id, cover_path)
+
+        return video_id
 
 def upload_caption_file(youtube, video_id, srt_path, language="zh-TW", name="繁體中文"):
     """使用 YouTube Captions API 上傳 CC 字幕軌檔 (SRT)"""
@@ -571,45 +736,55 @@ def upload_caption_file(youtube, video_id, srt_path, language="zh-TW", name="繁
         logging.warning(f"⚠️ [Caption] 字幕檔不存在或為空: {srt_path}")
         return False
 
-    # 1. 清除該影片歷史舊字幕軌 (避免舊測試檔殘留)
-    try:
-        cap_list = youtube.captions().list(part="snippet", videoId=video_id).execute()
-        for item in cap_list.get("items", []):
-            cap_id = item["id"]
-            logging.info(f"  🧹 清除舊字幕軌 (ID: {cap_id})...")
-            try:
-                youtube.captions().delete(id=cap_id).execute()
-            except Exception as e:
-                logging.warning(f"  無法刪除舊字幕軌 {cap_id}: {e}")
-    except Exception as e:
-        logging.warning(f"  無法列出既有字幕軌: {e}")
+    while True:
+        # 1. 清除該影片歷史舊字幕軌 (避免舊測試檔殘留)
+        try:
+            cap_list = youtube.captions().list(part="snippet", videoId=video_id).execute()
+            for item in cap_list.get("items", []):
+                cap_id = item["id"]
+                logging.info(f"  🧹 清除舊字幕軌 (ID: {cap_id})...")
+                try:
+                    youtube.captions().delete(id=cap_id).execute()
+                except Exception as e:
+                    logging.warning(f"  無法刪除舊字幕軌 {cap_id}: {e}")
+        except Exception as e:
+            err_str = str(e)
+            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and hasattr(youtube, "rotate_on_quota") and youtube.rotate_on_quota(e):
+                logging.info("🔄 配額已切換至下一專案，重新發起 CC 字幕清理與上傳...")
+                continue
+            logging.warning(f"  無法列出既有字幕軌: {e}")
 
-    # 2. 上傳全新 SRT 字幕檔
-    file_size_kb = os.path.getsize(srt_path) / 1024.0
-    logging.info(f"💬 開始 API 上傳 CC 字幕軌至 [Video ID: {video_id}] ({file_size_kb:.1f} KB)...")
+        # 2. 上傳全新 SRT 字幕檔
+        file_size_kb = os.path.getsize(srt_path) / 1024.0
+        logging.info(f"💬 開始 API 上傳 CC 字幕軌至 [Video ID: {video_id}] ({file_size_kb:.1f} KB)...")
 
-    body = {
-        "snippet": {
-            "videoId": video_id,
-            "language": language,
-            "name": name,
-            "isDraft": False
+        body = {
+            "snippet": {
+                "videoId": video_id,
+                "language": language,
+                "name": name,
+                "isDraft": False
+            }
         }
-    }
-    media = MediaFileUpload(srt_path, mimetype="*/*", resumable=False)
+        media = MediaFileUpload(srt_path, mimetype="*/*", resumable=False)
 
-    try:
-        req = youtube.captions().insert(part="snippet", body=body, media_body=media)
-        res = req.execute()
-        cap_id = res.get("id")
-        logging.info(f"🎉 CC 字幕成功上傳並生效！(Video ID: {video_id}, Caption ID: {cap_id})")
-        return True
-    except Exception as e:
-        logging.error(f"❌ 上傳 CC 字幕失敗 [Video ID: {video_id}]: {e}")
-        paused = classify_daily_limit(e)
-        if paused:
-            raise paused from e
-        return False
+        try:
+            req = youtube.captions().insert(part="snippet", body=body, media_body=media)
+            res = req.execute()
+            cap_id = res.get("id")
+            logging.info(f"🎉 CC 字幕成功上傳並生效！(Video ID: {video_id}, Caption ID: {cap_id})")
+            return True
+        except Exception as e:
+            err_str = str(e)
+            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and hasattr(youtube, "rotate_on_quota") and youtube.rotate_on_quota(e):
+                logging.info("🔄 配額已切換至下一專案，重新嘗試上傳 CC 字幕...")
+                continue
+            logging.error(f"❌ 上傳 CC 字幕失敗 [Video ID: {video_id}]: {e}")
+            paused = classify_daily_limit(e)
+            if paused:
+                raise paused from e
+            return False
+
 
 
 def set_video_privacy(youtube, video_id, privacy_status):
@@ -626,8 +801,48 @@ def set_video_privacy(youtube, video_id, privacy_status):
         return False
 
 
+def is_valid_chinese_caption(snippet):
+    """Return whether a caption snippet represents a valid Chinese caption track."""
+    if not isinstance(snippet, dict):
+        return False
+    lang = str(snippet.get("language") or "").strip().lower()
+    return lang in {"zh-tw", "zh-hant", "zh-hk", "zh", "cmn"}
+
+
+def resolve_part_srt(title="", part_num=None, search_dirs=None):
+    """Locate merged part SRT file by part number or chapter range."""
+    if search_dirs is None:
+        BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        search_dirs = [
+            os.path.join(BASE_DIR, "Upload_Subtitles"),
+            os.path.join(BASE_DIR, "prepared_parts"),
+            os.path.join(BASE_DIR, "Output"),
+        ]
+
+    for s_dir in search_dirs:
+        if not os.path.exists(s_dir):
+            continue
+        for root, _, files in os.walk(s_dir):
+            for file in files:
+                if not file.endswith(".srt"):
+                    continue
+                full_path = os.path.join(root, file)
+                if part_num is not None:
+                    m = re.search(r"Part[_\s]?0*(\d+)", file, re.IGNORECASE)
+                    if m and int(m.group(1)) == int(part_num):
+                        return full_path
+                if title:
+                    m_title = re.search(r"(\d+)~(\d+)", title)
+                    if m_title:
+                        s_c, e_c = m_title.group(1), m_title.group(2)
+                        if f"Ch{s_c}_to_Ch{e_c}" in file or f"ch{s_c}_to_ch{e_c}" in file:
+                            return full_path
+    return None
+
+
 def verify_published_part(youtube, video_id, playlist_id, privacy_status, attempts=5):
     """Read YouTube back after writes; API success alone is not final acceptance."""
+
     last_error = None
     for attempt in range(1, attempts + 1):
         try:
@@ -1006,13 +1221,22 @@ def main():
     parser.add_argument("--state-file", default="upload_resume_state/state.json",
                         help="Durable state restored/saved by GitHub Actions")
     parser.add_argument("--task-id", default=os.environ.get("QUEUE_TASK_ID", ""), help="Persistent cloud queue task ID")
+    parser.add_argument("--auth-pool", action="store_true", help="Authorize all project client_secrets and generate tokens locally")
+    parser.add_argument("--no-sync-gh", action="store_true", help="Do not sync generated tokens to GitHub secrets")
     args = parser.parse_args()
+
+    if args.auth_pool:
+        pool = YouTubeServicePool()
+        pool.authorize_all_local(sync_github=not args.no_sync_gh)
+        return 0
+
     publication = PublicationCheckpoint(args.state_file)
 
     hf_token = os.environ.get("HF_TOKEN", "")
     if not hf_token:
         raise RuntimeError("HF_TOKEN is required because the production archive is mandatory")
     hf_repo = os.environ.get("HF_ARCHIVE_REPO", "").strip()
+
     if not hf_repo:
         from huggingface_hub import HfApi
         hf_repo = f"{HfApi(token=hf_token).whoami()['name']}/audiobook-archive"
