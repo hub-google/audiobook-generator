@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import json
 import logging
 import os
 import re
@@ -251,6 +253,9 @@ class Dispatcher:
             "end_chap": str(end_int),
             "exclude_chapters": ",".join(str(value) for value in sorted(task.get("excluded_chapters") or [])),
             "renumber_selected": "true" if renumber else "false",
+            "chapter_title_overrides_b64": base64.b64encode(
+                json.dumps(task.get("chapter_title_overrides") or {}, ensure_ascii=False).encode("utf-8")
+            ).decode("ascii"),
             "zip_password": "",
         }
         dispatch_requested_at = datetime.now(timezone.utc)

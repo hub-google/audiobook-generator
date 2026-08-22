@@ -225,10 +225,6 @@ class YouTubeServicePool:
                     cs_path = root_cs
 
             tok_path = os.path.join(cs_dir, f"token_{slot}.json")
-            if slot == 1 and not os.path.exists(tok_path):
-                root_tok = os.path.join(BASE_DIR, "token.json")
-                if os.path.exists(root_tok):
-                    tok_path = root_tok
 
             # 2. 環境變數檢查 (Slot 1 支援標準 YOUTUBE_*，Slot 2..10 支援 YOUTUBE_*_N)
             if slot == 1:

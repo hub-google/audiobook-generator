@@ -4,6 +4,7 @@ import math
 import yaml
 import json
 import argparse
+import base64
 import requests
 import unicodedata
 from bs4 import BeautifulSoup
@@ -195,6 +196,38 @@ def analyze_duplicate_chapters(
         "duplicate_chapters": duplicates,
         "duplicate_chapter_count": len(duplicate_indices),
     }
+
+
+def apply_chapter_title_overrides(parsed_result, overrides=None):
+    """Apply immutable 1-based catalog UUID -> full title overrides in place."""
+    if not isinstance(parsed_result, dict):
+        return parsed_result
+    titles = list(parsed_result.get("chapter_titles") or [])
+    for raw_index, title in (overrides or {}).items():
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= index <= len(titles) and str(title or "").strip():
+            titles[index - 1] = normalize_chapter_title(title)
+    parsed_result["chapter_titles"] = titles
+    analysis = analyze_duplicate_chapters(titles, parsed_result.get("chapters") or [])
+    for key, value in analysis.items():
+        parsed_result[key] = value
+    return parsed_result
+
+
+def decode_chapter_title_overrides(value):
+    if not value:
+        return {}
+    try:
+        decoded = base64.b64decode(str(value), validate=True).decode("utf-8")
+        data = json.loads(decoded)
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("章節名稱修改資料格式無效") from error
+    if not isinstance(data, dict):
+        raise ValueError("章節名稱修改資料必須是物件")
+    return {str(key): str(title) for key, title in data.items() if str(title).strip()}
 
 def parse_catalog(catalog_url):
     """
@@ -412,6 +445,7 @@ if __name__ == "__main__":
     parser.add_argument("--matrix-output",  type=str, default="", help="Path to write matrix JSON (for GitHub Actions)")
     parser.add_argument("--exclude-chapters", type=str, default="", help="Comma separated 1-based indices to exclude")
     parser.add_argument("--renumber-selected", type=str, default="false", help="Renumber selected chapters consecutively")
+    parser.add_argument("--chapter-title-overrides-b64", type=str, default="", help="Base64 JSON mapping stable catalog UUIDs to edited full titles")
     args = parser.parse_args()
 
     exclude_list = []
@@ -427,6 +461,7 @@ if __name__ == "__main__":
     # ── 只爬取一次目錄，共用於 config 與 matrix ──
     print(f"[CatalogParser] 正在解析目錄：{args.url}")
     parsed = parse_catalog(args.url)
+    apply_chapter_title_overrides(parsed, decode_chapter_title_overrides(args.chapter_title_overrides_b64))
 
     # ── 若需要 matrix，先計算以取得可能自動調整後的 chapters_per_worker ──
     effective_cpw = chapters_per_worker_input

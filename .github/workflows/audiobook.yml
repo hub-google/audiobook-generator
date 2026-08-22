@@ -41,6 +41,10 @@ on:
         description: '將已選章節重新編為連續章號'
         required: false
         default: 'false'
+      chapter_title_overrides_b64:
+        description: 'GUI 編輯後的章節名稱（Base64 JSON；固定目錄 UUID 對應完整標題）'
+        required: false
+        default: ''
       chapters_per_worker:
         description: '每台工作機負責的章節數 (預設 10，總共最多建立 17 台)'
         required: true
@@ -201,7 +205,8 @@ jobs:
               --workers ${{ github.event.inputs.chapters_per_worker }} \
               --matrix-output matrix.json \
               --exclude-chapters "${{ github.event.inputs.exclude_chapters }}" \
-              --renumber-selected "${{ github.event.inputs.renumber_selected }}"; then
+              --renumber-selected "${{ github.event.inputs.renumber_selected }}" \
+              --chapter-title-overrides-b64 "${{ github.event.inputs.chapter_title_overrides_b64 }}"; then
               break
             fi
             if [ "$attempt" -eq 3 ]; then exit 1; fi

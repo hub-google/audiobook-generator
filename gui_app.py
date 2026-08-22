@@ -12,13 +12,14 @@ from tkinter import ttk, messagebox, scrolledtext, simpledialog
 from dotenv import load_dotenv
 import re
 import webbrowser
+import base64
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 載入目錄解析器
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 try:
-    from catalog_parser import analyze_duplicate_chapters, parse_catalog, split_chapter_title
+    from catalog_parser import analyze_duplicate_chapters, apply_chapter_title_overrides, parse_catalog, split_chapter_title
     from cleaner import chunk_text, clean_text_content
     from crawler import fetch_chapter_text
     from cloud_queue import (
@@ -56,6 +57,7 @@ class AudiobookGUIApp:
         self.editing_task_id = None
         self.catalog_load_token = 0
         self.renumber_selected_chapters = False
+        self.chapter_title_overrides = {}
 
         self._setup_style()
         self._build_ui()
@@ -186,11 +188,6 @@ class AudiobookGUIApp:
         section = ttk.LabelFrame(parent, text="雲端小說佇列（關閉 GUI 後仍由 GitHub 繼續）")
         section.pack(fill=tk.X, pady=(0, 12))
         columns = ("position", "book", "range", "duplicates", "status", "verified", "hf", "youtube", "run")
-        tree_frame = ttk.Frame(section)
-        tree_frame.pack(fill=tk.X, padx=5, pady=5)
-        self.queue_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=6, selectmode="extended")
-        queue_scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.queue_tree.yview)
-        self.queue_tree.configure(yscrollcommand=queue_scrollbar.set)
         headings = {
             "position": "順位", "book": "小說", "range": "章節", "duplicates": "重複章節", "status": "狀態",
             "verified": "GitHub 查證", "hf": "HF", "youtube": "YouTube", "run": "Run",
@@ -199,13 +196,28 @@ class AudiobookGUIApp:
             "position": 45, "book": 135, "range": 80, "duplicates": 75, "status": 175,
             "verified": 100, "hf": 65, "youtube": 75, "run": 90,
         }
-        for key in columns:
-            self.queue_tree.heading(key, text=headings[key])
-            self.queue_tree.column(key, width=widths[key], anchor=tk.CENTER if key != "book" else tk.W)
-        self.queue_tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        queue_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.queue_tree.bind("<<TreeviewSelect>>", self._on_queue_select)
-        self.queue_tree.bind("<Double-1>", self.open_selected_task_progress)
+        lists = ttk.Notebook(section)
+        lists.pack(fill=tk.X, padx=5, pady=5)
+
+        def build_tree(tab_text):
+            page = ttk.Frame(lists)
+            lists.add(page, text=tab_text)
+            tree = ttk.Treeview(page, columns=columns, show="headings", height=6, selectmode="extended")
+            scrollbar = ttk.Scrollbar(page, orient=tk.VERTICAL, command=tree.yview)
+            tree.configure(yscrollcommand=scrollbar.set)
+            for key in columns:
+                tree.heading(key, text=headings[key])
+                tree.column(key, width=widths[key], anchor=tk.CENTER if key != "book" else tk.W)
+            tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            return tree
+
+        self.pending_queue_tree = build_tree("進行中／尚未完成")
+        self.success_queue_tree = build_tree("已完成（Success）")
+        self.queue_tree = self.pending_queue_tree
+        for tree in (self.pending_queue_tree, self.success_queue_tree):
+            tree.bind("<<TreeviewSelect>>", lambda event, source=tree: self._activate_queue_tree(source, event))
+            tree.bind("<Double-1>", lambda event, source=tree: self._activate_and_open_queue_task(source, event))
 
         buttons = ttk.Frame(section)
         buttons.pack(fill=tk.X, padx=5, pady=(0, 5))
@@ -237,6 +249,17 @@ class AudiobookGUIApp:
             review_buttons, text="語音品質檢查：Clean 欄就是 TTS 實際會朗讀的文字",
         ).pack(side=tk.LEFT, padx=8)
 
+    def _activate_queue_tree(self, tree, event=None):
+        self.queue_tree = tree
+        other = self.success_queue_tree if tree is self.pending_queue_tree else self.pending_queue_tree
+        if tree.selection():
+            other.selection_remove(*other.selection())
+        self._on_queue_select(event)
+
+    def _activate_and_open_queue_task(self, tree, event=None):
+        self._activate_queue_tree(tree, event)
+        self.open_selected_task_progress(event)
+
     def _github_settings(self):
         load_dotenv(ENV_PATH, override=True)
         repo = os.getenv("GITHUB_REPO", "hub-google/audiobook-generator")
@@ -267,9 +290,12 @@ class AudiobookGUIApp:
         return GitHubQueueStore(repo, token), repo, token
 
     def _render_queue(self, queue):
-        selected_ids = tuple(self.queue_tree.selection())
-        for item in self.queue_tree.get_children():
-            self.queue_tree.delete(item)
+        selected_ids = {
+            tree: tuple(tree.selection())
+            for tree in (self.pending_queue_tree, self.success_queue_tree)
+        }
+        for tree in (self.pending_queue_tree, self.success_queue_tree):
+            tree.delete(*tree.get_children())
         for task in queue.get("tasks", []):
             start = task.get("start_chapter") or 1
             end = task.get("end_chapter") or "全部"
@@ -277,7 +303,8 @@ class AudiobookGUIApp:
             yt = task.get("youtube_progress") or {}
             observation = self.github_observations.get(task.get("task_id"))
             duplicate_count = task.get("duplicate_chapter_count")
-            self.queue_tree.insert("", tk.END, iid=task["task_id"], values=(
+            target_tree = self.success_queue_tree if task.get("status") == "completed" else self.pending_queue_tree
+            target_tree.insert("", tk.END, iid=task["task_id"], values=(
                 task.get("position"), task.get("book_title"), f"{start}–{end}",
                 duplicate_count if duplicate_count is not None else "—", self._queue_status_text(task),
                 self._observation_checked_time(observation),
@@ -301,9 +328,14 @@ class AudiobookGUIApp:
                 elif status == "interrupted":
                     self.log(f"🛑 {title} 本次 Run 已中斷；任務已保留，可按「重新排程」")
             self.queue_status_cache[task["task_id"]] = current
-        restored_ids = [task_id for task_id in selected_ids if self.queue_tree.exists(task_id)]
+        restored_ids = []
+        for tree, ids in selected_ids.items():
+            valid = [task_id for task_id in ids if tree.exists(task_id)]
+            if valid:
+                tree.selection_set(valid)
+                self.queue_tree = tree
+                restored_ids.extend(valid)
         if restored_ids:
-            self.queue_tree.selection_set(restored_ids)
             selected_tasks = [
                 item for item in queue.get("tasks", []) if item.get("task_id") in restored_ids
             ]
@@ -388,10 +420,11 @@ class AudiobookGUIApp:
         if self.cloud_queue:
             for task in self.cloud_queue.get("tasks", []):
                 task_id = task.get("task_id")
-                if task_id and task.get("run_id") and self.queue_tree.exists(task_id):
+                display_tree = next((tree for tree in (self.pending_queue_tree, self.success_queue_tree) if tree.exists(task_id)), None)
+                if task_id and task.get("run_id") and display_tree is not None:
                     observation = self.github_observations.get(task_id)
-                    self.queue_tree.set(task_id, "status", self._queue_status_text(task))
-                    self.queue_tree.set(task_id, "verified", self._observation_checked_time(observation))
+                    display_tree.set(task_id, "status", self._queue_status_text(task))
+                    display_tree.set(task_id, "verified", self._observation_checked_time(observation))
         self.queue_freshness_after = self.root.after(1000, self._refresh_observation_freshness)
 
     def sync_cloud_queue(self):
@@ -651,6 +684,7 @@ class AudiobookGUIApp:
         def worker():
             try:
                 catalog = parse_catalog(task.get("catalog_url") or "")
+                apply_chapter_title_overrides(catalog, task.get("chapter_title_overrides") or {})
                 samples = self._text_sample_chapters(task, catalog)
                 results = []
                 for sample in samples:
@@ -681,9 +715,11 @@ class AudiobookGUIApp:
         self.catalog_load_token += 1
         self.editing_task_id = None
         self.catalog_data = None
+        self.chapter_title_overrides = {}
         self.excluded_chapters.clear()
         self.renumber_selected_chapters = False
-        self.queue_tree.selection_remove(*self.queue_tree.selection())
+        for tree in (self.pending_queue_tree, self.success_queue_tree):
+            tree.selection_remove(*tree.selection())
         self.edit_mode_var.set("新增小說")
         self.url_entry.delete(0, tk.END)
         self.lbl_book_info.config(text="書名: 尚未解析 | 總章節: 0 章")
@@ -711,6 +747,7 @@ class AudiobookGUIApp:
         def worker():
             try:
                 result = parse_catalog(task.get("catalog_url") or "")
+                apply_chapter_title_overrides(result, task.get("chapter_title_overrides") or {})
                 self.root.after(0, lambda: self._finish_queue_task_load(token, task["task_id"], result))
             except Exception as error:
                 self.root.after(0, lambda detail=str(error): self._on_parse_failed(detail))
@@ -734,6 +771,7 @@ class AudiobookGUIApp:
         self.entry_end.insert(0, str(end))
         self.excluded_chapters = {int(value) for value in task.get("excluded_chapters") or []}
         self.renumber_selected_chapters = bool(task.get("renumber_selected"))
+        self.chapter_title_overrides = dict(task.get("chapter_title_overrides") or {})
         self._update_chapter_selection_summary(start, end)
         self.btn_update_queue.config(state=tk.NORMAL)
 
@@ -1105,7 +1143,7 @@ class AudiobookGUIApp:
         task = new_task(
             self.url_entry.get().strip(), self.catalog_data.get("book_title", ""), start, end,
             sorted(self.excluded_chapters), self.renumber_selected_chapters,
-            self.catalog_data.get("duplicate_chapter_count"),
+            self.catalog_data.get("duplicate_chapter_count"), self.chapter_title_overrides,
         )
         self._mutate_queue_async(
             lambda queue: add_tasks(queue, [task]),
@@ -1166,6 +1204,7 @@ class AudiobookGUIApp:
                         value, task_id, start, end, excluded, active,
                         self.renumber_selected_chapters,
                         (self.catalog_data or {}).get("duplicate_chapter_count"),
+                        self.chapter_title_overrides,
                     ),
                     f"Update chapter plan for audiobook task {task_id}",
                 )
@@ -1477,6 +1516,7 @@ class AudiobookGUIApp:
         self.btn_parse.config(state=tk.NORMAL)
         if res and res.get("success"):
             self.catalog_data = res
+            self.chapter_title_overrides = {}
             book_title = res["book_title"]
             total = res["total_chapters"]
             duplicate_count = int(res.get("duplicate_chapter_count") or 0)
@@ -1561,9 +1601,10 @@ class AudiobookGUIApp:
         container = ttk.Frame(top)
         container.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
 
-        columns = ("output_number", "normalized_number", "display_number", "chapter_name", "duplicate")
+        columns = ("uuid", "output_number", "normalized_number", "display_number", "chapter_name", "duplicate")
         chapter_tree = ttk.Treeview(container, columns=columns, show="headings", selectmode="browse")
         headings = {
+            "uuid": "UUID",
             "output_number": "編號章節數",
             "normalized_number": "網站章節數正規化",
             "display_number": "網站顯示章節數",
@@ -1571,7 +1612,7 @@ class AudiobookGUIApp:
             "duplicate": "重複標記",
         }
         widths = {
-            "output_number": 105, "normalized_number": 155, "display_number": 145,
+            "uuid": 65, "output_number": 105, "normalized_number": 155, "display_number": 145,
             "chapter_name": 280, "duplicate": 85,
         }
         for column in columns:
@@ -1596,19 +1637,22 @@ class AudiobookGUIApp:
             chapter_state[i] = (i not in self.excluded_chapters)
 
         chapter_parts = [split_chapter_title(title) for title in titles]
+        duplicate_analysis = {"duplicate_indices": [], "duplicate_chapters": []}
 
         # 紀錄目前表格顯示的章節編號列表
         visible_indices = []
 
         def _refresh_duplicates():
-            nonlocal duplicate_indices
-            analysis = analyze_duplicate_chapters(
+            nonlocal duplicate_indices, duplicate_analysis, chapter_parts
+            chapter_parts = [split_chapter_title(title) for title in titles]
+            duplicate_analysis = analyze_duplicate_chapters(
                 titles,
                 self.catalog_data.get("chapters", []),
                 use_normalized_number=duplicate_use_number.get(),
                 use_chapter_name=duplicate_use_name.get(),
             )
-            duplicate_indices = {int(value) for value in analysis["duplicate_indices"]}
+            duplicate_indices = {int(value) for value in duplicate_analysis["duplicate_indices"]}
+            self.catalog_data.update(duplicate_analysis)
 
         def _output_numbers():
             selected = [
@@ -1638,6 +1682,7 @@ class AudiobookGUIApp:
                         if self.renumber_selected_chapters else global_idx
                     )
                 values = (
+                    global_idx,
                     f"{'☑' if is_checked else '☐'} {output_number}".rstrip(),
                     parts["normalized_number"],
                     parts["display_number"],
@@ -1657,9 +1702,59 @@ class AudiobookGUIApp:
 
         search_entry.bind("<KeyRelease>", lambda e: _update_listbox())
 
+        def _duplicate_group(index):
+            links = {}
+            for item in duplicate_analysis.get("duplicate_chapters") or []:
+                duplicate = int(item["index"])
+                for original in item.get("original_indices") or []:
+                    links.setdefault(duplicate, set()).add(int(original))
+                    links.setdefault(int(original), set()).add(duplicate)
+            group, pending = set(), [index]
+            while pending:
+                current = pending.pop()
+                if current in group:
+                    continue
+                group.add(current)
+                pending.extend(links.get(current, set()) - group)
+            return sorted(group)
+
+        def _show_duplicate_details(index):
+            group = _duplicate_group(index)
+            if len(group) < 2:
+                return
+            dialog = tk.Toplevel(top)
+            dialog.title(f"重複章節明細｜UUID {index}")
+            dialog.geometry("820x300")
+            dialog.transient(top)
+            body = ttk.Frame(dialog, padding=10)
+            body.pack(fill=tk.BOTH, expand=True)
+            detail_columns = ("uuid", "normalized", "display", "name")
+            detail = ttk.Treeview(body, columns=detail_columns, show="headings")
+            for key, label, width in (
+                ("uuid", "UUID", 70), ("normalized", "網站章節數正規化", 160),
+                ("display", "網站顯示章節數", 180), ("name", "章節名稱", 360),
+            ):
+                detail.heading(key, text=label)
+                detail.column(key, width=width, anchor=tk.W if key == "name" else tk.CENTER)
+            for uuid_value in group:
+                parts = chapter_parts[uuid_value - 1]
+                detail.insert("", tk.END, values=(uuid_value, parts["normalized_number"], parts["display_number"], parts["chapter_name"]))
+            detail.pack(fill=tk.BOTH, expand=True)
+            ttk.Button(body, text="關閉", command=dialog.destroy).pack(anchor=tk.E, pady=(8, 0))
+
         def _toggle_item(event=None):
             if event is not None and getattr(event, "num", None) == 1:
                 if chapter_tree.identify_region(event.x, event.y) != "cell":
+                    return
+                column = chapter_tree.identify_column(event.x)
+                row = chapter_tree.identify_row(event.y)
+                if not row:
+                    return
+                if column == "#6":
+                    if int(row) in duplicate_indices:
+                        _show_duplicate_details(int(row))
+                    return
+                if column == "#5":
                     return
             sel = chapter_tree.selection()
             if not sel:
@@ -1676,6 +1771,48 @@ class AudiobookGUIApp:
         # 單擊選取或按空白鍵切換狀態
         chapter_tree.bind("<ButtonRelease-1>", lambda e: _toggle_item())
         chapter_tree.bind("<space>", lambda e: (_toggle_item(), "break"))
+
+        def _edit_chapter_name(event):
+            if chapter_tree.identify_region(event.x, event.y) != "cell" or chapter_tree.identify_column(event.x) != "#5":
+                return
+            row = chapter_tree.identify_row(event.y)
+            if not row:
+                return
+            index = int(row)
+            x, y, width, height = chapter_tree.bbox(row, "chapter_name")
+            editor = ttk.Entry(chapter_tree)
+            editor.insert(0, chapter_parts[index - 1]["chapter_name"])
+            editor.place(x=x, y=y, width=width, height=height)
+            editor.focus_set()
+            editor.select_range(0, tk.END)
+            closed = False
+
+            def finish(save=True):
+                nonlocal closed
+                if closed:
+                    return
+                closed = True
+                if save:
+                    new_name = editor.get().strip()
+                    if not new_name:
+                        messagebox.showwarning("章節名稱", "章節名稱不能是空白。", parent=top)
+                        closed = False
+                        editor.focus_set()
+                        return
+                    parts = chapter_parts[index - 1]
+                    full_title = " ".join(value for value in (parts["display_number"], new_name) if value).strip()
+                    titles[index - 1] = full_title
+                    self.catalog_data["chapter_titles"][index - 1] = full_title
+                    self.chapter_title_overrides[str(index)] = full_title
+                    _refresh_duplicates()
+                    _update_listbox()
+                editor.destroy()
+
+            editor.bind("<Return>", lambda _event: finish(True))
+            editor.bind("<Escape>", lambda _event: finish(False))
+            editor.bind("<FocusOut>", lambda _event: finish(True))
+
+        chapter_tree.bind("<Double-1>", _edit_chapter_name)
 
         _refresh_duplicates()
         _update_listbox()
@@ -1831,6 +1968,9 @@ class AudiobookGUIApp:
                         "end_chap": end_chap,
                         "exclude_chapters": ",".join(map(str, sorted(list(self.excluded_chapters)))) if hasattr(self, 'excluded_chapters') and self.excluded_chapters else "",
                         "renumber_selected": "true" if self.renumber_selected_chapters else "false",
+                        "chapter_title_overrides_b64": base64.b64encode(
+                            json.dumps(self.chapter_title_overrides, ensure_ascii=False).encode("utf-8")
+                        ).decode("ascii"),
                         "zip_password": os.getenv("ZIP_PASSWORD", "Qw000000")
                     }
                 }
