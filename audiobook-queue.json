@@ -1,11 +1,40 @@
 {
   "schema_version": 2,
-  "revision": 416,
-  "updated_at": "2026-08-22T13:43:40.285187+00:00",
+  "revision": 417,
+  "updated_at": "2026-08-22T13:44:02.570978+00:00",
   "queue": [
     {
-      "task_id": "book-20260822-e697f308",
+      "task_id": "book-20260822-27eedcc7",
       "position": 1,
+      "book_title": "大主宰",
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33644",
+      "start_chapter": 1,
+      "end_chapter": 1567,
+      "excluded_chapters": [],
+      "renumber_selected": false,
+      "duplicate_chapter_count": 144,
+      "status": "running",
+      "run_id": 32576615343,
+      "run_attempt": 1,
+      "execution_generation": 1,
+      "retry_requested_at": null,
+      "run_history": [],
+      "retry_at": null,
+      "reason": null,
+      "hf_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "youtube_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "created_at": "2026-08-22T09:51:03.814563+00:00",
+      "updated_at": "2026-08-22T13:44:02.570952+00:00"
+    },
+    {
+      "task_id": "book-20260822-e697f308",
+      "position": 2,
       "book_title": "完美世界",
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
       "start_chapter": 1,
@@ -168,35 +197,6 @@
       "updated_at": "2026-08-22T13:43:40.284191+00:00",
       "run_conclusion": "cancelled",
       "run_completed_at": "2026-08-22T13:43:32Z"
-    },
-    {
-      "task_id": "book-20260822-27eedcc7",
-      "position": 2,
-      "book_title": "大主宰",
-      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33644",
-      "start_chapter": 1,
-      "end_chapter": 1567,
-      "excluded_chapters": [],
-      "renumber_selected": false,
-      "duplicate_chapter_count": 144,
-      "status": "queued",
-      "run_id": null,
-      "run_attempt": 0,
-      "execution_generation": 1,
-      "retry_requested_at": null,
-      "run_history": [],
-      "retry_at": null,
-      "reason": null,
-      "hf_progress": {
-        "completed": 0,
-        "total": 0
-      },
-      "youtube_progress": {
-        "completed": 0,
-        "total": 0
-      },
-      "created_at": "2026-08-22T09:51:03.814563+00:00",
-      "updated_at": "2026-08-22T09:51:03.814563+00:00"
     },
     {
       "task_id": "book-20260822-a49e60a1",
