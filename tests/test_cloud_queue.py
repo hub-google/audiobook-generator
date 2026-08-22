@@ -273,6 +273,7 @@ class CloudQueueTests(unittest.TestCase):
         dispatcher.store = Mock()
         dispatcher.store.load.return_value = (queue, "sha")
         dispatcher.store.save.return_value = "next-sha"
+        dispatcher.profile_store.load = Mock(return_value=({"books": {}}, None))
         dispatcher.runs = Mock(return_value=[{
             "id": 123, "status": "completed", "conclusion": "cancelled",
             "created_at": "2026-08-19T01:00:00Z", "updated_at": "2026-08-19T02:00:00Z",
@@ -415,6 +416,7 @@ class CloudQueueTests(unittest.TestCase):
         dispatcher.store = Mock()
         dispatcher.store.load.return_value = (queue, "sha")
         dispatcher.store.save.return_value = "next-sha"
+        dispatcher.profile_store.load = Mock(return_value=({"books": {}}, None))
         dispatcher.runs = Mock(side_effect=[
             [],
             [{
@@ -441,6 +443,7 @@ class CloudQueueTests(unittest.TestCase):
         dispatcher = Dispatcher("owner/repo", "token")
         dispatcher.store = Mock()
         dispatcher.store.load.return_value = (queue, "sha")
+        dispatcher.profile_store.load = Mock(return_value=({"books": {}}, None))
         old_run = {
             "id": 122,
             "name": f"有聲小說製作｜凡人修仙傳｜Ch1-100｜{task['task_id']}",
@@ -536,6 +539,7 @@ class CloudQueueTests(unittest.TestCase):
         dispatcher = Dispatcher("owner/repo", "token", force=True)
         dispatcher.store.load = Mock(return_value=(queue, "sha-1"))
         dispatcher.store.save = Mock(return_value="sha-2")
+        dispatcher.profile_store.load = Mock(return_value=({"books": {}}, None))
         dispatcher.runs = Mock(return_value=[])
 
         summary = dispatcher.run()
@@ -554,6 +558,7 @@ class CloudQueueTests(unittest.TestCase):
         dispatcher = Dispatcher("owner/repo", "token")
         dispatcher.store.load = Mock(return_value=(queue, "sha-1"))
         dispatcher.store.save = Mock(return_value="sha-2")
+        dispatcher.profile_store.load = Mock(return_value=({"books": {}}, None))
         dispatcher.reconcile = Mock(return_value=(queue, False))
         dispatcher.run_uses_current_master = Mock(return_value=False)
         dispatch_next.side_effect = lambda value: (value, "fresh")

@@ -3,16 +3,23 @@ import re
 import yaml
 import logging
 
+try:
+    from .book_profiles import validate_remove_patterns
+except ImportError:
+    from book_profiles import validate_remove_patterns
+
 def load_config():
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.yaml")
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
-def clean_text_content(text, title, book_title):
+def clean_text_content(text, title, book_title, remove_patterns=None):
     # 更嚴格的清理規則，把整句包含「請記住本站域名」的文字移除
     text = re.sub(r'請記住本站域名.*?(?=\n|$)', '', text)
     text = re.sub(r'快捷鍵:.*?返回書頁', '', text)
     text = text.replace('黃金屋', '')
+    for pattern in validate_remove_patterns(remove_patterns):
+        text = re.sub(pattern, '', text)
     text = text.replace('\xa0', '').strip()
     
     # 移除重複的空白行
@@ -152,7 +159,11 @@ def run_cleaner(target_indices=None):
         title = lines[0].strip()
         raw_content = "".join(lines[1:])
         
-        cleaned_text = clean_text_content(raw_content, title, book_title)
+        cleaner_config = config.get("cleaner") or {}
+        cleaned_text = clean_text_content(
+            raw_content, title, book_title,
+            remove_patterns=cleaner_config.get("remove_patterns") or [],
+        )
         chunked_text = chunk_text(cleaned_text, max_length=18)
         
         clean_tmp = clean_path + ".tmp"

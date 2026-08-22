@@ -45,6 +45,10 @@ on:
         description: 'GUI 編輯後的章節名稱（Base64 JSON；固定目錄 UUID 對應完整標題）'
         required: false
         default: ''
+      book_profile_snapshot_b64:
+        description: '書籍長期設定快照（Base64 JSON；由 GUI／調度器產生）'
+        required: false
+        default: ''
       chapters_per_worker:
         description: '每台工作機負責的章節數 (預設 10，總共最多建立 17 台)'
         required: true
@@ -206,7 +210,8 @@ jobs:
               --matrix-output matrix.json \
               --exclude-chapters "${{ github.event.inputs.exclude_chapters }}" \
               --renumber-selected "${{ github.event.inputs.renumber_selected }}" \
-              --chapter-title-overrides-b64 "${{ github.event.inputs.chapter_title_overrides_b64 }}"; then
+              --chapter-title-overrides-b64 "${{ github.event.inputs.chapter_title_overrides_b64 }}" \
+              --book-profile-snapshot-b64 "${{ github.event.inputs.book_profile_snapshot_b64 }}"; then
               break
             fi
             if [ "$attempt" -eq 3 ]; then exit 1; fi
@@ -233,6 +238,11 @@ jobs:
           with open("matrix.json", encoding="utf-8") as handle:
               matrix = (json.load(handle) or {}).get("include") or []
           selected = [int(value) for value in config.get("selected_indices") or []]
+          patterns = (config.get("cleaner") or {}).get("remove_patterns") or []
+          if not isinstance(patterns, list):
+              raise SystemExit("Strict success gate: cleaner remove_patterns must be a list")
+          if patterns and not (config.get("cleaner") or {}).get("fingerprint"):
+              raise SystemExit("Strict success gate: cleaner profile fingerprint is missing")
           if not selected:
               raise SystemExit("Strict success gate: no chapters were selected")
           if not matrix:
@@ -255,6 +265,16 @@ jobs:
           echo "✅ **Chapter Range:** ${START} ~ ${END}" >> "$GITHUB_STEP_SUMMARY"
           echo "✅ **Actual Selected Chapters:** $(python -c "import yaml; c = yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}; print(len(c.get('selected_indices') or []))")" >> "$GITHUB_STEP_SUMMARY"
           echo "✅ **Workers Created:** $(jq '.include | length' matrix.json)" >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY'
+          import os, yaml
+          with open("config.yaml", encoding="utf-8") as handle:
+              config = yaml.safe_load(handle) or {}
+          cleaner = config.get("cleaner") or {}
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(f"✅ **Book Profile:** `{config.get('book_profile_id') or 'manual/default'}` revision {config.get('profile_revision', 0)}\n")
+              summary.write(f"✅ **Cleaner Rules:** {len(cleaner.get('remove_patterns') or [])}\n")
+              summary.write(f"✅ **Cleaner Fingerprint:** `{(cleaner.get('fingerprint') or 'none')[:12]}`\n")
+          PY
         env:
           START: ${{ github.event.inputs.start_chap }}
           END: ${{ github.event.inputs.end_chap }}
@@ -394,7 +414,8 @@ jobs:
           start = worker_id * per_worker
           chapters = config["selected_indices"][start:start + per_worker]
           checkpoint = PipelineCheckpoint(
-              workspace, book_title, worker_id, chapters
+              workspace, book_title, worker_id, chapters,
+              cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
           )
           checkpoint.export_manifest()
           m_val = checkpoint.validate_manifest()

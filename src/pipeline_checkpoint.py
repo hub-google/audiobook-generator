@@ -34,11 +34,12 @@ def _utc_now():
 
 
 class PipelineCheckpoint:
-    def __init__(self, workspace_dir, book_title, worker_id, chapters):
+    def __init__(self, workspace_dir, book_title, worker_id, chapters, cleaner_fingerprint=""):
         self.workspace_dir = os.path.abspath(workspace_dir)
         self.book_title = book_title
         self.worker_id = int(worker_id)
         self.chapter_numbers = [int(chapter) for chapter in chapters]
+        self.cleaner_fingerprint = str(cleaner_fingerprint or "")
         checkpoint_dir = os.path.join(self.workspace_dir, "Checkpoints")
         os.makedirs(checkpoint_dir, exist_ok=True)
         self.path = os.path.join(checkpoint_dir, f"worker-{self.worker_id}.json")
@@ -146,6 +147,8 @@ class PipelineCheckpoint:
                 input_signature = self._input_signature(chapter, stage)
                 recorded_signature = record.get("input_signature")
                 stale = bool(recorded_signature and recorded_signature != input_signature)
+                if stage == "cleaner" and self.cleaner_fingerprint:
+                    stale = stale or record.get("settings_signature") != self.cleaner_fingerprint
                 if valid and upstream_complete and not stale:
                     record.update({
                         "status": "completed",
@@ -230,6 +233,8 @@ class PipelineCheckpoint:
             "validation": validation,
             "input_signature": self._input_signature(chapter, stage),
         })
+        if stage == "cleaner" and self.cleaner_fingerprint:
+            record["settings_signature"] = self.cleaner_fingerprint
         record.pop("error", None)
         record.pop("error_type", None)
         record.pop("validation_error", None)
@@ -270,6 +275,11 @@ class PipelineCheckpoint:
         if not self.output_exists(chapter, stage):
             return False
         record = self._stage_record(chapter, stage)
+        if record.get("status") != "completed":
+            return False
+        if stage == "cleaner" and self.cleaner_fingerprint:
+            if record.get("settings_signature") != self.cleaner_fingerprint:
+                return False
         recorded = record.get("input_signature")
         return not recorded or recorded == self._input_signature(chapter, stage)
 

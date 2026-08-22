@@ -515,7 +515,8 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
         SRC_DIR, "..", config["paths"]["workspace_base"], book_title
     ))
     checkpoint = PipelineCheckpoint(
-        workspace_dir, book_title, worker_id, exact_indices
+        workspace_dir, book_title, worker_id, exact_indices,
+        cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
     )
     # ── 跨 Run 歷史 Artifacts 優先繼承 ───────────────────────────
     inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices)
@@ -648,7 +649,10 @@ def main():
         workspace_dir = os.path.abspath(os.path.join(
             SRC_DIR, "..", config["paths"]["workspace_base"], book_title
         ))
-        checkpoint = PipelineCheckpoint(workspace_dir, book_title, args.worker_id, exact_indices)
+        checkpoint = PipelineCheckpoint(
+            workspace_dir, book_title, args.worker_id, exact_indices,
+            cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
+        )
         checkpoint.export_manifest()
         m_val = checkpoint.validate_manifest()
         chapter_count = m_val.get("chapter_count", len(complete_chapters)) if isinstance(m_val, dict) else len(complete_chapters)

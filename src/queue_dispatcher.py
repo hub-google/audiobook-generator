@@ -18,8 +18,10 @@ import requests
 
 try:
     from .cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
+    from .book_profiles import GitHubBookProfileStore, get_book_profile, profile_snapshot
 except ImportError:
     from cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
+    from book_profiles import GitHubBookProfileStore, get_book_profile, profile_snapshot
 
 
 def _find_gh() -> str:
@@ -63,6 +65,7 @@ class Dispatcher:
         self.repo = repo
         self.token = token
         self.store = GitHubQueueStore(repo, token, branch=branch)
+        self.profile_store = GitHubBookProfileStore(repo, token, branch=branch)
         self.force = bool(force)
 
         self.headers = {
@@ -238,6 +241,17 @@ class Dispatcher:
         if not task:
             return queue, "No queued task is eligible."
         task_id = task["task_id"]
+        profiles, _ = self.profile_store.load()
+        profile_id, profile = get_book_profile(
+            profiles, task.get("catalog_url") or "", task.get("book_title") or "",
+        )
+        snapshot = profile_snapshot(profile_id, profile)
+        # Existing tasks created before book profiles retain their edited titles
+        # until the first explicit profile save migrates them.
+        if not snapshot.get("chapter_title_overrides") and task.get("chapter_title_overrides"):
+            snapshot["chapter_title_overrides"] = dict(task.get("chapter_title_overrides") or {})
+        task["book_profile_id"] = profile_id
+        task["profile_snapshot"] = snapshot
         task.update({"status": "dispatching", "reason": None, "retry_at": None, "dispatched_at": datetime.now(timezone.utc).isoformat()})
         self.store.save(queue, sha=self.store.load()[1], message=f"Reserve audiobook task {task_id}")
 
@@ -257,7 +271,10 @@ class Dispatcher:
             "exclude_chapters": ",".join(str(value) for value in sorted(task.get("excluded_chapters") or [])),
             "renumber_selected": "true" if renumber else "false",
             "chapter_title_overrides_b64": base64.b64encode(
-                json.dumps(task.get("chapter_title_overrides") or {}, ensure_ascii=False).encode("utf-8")
+                json.dumps(snapshot.get("chapter_title_overrides") or {}, ensure_ascii=False).encode("utf-8")
+            ).decode("ascii"),
+            "book_profile_snapshot_b64": base64.b64encode(
+                json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
             ).decode("ascii"),
             "zip_password": "",
         }

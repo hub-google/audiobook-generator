@@ -10,6 +10,11 @@ import unicodedata
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
+try:
+    from .book_profiles import validate_remove_patterns
+except ImportError:
+    from book_profiles import validate_remove_patterns
+
 
 MAX_PARALLEL_WORKERS = 17
 
@@ -299,7 +304,7 @@ def parse_catalog(catalog_url):
 
 def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="config.yaml",
                           exclude_chapters=None, chapters_per_worker=5,
-                          parsed_result=None, renumber_selected=False):
+                          parsed_result=None, renumber_selected=False, book_profile_snapshot=None):
     """
     根據解析結果生成 config.yaml 檔案。
     parsed_result: 可傳入已爬取的 parse_catalog() 結果，避免重複爬取。
@@ -339,6 +344,8 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
         if renumber_selected else list(source_indices)
     )
 
+    snapshot = dict(book_profile_snapshot or {})
+    cleaner_patterns = validate_remove_patterns(snapshot.get("cleaner_remove_patterns") or [])
     config_data = {
         "book_title": res["book_title"],
         "base_url": res["base_url"],
@@ -357,6 +364,12 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
         },
         "renumber_selected": bool(renumber_selected),
         "chapters_per_worker": chapters_per_worker,  # 新增：讓 Worker 知道每台機器的額度
+        "book_profile_id": snapshot.get("book_profile_id", ""),
+        "profile_revision": int(snapshot.get("profile_revision") or 0),
+        "cleaner": {
+            "remove_patterns": cleaner_patterns,
+            "fingerprint": str(snapshot.get("cleaner_fingerprint") or ""),
+        },
         "tts": {
             "engine": "edge-tts",
             "edge_voice": "zh-CN-YunxiNeural",
@@ -457,6 +470,7 @@ if __name__ == "__main__":
     parser.add_argument("--exclude-chapters", type=str, default="", help="Comma separated 1-based indices to exclude")
     parser.add_argument("--renumber-selected", type=str, default="false", help="Renumber selected chapters consecutively")
     parser.add_argument("--chapter-title-overrides-b64", type=str, default="", help="Base64 JSON mapping stable catalog UUIDs to edited full titles")
+    parser.add_argument("--book-profile-snapshot-b64", type=str, default="", help="Base64 JSON immutable per-book settings snapshot")
     args = parser.parse_args()
 
     exclude_list = []
@@ -472,7 +486,17 @@ if __name__ == "__main__":
     # ── 只爬取一次目錄，共用於 config 與 matrix ──
     print(f"[CatalogParser] 正在解析目錄：{args.url}")
     parsed = parse_catalog(args.url)
-    apply_chapter_title_overrides(parsed, decode_chapter_title_overrides(args.chapter_title_overrides_b64))
+    snapshot = {}
+    if args.book_profile_snapshot_b64:
+        try:
+            snapshot = json.loads(base64.b64decode(args.book_profile_snapshot_b64).decode("utf-8"))
+        except Exception as error:
+            raise ValueError(f"無法解碼書籍設定快照：{error}") from error
+        if not isinstance(snapshot, dict):
+            raise ValueError("書籍設定快照必須是 JSON 物件")
+        validate_remove_patterns(snapshot.get("cleaner_remove_patterns") or [])
+    overrides = snapshot.get("chapter_title_overrides") or decode_chapter_title_overrides(args.chapter_title_overrides_b64)
+    apply_chapter_title_overrides(parsed, overrides)
 
     # ── 若需要 matrix，先計算以取得可能自動調整後的 chapters_per_worker ──
     effective_cpw = chapters_per_worker_input
@@ -495,4 +519,5 @@ if __name__ == "__main__":
         chapters_per_worker=effective_cpw,
         parsed_result=parsed,
         renumber_selected=renumber_selected,
+        book_profile_snapshot=snapshot,
     )

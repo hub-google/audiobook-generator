@@ -21,6 +21,10 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 try:
     from catalog_parser import analyze_duplicate_chapters, apply_chapter_title_overrides, parse_catalog, split_chapter_title
     from cleaner import chunk_text, clean_text_content
+    from book_profiles import (
+        GitHubBookProfileStore, book_profile_id, get_book_profile, profile_snapshot,
+        update_book_profile, validate_remove_patterns,
+    )
     from crawler import fetch_chapter_text
     from cloud_queue import (
         BLOCKING_STATES, GitHubQueueStore, TERMINAL_STATES, add_tasks, delete_task,
@@ -58,6 +62,8 @@ class AudiobookGUIApp:
         self.catalog_load_token = 0
         self.renumber_selected_chapters = False
         self.chapter_title_overrides = {}
+        self.cleaner_remove_patterns = []
+        self.duplicate_detection = {"use_normalized_number": True, "use_chapter_name": True}
 
         self._setup_style()
         self._build_ui()
@@ -288,6 +294,10 @@ class AudiobookGUIApp:
             raise RuntimeError("雲端佇列模組載入失敗；請檢查 src/cloud_queue.py 與 requests 套件")
         repo, token = self._github_settings()
         return GitHubQueueStore(repo, token), repo, token
+
+    def _profile_store(self):
+        repo, token = self._github_settings()
+        return GitHubBookProfileStore(repo, token), repo, token
 
     def _render_queue(self, queue):
         selected_ids = {
@@ -609,10 +619,116 @@ class AudiobookGUIApp:
         return samples
 
     @staticmethod
-    def _build_text_sample(raw_title, raw_body, book_title):
+    def _build_text_sample(raw_title, raw_body, book_title, remove_patterns=None):
         raw_text = raw_title + "\n\n" + raw_body
-        cleaned = clean_text_content(raw_body, raw_title, book_title)
+        cleaned = clean_text_content(raw_body, raw_title, book_title, remove_patterns=remove_patterns)
         return raw_text, chunk_text(cleaned, max_length=18)
+
+    def _open_cleaner_patterns_dialog(self, task, parent, on_saved):
+        dialog = tk.Toplevel(parent)
+        dialog.title(f"《{task.get('book_title') or '待解析'}》刪除關鍵字設定")
+        dialog.geometry("680x430")
+        dialog.minsize(560, 360)
+        dialog.transient(parent)
+        dialog.grab_set()
+        body = ttk.Frame(dialog, padding=12)
+        body.pack(fill=tk.BOTH, expand=True)
+        status_var = tk.StringVar(value="正在從 GitHub 載入這本小說的設定…")
+        ttk.Label(body, textvariable=status_var).pack(anchor=tk.W, pady=(0, 8))
+        add_row = ttk.Frame(body)
+        add_row.pack(fill=tk.X)
+        entry = ttk.Entry(add_row)
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        listbox = tk.Listbox(body, selectmode=tk.EXTENDED, font=("Microsoft JhengHei", 10))
+        listbox.pack(fill=tk.BOTH, expand=True, pady=8)
+        patterns = []
+
+        def render():
+            listbox.delete(0, tk.END)
+            for pattern in patterns:
+                listbox.insert(tk.END, pattern)
+
+        def add_pattern():
+            value = entry.get().strip()
+            if not value:
+                return
+            try:
+                validated = validate_remove_patterns(patterns + [value])
+            except ValueError as error:
+                messagebox.showwarning("刪除關鍵字", str(error), parent=dialog)
+                return
+            patterns[:] = validated
+            entry.delete(0, tk.END)
+            render()
+
+        def delete_selected():
+            selected = set(listbox.curselection())
+            patterns[:] = [value for index, value in enumerate(patterns) if index not in selected]
+            render()
+
+        ttk.Button(add_row, text="＋新增", command=add_pattern).pack(side=tk.RIGHT)
+        entry.bind("<Return>", lambda _event: add_pattern())
+        actions = ttk.Frame(body)
+        actions.pack(fill=tk.X)
+        ttk.Button(actions, text="刪除選取項目", command=delete_selected).pack(side=tk.LEFT)
+        save_button = ttk.Button(actions, text="儲存到 GitHub", style="Accent.TButton")
+        save_button.pack(side=tk.RIGHT)
+
+        def load_worker():
+            try:
+                profiles, _ = self._profile_store()[0].load()
+                _, profile = get_book_profile(profiles, task.get("catalog_url") or "", task.get("book_title") or "")
+                loaded = list(profile.get("cleaner_remove_patterns") or [])
+                self.root.after(0, lambda: finish_load(loaded))
+            except Exception as error:
+                self.root.after(0, lambda detail=str(error): messagebox.showerror("讀取書籍設定失敗", detail, parent=dialog))
+
+        def finish_load(loaded):
+            patterns[:] = loaded
+            render()
+            status_var.set("以下規則只套用於目前這本小說；內容使用正則表達式。")
+            entry.focus_set()
+
+        def save():
+            try:
+                validated = validate_remove_patterns(patterns)
+            except ValueError as error:
+                messagebox.showwarning("刪除關鍵字", str(error), parent=dialog)
+                return
+            save_button.config(state=tk.DISABLED, text="正在儲存…")
+            status_var.set("正在寫入 GitHub automation-state…")
+
+            def save_worker():
+                try:
+                    store, _, _ = self._profile_store()
+                    profiles = store.mutate(
+                        lambda data: update_book_profile(
+                            data, task.get("catalog_url") or "", task.get("book_title") or "",
+                            cleaner_remove_patterns=validated,
+                            duplicate_detection=self.duplicate_detection,
+                            chapter_title_overrides=self.chapter_title_overrides,
+                        ),
+                        f"Update cleaner patterns for {task.get('book_title') or 'audiobook'}",
+                    )
+                    _, saved_profile = get_book_profile(profiles, task.get("catalog_url") or "", task.get("book_title") or "")
+                    self.root.after(0, lambda: finish_save(saved_profile))
+                except Exception as error:
+                    self.root.after(0, lambda detail=str(error): fail_save(detail))
+            threading.Thread(target=save_worker, daemon=True).start()
+
+        def finish_save(profile):
+            self.cleaner_remove_patterns = list(profile.get("cleaner_remove_patterns") or [])
+            status_var.set(f"已儲存到 GitHub｜Profile revision {profile.get('profile_revision', 0)}")
+            save_button.config(state=tk.NORMAL, text="儲存到 GitHub")
+            on_saved(self.cleaner_remove_patterns)
+
+        def fail_save(detail):
+            save_button.config(state=tk.NORMAL, text="儲存到 GitHub")
+            status_var.set("儲存失敗；清單尚未寫入 GitHub。")
+            messagebox.showerror("儲存書籍設定失敗", detail, parent=dialog)
+
+        save_button.config(command=save)
+        threading.Thread(target=load_worker, daemon=True).start()
 
     def open_text_sample(self):
         task = self._selected_task()
@@ -648,6 +764,12 @@ class AudiobookGUIApp:
             panes.add(clean_frame, weight=1)
             views[label] = (info_var, raw_box, clean_box)
 
+        manage_button = ttk.Button(
+            frame, text="管理刪除關鍵字",
+            command=lambda: self._open_cleaner_patterns_dialog(task, top, refresh_preview),
+        )
+        manage_button.place(relx=1.0, y=34, anchor=tk.NE)
+
         def show_error(detail):
             status_var.set("抽查失敗")
             messagebox.showerror("抽查文字失敗", detail, parent=top)
@@ -681,21 +803,34 @@ class AudiobookGUIApp:
                     box.config(state=tk.DISABLED)
             status_var.set(f"抽查完成：3 個位置，{warnings} 個需要留意。左右內容可直接捲動比對。")
 
-        def worker():
+        def worker(remove_patterns=None):
             try:
                 catalog = parse_catalog(task.get("catalog_url") or "")
-                apply_chapter_title_overrides(catalog, task.get("chapter_title_overrides") or {})
+                profiles, _ = self._profile_store()[0].load()
+                _, profile = get_book_profile(profiles, task.get("catalog_url") or "", task.get("book_title") or "")
+                active_patterns = (
+                    remove_patterns if remove_patterns is not None
+                    else profile.get("cleaner_remove_patterns") or []
+                )
+                apply_chapter_title_overrides(
+                    catalog, profile.get("chapter_title_overrides") or task.get("chapter_title_overrides") or {},
+                )
                 samples = self._text_sample_chapters(task, catalog)
                 results = []
                 for sample in samples:
                     title, body = fetch_chapter_text(sample["url"])
                     raw_text, clean_text = self._build_text_sample(
                         title, body, task.get("book_title") or catalog.get("book_title") or "",
+                        remove_patterns=active_patterns,
                     )
                     results.append((sample, raw_text, clean_text))
                 self.root.after(0, lambda: render(results) if top.winfo_exists() else None)
             except Exception as error:
                 self.root.after(0, lambda detail=str(error): show_error(detail) if top.winfo_exists() else None)
+        def refresh_preview(patterns):
+            status_var.set("關鍵字已儲存；正在重新取得三個取樣章節…")
+            threading.Thread(target=worker, args=(patterns,), daemon=True).start()
+
         threading.Thread(target=worker, daemon=True).start()
 
     def _update_selected_task_status(self, task):
@@ -716,6 +851,8 @@ class AudiobookGUIApp:
         self.editing_task_id = None
         self.catalog_data = None
         self.chapter_title_overrides = {}
+        self.cleaner_remove_patterns = []
+        self.duplicate_detection = {"use_normalized_number": True, "use_chapter_name": True}
         self.excluded_chapters.clear()
         self.renumber_selected_chapters = False
         for tree in (self.pending_queue_tree, self.success_queue_tree):
@@ -747,13 +884,16 @@ class AudiobookGUIApp:
         def worker():
             try:
                 result = parse_catalog(task.get("catalog_url") or "")
-                apply_chapter_title_overrides(result, task.get("chapter_title_overrides") or {})
-                self.root.after(0, lambda: self._finish_queue_task_load(token, task["task_id"], result))
+                profiles, _ = self._profile_store()[0].load()
+                _, profile = get_book_profile(profiles, task.get("catalog_url") or "", task.get("book_title") or "")
+                overrides = profile.get("chapter_title_overrides") or task.get("chapter_title_overrides") or {}
+                apply_chapter_title_overrides(result, overrides)
+                self.root.after(0, lambda: self._finish_queue_task_load(token, task["task_id"], result, profile))
             except Exception as error:
                 self.root.after(0, lambda detail=str(error): self._on_parse_failed(detail))
         threading.Thread(target=worker, daemon=True).start()
 
-    def _finish_queue_task_load(self, token, task_id, result):
+    def _finish_queue_task_load(self, token, task_id, result, profile=None):
         if token != self.catalog_load_token or task_id != self.editing_task_id:
             return
         task = self._selected_task()
@@ -771,7 +911,10 @@ class AudiobookGUIApp:
         self.entry_end.insert(0, str(end))
         self.excluded_chapters = {int(value) for value in task.get("excluded_chapters") or []}
         self.renumber_selected_chapters = bool(task.get("renumber_selected"))
-        self.chapter_title_overrides = dict(task.get("chapter_title_overrides") or {})
+        profile = profile or {}
+        self.chapter_title_overrides = dict(profile.get("chapter_title_overrides") or task.get("chapter_title_overrides") or {})
+        self.cleaner_remove_patterns = list(profile.get("cleaner_remove_patterns") or [])
+        self.duplicate_detection = dict(profile.get("duplicate_detection") or self.duplicate_detection)
         self._update_chapter_selection_summary(start, end)
         self.btn_update_queue.config(state=tk.NORMAL)
 
@@ -1192,6 +1335,16 @@ class AudiobookGUIApp:
         def worker():
             try:
                 store, repo, token = self._queue_store()
+                profile_store, _, _ = self._profile_store()
+                profile_store.mutate(
+                    lambda data: update_book_profile(
+                        data, task.get("catalog_url") or "", task.get("book_title") or "",
+                        cleaner_remove_patterns=self.cleaner_remove_patterns,
+                        duplicate_detection=self.duplicate_detection,
+                        chapter_title_overrides=self.chapter_title_overrides,
+                    ),
+                    f"Update book profile for {task.get('book_title') or task_id}",
+                )
                 if active and run_id:
                     response = requests.post(
                         f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel",
@@ -1517,6 +1670,8 @@ class AudiobookGUIApp:
         if res and res.get("success"):
             self.catalog_data = res
             self.chapter_title_overrides = {}
+            self.cleaner_remove_patterns = []
+            self.duplicate_detection = {"use_normalized_number": True, "use_chapter_name": True}
             book_title = res["book_title"]
             total = res["total_chapters"]
             duplicate_count = int(res.get("duplicate_chapter_count") or 0)
@@ -1552,8 +1707,8 @@ class AudiobookGUIApp:
             return
             
         titles = self.catalog_data.get("chapter_titles", [])
-        duplicate_use_number = tk.BooleanVar(value=True)
-        duplicate_use_name = tk.BooleanVar(value=True)
+        duplicate_use_number = tk.BooleanVar(value=self.duplicate_detection.get("use_normalized_number", True))
+        duplicate_use_name = tk.BooleanVar(value=self.duplicate_detection.get("use_chapter_name", True))
         duplicate_indices = set()
         if not titles:
             messagebox.showinfo("提示", "目前沒有章節標題資訊可供篩選。")
@@ -1592,6 +1747,7 @@ class AudiobookGUIApp:
         control_frame.pack(fill=tk.X, padx=15, pady=5)
 
         show_all_var = tk.BooleanVar(value=True)
+        show_duplicates_only_var = tk.BooleanVar(value=False)
         
         ttk.Label(control_frame, text="🔍 搜尋:").pack(side=tk.LEFT, padx=(0, 4))
         search_entry = ttk.Entry(control_frame, width=16)
@@ -1673,6 +1829,8 @@ class AudiobookGUIApp:
 
             for i in range(s_idx, e_idx + 1):
                 global_idx = i
+                if show_duplicates_only_var.get() and global_idx not in duplicate_indices:
+                    continue
                 parts = chapter_parts[global_idx - 1]
                 is_checked = chapter_state.get(global_idx, True)
                 output_number = ""
@@ -1699,6 +1857,20 @@ class AudiobookGUIApp:
 
         chk_show_all = ttk.Checkbutton(control_frame, text="🌐 顯示全書章節", variable=show_all_var, command=_update_listbox)
         chk_show_all.pack(side=tk.LEFT, padx=(0, 10))
+
+        duplicate_filter_button = ttk.Button(control_frame, text="只看重複章節")
+        duplicate_filter_button.pack(side=tk.LEFT, padx=(0, 10))
+
+        def _toggle_duplicate_filter():
+            show_duplicates_only_var.set(not show_duplicates_only_var.get())
+            duplicate_filter_button.config(
+                text="看全部章節" if show_duplicates_only_var.get() else "只看重複章節"
+            )
+            _update_listbox()
+            if show_duplicates_only_var.get() and not visible_indices:
+                info_lbl.config(text="目前沒有符合範圍與搜尋條件的重複章節")
+
+        duplicate_filter_button.config(command=_toggle_duplicate_filter)
 
         search_entry.bind("<KeyRelease>", lambda e: _update_listbox())
 
@@ -1871,10 +2043,34 @@ class AudiobookGUIApp:
                     return
                 duplicate_use_number.set(pending_use_number.get())
                 duplicate_use_name.set(pending_use_name.get())
+                self.duplicate_detection = {
+                    "use_normalized_number": duplicate_use_number.get(),
+                    "use_chapter_name": duplicate_use_name.get(),
+                }
                 _refresh_duplicates()
                 _update_listbox()
                 info_lbl.config(text=f"已重新判斷重複章節｜共標記 {len(duplicate_indices)} 個")
                 dialog.destroy()
+
+                task = self._selected_task()
+                if task:
+                    def save_conditions():
+                        try:
+                            store, _, _ = self._profile_store()
+                            store.mutate(
+                                lambda data: update_book_profile(
+                                    data, task.get("catalog_url") or "", task.get("book_title") or "",
+                                    cleaner_remove_patterns=self.cleaner_remove_patterns,
+                                    duplicate_detection=self.duplicate_detection,
+                                    chapter_title_overrides=self.chapter_title_overrides,
+                                ),
+                                f"Update duplicate detection for {task.get('book_title') or 'audiobook'}",
+                            )
+                        except Exception as error:
+                            self.root.after(0, lambda detail=str(error): messagebox.showerror(
+                                "儲存重複判斷條件失敗", detail, parent=top,
+                            ))
+                    threading.Thread(target=save_conditions, daemon=True).start()
 
             ttk.Button(body, text="套用", command=_apply_conditions).pack(anchor=tk.E, pady=(12, 0))
 
@@ -1970,6 +2166,16 @@ class AudiobookGUIApp:
                         "renumber_selected": "true" if self.renumber_selected_chapters else "false",
                         "chapter_title_overrides_b64": base64.b64encode(
                             json.dumps(self.chapter_title_overrides, ensure_ascii=False).encode("utf-8")
+                        ).decode("ascii"),
+                        "book_profile_snapshot_b64": base64.b64encode(
+                            json.dumps(profile_snapshot(
+                                book_profile_id(url), {
+                                    "profile_revision": 0,
+                                    "cleaner_remove_patterns": self.cleaner_remove_patterns,
+                                    "duplicate_detection": self.duplicate_detection,
+                                    "chapter_title_overrides": self.chapter_title_overrides,
+                                }
+                            ), ensure_ascii=False).encode("utf-8")
                         ).decode("ascii"),
                         "zip_password": os.getenv("ZIP_PASSWORD", "Qw000000")
                     }
