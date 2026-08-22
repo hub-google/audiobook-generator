@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 426,
-  "updated_at": "2026-08-22T15:54:44.920894+00:00",
+  "revision": 427,
+  "updated_at": "2026-08-22T16:02:48.763454+00:00",
   "queue": [
     {
       "task_id": "book-20260822-e697f308",
@@ -2060,7 +2060,7 @@
         2011
       ],
       "chapter_normalized_number_overrides": {
-        "1": 1
+        "1": "1"
       },
       "chapter_title_overrides": {}
     },
@@ -2073,10 +2073,12 @@
       "end_chapter": 1567,
       "excluded_chapters": [
         1258,
-        1292
+        1260,
+        1292,
+        1491
       ],
       "renumber_selected": true,
-      "duplicate_chapter_count": 109,
+      "duplicate_chapter_count": 110,
       "status": "interrupted",
       "run_id": 32576615343,
       "run_attempt": 1,
@@ -2100,7 +2102,7 @@
         "total": 0
       },
       "created_at": "2026-08-22T09:51:03.814563+00:00",
-      "updated_at": "2026-08-22T15:54:44.920894+00:00",
+      "updated_at": "2026-08-22T16:02:48.763454+00:00",
       "chapter_order": [
         1,
         2,
@@ -2800,6 +2802,7 @@
         695,
         696,
         697,
+        698,
         699,
         700,
         701,
@@ -3445,7 +3448,9 @@
         1343,
         1344,
         1345,
+        1346,
         1348,
+        1347,
         1349,
         1350,
         1351,
@@ -3664,20 +3669,22 @@
         1565,
         1566,
         1567,
-        698,
-        1346,
         1260,
-        1347,
         1491
       ],
       "chapter_normalized_number_overrides": {
-        "1345": 1333,
-        "1346": 1333,
-        "1347": 1334
+        "1345": "1333",
+        "1346": "1333.1",
+        "1347": "1334",
+        "698": "697"
       },
       "run_conclusion": "cancelled",
       "run_completed_at": "2026-08-22T15:05:42Z",
-      "chapter_title_overrides": {}
+      "chapter_title_overrides": {
+        "698": "金池落幕",
+        "1260": "邪神隕落(大結局)",
+        "1567": "第一千五百五十一章 邪神隕落(大結局)"
+      }
     },
     {
       "task_id": "book-20260822-a49e60a1",
