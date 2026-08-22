@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 5,
-  "updated_at": "2026-08-22T15:27:26.875926+00:00",
+  "revision": 6,
+  "updated_at": "2026-08-22T15:32:46.400841+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -11,7 +11,8 @@
       ],
       "duplicate_detection": {
         "use_normalized_number": true,
-        "use_chapter_name": true
+        "use_chapter_name": true,
+        "use_number_and_name": false
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {
@@ -26,7 +27,8 @@
       "cleaner_remove_patterns": [],
       "duplicate_detection": {
         "use_normalized_number": true,
-        "use_chapter_name": true
+        "use_chapter_name": true,
+        "use_number_and_name": false
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
@@ -39,12 +41,31 @@
       "cleaner_remove_patterns": [],
       "duplicate_detection": {
         "use_normalized_number": true,
-        "use_chapter_name": true
+        "use_chapter_name": true,
+        "use_number_and_name": false
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
       "profile_revision": 1,
       "updated_at": "2026-08-22T15:27:26.875926+00:00"
+    },
+    "f4373967b52d240b": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33644",
+      "book_title": "大主宰",
+      "cleaner_remove_patterns": [
+        "(新書正式開始了。六年了，不知道陪伴了多少讀者走完高中，大學，甚至走入社會，或許中途會有讀者離去，但若是能夠在多年后突然想起那曾經的學園中，追讀著一本小說的歡樂，這便是我最大的幸福。所以我也希望，大主宰也能夠陪伴著大家，再度走過兩年的光陰歲月。新書剛剛出生，需要大家的溫養，真心的希望，不論是看正版還是盜版的讀者，能夠在公眾期支持大主宰，一張推薦，一個，都至關重要。所以，將票票投給大主宰，今天推薦票多的話，就三更喔~~~~~我們一起加油吧！）\n\n",
+        "（給大家推薦一下流浪的蛤蟆的新書，也算是遠古大神了，龍神訣，書名雖然和人一樣略挫，不過內容倒是不錯的。）\n\n",
+        "（大結局。）\n\n（直播活動開始了，大家有空的都來斗魚搜索天蠶土豆吧，今晚咱們王者榮耀狂歡局！同時我也會發布新書的信息。）\n\n(天津)\n\n\n"
+      ],
+      "duplicate_detection": {
+        "use_normalized_number": false,
+        "use_chapter_name": false,
+        "use_number_and_name": true
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "updated_at": "2026-08-22T15:32:46.400841+00:00"
     }
   }
 }
