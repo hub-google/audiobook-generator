@@ -401,7 +401,8 @@ def inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices):
         try:
             store = GitHubQueueStore(repo, token, branch=os.environ.get("QUEUE_STATE_BRANCH", "automation-state"))
             queue, _ = store.load()
-            for t in queue.get("tasks", []):
+            pending = queue.get("queue", queue.get("tasks", []))
+            for t in pending + queue.get("completed", []):
                 if (task_id and t.get("task_id") == task_id) or (book_title and t.get("book_title") == book_title):
                     history = t.get("run_history") or []
                     for item in reversed(history):

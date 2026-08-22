@@ -5,12 +5,31 @@ from unittest.mock import Mock, patch
 from src.cloud_queue import (
     add_tasks, current_task, empty_queue, format_chapter_label, move_task, move_tasks, new_task, next_task,
     mark_task_interrupted, mark_task_needs_attention, requeue_task_after_active, update_task,
-    update_task_chapters,
+    update_task_chapters, normalize_queue,
 )
 from src.queue_dispatcher import Dispatcher
 
 
 class CloudQueueTests(unittest.TestCase):
+    def test_schema_v1_migration_splits_completed_from_ranked_queue(self):
+        pending = new_task("https://example/1", "完美世界")
+        pending["position"] = 3
+        completed = new_task("https://example/2", "修真聊天群")
+        completed.update({"position": 2, "status": "completed"})
+
+        migrated = normalize_queue({
+            "schema_version": 1,
+            "revision": 10,
+            "tasks": [completed, pending],
+        })
+
+        self.assertEqual(migrated["schema_version"], 2)
+        self.assertNotIn("tasks", migrated)
+        self.assertEqual(migrated["queue"][0]["book_title"], "完美世界")
+        self.assertEqual(migrated["queue"][0]["position"], 1)
+        self.assertEqual(migrated["completed"][0]["book_title"], "修真聊天群")
+        self.assertNotIn("position", migrated["completed"][0])
+
     def test_chapter_title_overrides_are_persisted_by_stable_uuid(self):
         task = new_task(
             "https://example/1", "第一部", 1, 3,
@@ -22,7 +41,7 @@ class CloudQueueTests(unittest.TestCase):
             queue, task["task_id"], 1, 3,
             chapter_title_overrides={"2": "第二章 再修正"},
         )
-        self.assertEqual(queue["tasks"][0]["chapter_title_overrides"], {"2": "第二章 再修正"})
+        self.assertEqual(queue["queue"][0]["chapter_title_overrides"], {"2": "第二章 再修正"})
 
     def test_duplicate_chapter_count_is_persisted_and_updated(self):
         task = new_task(
@@ -36,7 +55,7 @@ class CloudQueueTests(unittest.TestCase):
             queue, task["task_id"], 1, 80,
             duplicate_chapter_count=9,
         )
-        self.assertEqual(queue["tasks"][0]["duplicate_chapter_count"], 9)
+        self.assertEqual(queue["queue"][0]["duplicate_chapter_count"], 9)
 
     def test_chapter_plan_update_normalizes_exclusions(self):
         task = new_task("https://example/1", "第一部", 1, 100)
@@ -44,7 +63,7 @@ class CloudQueueTests(unittest.TestCase):
 
         queue = update_task_chapters(queue, task["task_id"], 10, 20, [1, 10, 12, 12, 30])
 
-        edited = queue["tasks"][0]
+        edited = queue["queue"][0]
         self.assertEqual((edited["start_chapter"], edited["end_chapter"]), (10, 20))
         self.assertEqual(edited["excluded_chapters"], [10, 12])
 
@@ -56,7 +75,7 @@ class CloudQueueTests(unittest.TestCase):
             queue, task["task_id"], 1, 5, [2, 4], renumber_selected=True,
         )
 
-        edited = queue["tasks"][0]
+        edited = queue["queue"][0]
         self.assertEqual(edited["excluded_chapters"], [2, 4])
         self.assertTrue(edited["renumber_selected"])
 
@@ -67,7 +86,7 @@ class CloudQueueTests(unittest.TestCase):
 
         queue = update_task_chapters(queue, task["task_id"], 20, 80, [], requeue_after_cancel=True)
 
-        edited = queue["tasks"][0]
+        edited = queue["queue"][0]
         self.assertEqual(edited["status"], "canceling")
         self.assertTrue(edited["requeue_after_edit"])
 
@@ -122,7 +141,7 @@ class CloudQueueTests(unittest.TestCase):
         reconciled, changed = dispatcher.reconcile(queue)
 
         self.assertFalse(changed)
-        self.assertEqual(reconciled["tasks"][0]["retry_at"], "2026-08-20T09:30:00+00:00")
+        self.assertEqual(reconciled["queue"][0]["retry_at"], "2026-08-20T09:30:00+00:00")
         dispatcher.retry_marker.assert_not_called()
 
     def test_existing_retry_deadline_migrates_bad_legacy_reason_to_waiting(self):
@@ -144,8 +163,8 @@ class CloudQueueTests(unittest.TestCase):
         reconciled, changed = dispatcher.reconcile(queue)
 
         self.assertTrue(changed)
-        self.assertEqual(reconciled["tasks"][0]["status"], "waiting_retry")
-        self.assertEqual(reconciled["tasks"][0]["reason"], "otherError")
+        self.assertEqual(reconciled["queue"][0]["status"], "waiting_retry")
+        self.assertEqual(reconciled["queue"][0]["reason"], "otherError")
 
     def test_paused_task_is_skipped_and_can_be_reordered(self):
         first = new_task("https://example/1", "第一部")
@@ -154,7 +173,7 @@ class CloudQueueTests(unittest.TestCase):
         queue = update_task(queue, first["task_id"], status="paused")
         self.assertEqual(next_task(queue)["task_id"], second["task_id"])
         queue = move_task(queue, first["task_id"], 2)
-        self.assertEqual(queue["tasks"][1]["task_id"], first["task_id"])
+        self.assertEqual(queue["queue"][1]["task_id"], first["task_id"])
 
     def test_active_task_cannot_be_reordered(self):
         task = new_task("https://example/1", "第一部")
@@ -169,12 +188,12 @@ class CloudQueueTests(unittest.TestCase):
         selected = [tasks[1]["task_id"], tasks[3]["task_id"]]
 
         queue = move_tasks(queue, selected, -1)
-        self.assertEqual([item["book_title"] for item in queue["tasks"]], [
+        self.assertEqual([item["book_title"] for item in queue["queue"]], [
             "第2部", "第1部", "第4部", "第3部", "第5部",
         ])
 
         queue = move_tasks(queue, selected, 1)
-        self.assertEqual([item["book_title"] for item in queue["tasks"]], [
+        self.assertEqual([item["book_title"] for item in queue["queue"]], [
             "第1部", "第2部", "第3部", "第4部", "第5部",
         ])
 
@@ -198,10 +217,10 @@ class CloudQueueTests(unittest.TestCase):
         self.assertEqual(current_task(queue)["task_id"], active["task_id"])
         queue = requeue_task_after_active(queue, interrupted["task_id"])
 
-        self.assertEqual([item["task_id"] for item in queue["tasks"]], [
+        self.assertEqual([item["task_id"] for item in queue["queue"]], [
             active["task_id"], interrupted["task_id"], waiting["task_id"],
         ])
-        retried = queue["tasks"][1]
+        retried = queue["queue"][1]
         self.assertEqual(retried["status"], "queued")
         self.assertIsNone(retried["run_id"])
         self.assertEqual(retried["run_history"][0]["run_id"], 111)
@@ -223,7 +242,7 @@ class CloudQueueTests(unittest.TestCase):
         queue, changed = dispatcher.reconcile(queue)
 
         self.assertTrue(changed)
-        self.assertEqual(queue["tasks"][0]["status"], "interrupted")
+        self.assertEqual(queue["queue"][0]["status"], "interrupted")
         self.assertEqual(next_task(queue)["task_id"], second["task_id"])
 
     def test_cancelled_edited_run_is_automatically_requeued(self):
@@ -240,7 +259,7 @@ class CloudQueueTests(unittest.TestCase):
         queue, changed = dispatcher.reconcile(queue)
 
         self.assertTrue(changed)
-        edited = queue["tasks"][0]
+        edited = queue["queue"][0]
         self.assertEqual(edited["status"], "queued")
         self.assertFalse(edited["requeue_after_edit"])
         self.assertIsNone(edited["run_id"])
@@ -265,7 +284,7 @@ class CloudQueueTests(unittest.TestCase):
         result = dispatcher.run()
         self.assertIn("已啟動", result)
         dispatched_queue = dispatcher.dispatch_next.call_args.args[0]
-        self.assertEqual(dispatched_queue["tasks"][0]["status"], "interrupted")
+        self.assertEqual(dispatched_queue["queue"][0]["status"], "interrupted")
         self.assertEqual(next_task(dispatched_queue)["task_id"], second["task_id"])
 
     def test_missing_bound_run_interrupts_book_and_starts_next(self):
@@ -284,7 +303,7 @@ class CloudQueueTests(unittest.TestCase):
         result = dispatcher.run()
         self.assertIn("已啟動", result)
         dispatched_queue = dispatcher.dispatch_next.call_args.args[0]
-        interrupted = dispatched_queue["tasks"][0]
+        interrupted = dispatched_queue["queue"][0]
         self.assertEqual(interrupted["status"], "interrupted")
         self.assertEqual(interrupted["reason"], "run_not_found")
         self.assertEqual(interrupted["run_history"][0]["run_id"], 404123)
@@ -298,7 +317,7 @@ class CloudQueueTests(unittest.TestCase):
         queue = mark_task_interrupted(queue, task["task_id"], ended_at="2026-08-19T02:00:00Z")
         queue = mark_task_interrupted(queue, task["task_id"], ended_at="2026-08-19T02:00:00Z")
 
-        self.assertEqual(len(queue["tasks"][0]["run_history"]), 1)
+        self.assertEqual(len(queue["queue"][0]["run_history"]), 1)
 
     def test_failed_run_needs_attention_and_can_be_requeued(self):
         task = new_task("https://example/1", "第一部")
@@ -310,16 +329,16 @@ class CloudQueueTests(unittest.TestCase):
             ended_at="2026-08-20T02:00:00Z",
         )
 
-        failed = queue["tasks"][0]
+        failed = queue["queue"][0]
         self.assertEqual(failed["status"], "waiting_retry")
         self.assertIsNotNone(failed.get("retry_at"))
         self.assertEqual(failed["run_history"][0]["run_id"], 456)
         queue = requeue_task_after_active(queue, task["task_id"])
-        self.assertEqual(queue["tasks"][0]["status"], "queued")
-        self.assertIsNone(queue["tasks"][0]["run_id"])
+        self.assertEqual(queue["queue"][0]["status"], "queued")
+        self.assertIsNone(queue["queue"][0]["run_id"])
 
     def test_every_non_active_state_can_be_requeued(self):
-        for status in ("queued", "paused", "completed", "stopped", "interrupted", "needs_attention"):
+        for status in ("queued", "paused", "stopped", "interrupted", "needs_attention"):
             with self.subTest(status=status):
                 task = new_task("https://example/1", "第一部")
                 queue = add_tasks(empty_queue(), [task])
@@ -327,7 +346,46 @@ class CloudQueueTests(unittest.TestCase):
 
                 queue = requeue_task_after_active(queue, task["task_id"])
 
-                self.assertEqual(queue["tasks"][0]["status"], "queued")
+                self.assertEqual(queue["queue"][0]["status"], "queued")
+
+    def test_completed_task_moves_out_of_queue_and_releases_its_position(self):
+        first = new_task("https://example/1", "吞噬星空")
+        second = new_task("https://example/2", "修真聊天群")
+        third = new_task("https://example/3", "完美世界")
+        queue = add_tasks(empty_queue(), [first, second, third])
+
+        queue = update_task(
+            queue, second["task_id"], status="completed",
+            completed_at="2026-08-22T08:56:35Z",
+        )
+
+        self.assertEqual([item["book_title"] for item in queue["queue"]], ["吞噬星空", "完美世界"])
+        self.assertEqual([item["position"] for item in queue["queue"]], [1, 2])
+        self.assertEqual([item["book_title"] for item in queue["completed"]], ["修真聊天群"])
+        self.assertNotIn("position", queue["completed"][0])
+
+    def test_dispatcher_success_moves_task_to_completed_in_same_update(self):
+        finished = new_task("https://example/1", "修真聊天群")
+        waiting = new_task("https://example/2", "完美世界")
+        queue = add_tasks(empty_queue(), [finished, waiting])
+        queue = update_task(queue, finished["task_id"], status="running", run_id=123)
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.runs = Mock(return_value=[{
+            "id": 123,
+            "name": f"有聲小說製作｜修真聊天群｜Ch1-3300｜{finished['task_id']}",
+            "status": "completed",
+            "conclusion": "success",
+            "updated_at": "2026-08-22T08:56:35Z",
+        }])
+        dispatcher.progress_markers = Mock(return_value=None)
+
+        reconciled, changed = dispatcher.reconcile(queue)
+
+        self.assertTrue(changed)
+        self.assertEqual([item["book_title"] for item in reconciled["queue"]], ["完美世界"])
+        self.assertEqual(reconciled["queue"][0]["position"], 1)
+        self.assertEqual(reconciled["completed"][0]["book_title"], "修真聊天群")
+        self.assertNotIn("position", reconciled["completed"][0])
 
     def test_requeued_book_ignores_runs_created_before_retry_request(self):
         task = new_task("https://example/1", "第一部")
@@ -346,8 +404,8 @@ class CloudQueueTests(unittest.TestCase):
         queue, changed = dispatcher.reconcile(queue)
 
         self.assertFalse(changed)
-        self.assertEqual(queue["tasks"][0]["status"], "queued")
-        self.assertIsNone(queue["tasks"][0]["run_id"])
+        self.assertEqual(queue["queue"][0]["status"], "queued")
+        self.assertIsNone(queue["queue"][0]["run_id"])
 
     @patch.object(Dispatcher, "request")
     def test_dispatcher_passes_book_title_to_workflow(self, request):
@@ -400,7 +458,7 @@ class CloudQueueTests(unittest.TestCase):
         dispatcher.dispatch_next(queue)
 
         attached = dispatcher.store.save.call_args_list[-1].args[0]
-        self.assertEqual(attached["tasks"][0]["run_id"], 123)
+        self.assertEqual(attached["queue"][0]["run_id"], 123)
 
     def test_format_chapter_label(self):
         # 1. No exclusion
@@ -420,15 +478,15 @@ class CloudQueueTests(unittest.TestCase):
         first = new_task("https://example/1", "吞噬星空")
         second = new_task("https://example/2", "修真聊天群")
         queue = add_tasks(empty_queue(), [first, second])
-        self.assertEqual(queue["tasks"][0]["book_title"], "吞噬星空")
-        self.assertEqual(queue["tasks"][1]["book_title"], "修真聊天群")
+        self.assertEqual(queue["queue"][0]["book_title"], "吞噬星空")
+        self.assertEqual(queue["queue"][1]["book_title"], "修真聊天群")
 
         # When second starts running, it must automatically become position 1
         queue = update_task(queue, second["task_id"], status="running", run_id=32326794640)
-        self.assertEqual(queue["tasks"][0]["book_title"], "修真聊天群")
-        self.assertEqual(queue["tasks"][0]["position"], 1)
-        self.assertEqual(queue["tasks"][1]["book_title"], "吞噬星空")
-        self.assertEqual(queue["tasks"][1]["position"], 2)
+        self.assertEqual(queue["queue"][0]["book_title"], "修真聊天群")
+        self.assertEqual(queue["queue"][0]["position"], 1)
+        self.assertEqual(queue["queue"][1]["book_title"], "吞噬星空")
+        self.assertEqual(queue["queue"][1]["position"], 2)
 
     def test_requeue_task_places_behind_currently_running_task(self):
         task1 = new_task("https://example/1", "吞噬星空")
@@ -440,17 +498,17 @@ class CloudQueueTests(unittest.TestCase):
         queue = update_task(queue, task1["task_id"], status="interrupted")
         queue = update_task(queue, task2["task_id"], status="running", run_id=32326794640)
 
-        self.assertEqual(queue["tasks"][0]["book_title"], "修真聊天群")
-        self.assertEqual(queue["tasks"][0]["position"], 1)
+        self.assertEqual(queue["queue"][0]["book_title"], "修真聊天群")
+        self.assertEqual(queue["queue"][0]["position"], 1)
 
         # Requeue task1 -> must be position 2 (behind task2), task3 is position 3
         queue = requeue_task_after_active(queue, task1["task_id"])
-        self.assertEqual(queue["tasks"][0]["book_title"], "修真聊天群")
-        self.assertEqual(queue["tasks"][0]["position"], 1)
-        self.assertEqual(queue["tasks"][1]["book_title"], "吞噬星空")
-        self.assertEqual(queue["tasks"][1]["position"], 2)
-        self.assertEqual(queue["tasks"][2]["book_title"], "完美世界")
-        self.assertEqual(queue["tasks"][2]["position"], 3)
+        self.assertEqual(queue["queue"][0]["book_title"], "修真聊天群")
+        self.assertEqual(queue["queue"][0]["position"], 1)
+        self.assertEqual(queue["queue"][1]["book_title"], "吞噬星空")
+        self.assertEqual(queue["queue"][1]["position"], 2)
+        self.assertEqual(queue["queue"][2]["book_title"], "完美世界")
+        self.assertEqual(queue["queue"][2]["position"], 3)
 
     def test_requeue_task_with_explicit_active_id(self):
         task1 = new_task("https://example/1", "吞噬星空")
@@ -459,10 +517,10 @@ class CloudQueueTests(unittest.TestCase):
 
         # Even if task2 status in json is still queued but GUI knows it's active
         queue = requeue_task_after_active(queue, task1["task_id"], active_id=task2["task_id"])
-        self.assertEqual(queue["tasks"][0]["book_title"], "修真聊天群")
-        self.assertEqual(queue["tasks"][0]["position"], 1)
-        self.assertEqual(queue["tasks"][1]["book_title"], "吞噬星空")
-        self.assertEqual(queue["tasks"][1]["position"], 2)
+        self.assertEqual(queue["queue"][0]["book_title"], "修真聊天群")
+        self.assertEqual(queue["queue"][0]["position"], 1)
+        self.assertEqual(queue["queue"][1]["book_title"], "吞噬星空")
+        self.assertEqual(queue["queue"][1]["position"], 2)
 
 
     @patch.object(Dispatcher, "request")
@@ -504,7 +562,7 @@ class CloudQueueTests(unittest.TestCase):
 
         dispatcher.run_uses_current_master.assert_called_once_with(123)
         dispatched_queue = dispatch_next.call_args.args[0]
-        self.assertEqual(dispatched_queue["tasks"][0]["status"], "queued")
+        self.assertEqual(dispatched_queue["queue"][0]["status"], "queued")
 
     @patch.object(Dispatcher, "dispatch_next")
     def test_unobserved_dispatch_is_not_reported_as_launched(self, dispatch_next):

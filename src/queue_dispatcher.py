@@ -142,7 +142,7 @@ class Dispatcher:
             if task_id:
                 by_task.setdefault(task_id, []).append(run)
         changed = False
-        for task in queue["tasks"]:
+        for task in list(queue["queue"]):
             candidates = by_task.get(task.get("task_id"), [])
             retry_requested_at = parse_time(task.get("retry_requested_at"))
             if retry_requested_at:
@@ -197,7 +197,10 @@ class Dispatcher:
                     task["reason"] = None
                     changed = True
             elif status == "completed" and conclusion == "success" and task.get("status") != "completed":
-                task.update({"status": "completed", "reason": None, "retry_at": None, "completed_at": run.get("updated_at")})
+                queue = update_task(
+                    queue, task["task_id"], status="completed", reason=None,
+                    retry_at=None, completed_at=run.get("updated_at"),
+                )
                 changed = True
             elif status == "completed" and conclusion == "failure" and task.get("status") not in {"stopped", "paused"}:
                 if task.get("status") == "waiting_retry" and task.get("retry_at"):
@@ -294,7 +297,7 @@ class Dispatcher:
     def summary(self, queue, action, task=None):
         """Render a useful operator-facing Markdown report for Actions summary."""
         now = datetime.now(timezone.utc)
-        queued = [item for item in queue.get("tasks", []) if item.get("status") == "queued"]
+        queued = [item for item in queue.get("queue", []) if item.get("status") == "queued"]
         active = task or current_task(queue)
 
         if action == "dispatched":

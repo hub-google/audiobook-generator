@@ -296,16 +296,16 @@ class AudiobookGUIApp:
         }
         for tree in (self.pending_queue_tree, self.success_queue_tree):
             tree.delete(*tree.get_children())
-        for task in queue.get("tasks", []):
+        for task in queue.get("queue", []) + queue.get("completed", []):
             start = task.get("start_chapter") or 1
             end = task.get("end_chapter") or "全部"
             hf = task.get("hf_progress") or {}
             yt = task.get("youtube_progress") or {}
             observation = self.github_observations.get(task.get("task_id"))
             duplicate_count = task.get("duplicate_chapter_count")
-            target_tree = self.success_queue_tree if task.get("status") == "completed" else self.pending_queue_tree
+            target_tree = self.success_queue_tree if task in queue.get("completed", []) else self.pending_queue_tree
             target_tree.insert("", tk.END, iid=task["task_id"], values=(
-                task.get("position"), task.get("book_title"), f"{start}–{end}",
+                task.get("position", "—"), task.get("book_title"), f"{start}–{end}",
                 duplicate_count if duplicate_count is not None else "—", self._queue_status_text(task),
                 self._observation_checked_time(observation),
                 f"{hf.get('completed', 0)}/{hf.get('total', 0)}",
@@ -337,7 +337,7 @@ class AudiobookGUIApp:
                 restored_ids.extend(valid)
         if restored_ids:
             selected_tasks = [
-                item for item in queue.get("tasks", []) if item.get("task_id") in restored_ids
+                item for item in queue.get("queue", []) + queue.get("completed", []) if item.get("task_id") in restored_ids
             ]
             self._update_queue_control_states(selected_tasks)
             if len(selected_tasks) == 1:
@@ -418,7 +418,7 @@ class AudiobookGUIApp:
     def _refresh_observation_freshness(self):
         """Expire an old observation in the UI even while a network poll is blocked."""
         if self.cloud_queue:
-            for task in self.cloud_queue.get("tasks", []):
+            for task in self.cloud_queue.get("queue", []) + self.cloud_queue.get("completed", []):
                 task_id = task.get("task_id")
                 display_tree = next((tree for tree in (self.pending_queue_tree, self.success_queue_tree) if tree.exists(task_id)), None)
                 if task_id and task.get("run_id") and display_tree is not None:
@@ -443,7 +443,7 @@ class AudiobookGUIApp:
                 queue, _ = store.load()
                 terminal_updates = []
                 running_updates = []
-                monitored = [task for task in queue.get("tasks", []) if task.get("run_id")]
+                monitored = [task for task in queue.get("queue", []) if task.get("run_id")]
                 observations = {}
                 with ThreadPoolExecutor(max_workers=min(6, max(1, len(monitored)))) as executor:
                     futures = {
@@ -495,7 +495,7 @@ class AudiobookGUIApp:
                     def apply_terminal_updates(latest):
                         for task_id, run_id, target, reason, conclusion, ended_at in terminal_updates:
                             current = next(
-                                (item for item in latest.get("tasks", []) if item.get("task_id") == task_id), None
+                                (item for item in latest.get("queue", []) if item.get("task_id") == task_id), None
                             )
                             if current and current.get("run_id") == run_id and current.get("status") in BLOCKING_STATES:
                                 if target == "interrupted":
@@ -511,7 +511,7 @@ class AudiobookGUIApp:
                 self.root.after(0, lambda: self._render_queue(queue))
             except Exception as error:
                 if self.cloud_queue:
-                    for task in self.cloud_queue.get("tasks", []):
+                    for task in self.cloud_queue.get("queue", []) + self.cloud_queue.get("completed", []):
                         if task.get("run_id"):
                             self.github_observations[task["task_id"]] = error_observation(
                                 "network_error", detail=error,
@@ -532,7 +532,7 @@ class AudiobookGUIApp:
         if not selected_ids or not self.cloud_queue:
             return []
         return [
-            task for task in self.cloud_queue.get("tasks", [])
+            task for task in self.cloud_queue.get("queue", []) + self.cloud_queue.get("completed", [])
             if task.get("task_id") in selected_ids
         ]
 
@@ -874,7 +874,7 @@ class AudiobookGUIApp:
 
     def _task_from_current_queue(self, task_id, fallback):
         if self.cloud_queue:
-            current = next((item for item in self.cloud_queue.get("tasks", []) if item.get("task_id") == task_id), None)
+            current = next((item for item in self.cloud_queue.get("queue", []) + self.cloud_queue.get("completed", []) if item.get("task_id") == task_id), None)
             if current:
                 return dict(current)
         return dict(fallback)
@@ -1018,7 +1018,7 @@ class AudiobookGUIApp:
                     try:
                         store, _, _ = self._queue_store()
                         queue, _ = store.load()
-                        task = next((item for item in queue.get("tasks", []) if item.get("task_id") == task_id), task)
+                        task = next((item for item in queue.get("queue", []) + queue.get("completed", []) if item.get("task_id") == task_id), task)
                     except Exception:
                         pass
                     run_id = task.get("run_id")
@@ -1176,7 +1176,7 @@ class AudiobookGUIApp:
         def finish_update(queue, dispatch_error=None):
             self._render_queue(queue)
             self.btn_update_queue.config(state=tk.NORMAL, text=original_button_text)
-            updated = next((item for item in queue.get("tasks", []) if item.get("task_id") == task_id), None)
+            updated = next((item for item in queue.get("queue", []) if item.get("task_id") == task_id), None)
             if updated:
                 self._update_selected_task_status(updated)
             result = "已停止舊 Run，確認取消後自動重新排程" if active else "已更新雲端佇列"
@@ -1289,7 +1289,7 @@ class AudiobookGUIApp:
         )
 
     def _find_active_task_id(self, exclude_task_id=None):
-        for other in (self.cloud_queue or {}).get("tasks", []):
+        for other in (self.cloud_queue or {}).get("queue", []):
             other_id = other.get("task_id")
             if other_id and other_id != exclude_task_id:
                 obs = self.github_observations.get(other_id) or {}
