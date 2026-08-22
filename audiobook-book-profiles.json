@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 11,
-  "updated_at": "2026-08-22T16:02:41.175519+00:00",
+  "revision": 12,
+  "updated_at": "2026-08-22T16:03:11.644221+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -75,6 +75,20 @@
       },
       "profile_revision": 6,
       "updated_at": "2026-08-22T16:02:41.175519+00:00"
+    },
+    "a75e9c51c7d2494d": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/1642",
+      "book_title": "斗破蒼穹",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "updated_at": "2026-08-22T16:03:11.644221+00:00"
     }
   }
 }
