@@ -59,3 +59,26 @@ def test_run_discovery_callback_binds_the_discovered_run_id():
 
     assert "lambda rid=run_id, s=status" in source
     assert "Run ID #{rid}" in source
+
+
+def test_cleaner_pattern_dialog_only_applies_a_local_draft():
+    tree = ast.parse(GUI_SOURCE.read_text(encoding="utf-8"))
+    dialog = next(
+        node for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "AudiobookGUIApp"
+        for node in node.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_open_cleaner_patterns_dialog"
+    )
+    dialog_source = ast.get_source_segment(GUI_SOURCE.read_text(encoding="utf-8"), dialog)
+
+    assert "套用到預覽（尚未儲存）" in dialog_source
+    assert "儲存到 GitHub" not in dialog_source
+    assert "._profile_store(" not in dialog_source
+    assert "on_applied(self.cleaner_remove_patterns)" in dialog_source
+
+
+def test_chapter_update_persists_the_cleaner_pattern_snapshot():
+    source = GUI_SOURCE.read_text(encoding="utf-8")
+
+    assert "cleaner_patterns = validate_remove_patterns(self.cleaner_remove_patterns)" in source
+    assert "cleaner_remove_patterns=cleaner_patterns" in source
