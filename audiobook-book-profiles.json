@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 10,
-  "updated_at": "2026-08-22T16:01:20.815465+00:00",
+  "revision": 11,
+  "updated_at": "2026-08-22T16:02:41.175519+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -62,14 +62,19 @@
         "use_chapter_name": true,
         "use_number_and_name": false
       },
-      "chapter_title_overrides": {},
+      "chapter_title_overrides": {
+        "698": "金池落幕",
+        "1260": "邪神隕落(大結局)",
+        "1567": "第一千五百五十一章 邪神隕落(大結局)"
+      },
       "chapter_normalized_number_overrides": {
         "1345": "1333",
         "1346": "1333.1",
-        "1347": "1334"
+        "1347": "1334",
+        "698": "697"
       },
-      "profile_revision": 5,
-      "updated_at": "2026-08-22T16:01:20.815465+00:00"
+      "profile_revision": 6,
+      "updated_at": "2026-08-22T16:02:41.175519+00:00"
     }
   }
 }
