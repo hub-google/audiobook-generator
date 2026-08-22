@@ -6,6 +6,32 @@ from unittest.mock import patch, MagicMock
 from src.youtube_api_uploader import YouTubeServicePool
 
 class YouTubeServicePoolTests(unittest.TestCase):
+    @patch.dict(os.environ, {
+        "YOUTUBE_EXPECTED_ACCOUNT_COUNT": "5",
+        "YOUTUBE_CLIENT_ID": "c1",
+        "YOUTUBE_CLIENT_SECRET": "s1",
+        "YOUTUBE_REFRESH_TOKEN": "r1",
+    }, clear=True)
+    def test_expected_pool_size_rejects_silent_single_account_fallback(self):
+        with patch("src.youtube_api_uploader.os.path.exists", return_value=False):
+            pool = YouTubeServicePool()
+        with self.assertRaisesRegex(RuntimeError, "found 1/5 accounts"):
+            pool.require_expected_accounts()
+
+    @patch.dict(os.environ, {
+        "YOUTUBE_EXPECTED_ACCOUNT_COUNT": "5",
+        **{
+            f"YOUTUBE_{field}_{slot}": f"{field.lower()}-{slot}"
+            for slot in range(1, 6)
+            for field in ("CLIENT_ID", "CLIENT_SECRET", "REFRESH_TOKEN")
+        },
+    }, clear=True)
+    def test_discovers_all_five_numbered_accounts(self):
+        with patch("src.youtube_api_uploader.os.path.exists", return_value=False):
+            pool = YouTubeServicePool()
+        self.assertEqual([account["slot"] for account in pool.accounts], [1, 2, 3, 4, 5])
+        pool.require_expected_accounts()
+
     def test_pool_rotation_on_quota(self):
         pool = YouTubeServicePool()
         # Mock 2 accounts in the pool

@@ -234,6 +234,29 @@ class YouTubeServicePool:
 
         logging.info("🔑 [YouTube-Pool] 偵測到 %s 組 YouTube API 專案金鑰/憑證設定。", len(self.accounts))
 
+    def require_expected_accounts(self):
+        """Fail early in CI when the configured credential pool is incomplete."""
+        raw_expected = os.environ.get("YOUTUBE_EXPECTED_ACCOUNT_COUNT", "").strip()
+        if not raw_expected:
+            return
+        try:
+            expected = int(raw_expected)
+        except ValueError as exc:
+            raise RuntimeError(
+                "YOUTUBE_EXPECTED_ACCOUNT_COUNT must be an integer"
+            ) from exc
+        discovered = len(self.accounts)
+        if discovered < expected:
+            missing = [
+                str(slot) for slot in range(1, expected + 1)
+                if not any(account["slot"] == slot for account in self.accounts)
+            ]
+            raise RuntimeError(
+                f"YouTube credential pool is incomplete: found {discovered}/{expected} "
+                f"accounts; missing slots: {', '.join(missing) or 'unknown'}. "
+                "Each slot needs client ID, client secret, and refresh token."
+            )
+
     def _authenticate_account(self, acc):
         slot = acc["slot"]
         tok_path = acc["tok_path"]
@@ -422,6 +445,7 @@ class YouTubeServicePool:
 def get_authenticated_service():
     """獲取與授權 YouTube API v3 Service Pool (支援多專案輪替)"""
     pool = YouTubeServicePool()
+    pool.require_expected_accounts()
     if pool.active_service is None:
         logging.error("❌ 無法初始化任何 YouTube API Service！")
         sys.exit(1)
