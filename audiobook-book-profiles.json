@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 14,
-  "updated_at": "2026-08-22T16:09:27.332498+00:00",
+  "revision": 15,
+  "updated_at": "2026-08-22T16:18:47.817988+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -38,7 +38,9 @@
     "e6bd78f052f4906f": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/30906",
       "book_title": "傲世丹神",
-      "cleaner_remove_patterns": [],
+      "cleaner_remove_patterns": [
+        "（本書完）\n\n本書來自17K，第一時間看正版內容！\n\n"
+      ],
       "duplicate_detection": {
         "use_normalized_number": true,
         "use_chapter_name": true,
@@ -46,8 +48,8 @@
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 1,
-      "updated_at": "2026-08-22T15:27:26.875926+00:00"
+      "profile_revision": 2,
+      "updated_at": "2026-08-22T16:18:47.817988+00:00"
     },
     "f4373967b52d240b": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33644",
