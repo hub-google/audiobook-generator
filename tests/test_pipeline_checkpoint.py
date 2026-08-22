@@ -177,6 +177,8 @@ class PipelineCheckpointTests(unittest.TestCase):
         checkpoint = PipelineCheckpoint(self.workspace, self.book, 0, [1, 2])
         for stage in STAGES:
             self._write_output(checkpoint, 1, stage)
+        with open(checkpoint.output_path(1, "crawler"), "w", encoding="utf-8") as raw_file:
+            raw_file.write("第1章 測試章名\n這是內文")
         checkpoint.mark_source_missing(2, "missing from origin")
         checkpoint.reconcile()
 
@@ -185,6 +187,7 @@ class PipelineCheckpointTests(unittest.TestCase):
         self.assertEqual(manifest["artifact"], "mp4-worker-0")
         self.assertEqual(len(manifest["chapters"]), 1)
         self.assertEqual(manifest["chapters"][0]["chap_num"], 1)
+        self.assertEqual(manifest["chapters"][0]["chapter_title"], "第1章 測試章名")
         self.assertEqual(manifest["source_missing"], [2])
         manifest_path = os.path.join(self.workspace, "Manifests", "manifest-worker-0.json")
         self.assertTrue(os.path.exists(manifest_path))

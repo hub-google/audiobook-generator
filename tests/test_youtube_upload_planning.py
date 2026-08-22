@@ -34,6 +34,7 @@ from src.youtube_api_uploader import (
     completed_playlist_title,
     update_playlist_metadata,
     build_video_description,
+    build_chapter_timeline,
 )
 from googleapiclient.errors import HttpError
 from httplib2 import Response
@@ -45,6 +46,38 @@ from src.worker_pipeline import (
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
+    def test_chapter_timeline_uses_unrounded_cumulative_boundaries(self):
+        items = [
+            {"chap_num": 1043, "chapter_title": "第1043章 孟奇", "dur": 2595.372},
+            {"chap_num": 1044, "chapter_title": "第1044章 山上弟子", "dur": 2555.439},
+            {"chap_num": 1045, "chapter_title": "第1045章 五行聚靈符", "dur": 1800.0},
+        ]
+        self.assertEqual(
+            build_chapter_timeline(items),
+            "⏳ 影片章節時間軸：\n"
+            "00:00:00 第1043章 孟奇\n"
+            "00:43:15 第1044章 山上弟子\n"
+            "01:25:51 第1045章 五行聚靈符",
+        )
+
+    def test_video_description_contains_playlist_and_clickable_timeline_only(self):
+        items = [
+            {"chap_num": 1, "chapter_title": "第1章 甲", "dur": 30.2},
+            {"chap_num": 2, "chapter_title": "第2章 乙", "dur": 30.2},
+            {"chap_num": 3, "chapter_title": "第3章 丙", "dur": 30.2},
+        ]
+        description = build_video_description("測試書", "", "PL123", items)
+        self.assertEqual(
+            description,
+            "▶️《測試書》播放清單全集\n"
+            "https://www.youtube.com/playlist?list=PL123\n\n"
+            "⏳ 影片章節時間軸：\n"
+            "00:00:00 第1章 甲\n"
+            "00:00:30 第2章 乙\n"
+            "00:01:00 第3章 丙",
+        )
+        self.assertNotIn("來源網站缺失章節", description)
+
     def test_video_description_starts_with_named_playlist_and_url(self):
         description = build_video_description(
             "吞噬星空", "歡迎訂閱、點讚！", "PL123"
@@ -52,9 +85,9 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         self.assertEqual(
             description,
             "▶️《吞噬星空》播放清單全集\n"
-            "https://www.youtube.com/playlist?list=PL123\n\n"
-            "歡迎訂閱、點讚！",
+            "https://www.youtube.com/playlist?list=PL123",
         )
+        self.assertNotIn("歡迎訂閱", description)
         self.assertNotIn("請依順序播放", description)
 
     def test_video_description_requires_playlist_id(self):

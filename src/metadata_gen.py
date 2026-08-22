@@ -703,14 +703,12 @@ def generate_video_title(book_title, start_chap=1, end_chap=2400, part_num=None)
     return f"[已完結]《{book_title}》第 {int(start_chap)}~{int(end_chap)} 章{part_str}"
 
 def generate_video_description(book_title, start_chap=1, end_chap=2400, pure_plot=None, part_num=None):
-    part_str = f"【第 {part_num} 部】" if part_num else ""
-    desc = f"""歡迎訂閱、點讚、開啟小鈴鐺並分享給同好朋友！
+    """The uploader adds the playlist and verified chapter timeline.
 
-📖 小說名稱：《{book_title}》
-📌 包含章節：第 {start_chap} 章 至 第 {end_chap} 章 {part_str}
-🎧 播放長度：完整連續播放無中斷 (約 10~11 小時)
-"""
-    return desc.strip()
+    Keep the base text empty so titles, ranges and promotional copy are not
+    duplicated in every video's description.
+    """
+    return ""
 
 def _valid_master_cover(path):
     if not os.path.exists(path) or os.path.getsize(path) < 10_000:

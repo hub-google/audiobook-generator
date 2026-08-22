@@ -308,13 +308,13 @@ def build_all_parts(book_title, workspace_dir=None, output_dir=None, min_hours=1
         # 3. 導出該 Part 的章節時間戳選單 (Chapter Timestamps Menu)
         ts_file = os.path.join(part_ws_dir, "youtube_metadata.txt")
         with open(ts_file, "w", encoding="utf-8") as f:
-            f.write(f"【{book_title}】第 {start_c}~{end_c} 章【第 {part_num} 部】\n\n")
-            f.write("⏳ 章節時間戳選單：\n")
+            f.write("⏳ 影片章節時間軸：\n")
             curr_time = 0.0
             for item in p["items"]:
                 c_num = item["chap_num"]
                 c_title = get_chapter_title(workspace_dir, book_title, c_num)
-                f.write(f"{format_timestamp(curr_time)} {c_title}\n")
+                rounded_start = int(curr_time + 0.5)
+                f.write(f"{format_timestamp(rounded_start)} {c_title}\n")
                 curr_time += item["dur"]
             f.write("\n")
 

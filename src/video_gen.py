@@ -39,6 +39,13 @@ FONT_PATHS = [
     r"C:\Windows\Fonts\simsun.ttc",    # SimSun fallback
 ]
 
+SUBTITLE_FORCE_STYLE = (
+    "FontName=Noto Sans CJK TC,FontSize=18,Bold=1,"
+    "PrimaryColour=&H0000E8FF,OutlineColour=&H00000000,"
+    "BackColour=&H80000000,BorderStyle=1,Outline=3,Shadow=1,"
+    "Alignment=2,MarginV=45,MarginL=80,MarginR=80,WrapStyle=0"
+)
+
 
 def load_config():
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.yaml")
@@ -173,7 +180,7 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
         vf_filter = (
             "scale=1280:720:force_original_aspect_ratio=decrease,"
             "pad=1280:720:(ow-iw)/2:(oh-ih)/2,"
-            f"subtitles='{escaped_srt}':force_style='FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H80000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=45,MarginL=80,MarginR=80,WrapStyle=0',"
+            f"subtitles='{escaped_srt}':force_style='{SUBTITLE_FORCE_STYLE}',"
             "format=yuv420p"
         )
         logging.info(f"[VideoGen] 💬 已開啟 FFmpeg 硬字幕嵌入: {os.path.basename(srt_path)}")

@@ -7,10 +7,17 @@ from unittest.mock import patch
 from PIL import Image
 
 from src.artifact_validation import ArtifactValidationError
-from src.video_gen import generate_chapter_video
+from src.video_gen import SUBTITLE_FORCE_STYLE, generate_chapter_video
 
 
 class VideoGenerationDurationTests(unittest.TestCase):
+    def test_subtitle_style_changes_appearance_without_moving_position(self):
+        self.assertIn("FontName=Noto Sans CJK TC", SUBTITLE_FORCE_STYLE)
+        self.assertIn("Bold=1", SUBTITLE_FORCE_STYLE)
+        self.assertIn("PrimaryColour=&H0000E8FF", SUBTITLE_FORCE_STYLE)
+        self.assertIn("Outline=3", SUBTITLE_FORCE_STYLE)
+        self.assertIn("Alignment=2,MarginV=45,MarginL=80,MarginR=80", SUBTITLE_FORCE_STYLE)
+
     @patch("src.video_gen.subprocess.run")
     def test_ffmpeg_output_is_capped_at_exact_wav_duration(self, run):
         with tempfile.TemporaryDirectory() as directory:

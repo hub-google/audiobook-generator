@@ -170,8 +170,40 @@ def recover_completed_titles_from_playlist(completed_titles, existing_titles, pl
     return recovered
 
 
-def build_video_description(book_title, description, playlist_id):
-    """Put the book playlist link before all other viewer-facing details."""
+def _chapter_title(item):
+    number = int(item["chap_num"])
+    return str(item.get("chapter_title") or f"第{number}章").strip()
+
+
+def build_chapter_timeline(chapter_items):
+    """Build YouTube chapters without accumulating per-chapter rounding error."""
+    items = list(chapter_items or [])
+    if len(items) < 3:
+        raise ValueError("YouTube chapter timeline requires at least three chapters")
+    lines = []
+    exact_start = 0.0
+    previous_second = -1
+    for position, item in enumerate(items):
+        duration = float(item.get("dur") or 0.0)
+        if duration < 10.0:
+            raise ValueError(f"第 {item.get('chap_num')} 章長度少於 YouTube 規定的 10 秒")
+        # Round only the final cumulative boundary. Never round individual
+        # chapter durations before adding them together.
+        display_second = 0 if position == 0 else int(exact_start + 0.5)
+        if display_second <= previous_second:
+            raise ValueError("chapter timestamps are not strictly increasing")
+        if abs(display_second - exact_start) >= 1.0:
+            raise ValueError("chapter timestamp differs from its media boundary by one second or more")
+        hours, remainder = divmod(display_second, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        lines.append(f"{hours:02d}:{minutes:02d}:{seconds:02d} {_chapter_title(item)}")
+        previous_second = display_second
+        exact_start += duration
+    return "⏳ 影片章節時間軸：\n" + "\n".join(lines)
+
+
+def build_video_description(book_title, description, playlist_id, chapter_items=None):
+    """Put the playlist first, followed only by the verified chapter timeline."""
     title = str(book_title or "").strip()
     playlist = str(playlist_id or "").strip()
     if not title:
@@ -182,8 +214,10 @@ def build_video_description(book_title, description, playlist_id):
         f"▶️《{title}》播放清單全集\n"
         f"https://www.youtube.com/playlist?list={playlist}"
     )
-    details = str(description or "").strip()
-    return f"{playlist_header}\n\n{details}" if details else playlist_header
+    sections = [playlist_header]
+    if chapter_items is not None:
+        sections.append(build_chapter_timeline(chapter_items))
+    return "\n\n".join(sections)
 
 
 def part_number_for_title(part_plan, title):
@@ -1480,6 +1514,7 @@ def scan_artifact_chapters(artifact_dir, artifact_name):
                         chapters.append({
                             "artifact": entry.get("artifact") or artifact_name,
                             "chap_num": chap_num,
+                            "chapter_title": entry.get("chapter_title") or f"第{chap_num}章",
                             "dur": dur,
                             "path": os.path.abspath(video_path),
                             "srt_path": os.path.abspath(srt_path) if srt_path else None,
@@ -1510,6 +1545,7 @@ def scan_artifact_chapters(artifact_dir, artifact_name):
         chapters.append({
             "artifact": artifact_name,
             "chap_num": chapter_num,
+            "chapter_title": f"第{chapter_num}章",
             "dur": dur,
             # Merge callers need usable local paths after expanding an artifact.
             # Keep the relative fields as the durable inventory representation.
@@ -1598,6 +1634,14 @@ def _make_planned_part(part_num, items, duration):
         "start_chap": int(items[0]["chap_num"]),
         "end_chap": int(items[-1]["chap_num"]),
         "chapters": [int(item["chap_num"]) for item in items],
+        "chapter_timeline": [
+            {
+                "chap_num": int(item["chap_num"]),
+                "chapter_title": _chapter_title(item),
+                "dur": float(item["dur"]),
+            }
+            for item in items
+        ],
         "artifacts": list(dict.fromkeys(item["artifact"] for item in items)),
         "duration": duration,
     }
@@ -2367,15 +2411,9 @@ def main():
                         title=p_meta["title"], cover=p_meta["cover_file"], cover_sha256=cover_validation["sha256"],
                     )
                     full_desc = build_video_description(
-                        book_title, p_meta["description"], playlist_id
+                        book_title, p_meta["description"], playlist_id, sliced_items
                     )
-
                     omitted = [int(value) for value in locked_part.get("source_missing_chapters", [])]
-                    if omitted:
-                        full_desc += (
-                            "\n\n來源網站缺失章節（原頁面無文章，故未製作）："
-                            + "、".join(str(value) for value in omitted)
-                        )
 
                     publication.mark(part_counter, "archive_hf", "running")
                     hf_future = hf_executor.submit(
@@ -2664,7 +2702,8 @@ def main():
                         "master_cover_path": p_meta["master_cover_file"],
                         "part_num": part_num,
                         "start_chap": s_c,
-                        "end_chap": e_c
+                        "end_chap": e_c,
+                        "chapter_timeline": p["items"],
                     })
         else:
             for idx, vp in enumerate(files_to_upload, 1):
@@ -2691,6 +2730,7 @@ def main():
                     "start_chap": c_start,
                     "end_chap": c_end,
                     "chapters": [int(value) for value in locked.get("chapters") or range(c_start, c_end + 1)],
+                    "chapter_timeline": list(locked.get("chapter_timeline") or []),
                     "source_missing_chapters": [int(value) for value in locked.get("source_missing_chapters") or []],
                 })
 
@@ -2745,11 +2785,9 @@ def main():
                         v_srt = v_path.replace(".mp4", ".srt")
                         if not os.path.exists(v_srt):
                             v_srt = None
-                    full_desc = build_video_description(book_title, v_desc, playlist_id)
-                    if item.get("source_missing_chapters"):
-                        full_desc += "\n\n來源網站缺失章節（原頁面無文章，故未製作）：" + "、".join(
-                            str(value) for value in item["source_missing_chapters"]
-                        )
+                    full_desc = build_video_description(
+                        book_title, v_desc, playlist_id, item.get("chapter_timeline")
+                    )
                     publication.mark(part_n, "archive_hf", "running")
                     archive_method = (
                         hf_archiver.register_preuploaded_part
@@ -2795,11 +2833,9 @@ def main():
             cover_validation = validate_image(v_cover, expected_size=(1280, 720))
             publication.complete(part_n, "generate_metadata_cover", title=v_title, cover_sha256=cover_validation["sha256"])
 
-            full_desc = build_video_description(book_title, v_desc, playlist_id)
-            if item.get("source_missing_chapters"):
-                full_desc += "\n\n來源網站缺失章節（原頁面無文章，故未製作）：" + "、".join(
-                    str(value) for value in item["source_missing_chapters"]
-                )
+            full_desc = build_video_description(
+                book_title, v_desc, playlist_id, item.get("chapter_timeline")
+            )
             publication.mark(part_n, "archive_hf", "running")
             archive_method = (
                 hf_archiver.register_preuploaded_part

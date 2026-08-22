@@ -37,6 +37,7 @@ def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17):
                 inventory.append({
                     "artifact": chapter.get("artifact") or f"mp4-worker-{worker_id}",
                     "chap_num": int(chapter["chap_num"]),
+                    "chapter_title": chapter.get("chapter_title") or f"第{int(chapter['chap_num'])}章",
                     "dur": float(chapter["dur"]),
                 })
             source_missing.update(int(c) for c in data.get("source_missing", []))
@@ -54,6 +55,7 @@ def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17):
                     inventory.append({
                         "artifact": chapter.get("artifact") or name,
                         "chap_num": int(chapter["chap_num"]),
+                        "chapter_title": chapter.get("chapter_title") or f"第{int(chapter['chap_num'])}章",
                         "dur": float(chapter["dur"]),
                     })
                 source_missing.update(int(c) for c in data.get("source_missing", []))

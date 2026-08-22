@@ -375,8 +375,16 @@ class PipelineCheckpoint:
                     duration = 0.0
             video_path = self.output_path(chapter, "video")
             srt_path = self.output_path(chapter, "subtitle")
+            raw_path = self.output_path(chapter, "crawler")
+            chapter_title = f"第{int(chapter)}章"
+            try:
+                with open(raw_path, "r", encoding="utf-8") as raw_file:
+                    chapter_title = raw_file.readline().strip() or chapter_title
+            except OSError:
+                pass
             chapters.append({
                 "chap_num": int(chapter),
+                "chapter_title": chapter_title,
                 "dur": duration,
                 "artifact": artifact_name,
                 "video_relpath": os.path.relpath(video_path, self.workspace_dir).replace("\\", "/"),
