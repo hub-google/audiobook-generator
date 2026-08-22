@@ -1,22 +1,22 @@
 {
   "schema_version": 2,
-  "revision": 1,
-  "updated_at": "2026-08-22T14:57:00.928080+00:00",
+  "revision": 2,
+  "updated_at": "2026-08-22T15:02:49.560667+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
       "book_title": "完美世界",
-      "cleaner_remove_patterns": [
-        "測試"
-      ],
+      "cleaner_remove_patterns": [],
       "duplicate_detection": {
         "use_normalized_number": true,
         "use_chapter_name": true
       },
       "chapter_title_overrides": {},
-      "chapter_normalized_number_overrides": {},
-      "profile_revision": 1,
-      "updated_at": "2026-08-22T14:57:00.928080+00:00"
+      "chapter_normalized_number_overrides": {
+        "1": 1
+      },
+      "profile_revision": 2,
+      "updated_at": "2026-08-22T15:02:49.560667+00:00"
     }
   }
 }
