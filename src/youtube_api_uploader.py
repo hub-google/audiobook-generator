@@ -170,6 +170,22 @@ def recover_completed_titles_from_playlist(completed_titles, existing_titles, pl
     return recovered
 
 
+def build_video_description(book_title, description, playlist_id):
+    """Put the book playlist link before all other viewer-facing details."""
+    title = str(book_title or "").strip()
+    playlist = str(playlist_id or "").strip()
+    if not title:
+        raise ValueError("book title is required for the YouTube description")
+    if not playlist:
+        raise ValueError("playlist id is required for the YouTube description")
+    playlist_header = (
+        f"▶️《{title}》播放清單全集\n"
+        f"https://www.youtube.com/playlist?list={playlist}"
+    )
+    details = str(description or "").strip()
+    return f"{playlist_header}\n\n{details}" if details else playlist_header
+
+
 def part_number_for_title(part_plan, title):
     planned = next((part for part in part_plan if str(part.get("title") or "") == str(title)), None)
     return int(planned["part_num"]) if planned else None
@@ -2350,9 +2366,8 @@ def main():
                         part_counter, "generate_metadata_cover",
                         title=p_meta["title"], cover=p_meta["cover_file"], cover_sha256=cover_validation["sha256"],
                     )
-                    full_desc = (
-                        f"{p_meta['description']}\n\n"
-                        f"播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
+                    full_desc = build_video_description(
+                        book_title, p_meta["description"], playlist_id
                     )
 
                     omitted = [int(value) for value in locked_part.get("source_missing_chapters", [])]
@@ -2730,7 +2745,7 @@ def main():
                         v_srt = v_path.replace(".mp4", ".srt")
                         if not os.path.exists(v_srt):
                             v_srt = None
-                    full_desc = f"{v_desc}\n\n播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
+                    full_desc = build_video_description(book_title, v_desc, playlist_id)
                     if item.get("source_missing_chapters"):
                         full_desc += "\n\n來源網站缺失章節（原頁面無文章，故未製作）：" + "、".join(
                             str(value) for value in item["source_missing_chapters"]
@@ -2780,7 +2795,7 @@ def main():
             cover_validation = validate_image(v_cover, expected_size=(1280, 720))
             publication.complete(part_n, "generate_metadata_cover", title=v_title, cover_sha256=cover_validation["sha256"])
 
-            full_desc = f"{v_desc}\n\n播放清單全集：https://www.youtube.com/playlist?list={playlist_id or ''}"
+            full_desc = build_video_description(book_title, v_desc, playlist_id)
             if item.get("source_missing_chapters"):
                 full_desc += "\n\n來源網站缺失章節（原頁面無文章，故未製作）：" + "、".join(
                     str(value) for value in item["source_missing_chapters"]

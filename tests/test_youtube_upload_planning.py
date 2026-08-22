@@ -33,6 +33,7 @@ from src.youtube_api_uploader import (
     validate_user_facing_playlist,
     completed_playlist_title,
     update_playlist_metadata,
+    build_video_description,
 )
 from googleapiclient.errors import HttpError
 from httplib2 import Response
@@ -44,6 +45,22 @@ from src.worker_pipeline import (
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
+    def test_video_description_starts_with_named_playlist_and_url(self):
+        description = build_video_description(
+            "吞噬星空", "歡迎訂閱、點讚！", "PL123"
+        )
+        self.assertEqual(
+            description,
+            "▶️《吞噬星空》播放清單全集\n"
+            "https://www.youtube.com/playlist?list=PL123\n\n"
+            "歡迎訂閱、點讚！",
+        )
+        self.assertNotIn("請依順序播放", description)
+
+    def test_video_description_requires_playlist_id(self):
+        with self.assertRaisesRegex(ValueError, "playlist id"):
+            build_video_description("吞噬星空", "說明", "")
+
     def test_completed_playlist_title_floors_measured_total_without_zero_padding(self):
         self.assertEqual(
             completed_playlist_title("修真聊天群", 327 * 3600 + 48 * 60),
