@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 9,
-  "updated_at": "2026-08-22T15:54:40.100578+00:00",
+  "revision": 10,
+  "updated_at": "2026-08-22T16:01:20.815465+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -65,11 +65,11 @@
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {
         "1345": "1333",
-        "1346": "1333",
+        "1346": "1333.1",
         "1347": "1334"
       },
-      "profile_revision": 4,
-      "updated_at": "2026-08-22T15:54:40.100578+00:00"
+      "profile_revision": 5,
+      "updated_at": "2026-08-22T16:01:20.815465+00:00"
     }
   }
 }
