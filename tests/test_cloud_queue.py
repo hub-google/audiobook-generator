@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 from src.cloud_queue import (
@@ -349,6 +350,7 @@ class CloudQueueTests(unittest.TestCase):
                 "id": 123,
                 "name": f"有聲小說製作｜凡人修仙傳｜Ch1-100｜{task['task_id']}",
                 "status": "in_progress",
+                "created_at": (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
             }],
         ])
 
@@ -360,6 +362,32 @@ class CloudQueueTests(unittest.TestCase):
         )
         self.assertEqual(dispatch_call.kwargs["json"]["inputs"]["book_title"], "凡人修仙傳")
         self.assertEqual(dispatch_call.kwargs["json"]["inputs"]["chapter_label"], "Ch1-100")
+
+    @patch.object(Dispatcher, "request")
+    def test_dispatcher_does_not_bind_old_run_with_same_task_id(self, request):
+        task = new_task("https://example/1", "凡人修仙傳", 1, 100)
+        queue = add_tasks(empty_queue(), [task])
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.store = Mock()
+        dispatcher.store.load.return_value = (queue, "sha")
+        old_run = {
+            "id": 122,
+            "name": f"有聲小說製作｜凡人修仙傳｜Ch1-100｜{task['task_id']}",
+            "status": "completed",
+            "created_at": "2026-08-21T00:00:00+00:00",
+        }
+        new_run = {
+            **old_run,
+            "id": 123,
+            "status": "in_progress",
+            "created_at": (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
+        }
+        dispatcher.runs = Mock(side_effect=[[], [old_run, new_run]])
+
+        dispatcher.dispatch_next(queue)
+
+        attached = dispatcher.store.save.call_args_list[-1].args[0]
+        self.assertEqual(attached["tasks"][0]["run_id"], 123)
 
     def test_format_chapter_label(self):
         # 1. No exclusion

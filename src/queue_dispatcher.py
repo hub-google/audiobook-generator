@@ -243,6 +243,7 @@ class Dispatcher:
             "renumber_selected": "true" if renumber else "false",
             "zip_password": "",
         }
+        dispatch_requested_at = datetime.now(timezone.utc)
         try:
             self.request("POST", "/actions/workflows/audiobook.yml/dispatches", json={"ref": "master", "inputs": inputs})
         except Exception as error:
@@ -256,7 +257,12 @@ class Dispatcher:
         run_id = None
         for _ in range(10):
             for run in self.runs():
-                if task_id_from_run_name(run.get("display_title") or run.get("name")) == task_id:
+                created_at = parse_time(run.get("created_at"))
+                if (
+                    task_id_from_run_name(run.get("display_title") or run.get("name")) == task_id
+                    and created_at is not None
+                    and created_at >= dispatch_requested_at
+                ):
                     run_id = int(run["id"])
                     break
             if run_id:
