@@ -3,9 +3,17 @@ import os
 import tempfile
 import json
 from unittest.mock import patch, MagicMock
-from src.youtube_api_uploader import YouTubeServicePool
+from src.youtube_api_uploader import YouTubeServicePool, configured_youtube_account_slots
 
 class YouTubeServicePoolTests(unittest.TestCase):
+    @patch.dict(os.environ, {
+        "YOUTUBE_CLIENT_ID": "c1", "YOUTUBE_CLIENT_SECRET": "s1", "YOUTUBE_REFRESH_TOKEN": "r1",
+        "YOUTUBE_CLIENT_ID_2": "c2", "YOUTUBE_CLIENT_SECRET_2": "s2", "YOUTUBE_REFRESH_TOKEN_2": "r2",
+        "YOUTUBE_CLIENT_ID_3": "incomplete",
+    }, clear=True)
+    def test_configured_slots_count_only_complete_credential_triplets(self):
+        self.assertEqual(configured_youtube_account_slots(), {1, 2})
+
     @patch.dict(os.environ, {
         "YOUTUBE_EXPECTED_ACCOUNT_COUNT": "5",
         "YOUTUBE_CLIENT_ID": "c1",

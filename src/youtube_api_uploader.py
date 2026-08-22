@@ -72,6 +72,25 @@ SCOPES = [
 EXIT_RETRY_LATER = 75
 
 
+def configured_youtube_account_slots():
+    """Return complete environment-backed credential slots without authenticating."""
+    slots = set()
+    base = all(os.environ.get(name, "").strip() for name in (
+        "YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN",
+    ))
+    numbered_one = all(os.environ.get(f"{name}_1", "").strip() for name in (
+        "YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN",
+    ))
+    if base or numbered_one:
+        slots.add(1)
+    for slot in range(2, 11):
+        if all(os.environ.get(f"{name}_{slot}", "").strip() for name in (
+            "YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN",
+        )):
+            slots.add(slot)
+    return slots
+
+
 class UploadPaused(RuntimeError):
     """A daily YouTube limit was reached; the upload can safely resume later."""
 
@@ -126,6 +145,7 @@ def save_resume_state(path, run_id, privacy, status, reason="", retry_at=None,
         "pending_captions": dict(pending_captions or {}),
         "pending_publish": dict(pending_publish or {}),
         "playlist_url": playlist_url,
+        "credential_pool_size": len(configured_youtube_account_slots()),
     }
     _atomic_write_json(path, data)
     logging.info("💾 上傳斷點已儲存：%s (%s)", path, status)
@@ -1382,8 +1402,16 @@ def main():
         if saved_state.get("status") == "paused" and retry_text:
             retry_at = datetime.fromisoformat(retry_text.replace("Z", "+00:00"))
             if datetime.now(timezone.utc) < retry_at:
-                logging.info("⏳ 尚未到安全重試時間 %s；本次排程不會呼叫 YouTube。", retry_at.isoformat())
-                return EXIT_RETRY_LATER
+                saved_pool_size = int(saved_state.get("credential_pool_size") or 1)
+                current_pool_size = len(configured_youtube_account_slots())
+                if saved_state.get("reason") == "quotaExceeded" and current_pool_size > saved_pool_size:
+                    logging.info(
+                        "🔄 YouTube 憑證池已從 %s 組擴充為 %s 組；忽略舊配額等待時間並立即輪替。",
+                        saved_pool_size, current_pool_size,
+                    )
+                else:
+                    logging.info("⏳ 尚未到安全重試時間 %s；本次排程不會呼叫 YouTube。", retry_at.isoformat())
+                    return EXIT_RETRY_LATER
 
     if not args.run_id and not args.input_dir:
         logging.info("🔍 未指定 --run-id 且無有效斷點紀錄，嘗試自動查詢最新產檔成功的 Run ID...")
