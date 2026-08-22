@@ -1,5 +1,7 @@
 import os
 import re
+import unicodedata
+from difflib import SequenceMatcher
 import yaml
 import logging
 
@@ -13,26 +15,73 @@ def load_config():
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
+_CHAPTER_MARKER_RE = re.compile(
+    r"^第.{1,18}[章回節节集]"
+)
+_PURE_CHAPTER_RE = re.compile(
+    r"^第\s*[0-9零〇一二三四五六七八九十百千萬万兩两]+\s*[章回節节集]\s*"
+    r"(?:[（(]?\s*(?:大結局|大结局|正文完|全書完|全书完|完)\s*[）)]?)?\s*$"
+)
+_OPENING_AD_RE = re.compile(
+    r"(?:請記住本站域名|请记住本站域名|本站域名|快捷鍵\s*[:：].*返回書頁|"
+    r"手機閱讀|手机阅读|返回書頁|返回书页)"
+)
+
+
+def _comparison_text(value):
+    """Normalize harmless display differences before comparing opening labels."""
+    value = unicodedata.normalize("NFKC", str(value or "")).lower()
+    return re.sub(r"[^0-9a-z\u3400-\u9fff]", "", value)
+
+
+def _is_repeated_opening_title(line, title):
+    line_key = _comparison_text(line)
+    title_key = _comparison_text(title)
+    if not line_key or not title_key:
+        return False
+    if line_key == title_key:
+        return True
+    if _PURE_CHAPTER_RE.fullmatch(unicodedata.normalize("NFKC", line).strip()):
+        return True
+    # Fuzzy matching is deliberately limited to lines shaped like chapter
+    # headings and is only called for the opening block of the body.
+    if not _CHAPTER_MARKER_RE.match(unicodedata.normalize("NFKC", line).strip()):
+        return False
+    ratio = SequenceMatcher(None, line_key, title_key).ratio()
+    shared = SequenceMatcher(None, line_key, title_key).find_longest_match().size
+    return ratio >= 0.72 and shared >= min(6, len(title_key))
+
+
+def _clean_opening_lines(text, title, book_title, scan_nonempty=12):
+    title_key = _comparison_text(title)
+    book_key = _comparison_text(book_title)
+    kept = []
+    seen_nonempty = 0
+    for raw_line in text.split("\n"):
+        line = raw_line.strip()
+        if line:
+            seen_nonempty += 1
+        in_opening = seen_nonempty <= scan_nonempty
+        remove = False
+        if in_opening and line:
+            line_key = _comparison_text(line)
+            remove = bool(_OPENING_AD_RE.search(line))
+            remove = remove or line_key == "黃金屋"
+            remove = remove or bool(book_key and line_key == book_key)
+            remove = remove or bool(title_key and _is_repeated_opening_title(line, title))
+        if not remove:
+            kept.append(raw_line.strip())
+    return "\n".join(kept)
+
+
 def clean_text_content(text, title, book_title, remove_patterns=None):
     text = text.replace('\r\n', '\n').replace('\r', '\n')
-    # 更嚴格的清理規則，把整句包含「請記住本站域名」的文字移除
-    text = re.sub(r'請記住本站域名.*?(?=\n|$)', '', text)
-    text = re.sub(r'快捷鍵:.*?返回書頁', '', text)
-    text = text.replace('黃金屋', '')
     for unwanted_text in validate_remove_patterns(remove_patterns):
         text = text.replace(unwanted_text, '')
-    text = text.replace('\xa0', '').strip()
-    
-    # 移除重複的空白行
-    text = re.sub(r'\n\s*\n', '\n', text)
-    
-    # 確保內文不會重複出現標題 (因為標題我們不希望 TTS 唸出)
-    if title:
-        text = text.replace(title, "").strip()
-    if book_title:
-        text = text.replace(book_title, "").strip()
-        
-    return text
+    text = text.replace('\xa0', ' ').replace('\u3000', ' ')
+    text = _clean_opening_lines(text, title, book_title)
+    text = re.sub(r'\n[ \t]*\n+', '\n', text)
+    return text.strip()
 
 def split_overlong_clause(text, hard_max=18):
     """
@@ -45,7 +94,7 @@ def split_overlong_clause(text, hard_max=18):
         return [text]
         
     # 語法/情節自然停頓關鍵詞
-    grammar_pauses = ["但是", "然而", "因為", "所以", "雖然", "結果", "隨後", "接著", "然後", "並且", "只見", "只聽", "忽見", "轉眼", "同時", "的時候", "之時", "之後", "之處"]
+    grammar_pauses = ["但是", "然而", "因為", "所以", "雖然", "結果", "隨後", "接著", "然後", "並且", "只見", "只聽", "忽見", "轉眼", "同時", "傳來", "传来", "的時候", "之時", "之後", "之處"]
     
     for kw in grammar_pauses:
         idx = text.find(kw)

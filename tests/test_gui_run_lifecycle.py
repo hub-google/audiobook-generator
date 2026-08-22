@@ -71,10 +71,10 @@ def test_cleaner_pattern_dialog_only_applies_a_local_draft():
     )
     dialog_source = ast.get_source_segment(GUI_SOURCE.read_text(encoding="utf-8"), dialog)
 
-    assert 'text="完成"' in dialog_source
-    assert 'text="取消"' not in dialog_source
+    assert 'text="套用"' in dialog_source
+    assert 'text="取消"' in dialog_source
     assert "套用到預覽（尚未儲存）" not in dialog_source
-    assert 'dialog.protocol("WM_DELETE_WINDOW", finish_editing)' in dialog_source
+    assert 'dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)' in dialog_source
     assert "dialog.grab_set()" not in dialog_source
     assert "儲存到 GitHub" not in dialog_source
     assert "._profile_store(" not in dialog_source

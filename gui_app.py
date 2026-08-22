@@ -637,8 +637,8 @@ class AudiobookGUIApp:
     def _open_cleaner_patterns_dialog(self, task, parent, on_applied):
         dialog = tk.Toplevel(parent)
         dialog.title(f"《{task.get('book_title') or '待解析'}》刪除關鍵字設定")
-        dialog.geometry("680x430")
-        dialog.minsize(560, 360)
+        dialog.geometry("900x520")
+        dialog.minsize(720, 440)
         dialog.transient(parent)
         body = ttk.Frame(dialog, padding=12)
         body.pack(fill=tk.BOTH, expand=True)
@@ -648,10 +648,11 @@ class AudiobookGUIApp:
         ttk.Label(body, textvariable=status_var).pack(anchor=tk.W, pady=(0, 8))
         add_row = ttk.Frame(body)
         add_row.pack(fill=tk.X)
+        add_row.columnconfigure(0, weight=1)
         entry = scrolledtext.ScrolledText(
             add_row, height=5, wrap=tk.WORD, font=("Microsoft JhengHei", 10),
         )
-        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        entry.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         listbox = tk.Listbox(body, selectmode=tk.EXTENDED, font=("Microsoft JhengHei", 10))
         listbox.pack(fill=tk.BOTH, expand=True, pady=8)
         patterns = list(self.cleaner_remove_patterns)
@@ -682,13 +683,16 @@ class AudiobookGUIApp:
             patterns[:] = [value for index, value in enumerate(patterns) if index not in selected]
             render()
 
-        ttk.Button(add_row, text="＋新增", command=add_pattern).pack(side=tk.RIGHT)
+        ttk.Button(add_row, text="＋新增", command=add_pattern).grid(
+            row=0, column=1, sticky="ns"
+        )
         entry.bind("<Control-Return>", lambda _event: (add_pattern(), "break")[1])
         actions = ttk.Frame(body)
         actions.pack(fill=tk.X)
         ttk.Button(actions, text="刪除選取項目", command=delete_selected).pack(side=tk.LEFT)
-        finish_button = ttk.Button(actions, text="完成", style="Accent.TButton")
+        finish_button = ttk.Button(actions, text="套用", style="Accent.TButton")
         finish_button.pack(side=tk.RIGHT)
+        ttk.Button(actions, text="取消", command=dialog.destroy).pack(side=tk.RIGHT, padx=(0, 8))
 
         def finish_editing():
             try:
@@ -701,8 +705,14 @@ class AudiobookGUIApp:
             dialog.destroy()
 
         finish_button.config(command=finish_editing)
-        dialog.protocol("WM_DELETE_WINDOW", finish_editing)
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
         render()
+        dialog.update_idletasks()
+        width = dialog.winfo_width()
+        height = dialog.winfo_height()
+        x = max(0, parent.winfo_rootx() + (parent.winfo_width() - width) // 2)
+        y = max(0, parent.winfo_rooty() + (parent.winfo_height() - height) // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
         entry.focus_set()
 
     def open_text_sample(self):

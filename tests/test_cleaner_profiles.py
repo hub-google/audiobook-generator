@@ -1,6 +1,6 @@
 import unittest
 
-from src.cleaner import clean_text_content
+from src.cleaner import chunk_text, clean_text_content
 
 
 class CleanerProfileTests(unittest.TestCase):
@@ -35,6 +35,44 @@ class CleanerProfileTests(unittest.TestCase):
 
     def test_repeated_literal_is_removed_everywhere(self):
         self.assertEqual(clean_text_content("廣告正文廣告", "", "", ["廣告"]), "正文")
+
+    def test_fanren_opening_labels_are_removed_without_global_word_deletion(self):
+        text = (
+            "\n請記住本站域名:\n黃金屋\n凡人修仙傳\n\u00a0第一章 山邊小村\n"
+            "二愣子睜大著雙眼。\n遠處真的有一座黃金屋。\n"
+            "他說起《凡人修仙傳》這本書。"
+        )
+        cleaned = clean_text_content(text, "第一章 山邊小村", "凡人修仙傳")
+        self.assertTrue(cleaned.startswith("二愣子睜大著雙眼。"))
+        self.assertIn("一座黃金屋", cleaned)
+        self.assertIn("《凡人修仙傳》", cleaned)
+
+    def test_dazhuzai_pure_repeated_chapter_number_is_removed(self):
+        title = "第一千五百五十一章 邪神隕落(大結局)"
+        text = f"大主宰\n{title}\n第一千五百五十一章\n空間在無限的被拉近。"
+        cleaned = clean_text_content(text, title, "大主宰")
+        self.assertEqual(cleaned, "空間在無限的被拉近。")
+
+    def test_doupo_corrupted_near_duplicate_title_is_removed(self):
+        title = "第一千六百二十三章 結束，也是開始。（大結局）"
+        text = (
+            f"鬥破蒼穹\n{title}\n"
+            "第一千六百二十蘭章結束，仇是開始（大結局）\n"
+            "一場曠世之戰落幕，\n然而卻是留下了一個滿目瘡痍的中州。"
+        )
+        cleaned = clean_text_content(text, title, "鬥破蒼穹")
+        self.assertTrue(cleaned.startswith("一場曠世之戰落幕，"))
+        self.assertNotIn("大結局", cleaned)
+
+    def test_chapter_reference_later_in_prose_is_preserved(self):
+        title = "第一千五百五十一章 邪神隕落"
+        text = f"{title}\n正文開始。\n他讀到第一千五百五十一章才停下。"
+        cleaned = clean_text_content(text, title, "大主宰")
+        self.assertIn("他讀到第一千五百五十一章才停下。", cleaned)
+
+    def test_long_clause_prefers_pause_after_chuanlai(self):
+        chunked = chunk_text("從他身上不時傳來輕重不一的陣陣打呼聲。", max_length=18)
+        self.assertEqual(chunked, "從他身上不時傳來\n輕重不一的陣陣打呼聲。")
 
 
 if __name__ == "__main__":
