@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 7,
-  "updated_at": "2026-08-22T15:36:07.946991+00:00",
+  "revision": 8,
+  "updated_at": "2026-08-22T15:36:18.215561+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -58,14 +58,14 @@
         "（大結局。）\n\n（直播活動開始了，大家有空的都來斗魚搜索天蠶土豆吧，今晚咱們王者榮耀狂歡局！同時我也會發布新書的信息。）\n\n(天津)\n\n\n"
       ],
       "duplicate_detection": {
-        "use_normalized_number": true,
+        "use_normalized_number": false,
         "use_chapter_name": true,
         "use_number_and_name": false
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 2,
-      "updated_at": "2026-08-22T15:36:07.946991+00:00"
+      "profile_revision": 3,
+      "updated_at": "2026-08-22T15:36:18.215561+00:00"
     }
   }
 }
