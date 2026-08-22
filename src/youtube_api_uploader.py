@@ -485,7 +485,7 @@ def get_or_create_playlist(youtube, playlist_title, playlist_desc=""):
             logging.info(f"🎉 成功建立播放清單 (ID: {playlist_id}):【{playlist_title}】")
             return playlist_id, True
         except Exception as e:
-            if ("quotaExceeded" in str(e) or "dailyLimitExceeded" in str(e)) and hasattr(youtube, "rotate_on_quota") and youtube.rotate_on_quota(e):
+            if ("quotaExceeded" in str(e) or "dailyLimitExceeded" in str(e)) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e) is True:
                 logging.info("🔄 配額已切換至下一專案，重新查詢/建立播放清單...")
                 continue
             logging.error(f"❌ 查詢/建立播放清單失敗: {e}")
@@ -497,36 +497,44 @@ def get_or_create_playlist(youtube, playlist_title, playlist_desc=""):
 
 def add_video_to_playlist(youtube, playlist_id, video_id, position=None):
     """將影片加到指定的播放清單中 (依呼叫順序追加)"""
-    try:
-        body = {
-            "snippet": {
-                "playlistId": playlist_id,
-                "resourceId": {
-                    "kind": "youtube#video",
-                    "videoId": video_id
+    while True:
+        try:
+            body = {
+                "snippet": {
+                    "playlistId": playlist_id,
+                    "resourceId": {
+                        "kind": "youtube#video",
+                        "videoId": video_id
+                    }
                 }
             }
-        }
-        if position is not None:
-            body["snippet"]["position"] = int(position)
-        youtube.playlistItems().insert(
-            part="snippet",
-            body=body
-        ).execute()
-        logging.info(f"📋 成功將影片 [Video ID: {video_id}] 加入播放清單！")
-        return True
-    except Exception as e:
-        logging.warning(f"⚠️ 將影片 [Video ID: {video_id}] 加入播放清單失敗: {e}")
-        return False
+            if position is not None:
+                body["snippet"]["position"] = int(position)
+            youtube.playlistItems().insert(
+                part="snippet",
+                body=body
+            ).execute()
+            logging.info(f"📋 成功將影片 [Video ID: {video_id}] 加入播放清單！")
+            return True
+        except Exception as e:
+            err_str = str(e)
+            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e) is True:
+                logging.info("🔄 配額已切換至下一專案，重新加入播放清單...")
+                continue
+            logging.warning(f"⚠️ 將影片 [Video ID: {video_id}] 加入播放清單失敗: {e}")
+            paused = classify_daily_limit(e)
+            if paused:
+                raise paused from e
+            return False
 
 def get_existing_playlist_video_titles(youtube, playlist_id):
     """獲取播放清單中已存在的影片標題集合，實現斷點續傳與自動跳過"""
     if not playlist_id:
         return set()
     titles = set()
-    try:
-        next_page_token = None
-        while True:
+    next_page_token = None
+    while True:
+        try:
             res = youtube.playlistItems().list(
                 part="snippet",
                 playlistId=playlist_id,
@@ -539,12 +547,20 @@ def get_existing_playlist_video_titles(youtube, playlist_id):
             next_page_token = res.get("nextPageToken")
             if not next_page_token:
                 break
-        logging.info(f"📋 成功獲取播放清單已有 {len(titles)} 部影片，開啟【智能斷點續傳】跳過機制！")
-    except Exception as e:
-        if "playlistNotFound" in str(e):
-            logging.info("📋 播放清單全新建立完成，目前為空狀態。")
-        else:
+        except Exception as e:
+            err_str = str(e)
+            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e) is True:
+                logging.info("🔄 配額已切換至下一專案，重新獲取播放清單影片標題...")
+                continue
+            if "playlistNotFound" in err_str:
+                logging.info("📋 播放清單全新建立完成，目前為空狀態。")
+                break
+            paused = classify_daily_limit(e)
+            if paused:
+                raise paused from e
             logging.warning(f"無法獲取播放清單既有影片清單: {e}")
+            break
+    logging.info(f"📋 成功獲取播放清單已有 {len(titles)} 部影片，開啟【智能斷點續傳】跳過機制！")
     return titles
 
 
@@ -555,6 +571,7 @@ def get_playlist_video_index(youtube, playlist_id, attempts=5, initial_delay=2):
         return index
     next_page_token = None
     while True:
+        res = None
         for attempt in range(attempts):
             try:
                 res = youtube.playlistItems().list(
@@ -562,10 +579,18 @@ def get_playlist_video_index(youtube, playlist_id, attempts=5, initial_delay=2):
                     pageToken=next_page_token,
                 ).execute()
                 break
-            except HttpError as error:
+            except Exception as error:
+                err_str = str(error)
+                if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(error) is True:
+                    logging.info("🔄 配額已切換至下一專案，重新獲取播放清單索引...")
+                    continue
+                paused = classify_daily_limit(error)
+                if paused:
+                    raise paused from error
                 is_not_found = (
-                    getattr(getattr(error, "resp", None), "status", None) == 404
-                    or "playlistNotFound" in str(error)
+                    isinstance(error, HttpError)
+                    and getattr(getattr(error, "resp", None), "status", None) == 404
+                    or "playlistNotFound" in err_str
                 )
                 if not is_not_found or attempt == attempts - 1:
                     raise
@@ -575,6 +600,8 @@ def get_playlist_video_index(youtube, playlist_id, attempts=5, initial_delay=2):
                     delay, attempt + 1, attempts,
                 )
                 time.sleep(delay)
+        if res is None:
+            raise RuntimeError("無法獲取播放清單索引")
         for item in res.get("items", []):
             snippet = item.get("snippet", {})
             video_id = snippet.get("resourceId", {}).get("videoId")
@@ -588,7 +615,19 @@ def get_playlist_video_index(youtube, playlist_id, attempts=5, initial_delay=2):
 
 def get_channel_upload_video_index(youtube):
     """Return title -> video id for the authenticated channel's uploads."""
-    channels = youtube.channels().list(part="contentDetails", mine=True).execute()
+    while True:
+        try:
+            channels = youtube.channels().list(part="contentDetails", mine=True).execute()
+            break
+        except Exception as e:
+            err_str = str(e)
+            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e) is True:
+                logging.info("🔄 配額已切換至下一專案，重新查詢頻道上傳清單...")
+                continue
+            paused = classify_daily_limit(e)
+            if paused:
+                raise paused from e
+            raise
     items = channels.get("items", [])
     if not items:
         return {}
@@ -615,7 +654,7 @@ def set_video_thumbnail(youtube, video_id, cover_path, attempts=5):
         except Exception as e:
             last_error = e
             err_str = str(e)
-            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and hasattr(youtube, "rotate_on_quota") and youtube.rotate_on_quota(e):
+            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e) is True:
                 logging.info("🔄 配額已切換至下一專案，重新嘗試設定封面縮圖...")
                 continue
             if "uploadRateLimitExceeded" in err_str or "429" in err_str:
@@ -704,7 +743,7 @@ def upload_video_file(youtube, video_path, title, description, category_id="22",
                         sys.stdout.flush()
         except Exception as e:
             err_str = str(e)
-            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and hasattr(youtube, "rotate_on_quota") and youtube.rotate_on_quota(e):
+            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e) is True:
                 logging.info("🔄 配額已切換至下一專案，重新發起本次影片上傳作業...")
                 continue
 
@@ -749,7 +788,7 @@ def upload_caption_file(youtube, video_id, srt_path, language="zh-TW", name="繁
                     logging.warning(f"  無法刪除舊字幕軌 {cap_id}: {e}")
         except Exception as e:
             err_str = str(e)
-            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and hasattr(youtube, "rotate_on_quota") and youtube.rotate_on_quota(e):
+            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e) is True:
                 logging.info("🔄 配額已切換至下一專案，重新發起 CC 字幕清理與上傳...")
                 continue
             logging.warning(f"  無法列出既有字幕軌: {e}")
@@ -776,7 +815,7 @@ def upload_caption_file(youtube, video_id, srt_path, language="zh-TW", name="繁
             return True
         except Exception as e:
             err_str = str(e)
-            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and hasattr(youtube, "rotate_on_quota") and youtube.rotate_on_quota(e):
+            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e) is True:
                 logging.info("🔄 配額已切換至下一專案，重新嘗試上傳 CC 字幕...")
                 continue
             logging.error(f"❌ 上傳 CC 字幕失敗 [Video ID: {video_id}]: {e}")
@@ -789,16 +828,24 @@ def upload_caption_file(youtube, video_id, srt_path, language="zh-TW", name="繁
 
 def set_video_privacy(youtube, video_id, privacy_status):
     """Publish only after every required post-upload action succeeds."""
-    try:
-        youtube.videos().update(
-            part="status",
-            body={"id": video_id, "status": {"privacyStatus": privacy_status}},
-        ).execute()
-        logging.info("Video %s privacy changed to %s", video_id, privacy_status)
-        return True
-    except Exception as error:
-        logging.error("Failed to change video %s privacy to %s: %s", video_id, privacy_status, error)
-        return False
+    while True:
+        try:
+            youtube.videos().update(
+                part="status",
+                body={"id": video_id, "status": {"privacyStatus": privacy_status}},
+            ).execute()
+            logging.info("Video %s privacy changed to %s", video_id, privacy_status)
+            return True
+        except Exception as error:
+            err_str = str(error)
+            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(error) is True:
+                logging.info("🔄 配額已切換至下一專案，重新更新影片隱私狀態...")
+                continue
+            logging.error("Failed to change video %s privacy to %s: %s", video_id, privacy_status, error)
+            paused = classify_daily_limit(error)
+            if paused:
+                raise paused from error
+            return False
 
 
 def is_valid_chinese_caption(snippet):
@@ -840,13 +887,25 @@ def resolve_part_srt(title="", part_num=None, search_dirs=None):
     return None
 
 
-def verify_published_part(youtube, video_id, playlist_id, privacy_status, attempts=5):
+def verify_published_part(youtube, video_id, playlist_id, privacy_status, attempts=5, srt_path=None, part_title="", part_num=None):
     """Read YouTube back after writes; API success alone is not final acceptance."""
 
     last_error = None
     for attempt in range(1, attempts + 1):
         try:
-            response = youtube.videos().list(part="status,snippet", id=video_id).execute()
+            while True:
+                try:
+                    response = youtube.videos().list(part="status,snippet", id=video_id).execute()
+                    break
+                except Exception as error:
+                    err_str = str(error)
+                    if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(error) is True:
+                        logging.info("🔄 配額已切換至下一專案，重新讀取影片狀態...")
+                        continue
+                    paused = classify_daily_limit(error)
+                    if paused:
+                        raise paused from error
+                    raise
             items = response.get("items") or []
             if not items:
                 raise RuntimeError(f"uploaded video cannot be read back: {video_id}")
@@ -856,12 +915,35 @@ def verify_published_part(youtube, video_id, playlist_id, privacy_status, attemp
             thumbnails = (items[0].get("snippet") or {}).get("thumbnails") or {}
             if not thumbnails:
                 raise RuntimeError("video thumbnail cannot be read back")
-            captions = youtube.captions().list(part="id,snippet", videoId=video_id).execute().get("items") or []
+            while True:
+                try:
+                    captions = youtube.captions().list(part="id,snippet", videoId=video_id).execute().get("items") or []
+                    break
+                except Exception as error:
+                    err_str = str(error)
+                    if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(error) is True:
+                        logging.info("🔄 配額已切換至下一專案，重新讀取字幕清單...")
+                        continue
+                    paused = classify_daily_limit(error)
+                    if paused:
+                        raise paused from error
+                    raise
             matching_captions = [
                 item.get("snippet") or {}
                 for item in captions
                 if (item.get("snippet") or {}).get("language") == "zh-TW"
             ]
+            if not matching_captions:
+                target_srt = srt_path or resolve_part_srt(title=part_title, part_num=part_num)
+                if target_srt and os.path.exists(target_srt):
+                    logging.warning("⚠️ 檢驗發現缺少繁中字幕軌，嘗試自動補上傳：%s", target_srt)
+                    if upload_caption_file(youtube, video_id, os.path.abspath(target_srt)):
+                        captions = youtube.captions().list(part="id,snippet", videoId=video_id).execute().get("items") or []
+                        matching_captions = [
+                            item.get("snippet") or {}
+                            for item in captions
+                            if (item.get("snippet") or {}).get("language") == "zh-TW"
+                        ]
             if not matching_captions:
                 raise RuntimeError("zh-TW caption track cannot be read back")
             failed_captions = [
@@ -879,6 +961,8 @@ def verify_published_part(youtube, video_id, playlist_id, privacy_status, attemp
             if video_id not in set(playlist_index.values()):
                 raise RuntimeError("video cannot be read back from the target playlist")
             return {"youtube_video_id": video_id, "privacy": actual_privacy, "caption_language": "zh-TW"}
+        except UploadPaused:
+            raise
         except Exception as error:
             last_error = error
             if attempt < attempts:
@@ -1380,10 +1464,28 @@ def main():
         existing_video_ids = (
             {} if playlist_created else get_playlist_video_index(youtube, playlist_id)
         )
-    except HttpError as error:
+    except UploadPaused as paused:
+        publication.mark_global("playlist", "paused", error=paused.reason)
+        save_resume_state(
+            args.state_file, args.run_id, args.privacy, "paused",
+            reason=paused.reason, retry_at=paused.retry_at,
+            completed_titles=completed_titles, part_plan=part_plan,
+            pending_thumbnails=pending_thumbnails,
+            pending_playlist=pending_playlist,
+            pending_captions=pending_captions,
+            pending_publish=pending_publish,
+            playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+        )
+        logging.error(
+            "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
+            len(completed_titles), len(part_plan), paused.retry_at.isoformat(),
+            args.run_id, paused.reason,
+        )
+        return EXIT_RETRY_LATER
+    except Exception as error:
         save_resume_state(
             args.state_file, args.run_id, args.privacy, "failed",
-            reason="playlistNotFound", completed_titles=completed_titles,
+            reason="playlistReadFailed", completed_titles=completed_titles,
             part_plan=part_plan, pending_thumbnails=pending_thumbnails,
             playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
         )
@@ -1396,7 +1498,25 @@ def main():
     # playlist insertion failed. Recover those video ids from channel uploads.
     missing_from_playlist = completed_titles - existing_titles
     if missing_from_playlist:
-        channel_uploads = get_channel_upload_video_index(youtube)
+        try:
+            channel_uploads = get_channel_upload_video_index(youtube)
+        except UploadPaused as paused:
+            save_resume_state(
+                args.state_file, args.run_id, args.privacy, "paused",
+                reason=paused.reason, retry_at=paused.retry_at,
+                completed_titles=completed_titles, part_plan=part_plan,
+                pending_thumbnails=pending_thumbnails,
+                pending_playlist=pending_playlist,
+                pending_captions=pending_captions,
+                pending_publish=pending_publish,
+                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+            )
+            logging.error(
+                "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
+                len(completed_titles), len(part_plan), paused.retry_at.isoformat(),
+                args.run_id, paused.reason,
+            )
+            return EXIT_RETRY_LATER
         for title in list(missing_from_playlist):
             video_id = channel_uploads.get(title)
             if not video_id:
@@ -1499,7 +1619,23 @@ def main():
         pending_part_num = part_number_for_title(part_plan, pending_title)
         planned = next((p for p in part_plan if p.get("title") == pending_title), {})
         position = int(planned.get("part_num", 0)) - 1 if planned else None
-        if not add_video_to_playlist(youtube, playlist_id, pending_video_id, position):
+        try:
+            added = add_video_to_playlist(youtube, playlist_id, pending_video_id, position)
+        except UploadPaused as paused:
+            if pending_part_num:
+                publication.fail(pending_part_num, "add_playlist", paused, paused=True, youtube_video_id=pending_video_id)
+            save_resume_state(
+                args.state_file, args.run_id, args.privacy, "paused",
+                paused.reason, paused.retry_at, completed_titles, part_plan,
+                pending_thumbnails,
+                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                pending_playlist=pending_playlist,
+                pending_captions=pending_captions,
+                pending_publish=pending_publish,
+            )
+            logging.error("Playlist insertion quota exhausted: %s; retry after %s", pending_title, paused.retry_at.isoformat())
+            return EXIT_RETRY_LATER
+        if not added:
             if pending_part_num:
                 publication.fail(pending_part_num, "add_playlist", RuntimeError("playlist insertion failed"), paused=True, youtube_video_id=pending_video_id)
             retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
@@ -1533,7 +1669,23 @@ def main():
     # private even if every other YouTube resource already exists.
     for pending_title, pending_video_id in list(pending_publish.items()):
         pending_part_num = part_number_for_title(part_plan, pending_title)
-        if not set_video_privacy(youtube, pending_video_id, args.privacy):
+        try:
+            published = set_video_privacy(youtube, pending_video_id, args.privacy)
+        except UploadPaused as paused:
+            if pending_part_num:
+                publication.fail(pending_part_num, "publish", paused, paused=True, youtube_video_id=pending_video_id)
+            save_resume_state(
+                args.state_file, args.run_id, args.privacy, "paused",
+                paused.reason, paused.retry_at, completed_titles, part_plan,
+                pending_thumbnails,
+                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                pending_playlist=pending_playlist,
+                pending_captions=pending_captions,
+                pending_publish=pending_publish,
+            )
+            logging.error("Video publish quota exhausted: %s; retry after %s", pending_title, paused.retry_at.isoformat())
+            return EXIT_RETRY_LATER
+        if not published:
             if pending_part_num:
                 publication.fail(pending_part_num, "publish", RuntimeError("final publish failed"), paused=True, youtube_video_id=pending_video_id)
             retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
@@ -1552,7 +1704,20 @@ def main():
         if pending_part_num:
             publication.complete(pending_part_num, "publish", youtube_video_id=pending_video_id, privacy=args.privacy)
             publication.mark(pending_part_num, "final_validation", "running")
-            evidence = verify_published_part(youtube, pending_video_id, playlist_id, args.privacy)
+            try:
+                evidence = verify_published_part(youtube, pending_video_id, playlist_id, args.privacy)
+            except UploadPaused as paused:
+                save_resume_state(
+                    args.state_file, args.run_id, args.privacy, "paused",
+                    paused.reason, paused.retry_at, completed_titles, part_plan,
+                    pending_thumbnails,
+                    playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                    pending_playlist=pending_playlist,
+                    pending_captions=pending_captions,
+                    pending_publish=pending_publish,
+                )
+                logging.error("Validation quota exhausted: %s; retry after %s", pending_title, paused.retry_at.isoformat())
+                return EXIT_RETRY_LATER
             publication.complete(pending_part_num, "final_validation", **evidence)
         save_resume_state(
             args.state_file, args.run_id, args.privacy, "running",
@@ -2375,7 +2540,21 @@ def main():
                     return EXIT_RETRY_LATER
                 publication.complete(part_n, "upload_caption", youtube_video_id=v_id)
                 publication.mark(part_n, "add_playlist", "running")
-                if not add_video_to_playlist(youtube, playlist_id, v_id, position=part_n - 1):
+                try:
+                    added = add_video_to_playlist(youtube, playlist_id, v_id, position=part_n - 1)
+                except UploadPaused as paused:
+                    if part_n:
+                        publication.fail(part_n, "add_playlist", paused, paused=True, youtube_video_id=v_id)
+                    save_resume_state(
+                        args.state_file, args.run_id, args.privacy, "paused",
+                        paused.reason, paused.retry_at, completed_titles, part_plan,
+                        pending_thumbnails, pending_playlist=pending_playlist,
+                        pending_captions=pending_captions, pending_publish=pending_publish,
+                        playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None,
+                    )
+                    logging.error("Playlist insertion quota exhausted: %s; retry after %s", v_title, paused.retry_at.isoformat())
+                    return EXIT_RETRY_LATER
+                if not added:
                     retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
                     save_resume_state(
                         args.state_file, args.run_id, args.privacy, "paused",
@@ -2392,7 +2571,23 @@ def main():
                 pending_publish[v_title] = v_id
                 existing_titles.add(v_title)
                 publication.mark(part_n, "publish", "running")
-                if not set_video_privacy(youtube, v_id, args.privacy):
+                try:
+                    published = set_video_privacy(youtube, v_id, args.privacy)
+                except UploadPaused as paused:
+                    if part_n:
+                        publication.fail(part_n, "publish", paused, paused=True, youtube_video_id=v_id)
+                    save_resume_state(
+                        args.state_file, args.run_id, args.privacy, "paused",
+                        paused.reason, paused.retry_at, completed_titles, part_plan,
+                        pending_thumbnails,
+                        playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                        pending_playlist=pending_playlist,
+                        pending_captions=pending_captions,
+                        pending_publish=pending_publish,
+                    )
+                    logging.error("Video publish quota exhausted: %s; retry after %s", v_title, paused.retry_at.isoformat())
+                    return EXIT_RETRY_LATER
+                if not published:
                     retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
                     save_resume_state(
                         args.state_file, args.run_id, args.privacy, "paused",
@@ -2409,7 +2604,21 @@ def main():
                 del pending_publish[v_title]
                 completed_titles.add(v_title)
                 publication.mark(part_n, "final_validation", "running")
-                publication.complete(part_n, "final_validation", **verify_published_part(youtube, v_id, playlist_id, args.privacy))
+                try:
+                    evidence = verify_published_part(youtube, v_id, playlist_id, args.privacy)
+                except UploadPaused as paused:
+                    save_resume_state(
+                        args.state_file, args.run_id, args.privacy, "paused",
+                        paused.reason, paused.retry_at, completed_titles, part_plan,
+                        pending_thumbnails,
+                        playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                        pending_playlist=pending_playlist,
+                        pending_captions=pending_captions,
+                        pending_publish=pending_publish,
+                    )
+                    logging.error("Validation quota exhausted: %s; retry after %s", v_title, paused.retry_at.isoformat())
+                    return EXIT_RETRY_LATER
+                publication.complete(part_n, "final_validation", **evidence)
                 archive_record = hf_archiver.finalize_part(
                     book_title=book_title, part_num=part_n,
                     youtube_video_id=v_id, playlist_id=playlist_id,
@@ -2463,13 +2672,39 @@ def main():
         # restored checkpoint or an exact-title recovery is not success by
         # itself; the public video, CC track, thumbnail and playlist entry must
         # all still be readable.
-        final_playlist_index = get_playlist_video_index(youtube, playlist_id)
+        try:
+            final_playlist_index = get_playlist_video_index(youtube, playlist_id)
+        except UploadPaused as paused:
+            save_resume_state(
+                args.state_file, args.run_id, args.privacy, "paused",
+                paused.reason, paused.retry_at, completed_titles, part_plan,
+                pending_thumbnails,
+                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                pending_playlist=pending_playlist,
+                pending_captions=pending_captions,
+                pending_publish=pending_publish,
+            )
+            logging.error("Final playlist index validation quota exhausted; retry after %s", paused.retry_at.isoformat())
+            return EXIT_RETRY_LATER
         for planned in part_plan:
             title = str(planned.get("title") or "").strip()
             video_id = final_playlist_index.get(title)
             if not video_id:
                 raise RuntimeError(f"final YouTube validation cannot find planned Part in playlist: {title}")
-            evidence = verify_published_part(youtube, video_id, playlist_id, args.privacy)
+            try:
+                evidence = verify_published_part(youtube, video_id, playlist_id, args.privacy)
+            except UploadPaused as paused:
+                save_resume_state(
+                    args.state_file, args.run_id, args.privacy, "paused",
+                    paused.reason, paused.retry_at, completed_titles, part_plan,
+                    pending_thumbnails,
+                    playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                    pending_playlist=pending_playlist,
+                    pending_captions=pending_captions,
+                    pending_publish=pending_publish,
+                )
+                logging.error("Final part read-back quota exhausted: %s; retry after %s", title, paused.retry_at.isoformat())
+                return EXIT_RETRY_LATER
             part_num = int(planned["part_num"])
             record = publication.data.get("parts", {}).get(str(part_num), {})
             steps = record.get("steps") or {}

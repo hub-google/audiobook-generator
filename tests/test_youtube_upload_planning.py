@@ -277,7 +277,7 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
 
     def test_playlist_insert_failure_is_reported(self):
         request = type("Request", (), {})()
-        request.execute = unittest.mock.Mock(side_effect=Exception("quotaExceeded"))
+        request.execute = unittest.mock.Mock(side_effect=Exception("network connection error"))
         playlist_items = type("PlaylistItems", (), {
             "insert": lambda self, **kwargs: request,
         })()
@@ -285,6 +285,19 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
             "playlistItems": lambda self: playlist_items,
         })()
         self.assertFalse(add_video_to_playlist(youtube, "playlist-1", "video-1", 0))
+
+    def test_playlist_insert_quota_exceeded_raises_upload_paused(self):
+        request = type("Request", (), {})()
+        request.execute = unittest.mock.Mock(side_effect=Exception("quotaExceeded"))
+        playlist_items = type("PlaylistItems", (), {
+            "insert": lambda self, **kwargs: request,
+        })()
+        youtube = type("YouTube", (), {
+            "playlistItems": lambda self: playlist_items,
+        })()
+        with self.assertRaises(UploadPaused) as raised:
+            add_video_to_playlist(youtube, "playlist-1", "video-1", 0)
+        self.assertEqual(raised.exception.reason, "quotaExceeded")
 
     @patch("src.youtube_api_uploader.get_playlist_video_index")
     def test_channel_upload_index_recovers_uploaded_video_ids(self, get_index):
