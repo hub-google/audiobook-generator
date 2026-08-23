@@ -412,15 +412,17 @@ def generate_gemini_cover_information(book_title, pure_plot, research=None):
         raise ValueError("缺少 GEMINI_API_KEY")
     _validate_plot_source(book_title, pure_plot, "送交 Gemini 的簡介")
     research = research or {"mode": "internal_knowledge_fallback", "sources": []}
+    expected_author_match = re.search(r"作者：([^；]+)", pure_plot)
+    expected_author = expected_author_match.group(1).strip() if expected_author_match else ""
     research_json = json.dumps(research, ensure_ascii=False)
     instruction = f"""你是熟悉中文網路小說的封面藝術總監。請依提供的聯網資料與目錄頁身分，嚴格分析《{book_title}》。
 目錄頁身分與簡介：{pure_plot}
 資料模式與來源：{research_json}
 分析必須與目錄頁的書名及作者相符。不得把同名公司、遊戲、漫畫、動畫或其他作者作品混入；不確定時必須回 insufficient_source，不得猜測。
 只回傳有效 JSON，格式：
-{{"status":"ok或insufficient_source","story_facts":[{{"fact":"本書具體事實1","source_ids":["S1"]}}],"analysis":{{"故事類型與時代":"...","世界觀":"...","主角外觀與身分":"...","代表性場景":"...","法寶武器或關鍵物件":"...","色彩氣氛與構圖":"...","應避免畫錯的內容":"..."}},"prompt":"英文生圖提示詞"}}
+{{"status":"ok或insufficient_source","identity":{{"book_title":"目錄中的書名","author":"目錄中的作者"}},"story_facts":[{{"fact":"本書具體事實1","source_ids":["S1"]}}],"analysis":{{"故事類型與時代":"...","世界觀":"...","主角外觀與身分":"...","代表性場景":"...","法寶武器或關鍵物件":"...","色彩氣氛與構圖":"...","應避免畫錯的內容":"..."}},"prompt":"英文生圖提示詞"}}
 至少五條 story_facts 必須是這一本小說的具體事實，且至少包含主角姓名、核心世界觀、代表場景與代表物件。web_evidence 模式下每條 fact 必須列出支持它的來源編號，不得超出來源文字；internal_knowledge_fallback 模式才可使用 source_ids=["MODEL_KNOWLEDGE"]，但不確定就必須 insufficient_source。
-宣傳文案中的誇飾或比喻（例如「一粒塵填海、一根草斬星辰」）不得直接畫成法寶或實體事件，除非資料明確證實它是故事中的真實代表物件。
+宣傳文案中的任何誇飾或比喻不得直接畫成法寶或實體事件，除非資料明確證實它是故事中的真實代表物件。
 status=ok 時，各分析欄位不得填未知、未提供、無法判斷或通用抽象方案；prompt 至少 120 個英文單字，必須具體使用已查證的故事元素，並適用 16:9、1280x720 電影級無字主視覺，保留乾淨文字安全區；禁止文字、字母、Logo、水印與簽名。不得用與本書無關的通用奇幻風景敷衍。"""
     errors = []
     for model in ("gemini-flash-latest", "gemini-3.5-flash"):
@@ -442,6 +444,9 @@ status=ok 時，各分析欄位不得填未知、未提供、無法判斷或通�
             result = json.loads(text)
             if result.get("status") != "ok":
                 raise ValueError("Gemini 判定來源不足，拒絕產生 Prompt")
+            identity = result.get("identity") or {}
+            if identity.get("book_title") != book_title or (expected_author and identity.get("author") not in {expected_author, expected_author.replace("東", "东")}):
+                raise ValueError("Gemini 回覆的書名或作者與目前目錄不符")
             analysis = result.get("analysis")
             required = {"故事類型與時代", "世界觀", "主角外觀與身分", "代表性場景", "法寶武器或關鍵物件", "色彩氣氛與構圖", "應避免畫錯的內容"}
             if not isinstance(analysis, dict) or not required.issubset(analysis):
@@ -464,9 +469,6 @@ status=ok 時，各分析欄位不得填未知、未提供、無法判斷或通�
                         raise ValueError("混合資料模式使用了無效來源編號")
                 elif not ids or not ids.issubset(valid_source_ids):
                     raise ValueError("Gemini 故事事實缺少有效聯網來源編號")
-            joined_facts = " ".join(str(item.get("fact") or "") for item in facts)
-            if book_title == "完美世界" and not all(marker in joined_facts for marker in ("石昊", "大荒")):
-                raise ValueError("Gemini 回覆未包含《完美世界》的關鍵身分事實")
             prompt = str(result.get("prompt") or "").strip()
             if len(re.findall(r"[A-Za-z]+", prompt)) < 120:
                 raise ValueError("Gemini 生圖 Prompt 過短或不夠具體")
@@ -485,7 +487,7 @@ def review_cover_information(book_title, pure_plot, research, draft):
 目錄身分：{pure_plot}
 資料：{json.dumps(research, ensure_ascii=False)}
 草稿：{json.dumps(draft, ensure_ascii=False)}
-輸出格式與草稿相同，status 只能 ok 或 insufficient_source。刪除所有無根據的年齡、髮型、服裝、武器與場景；不得把宣傳比喻「一粒塵填海、一根草斬星辰」畫成實體法寶。優先採用該作品公認且具辨識度的主角、柳神、石村、至尊骨等元素，但不確定就回 insufficient_source。保留至少五條 story_facts 及來源編號，英文 prompt 至少120字，必須具體、故事專屬、16:9、無文字。"""
+輸出格式與草稿相同，status 只能 ok 或 insufficient_source。identity 的書名與作者必須逐字符合目錄。刪除所有無根據的年齡、髮型、服裝、武器與場景；辨識宣傳文案中的誇飾與比喻，不得把比喻直接畫成實體法寶或事件。只採用該作品有資料支持、公認且具辨識度的角色、地點與物件，不確定就回 insufficient_source。保留至少五條 story_facts 及合法來源編號，英文 prompt 至少120字，必須具體、故事專屬、16:9、無文字。"""
     errors = []
     for model in ("gemini-flash-latest", "gemini-3.5-flash"):
         try:
@@ -501,6 +503,15 @@ def review_cover_information(book_title, pure_plot, research, draft):
             result = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE))
             if result.get("status") != "ok" or len(result.get("story_facts") or []) < 5:
                 raise ValueError("審核器拒絕草稿或缺少五條事實")
+            expected_author_match = re.search(r"作者：([^；]+)", pure_plot)
+            expected_author = expected_author_match.group(1).strip() if expected_author_match else ""
+            identity = result.get("identity") or {}
+            if identity.get("book_title") != book_title or (expected_author and identity.get("author") not in {expected_author, expected_author.replace("東", "东")}):
+                raise ValueError("審核器回覆的書名或作者與目錄不符")
+            valid_ids = {item["id"] for item in research.get("sources") or []} | {"MODEL_KNOWLEDGE"}
+            for fact in result.get("story_facts") or []:
+                if not isinstance(fact, dict) or not fact.get("fact") or not set(fact.get("source_ids") or []).issubset(valid_ids):
+                    raise ValueError("審核後故事事實缺少合法來源")
             analysis = result.get("analysis") or {}
             if len(analysis) < 7 or any(word in json.dumps(analysis, ensure_ascii=False) for word in ("未知", "未提供", "通用")):
                 raise ValueError("審核後分析仍不完整")

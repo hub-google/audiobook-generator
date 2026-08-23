@@ -19,6 +19,7 @@ FIELDS = {
 def response_payload(grounded=True):
     result = {
         "status": "ok",
+        "identity": {"book_title": "完美世界", "author": "辰東"},
         "story_facts": [
             {"fact": "主角石昊從大荒石村成長", "source_ids": ["MODEL_KNOWLEDGE"]},
             *[
@@ -49,7 +50,7 @@ class CoverInformationQualityTests(unittest.TestCase):
     def test_missing_story_facts_fails_instead_of_returning_prompt(self, post):
         payload = response_payload()
         payload["candidates"][0]["content"]["parts"][0]["text"] = json.dumps(
-            {"status": "ok", "story_facts": [], "analysis": FIELDS, "prompt": "specific " * 150},
+            {"status": "ok", "identity": {"book_title": "完美世界", "author": "辰東"}, "story_facts": [], "analysis": FIELDS, "prompt": "specific " * 150},
             ensure_ascii=False,
         )
         post.return_value = Mock(status_code=200, json=lambda: payload, text="")
