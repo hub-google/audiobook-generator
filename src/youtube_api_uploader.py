@@ -1829,15 +1829,18 @@ def main():
     if part_plan:
         publication.lock_plan(part_plan, run_id=args.run_id, book_title=book_title)
 
-    # Do not publish an invented duration before all videos are measured.
-    playlist_name = f"[處理中]《{book_title}》全集"
+    # Every part has already been rendered and measured before uploading starts,
+    # so publish the user-facing title immediately instead of exposing a
+    # temporary "processing" title for the duration of the upload.
+    measured_duration_seconds = sum(
+        float(part.get("duration") or 0) for part in (part_plan or [])
+    )
+    if not part_plan or any(float(part.get("duration") or 0) <= 0 for part in part_plan):
+        raise RuntimeError("缺少全部影片的實測時長，禁止建立播放清單")
+    playlist_name = completed_playlist_title(book_title, measured_duration_seconds)
     legacy_playlist_name = f"《{book_title}》有聲小說全集"
-    resumable_playlist_titles = [legacy_playlist_name]
-    if part_plan and all(float(part.get("duration") or 0) > 0 for part in part_plan):
-        resumable_playlist_titles.append(completed_playlist_title(
-            book_title,
-            sum(float(part["duration"]) for part in part_plan),
-        ))
+    processing_playlist_name = f"[處理中]《{book_title}》全集"
+    resumable_playlist_titles = [legacy_playlist_name, processing_playlist_name]
     playlist_desc = f"《{book_title}》完整版有聲書全集 (第 {start_chap} 至 {end_chap} 章)，高音質連續播映版。\n歡迎訂閱開啟小鈴鐺！"
     publication.mark_global("playlist", "running")
     try:
@@ -1871,6 +1874,8 @@ def main():
         )
         logging.error("無法取得或建立 YouTube 播放清單，停止上傳。")
         return 1
+    # Also migrate a playlist created by an older run before any upload work.
+    update_playlist_metadata(youtube, playlist_id, playlist_name, playlist_desc)
     publication.mark_global("playlist", "completed", playlist_id=playlist_id)
     try:
         # A playlist returned by playlists.insert is necessarily empty. Avoid
