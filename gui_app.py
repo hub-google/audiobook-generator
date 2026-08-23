@@ -39,7 +39,7 @@ try:
         error_observation, missing_observation, observation_text,
         successful_observation,
     )
-    from cover_assets import cache_path, normalize_manual_cover, restore_cover, upload_cover
+    from cover_assets import cache_path, normalize_manual_cover, restore_cover, upload_github_cover
     from metadata_gen import build_cover_information
 except ImportError:
     parse_catalog = None
@@ -1822,14 +1822,9 @@ class AudiobookGUIApp:
             def worker():
                 try:
                     details = normalize_manual_cover(path, local_cover)
-                    hf_token = os.getenv("HF_TOKEN", "")
-                    if not hf_token:
-                        raise RuntimeError("本機 .env 缺少 HF_TOKEN")
-                    repo_id, remote_path = upload_cover(
-                        local_cover, profile_id, hf_token, self._resolve_hf_archive_repo()
-                    )
-                    record = {"source": "manual_upload", "repo_id": repo_id, "remote_path": remote_path, **details}
-                    store, _, _ = self._profile_store()
+                    store, repo, github_token = self._profile_store()
+                    cloud = upload_github_cover(local_cover, profile_id, repo, github_token)
+                    record = {"source": "manual_upload", **cloud, **details}
                     store.mutate(
                         lambda data: update_book_profile(data, catalog_url, book_title, manual_cover=record),
                         f"Update manual cover for {book_title}",
@@ -1842,7 +1837,7 @@ class AudiobookGUIApp:
                         preview.config(image=preview.image)
                         upload_status.set(
                             f"✓ 上傳成功｜1280×720 JPEG｜{details['bytes']/1024:.0f} KB｜"
-                            f"指紋 {profile_id}｜HF: {repo_id}/{remote_path}"
+                            f"指紋 {profile_id}｜GitHub: {repo}@{cloud['branch']}/{cloud['remote_path']}"
                         )
                         self.log(f"✓ 《{book_title}》手動封面已同步；正式流程將跳過 Gemini 與 HF 生圖。")
                     self.root.after(0, done)
@@ -1885,13 +1880,14 @@ class AudiobookGUIApp:
             upload_status.set("已找到雲端手動封面紀錄，正在下載並驗證…")
             def restore_worker():
                 try:
-                    restore_cover(self.current_book_profile["manual_cover"], local_cover, os.getenv("HF_TOKEN", ""))
+                    _, _, github_token = self._profile_store()
+                    restore_cover(self.current_book_profile["manual_cover"], local_cover, github_token)
                     def restored():
                         with Image.open(local_cover) as image:
                             shown = image.copy(); shown.thumbnail((720, 405))
                         preview.image = ImageTk.PhotoImage(shown)
                         preview.config(image=preview.image)
-                        upload_status.set(f"✓ 已從 HF 讀取手動封面｜指紋 {profile_id}")
+                        upload_status.set(f"✓ 已從 GitHub 雲端讀取手動封面｜指紋 {profile_id}")
                     self.root.after(0, restored)
                 except Exception as error:
                     self.root.after(0, lambda detail=str(error): upload_status.set(f"雲端封面讀取失敗：{detail}"))

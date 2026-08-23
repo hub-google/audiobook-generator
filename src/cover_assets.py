@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import os
 from pathlib import Path
+
+import requests
 
 from PIL import Image, ImageOps
 
@@ -99,9 +102,50 @@ def upload_cover(local_path, profile_id, token, repo_id=""):
     return repo_id, remote
 
 
+def upload_github_cover(local_path, profile_id, repo, token, branch="automation-state"):
+    """Persist a manual cover beside the durable book profiles on GitHub."""
+    remote = f"manual-covers/{profile_id}/master_cover.jpg"
+    url = f"https://api.github.com/repos/{repo}/contents/{remote}"
+    headers = {
+        "Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    current = requests.get(url, headers=headers, params={"ref": branch}, timeout=30)
+    if current.status_code not in {200, 404}:
+        raise RuntimeError(f"GitHub 手動封面檢查失敗 ({current.status_code})：{current.text}")
+    body = {
+        "message": f"Update manual cover {profile_id}", "branch": branch,
+        "content": base64.b64encode(Path(local_path).read_bytes()).decode("ascii"),
+    }
+    if current.status_code == 200:
+        body["sha"] = current.json()["sha"]
+    response = requests.put(url, headers=headers, json=body, timeout=60)
+    if response.status_code not in {200, 201}:
+        raise RuntimeError(f"GitHub 手動封面上傳失敗 ({response.status_code})：{response.text}")
+    return {
+        "provider": "github", "repo": repo, "branch": branch, "remote_path": remote,
+        "blob_sha": response.json()["content"]["sha"],
+    }
+
+
 def restore_cover(record, destination, token):
-    from huggingface_hub import hf_hub_download
-    cached = hf_hub_download(record["repo_id"], record["remote_path"], repo_type="dataset", token=token)
+    if record.get("provider") == "github":
+        github_token = token or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
+        repo = record.get("repo") or os.environ.get("GITHUB_REPOSITORY", "")
+        branch = record.get("branch") or "automation-state"
+        url = f"https://api.github.com/repos/{repo}/contents/{record['remote_path']}"
+        response = requests.get(url, headers={
+            "Accept": "application/vnd.github.raw+json", "Authorization": f"Bearer {github_token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }, params={"ref": branch}, timeout=60)
+        if response.status_code != 200:
+            raise RuntimeError(f"GitHub 手動封面下載失敗 ({response.status_code})")
+        cached = Path(destination).with_suffix(".download")
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        cached.write_bytes(response.content)
+    else:
+        from huggingface_hub import hf_hub_download
+        cached = hf_hub_download(record["repo_id"], record["remote_path"], repo_type="dataset", token=token)
     destination = Path(destination)
     validate_cached_cover(cached, record.get("sha256", ""))
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -120,13 +164,25 @@ def restore_from_config(config_path, workspace_root="Workspace"):
     config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
     record = config.get("manual_cover") or {}
     if not record:
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            with open(summary, "a", encoding="utf-8") as handle:
+                handle.write("- [ ] 手動封面：未設定，將使用 Gemini／HF 自動封面流程\n")
         return False
-    token = os.environ.get("HF_TOKEN", "")
+    token = (
+        os.environ.get("GH_TOKEN", "") or os.environ.get("GITHUB_TOKEN", "")
+        if record.get("provider") == "github" else os.environ.get("HF_TOKEN", "")
+    )
     if not token:
-        raise RuntimeError("手動封面已設定，但缺少 HF_TOKEN")
+        provider = "GitHub" if record.get("provider") == "github" else "Hugging Face"
+        raise RuntimeError(f"手動封面已設定，但缺少 {provider} 讀取 Token")
     destination = Path(workspace_root) / config["book_title"] / "Cover" / "master_cover.jpg"
     restore_cover(record, destination, token)
-    print(f"[MANUAL_COVER] restored {destination}", flush=True)
+    print(f"✅ [MANUAL_COVER_CHECK] PASS | restored and verified {destination}", flush=True)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as handle:
+            handle.write("- [x] 手動封面：已從雲端還原並通過尺寸、格式與 SHA-256 檢核；跳過 Gemini／HF 生圖\n")
     return True
 
 

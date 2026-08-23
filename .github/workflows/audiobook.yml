@@ -573,6 +573,8 @@ jobs:
 
       - name: Restore verified manual cover when configured
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python src/cover_assets.py --restore-config prepared_source/config.yaml
 
