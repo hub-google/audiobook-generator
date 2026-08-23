@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 541,
-  "updated_at": "2026-08-23T21:21:26.041732+00:00",
+  "revision": 542,
+  "updated_at": "2026-08-23T21:21:28.482919+00:00",
   "queue": [
     {
       "task_id": "book-20260822-27eedcc7",
@@ -18,7 +18,7 @@
       ],
       "renumber_selected": true,
       "duplicate_chapter_count": 110,
-      "status": "queued",
+      "status": "dispatching",
       "run_id": 32667158156,
       "run_attempt": 1,
       "execution_generation": 2,
@@ -46,7 +46,7 @@
         "total": 0
       },
       "created_at": "2026-08-22T09:51:03.814563+00:00",
-      "updated_at": "2026-08-23T21:21:26.041700+00:00",
+      "updated_at": "2026-08-23T21:21:28.482896+00:00",
       "chapter_order": [
         1,
         2,
@@ -1669,8 +1669,8 @@
         },
         "cleaner_fingerprint": "ec6598cc9c99091f36d41b9d350bede67796b693c2cb5820496c6dadbbc71b01"
       },
-      "artifact_source_run_id": 32576615343,
-      "dispatched_at": "2026-08-23T21:19:18.776064+00:00"
+      "artifact_source_run_id": 32667158156,
+      "dispatched_at": "2026-08-23T21:21:28.478875+00:00"
     },
     {
       "task_id": "book-20260822-e697f308",
