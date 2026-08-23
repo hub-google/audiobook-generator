@@ -1312,7 +1312,9 @@ def resolve_part_srt(title="", part_num=None, search_dirs=None):
     return None
 
 
-def verify_published_part(youtube, video_id, playlist_id, privacy_status, attempts=5, srt_path=None, part_title="", part_num=None):
+def verify_published_part(youtube, video_id, playlist_id, privacy_status, attempts=5,
+                          srt_path=None, part_title="", part_num=None,
+                          cover_path=None, playlist_position=None):
     """Read YouTube back after writes; API success alone is not final acceptance."""
 
     last_error = None
@@ -1336,10 +1338,17 @@ def verify_published_part(youtube, video_id, playlist_id, privacy_status, attemp
                 raise RuntimeError(f"uploaded video cannot be read back: {video_id}")
             actual_privacy = (items[0].get("status") or {}).get("privacyStatus")
             if actual_privacy != privacy_status:
-                raise RuntimeError(f"privacy mismatch: expected {privacy_status}, got {actual_privacy}")
+                logging.warning("Final reconciliation repairing privacy: Part %s | %s | %s -> %s", part_num, video_id, actual_privacy, privacy_status)
+                if not set_video_privacy(youtube, video_id, privacy_status):
+                    raise RuntimeError(f"privacy mismatch: expected {privacy_status}, got {actual_privacy}")
+                raise RuntimeError("privacy repaired; waiting for YouTube read-back")
             thumbnails = (items[0].get("snippet") or {}).get("thumbnails") or {}
             if not thumbnails:
-                raise RuntimeError("video thumbnail cannot be read back")
+                if cover_path and os.path.exists(cover_path):
+                    logging.warning("Final reconciliation repairing thumbnail: Part %s | %s | %s", part_num, video_id, cover_path)
+                    set_video_thumbnail(youtube, video_id, cover_path)
+                    raise RuntimeError("thumbnail repaired; waiting for YouTube read-back")
+                raise RuntimeError("video thumbnail cannot be read back and no local cover is available")
             while True:
                 try:
                     captions = youtube.captions().list(part="id,snippet", videoId=video_id).execute().get("items") or []
@@ -1356,8 +1365,14 @@ def verify_published_part(youtube, video_id, playlist_id, privacy_status, attemp
             matching_captions = [
                 item.get("snippet") or {}
                 for item in captions
-                if (item.get("snippet") or {}).get("language") == "zh-TW"
+                if is_valid_chinese_caption(item.get("snippet") or {})
             ]
+            logging.info(
+                "Final reconciliation read-back: Part %s | video=%s | captions=%s",
+                part_num, video_id,
+                [(snippet.get("language"), snippet.get("status"), snippet.get("failureReason"))
+                 for snippet in (item.get("snippet") or {} for item in captions)],
+            )
             if not matching_captions:
                 target_srt = srt_path or resolve_part_srt(title=part_title, part_num=part_num)
                 if target_srt and os.path.exists(target_srt):
@@ -1367,7 +1382,7 @@ def verify_published_part(youtube, video_id, playlist_id, privacy_status, attemp
                         matching_captions = [
                             item.get("snippet") or {}
                             for item in captions
-                            if (item.get("snippet") or {}).get("language") == "zh-TW"
+                            if is_valid_chinese_caption(item.get("snippet") or {})
                         ]
             if not matching_captions:
                 raise RuntimeError("zh-TW caption track cannot be read back")
@@ -1384,7 +1399,10 @@ def verify_published_part(youtube, video_id, playlist_id, privacy_status, attemp
                 raise RuntimeError("zh-TW caption track is not serving yet")
             playlist_index = get_playlist_video_index(youtube, playlist_id)
             if video_id not in set(playlist_index.values()):
-                raise RuntimeError("video cannot be read back from the target playlist")
+                logging.warning("Final reconciliation repairing playlist membership: Part %s | %s", part_num, video_id)
+                if not add_video_to_playlist(youtube, playlist_id, video_id, position=playlist_position):
+                    raise RuntimeError("video is missing from the target playlist and repair failed")
+                raise RuntimeError("playlist membership repaired; waiting for YouTube read-back")
             return {"youtube_video_id": video_id, "privacy": actual_privacy, "caption_language": "zh-TW"}
         except UploadPaused:
             raise
@@ -3170,13 +3188,29 @@ def main():
             )
             logging.error("Final playlist index validation quota exhausted; retry after %s", paused.retry_at.isoformat())
             return EXIT_RETRY_LATER
+        final_channel_index = None
+        upload_parts_by_number = {int(item["part_num"]): item for item in parts_to_upload}
         for planned in part_plan:
             title = str(planned.get("title") or "").strip()
             video_id = final_playlist_index.get(title)
             if not video_id:
-                raise RuntimeError(f"final YouTube validation cannot find planned Part in playlist: {title}")
+                if final_channel_index is None:
+                    final_channel_index = get_channel_upload_video_index(youtube)
+                video_id = final_channel_index.get(title)
+                if not video_id:
+                    raise RuntimeError(f"final reconciliation cannot find the video in either the playlist or channel uploads: {title}")
+                logging.warning("Final reconciliation restoring playlist entry: Part %s | video=%s", planned.get("part_num"), video_id)
+                if not add_video_to_playlist(youtube, playlist_id, video_id, position=int(planned["part_num"]) - 1):
+                    raise RuntimeError(f"final reconciliation failed to restore playlist entry: {title}")
+                final_playlist_index[title] = video_id
+            local_part = upload_parts_by_number.get(int(planned["part_num"]), {})
             try:
-                evidence = verify_published_part(youtube, video_id, playlist_id, args.privacy)
+                evidence = verify_published_part(
+                    youtube, video_id, playlist_id, args.privacy,
+                    part_title=title, part_num=planned.get("part_num"),
+                    cover_path=local_part.get("cover_path"),
+                    playlist_position=int(planned["part_num"]) - 1,
+                )
             except UploadPaused as paused:
                 save_resume_state(
                     args.state_file, args.run_id, args.privacy, "paused",

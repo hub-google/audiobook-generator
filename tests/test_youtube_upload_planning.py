@@ -176,6 +176,25 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         playlist_index.assert_called_once_with(youtube, "playlist-1")
 
     @patch("src.youtube_api_uploader.get_playlist_video_index", return_value={"Part 1": "video-1"})
+    def test_final_readback_accepts_youtube_traditional_chinese_language_alias(self, playlist_index):
+        youtube = MagicMock()
+        youtube.videos.return_value.list.return_value.execute.return_value = {
+            "items": [{
+                "status": {"privacyStatus": "public"},
+                "snippet": {"thumbnails": {"high": {"url": "https://example/cover.jpg"}}},
+            }]
+        }
+        youtube.captions.return_value.list.return_value.execute.return_value = {
+            "items": [{"snippet": {"language": "zh-Hant", "status": "serving"}}]
+        }
+
+        result = verify_published_part(
+            youtube, "video-1", "playlist-1", "public", attempts=1
+        )
+
+        self.assertEqual(result["youtube_video_id"], "video-1")
+
+    @patch("src.youtube_api_uploader.get_playlist_video_index", return_value={"Part 1": "video-1"})
     def test_final_readback_rejects_missing_thumbnail(self, playlist_index):
         youtube = MagicMock()
         youtube.videos.return_value.list.return_value.execute.return_value = {
