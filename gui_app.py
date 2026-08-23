@@ -1805,7 +1805,8 @@ class AudiobookGUIApp:
         )).pack(side=tk.LEFT, padx=8)
 
         upload_status = tk.StringVar(value="選擇或拖曳 JPG／PNG／WEBP；將中央裁切並標準化為 1280×720 JPEG。")
-        ttk.Label(upload_page, textvariable=upload_status, wraplength=780).pack(anchor=tk.W, pady=8)
+        upload_hint = ttk.Label(upload_page, textvariable=upload_status, wraplength=780)
+        upload_hint.pack(anchor=tk.W, pady=8)
         preview = ttk.Label(upload_page, anchor=tk.CENTER)
         preview.pack(fill=tk.BOTH, expand=True, pady=10)
 
@@ -1851,13 +1852,25 @@ class AudiobookGUIApp:
                     ))
             threading.Thread(target=worker, daemon=True).start()
 
-        ttk.Button(upload_page, text="選擇圖片檔案", command=select_file).pack(pady=8)
+        choose_file_button = ttk.Button(upload_page, text="選擇圖片檔案", command=select_file)
+        choose_file_button.pack(pady=8)
+
+        def accept_drop(event):
+            paths = top.tk.splitlist(event.data)
+            if paths:
+                process_file(paths[0])
+            return "break"
+
+        # Tk 的拖放事件不会从子元件冒泡。预览区覆盖了页面的大部分面积，
+        # 因此每一个可见的上传元件都必须各自注册为放置目标。
+        drop_widgets = (upload_page, upload_hint, preview, choose_file_button)
         if hasattr(upload_page, "drop_target_register"):
-            try:
-                upload_page.drop_target_register("DND_Files")
-                upload_page.dnd_bind("<<Drop>>", lambda event: process_file(top.tk.splitlist(event.data)[0]))
-            except tk.TclError:
-                pass
+            for widget in drop_widgets:
+                try:
+                    widget.drop_target_register("DND_Files")
+                    widget.dnd_bind("<<Drop>>", accept_drop)
+                except (AttributeError, tk.TclError):
+                    continue
         if local_cover.is_file():
             try:
                 with Image.open(local_cover) as image:

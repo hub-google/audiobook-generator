@@ -78,12 +78,24 @@ def default_repo(token, configured=""):
 
 def upload_cover(local_path, profile_id, token, repo_id=""):
     from huggingface_hub import HfApi
+    from huggingface_hub.errors import HfHubHTTPError
     repo_id = default_repo(token, repo_id)
     remote = f"manual-covers/{profile_id}/master_cover.jpg"
     api = HfApi(token=token)
-    api.create_repo(repo_id, repo_type="dataset", private=True, exist_ok=True)
-    api.upload_file(path_or_fileobj=str(local_path), path_in_repo=remote, repo_id=repo_id,
-                    repo_type="dataset", commit_message=f"Update manual cover {profile_id}")
+    try:
+        api.create_repo(repo_id, repo_type="dataset", private=True, exist_ok=True)
+        api.upload_file(path_or_fileobj=str(local_path), path_in_repo=remote, repo_id=repo_id,
+                        repo_type="dataset", commit_message=f"Update manual cover {profile_id}")
+    except HfHubHTTPError as error:
+        status = getattr(getattr(error, "response", None), "status_code", None)
+        if status in {401, 403}:
+            raise RuntimeError(
+                "Hugging Face 拒絕上傳：HF_TOKEN 沒有寫入權限。\n\n"
+                "請到 Hugging Face → Settings → Access Tokens 建立 Write token；"
+                "若使用 Fine-grained token，必須授予資料庫 "
+                f"{repo_id} 的寫入權限。然後把新 token 更新到本機 .env 的 HF_TOKEN，重開程式後再試。"
+            ) from error
+        raise RuntimeError(f"Hugging Face 上傳失敗：{error}") from error
     return repo_id, remote
 
 

@@ -1,10 +1,11 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from PIL import Image
 
-from src.cover_assets import normalize_manual_cover, validate_cached_cover
+from src.cover_assets import normalize_manual_cover, upload_cover, validate_cached_cover
 
 
 class ManualCoverTests(unittest.TestCase):
@@ -27,6 +28,17 @@ class ManualCoverTests(unittest.TestCase):
             normalize_manual_cover(source, output)
             with self.assertRaisesRegex(ValueError, "SHA-256"):
                 validate_cached_cover(output, "0" * 64)
+
+    def test_upload_explains_missing_write_permission(self):
+        from huggingface_hub.errors import HfHubHTTPError
+
+        response = Mock(status_code=403)
+        error = HfHubHTTPError("Forbidden", response=response)
+        api = Mock()
+        api.upload_file.side_effect = error
+        with patch("huggingface_hub.HfApi", return_value=api):
+            with self.assertRaisesRegex(RuntimeError, "沒有寫入權限"):
+                upload_cover("cover.jpg", "profile", "hf_read_only", "owner/archive")
 
 
 if __name__ == "__main__":
