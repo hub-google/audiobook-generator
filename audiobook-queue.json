@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 469,
-  "updated_at": "2026-08-23T15:15:21.106669+00:00",
+  "revision": 470,
+  "updated_at": "2026-08-23T15:15:24.831234+00:00",
   "queue": [
     {
       "task_id": "book-20260822-e697f308",
@@ -18,8 +18,8 @@
       "status": "queued",
       "run_id": null,
       "run_attempt": 0,
-      "execution_generation": 3,
-      "retry_requested_at": "2026-08-23T15:15:21.106669+00:00",
+      "execution_generation": 4,
+      "retry_requested_at": "2026-08-23T15:15:24.831234+00:00",
       "run_history": [
         {
           "run_id": 32574361239,
