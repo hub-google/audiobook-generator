@@ -34,3 +34,25 @@ tts:
 paths:
   workspace_base: Workspace
 gdrive_folder_id: ''
+cover:
+  template: viral-v1
+  hf_model: black-forest-labs/FLUX.1-schnell
+  width: 1280
+  height: 720
+  inference_steps: 4
+  guidance_scale: 0.0
+  composition:
+    protagonist_scale: close_waist_up
+    max_supporting_characters: 2
+    title_zone_bottom_ratio: 0.35
+    require_large_story_symbol: true
+    forbid_empty_space: true
+  typography:
+    title_font: fonts/YujiBoku.ttf
+    title_face: '#FFF4D0'
+    title_inner_stroke: '#BE802B'
+    title_outer_stroke: '#0C0806'
+    title_shadow: '#000000'
+    title_max_lines: 2
+    badge_face: '#FFFFFF'
+    badge_fill: '#BE0F19'

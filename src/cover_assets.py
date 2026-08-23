@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -10,7 +11,6 @@ from PIL import Image, ImageOps
 
 SIZE = (1280, 720)
 MAX_INPUT_PIXELS = 80_000_000
-MAX_OUTPUT_BYTES = 2 * 1024 * 1024
 
 
 def sha256_file(path):
@@ -26,7 +26,7 @@ def cache_path(project_root, profile_id):
 
 
 def normalize_manual_cover(source, destination):
-    """Decode, orient, center-crop to 16:9, and write a verified YouTube-safe JPEG."""
+    """Decode, orient, center-crop to 16:9, and write one high-quality JPEG."""
     source, destination = Path(source), Path(destination)
     if not source.is_file():
         raise ValueError("找不到選取的圖片檔案")
@@ -38,25 +38,26 @@ def normalize_manual_cover(source, destination):
         image = ImageOps.exif_transpose(opened).convert("RGB")
         image = ImageOps.fit(image, SIZE, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
     destination.parent.mkdir(parents=True, exist_ok=True)
-    quality = 94
-    while True:
-        image.save(destination, "JPEG", quality=quality, optimize=True)
-        if destination.stat().st_size < MAX_OUTPUT_BYTES:
-            break
-        quality -= 4
-        if quality < 50:
-            raise ValueError("圖片無法壓縮至 YouTube 2 MB 限制內")
+    quality = 98
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    image.save(temporary, "JPEG", quality=quality, subsampling=0, optimize=False)
+    os.replace(temporary, destination)
     validate_cached_cover(destination)
+    digest = sha256_file(destination)
+    marker = destination.with_suffix(".manual.json")
+    temporary_marker = marker.with_suffix(marker.suffix + ".tmp")
+    temporary_marker.write_text(json.dumps({"source": "manual", "sha256": digest}), encoding="utf-8")
+    os.replace(temporary_marker, marker)
     return {
         "width": SIZE[0], "height": SIZE[1], "bytes": destination.stat().st_size,
-        "sha256": sha256_file(destination), "quality": quality,
+        "sha256": digest, "quality": quality,
     }
 
 
 def validate_cached_cover(path, expected_sha256=""):
     path = Path(path)
-    if not path.is_file() or path.stat().st_size >= MAX_OUTPUT_BYTES:
-        raise ValueError("手動封面不存在或超過 2 MB")
+    if not path.is_file() or path.stat().st_size < 10_000:
+        raise ValueError("手動封面不存在或檔案異常過小")
     with Image.open(path) as image:
         image.verify()
     with Image.open(path) as image:
@@ -89,9 +90,16 @@ def upload_cover(local_path, profile_id, token, repo_id=""):
 def restore_cover(record, destination, token):
     from huggingface_hub import hf_hub_download
     cached = hf_hub_download(record["repo_id"], record["remote_path"], repo_type="dataset", token=token)
-    Path(destination).parent.mkdir(parents=True, exist_ok=True)
-    Path(destination).write_bytes(Path(cached).read_bytes())
-    validate_cached_cover(destination, record.get("sha256", ""))
+    destination = Path(destination)
+    validate_cached_cover(cached, record.get("sha256", ""))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary_destination = destination.with_suffix(destination.suffix + ".tmp")
+    temporary_destination.write_bytes(Path(cached).read_bytes())
+    os.replace(temporary_destination, destination)
+    marker = destination.with_suffix(".manual.json")
+    temporary_marker = marker.with_suffix(marker.suffix + ".tmp")
+    temporary_marker.write_text(json.dumps({"source": "manual", "sha256": record.get("sha256", "")}), encoding="utf-8")
+    os.replace(temporary_marker, marker)
     return destination
 
 

@@ -15,8 +15,9 @@ class ManualCoverTests(unittest.TestCase):
             Image.new("RGBA", (1000, 1400), (30, 80, 160, 180)).save(source)
             result = normalize_manual_cover(source, output)
             self.assertEqual((result["width"], result["height"]), (1280, 720))
-            self.assertLess(result["bytes"], 2 * 1024 * 1024)
+            self.assertGreater(result["bytes"], 10_000)
             self.assertEqual(validate_cached_cover(output, result["sha256"]), result["sha256"])
+            self.assertTrue(output.with_suffix(".manual.json").is_file())
 
     def test_rejects_wrong_digest(self):
         with tempfile.TemporaryDirectory() as directory:

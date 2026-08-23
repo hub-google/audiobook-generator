@@ -48,6 +48,7 @@ scratch/
 *.md
 *.MD
 *.markdown
+!章節選擇與重複判斷需求書.md
 
 # IDE & OS System Files
 .vscode/

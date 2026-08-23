@@ -15,6 +15,22 @@ FIELDS = {
     "應避免畫錯的內容": "不得混入同名遊戲或其他作者作品。",
 }
 
+VISUAL_BRIEF = {
+    "genre": "prehistoric oriental fantasy",
+    "era_and_setting": "the Great Wilderness and ancient cultivation realms",
+    "core_conflict": "Shi Hao rises from Stone Village against ancient clans",
+    "main_character_identity": "young cultivator Shi Hao",
+    "appearance": "long dark hair and a fierce youthful face",
+    "clothing": "story-appropriate rugged ancient robes",
+    "expression_and_action": "a determined gaze while confronting powerful enemies",
+    "supporting_characters": [],
+    "iconic_story_symbol": "the colossal primordial wilderness and Stone Village guardian willow",
+    "iconic_prop_or_power": "verified ancient runes and cultivation power",
+    "genre_color_palette": "deep black, brilliant gold and emerald highlights",
+    "lighting_and_mood": "explosive backlight and an awe-inspiring heroic mood",
+    "avoid_story_errors": ["do not mix in characters from unrelated adaptations"],
+}
+
 
 def response_payload(grounded=True):
     result = {
@@ -28,7 +44,7 @@ def response_payload(grounded=True):
             ],
         ],
         "analysis": FIELDS,
-        "prompt": " ".join(["specific cinematic prehistoric oriental fantasy detail"] * 25),
+        "visual_brief": VISUAL_BRIEF,
     }
     candidate = {"content": {"parts": [{"text": json.dumps(result, ensure_ascii=False)}]}}
     return {"candidates": [candidate]}
@@ -50,7 +66,7 @@ class CoverInformationQualityTests(unittest.TestCase):
     def test_missing_story_facts_fails_instead_of_returning_prompt(self, post):
         payload = response_payload()
         payload["candidates"][0]["content"]["parts"][0]["text"] = json.dumps(
-            {"status": "ok", "identity": {"book_title": "完美世界", "author": "辰東"}, "story_facts": [], "analysis": FIELDS, "prompt": "specific " * 150},
+            {"status": "ok", "identity": {"book_title": "完美世界", "author": "辰東"}, "story_facts": [], "analysis": FIELDS, "visual_brief": VISUAL_BRIEF},
             ensure_ascii=False,
         )
         post.return_value = Mock(status_code=200, json=lambda: payload, text="")

@@ -6,10 +6,18 @@ import base64
 import requests
 import logging
 import time
+import yaml
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+
+try:
+    from .cover_renderer import render_viral_cover
+    from .cover_template import COVER_TEMPLATE_VERSION, build_cover_prompt, validate_visual_brief
+except ImportError:
+    from cover_renderer import render_viral_cover
+    from cover_template import COVER_TEMPLATE_VERSION, build_cover_prompt, validate_visual_brief
 
 load_dotenv()
 
@@ -20,20 +28,62 @@ logging.basicConfig(
 )
 
 
-LIGHT_PAINTING_STYLE = (
-    "Spectacular light painting art style, with luminous energy trails, "
-    "flowing long-exposure light ribbons, radiant contours, and controlled "
-    "glowing accents integrated naturally into the story scene."
-)
-
 COVER_OUTPUT_RULES = "No text, no letters, no logo, no watermark, no signature."
 YOUTUBE_COVER_SIZE = (1280, 720)
 YOUTUBE_COVER_MAX_BYTES = 2 * 1024 * 1024
 
 
-def finalize_cover_prompt(prompt):
-    """套用所有封面來源都不可繞過的全域生圖風格與輸出限制。"""
-    return f"{prompt.strip()} {LIGHT_PAINTING_STYLE} {COVER_OUTPUT_RULES}"
+def _cover_config():
+    config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config.yaml"))
+    if not os.path.isfile(config_path):
+        return {}
+    try:
+        with open(config_path, "r", encoding="utf-8") as handle:
+            root = yaml.safe_load(handle) or {}
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        raise RuntimeError(f"無法讀取封面設定：{exc}") from exc
+    cover = root.get("cover") or {}
+    if not isinstance(cover, dict):
+        raise RuntimeError("config.yaml 的 cover 必須是物件")
+    return cover
+
+
+def _write_json_atomic(path, payload):
+    path = os.path.abspath(path)
+    temporary = path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+    os.replace(temporary, path)
+
+
+def _validate_cover_config(config):
+    template = str(config.get("template") or COVER_TEMPLATE_VERSION)
+    if template != COVER_TEMPLATE_VERSION:
+        raise ValueError(f"不支援的封面模板版本：{template}")
+    width = int(config.get("width") or YOUTUBE_COVER_SIZE[0])
+    height = int(config.get("height") or YOUTUBE_COVER_SIZE[1])
+    if (width, height) != YOUTUBE_COVER_SIZE:
+        raise ValueError("viral-v1 封面尺寸必須固定為 1280×720")
+    steps = int(config.get("inference_steps") or 4)
+    if steps < 1 or steps > 100:
+        raise ValueError("HF inference_steps 必須介於 1 到 100")
+    guidance = float(config.get("guidance_scale") if config.get("guidance_scale") is not None else 0.0)
+    if guidance < 0 or guidance > 30:
+        raise ValueError("HF guidance_scale 必須介於 0 到 30")
+    composition = config.get("composition") or {}
+    if int(composition.get("max_supporting_characters", 2)) != 2:
+        raise ValueError("viral-v1 的 max_supporting_characters 必須固定為 2")
+    if float(composition.get("title_zone_bottom_ratio", 0.35)) != 0.35:
+        raise ValueError("viral-v1 的 title_zone_bottom_ratio 必須固定為 0.35")
+    typography = config.get("typography") or {}
+    if int(typography.get("title_max_lines", 2)) != 2:
+        raise ValueError("viral-v1 的 title_max_lines 必須固定為 2")
+    return width, height, steps, guidance
+
+
+def finalize_cover_prompt(visual_brief):
+    """Only structured story variables may enter the fixed viral template."""
+    return build_cover_prompt(visual_brief)
 
 
 FONT_PATHS = [
@@ -415,15 +465,15 @@ def generate_gemini_cover_information(book_title, pure_plot, research=None):
     expected_author_match = re.search(r"作者：([^；]+)", pure_plot)
     expected_author = expected_author_match.group(1).strip() if expected_author_match else ""
     research_json = json.dumps(research, ensure_ascii=False)
-    instruction = f"""你是熟悉中文網路小說的封面藝術總監。請依提供的聯網資料與目錄頁身分，嚴格分析《{book_title}》。
+    instruction = f"""你是熟悉中文網路小說的考據編輯。請依提供的聯網資料與目錄頁身分，嚴格分析《{book_title}》。你只負責填入故事變數，無權改變固定的熱門短劇縮圖構圖。
 目錄頁身分與簡介：{pure_plot}
 資料模式與來源：{research_json}
 分析必須與目錄頁的書名及作者相符。不得把同名公司、遊戲、漫畫、動畫或其他作者作品混入；不確定時必須回 insufficient_source，不得猜測。
 只回傳有效 JSON，格式：
-{{"status":"ok或insufficient_source","identity":{{"book_title":"目錄中的書名","author":"目錄中的作者"}},"story_facts":[{{"fact":"本書具體事實1","source_ids":["S1"]}}],"analysis":{{"故事類型與時代":"...","世界觀":"...","主角外觀與身分":"...","代表性場景":"...","法寶武器或關鍵物件":"...","色彩氣氛與構圖":"...","應避免畫錯的內容":"..."}},"prompt":"英文生圖提示詞"}}
+{{"status":"ok或insufficient_source","identity":{{"book_title":"目錄中的書名","author":"目錄中的作者"}},"story_facts":[{{"fact":"本書具體事實1","source_ids":["S1"]}}],"analysis":{{"故事類型與時代":"...","世界觀":"...","主角外觀與身分":"...","代表性場景":"...","法寶武器或關鍵物件":"...","色彩氣氛與構圖":"...","應避免畫錯的內容":"..."}},"visual_brief":{{"genre":"英文題材","era_and_setting":"英文時代與場景","core_conflict":"英文核心衝突","main_character_identity":"英文主角身分","appearance":"英文外觀","clothing":"英文服裝","expression_and_action":"英文表情與動作","supporting_characters":["英文輔角一","英文輔角二"],"iconic_story_symbol":"英文巨大故事識別符號","iconic_prop_or_power":"英文代表物件或能力","genre_color_palette":"英文題材色盤","lighting_and_mood":"英文光線氣氛","avoid_story_errors":["英文禁畫錯誤"]}}}}
 至少五條 story_facts 必須是這一本小說的具體事實，且至少包含主角姓名、核心世界觀、代表場景與代表物件。web_evidence 模式下每條 fact 必須列出支持它的來源編號，不得超出來源文字；internal_knowledge_fallback 模式才可使用 source_ids=["MODEL_KNOWLEDGE"]，但不確定就必須 insufficient_source。
 宣傳文案中的任何誇飾或比喻不得直接畫成法寶或實體事件，除非資料明確證實它是故事中的真實代表物件。
-status=ok 時，各分析欄位不得填未知、未提供、無法判斷或通用抽象方案；prompt 至少 120 個英文單字，必須具體使用已查證的故事元素，並適用 16:9、1280x720 電影級無字主視覺，保留乾淨文字安全區；禁止文字、字母、Logo、水印與簽名。不得用與本書無關的通用奇幻風景敷衍。"""
+status=ok 時，各分析欄位及 visual_brief 不得填未知、未提供、無法判斷或通用抽象方案。supporting_characters 只能是 0 至 2 項。iconic_story_symbol 必須是資料支持且一眼可辨識的巨大人物、物件、生物、建築或環境標誌，不能只寫神秘力量。不得要求留白、文字安全區、遠景小人物、大片天空或極簡構圖。"""
     errors = []
     for model in ("gemini-flash-latest", "gemini-3.5-flash"):
         try:
@@ -469,10 +519,9 @@ status=ok 時，各分析欄位不得填未知、未提供、無法判斷或通�
                         raise ValueError("混合資料模式使用了無效來源編號")
                 elif not ids or not ids.issubset(valid_source_ids):
                     raise ValueError("Gemini 故事事實缺少有效聯網來源編號")
-            prompt = str(result.get("prompt") or "").strip()
-            if len(re.findall(r"[A-Za-z]+", prompt)) < 120:
-                raise ValueError("Gemini 生圖 Prompt 過短或不夠具體")
-            result["prompt"] = finalize_cover_prompt(prompt)
+            visual_brief = validate_visual_brief(result.get("visual_brief"))
+            result["prompt"] = finalize_cover_prompt(visual_brief)
+            result["template_version"] = COVER_TEMPLATE_VERSION
             result["research"] = research
             return result
         except Exception as exc:
@@ -483,11 +532,11 @@ status=ok 時，各分析欄位不得填未知、未提供、無法判斷或通�
 def review_cover_information(book_title, pure_plot, research, draft):
     """A separate Gemini pass must audit and rewrite the draft before acceptance."""
     api_key = os.getenv("GEMINI_API_KEY")
-    prompt = f"""你是嚴格的小說考據編輯與封面總監。請審核下列《{book_title}》封面草稿，使用你對該小說的知識以及提供的資料逐項糾錯，最後只輸出完整 JSON。
+    prompt = f"""你是嚴格的小說考據編輯與熱門縮圖規格審核員。請審核下列《{book_title}》封面草稿，使用你對該小說的知識以及提供的資料逐項糾錯，最後只輸出完整 JSON。
 目錄身分：{pure_plot}
 資料：{json.dumps(research, ensure_ascii=False)}
 草稿：{json.dumps(draft, ensure_ascii=False)}
-輸出格式與草稿相同，status 只能 ok 或 insufficient_source。identity 的書名與作者必須逐字符合目錄。刪除所有無根據的年齡、髮型、服裝、武器與場景；辨識宣傳文案中的誇飾與比喻，不得把比喻直接畫成實體法寶或事件。只採用該作品有資料支持、公認且具辨識度的角色、地點與物件，不確定就回 insufficient_source。保留至少五條 story_facts 及合法來源編號，英文 prompt 至少120字，必須具體、故事專屬、16:9、無文字。"""
+輸出格式與草稿相同，status 只能 ok 或 insufficient_source。identity 的書名與作者必須逐字符合目錄。刪除所有無根據的年齡、髮型、服裝、武器與場景；辨識宣傳文案中的誇飾與比喻，不得把比喻直接畫成實體法寶或事件。只採用該作品有資料支持、公認且具辨識度的角色、地點與物件，不確定就回 insufficient_source。保留至少五條 story_facts 及合法來源編號。visual_brief 必須完整、最多兩位輔角，且不得要求遠景小人物、大片留白、文字安全區或極簡構圖。不要輸出或改寫最終英文 prompt，Python 會套用固定模板。"""
     errors = []
     for model in ("gemini-flash-latest", "gemini-3.5-flash"):
         try:
@@ -515,12 +564,12 @@ def review_cover_information(book_title, pure_plot, research, draft):
             analysis = result.get("analysis") or {}
             if len(analysis) < 7 or any(word in json.dumps(analysis, ensure_ascii=False) for word in ("未知", "未提供", "通用")):
                 raise ValueError("審核後分析仍不完整")
-            final_prompt = str(result.get("prompt") or "")
-            if len(re.findall(r"[A-Za-z]+", final_prompt)) < 120:
-                raise ValueError("審核後 Prompt 過短")
+            visual_brief = validate_visual_brief(result.get("visual_brief"))
+            final_prompt = finalize_cover_prompt(visual_brief)
             if re.search(r"(?:blade|weapon|sword).{0,20}(?:grass|dust)|(?:grass|dust).{0,20}(?:blade|weapon|sword)", final_prompt, re.I):
                 raise ValueError("審核後仍把宣傳比喻誤畫成實體武器")
-            result["prompt"] = finalize_cover_prompt(final_prompt)
+            result["prompt"] = final_prompt
+            result["template_version"] = COVER_TEMPLATE_VERSION
             result["research"] = research
             return result
         except Exception as exc:
@@ -540,8 +589,8 @@ def build_cover_information(book_title, catalog_url=None):
 def auto_generate_prompt_from_summary(book_title, workspace_dir=None, analyzer=None):
     pure_plot, source = fetch_book_summary_details(book_title)
     brief = analyze_cover_brief(book_title, pure_plot, source=source, workspace_dir=workspace_dir, analyzer=analyzer)
-    if brief.get("prompt"):
-        final_prompt = finalize_cover_prompt(brief["prompt"])
+    if brief.get("visual_brief"):
+        final_prompt = finalize_cover_prompt(brief["visual_brief"])
         brief["prompt"] = final_prompt
         return pure_plot, "", final_prompt, brief
     
@@ -552,13 +601,18 @@ def auto_generate_prompt_from_summary(book_title, workspace_dir=None, analyzer=N
     final_prompt = information["prompt"]
     brief["analysis"] = information["analysis"]
     brief["story_facts"] = information["story_facts"]
+    brief["visual_brief"] = information["visual_brief"]
+    brief["template_version"] = information["template_version"]
     brief["prompt"] = final_prompt
     return pure_plot, pure_plot, final_prompt, brief
 
 
 def download_ai_image(prompt, width=1280, height=720):
     import io
-    logging.info(f"🖼️ 連線 Hugging Face AI 繪圖伺服器 (FLUX.1-schnell) 生成 HD 封面底圖 ({width}x{height})...")
+    cover_config = _cover_config()
+    model = str(cover_config.get("hf_model") or "black-forest-labs/FLUX.1-schnell")
+    width, height, steps, guidance = _validate_cover_config(cover_config)
+    logging.info(f"🖼️ 連線 Hugging Face AI 繪圖伺服器 ({model}) 生成封面底圖 ({width}x{height})...")
     
     hf_token = os.getenv("HF_TOKEN")
     if not hf_token or not hf_token.startswith("hf_"):
@@ -568,17 +622,17 @@ def download_ai_image(prompt, width=1280, height=720):
     try:
         try:
             from huggingface_hub import InferenceClient
-            client = InferenceClient(model="black-forest-labs/FLUX.1-schnell", token=hf_token)
+            client = InferenceClient(model=model, token=hf_token)
             img = client.text_to_image(
                 prompt,
                 width=width,
                 height=height,
-                num_inference_steps=4,
-                guidance_scale=0.0,
+                num_inference_steps=steps,
+                guidance_scale=guidance,
             )
         except Exception as hf_err:
             logging.warning(f"⚠️ huggingface_hub 呼叫失敗，改用 REST API 重試: {hf_err}")
-            api_url = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
+            api_url = f"https://api-inference.huggingface.co/models/{model}"
             headers = {"Authorization": f"Bearer {hf_token}"}
             res = requests.post(
                 api_url,
@@ -588,8 +642,8 @@ def download_ai_image(prompt, width=1280, height=720):
                     "parameters": {
                         "width": width,
                         "height": height,
-                        "num_inference_steps": 4,
-                        "guidance_scale": 0.0,
+                        "num_inference_steps": steps,
+                        "guidance_scale": guidance,
                     },
                 },
                 timeout=60,
@@ -606,8 +660,9 @@ def download_ai_image(prompt, width=1280, height=720):
                     f"Hugging Face returned {img.size[0]}x{img.size[1]}; "
                     f"expected {width}x{height}. Refusing to stretch the image."
                 )
-            logging.info("✅ 成功從 Hugging Face FLUX.1 生成超高畫質底圖！")
+            logging.info("✅ 成功從 Hugging Face %s 生成底圖！", model)
             return img
+        raise RuntimeError("Hugging Face 沒有回傳圖片")
     except Exception as e:
         raise RuntimeError(f"❌ [CRITICAL] Hugging Face 生圖失敗: {e}！流程直接終止，嚴禁降級使用低品質備用圖。")
 
@@ -808,11 +863,8 @@ def _create_youtube_cover_legacy(
 
     # 存檔
     os.makedirs(os.path.dirname(os.path.abspath(output_filename)), exist_ok=True)
-    q = 95
-    img.save(output_filename, quality=q, optimize=True)
-    while os.path.getsize(output_filename) >= 2000000 and q > 50:
-        q -= 5
-        img.save(output_filename, quality=q, optimize=True)
+    q = 98
+    img.save(output_filename, quality=q, subsampling=0, optimize=False)
 
     size_mb = os.path.getsize(output_filename) / (1024 * 1024)
     logging.info(f"✅ 1280x720 自適應大氣封面合成完成: {output_filename} (品質 quality={q}, 大小 {size_mb:.2f} MB)")
@@ -887,25 +939,17 @@ def _create_youtube_cover_redesign(
     draw.text((status_x + pad_x, status_y + pad_y - 9), status_text, font=status_font, fill=(255, 255, 255), stroke_width=2, stroke_fill=(0, 55, 42))
 
     os.makedirs(os.path.dirname(os.path.abspath(output_filename)), exist_ok=True)
-    quality = 94
-    img.save(output_filename, "JPEG", quality=quality, optimize=True)
-    while os.path.getsize(output_filename) >= 2_000_000 and quality > 55:
-        quality -= 4
-        img.save(output_filename, "JPEG", quality=quality, optimize=True)
+    quality = 98
+    img.save(output_filename, "JPEG", quality=quality, subsampling=0, optimize=False)
     logging.info("✅ Part 封面完成（固定主視覺版型）: %s", output_filename)
     return output_filename
 
 
 def create_youtube_cover(bg_img, book_title, start_chap, end_chap, is_completed=True, output_filename="youtube_cover.jpg", part_num=None):
-    """使用專案原有封面文字排版；底圖仍採每本小說唯一 master cover。"""
-    return _create_youtube_cover_legacy(
-        bg_img,
-        book_title,
-        start_chap,
-        end_chap,
-        is_completed=is_completed,
-        output_filename=output_filename,
-        part_num=part_num,
+    """使用固定熱門縮圖版型；不因檔案大小降低畫質。"""
+    return render_viral_cover(
+        bg_img, book_title, start_chap, end_chap,
+        is_completed=is_completed, output_filename=output_filename, part_num=part_num,
     )
 
 def save_process_log(output_dir, book_title, pure_plot, english_plot, final_prompt, img_width=1280, img_height=720):
@@ -966,8 +1010,41 @@ def _valid_master_cover(path):
         return False
 
 
+def _master_template_version(cover_dir):
+    record = os.path.join(cover_dir, "master_cover_prompt.json")
+    try:
+        with open(record, "r", encoding="utf-8") as handle:
+            return str((json.load(handle) or {}).get("template_version") or "")
+    except (OSError, ValueError):
+        return ""
+
+
+def _part_cover_signature(book_title, start_chap, end_chap, is_completed, part_num):
+    typography = (_cover_config().get("typography") or {})
+    return {
+        "template_version": COVER_TEMPLATE_VERSION,
+        "book_title": book_title,
+        "start_chap": str(start_chap),
+        "end_chap": str(end_chap),
+        "is_completed": bool(is_completed),
+        "part_num": int(part_num) if part_num is not None else None,
+        "typography": typography,
+    }
+
+
+def _part_cover_cache_current(cover_file, signature):
+    if not _valid_youtube_cover(cover_file):
+        return False
+    metadata_path = cover_file + ".meta.json"
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as handle:
+            return json.load(handle) == signature
+    except (OSError, ValueError):
+        return False
+
+
 def _valid_youtube_cover(path):
-    if not os.path.exists(path) or os.path.getsize(path) >= YOUTUBE_COVER_MAX_BYTES:
+    if not os.path.exists(path) or not 10_000 <= os.path.getsize(path) < YOUTUBE_COVER_MAX_BYTES:
         return False
     try:
         with Image.open(path) as image:
@@ -983,11 +1060,18 @@ def ensure_master_cover(book_title, book_workspace_dir, force_regenerate=False, 
     cover_dir = os.path.join(book_workspace_dir, "Cover")
     os.makedirs(cover_dir, exist_ok=True)
     master_path = os.path.join(cover_dir, "master_cover.jpg")
+    manual_marker = os.path.splitext(master_path)[0] + ".manual.json"
     # Only an explicit caller request may spend money regenerating this image.
     force = bool(force_regenerate)
     if _valid_master_cover(master_path) and not force:
-        logging.info("♻️ 重用小說主視覺快取: %s", master_path)
-        return master_path, None
+        if os.path.isfile(manual_marker):
+            logging.info("♻️ 重用使用者指定的小說主視覺: %s", master_path)
+            return master_path, None
+        cached_version = _master_template_version(cover_dir)
+        if cached_version == COVER_TEMPLATE_VERSION:
+            logging.info("♻️ 重用小說主視覺快取: %s", master_path)
+            return master_path, None
+        logging.warning("小說主視覺使用舊模板 %s，將依 viral-v1 重新生成。", cached_version or "unknown")
 
     if force:
         logging.warning("已要求強制重生《%s》主視覺。", book_title)
@@ -996,9 +1080,15 @@ def ensure_master_cover(book_title, book_workspace_dir, force_regenerate=False, 
     )
     master = download_ai_image(final_prompt, width=1280, height=720)
 
-    master.convert("RGB").save(master_path, "JPEG", quality=94, optimize=True)
-    with open(os.path.join(cover_dir, "master_cover_prompt.json"), "w", encoding="utf-8") as f:
-        json.dump({"book_title": book_title, "brief": brief, "prompt": final_prompt}, f, ensure_ascii=False, indent=2)
+    temporary_master = master_path + ".tmp"
+    master.convert("RGB").save(temporary_master, "JPEG", quality=98, subsampling=0, optimize=False)
+    os.replace(temporary_master, master_path)
+    if os.path.isfile(manual_marker):
+        os.unlink(manual_marker)
+    _write_json_atomic(
+        os.path.join(cover_dir, "master_cover_prompt.json"),
+        {"book_title": book_title, "template_version": COVER_TEMPLATE_VERSION, "brief": brief, "prompt": final_prompt},
+    )
     save_process_log(cover_dir, book_title, pure_plot, english_plot, final_prompt)
     logging.info("✅ 已建立小說唯一無文字主視覺: %s", master_path)
     return master_path, (pure_plot, english_plot, final_prompt)
@@ -1047,7 +1137,8 @@ def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=No
 
     # Reuse a completed Part cover. The unique AI master is also reused unless
     # the caller explicitly requests regeneration.
-    if _valid_youtube_cover(cover_file):
+    cover_signature = _part_cover_signature(book_title, start_chap, end_chap, is_completed, part_num)
+    if _part_cover_cache_current(cover_file, cover_signature):
         logging.info("♻️ 重用已完成的 1280x720 Part 封面: %s", cover_file)
     else:
         with Image.open(master_cover) as cached_master:
@@ -1056,6 +1147,7 @@ def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=No
             bg_img, book_title, start_chap, end_chap,
             is_completed=is_completed, output_filename=cover_file, part_num=part_num,
         )
+        _write_json_atomic(cover_file + ".meta.json", cover_signature)
 
     log_file = os.path.join(book_workspace_dir, "Cover", f"{book_title}_process_log.txt")
 
