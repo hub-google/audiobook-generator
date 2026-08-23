@@ -106,8 +106,8 @@ class UploadPaused(RuntimeError):
 class ThumbnailUploadPaused(UploadPaused):
     """The video exists, but its custom thumbnail still needs to be applied."""
 
-    def __init__(self, video_id, retry_at, original_error=None):
-        super().__init__("thumbnailRateLimit", retry_at, original_error)
+    def __init__(self, video_id, retry_at, original_error=None, reason="thumbnailRateLimit"):
+        super().__init__(reason, retry_at, original_error)
         self.video_id = video_id
 
 
@@ -978,7 +978,7 @@ def get_channel_upload_video_index(youtube):
     uploads_id = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
     return get_playlist_video_index(youtube, uploads_id)
 
-def set_video_thumbnail(youtube, video_id, cover_path, attempts=5):
+def set_video_thumbnail(youtube, video_id, cover_path, attempts=None):
     """Apply a custom thumbnail or raise a resumable post-upload pause."""
     if not cover_path or not os.path.exists(cover_path):
         raise ThumbnailUploadPaused(
@@ -987,7 +987,13 @@ def set_video_thumbnail(youtube, video_id, cover_path, attempts=5):
         )
 
     last_error = None
-    for attempt in range(attempts):
+    # A fixed five-attempt loop silently stopped after slot 5 even when the
+    # configured pool contained ten projects.  Default calls must give every
+    # account every configured rotation round a chance.  An explicit attempts
+    # value remains available for bounded unit tests/transient retries.
+    account_count = max(1, len(getattr(youtube, "accounts", []) or []))
+    max_attempts = attempts if attempts is not None else account_count * YOUTUBE_SLOT_ROTATION_ROUNDS
+    for attempt in range(max_attempts):
         try:
             youtube.thumbnails().set(
                 videoId=video_id,
@@ -1005,7 +1011,7 @@ def set_video_thumbnail(youtube, video_id, cover_path, attempts=5):
                 wait_sec = (attempt + 1) * 10
                 logging.warning(
                     "⚠️ 設定縮圖觸發速率限制 (429)，等待 %s 秒後重試 (%s/%s)...",
-                    wait_sec, attempt + 1, attempts,
+                    wait_sec, attempt + 1, max_attempts,
                 )
                 time.sleep(wait_sec)
                 continue
@@ -1013,10 +1019,13 @@ def set_video_thumbnail(youtube, video_id, cover_path, attempts=5):
                 video_id, datetime.now(timezone.utc) + timedelta(hours=2), e,
             ) from e
 
+    daily_pause = classify_daily_limit(last_error) if last_error else None
+    if daily_pause:
+        raise ThumbnailUploadPaused(
+            video_id, daily_pause.retry_at, last_error, reason=daily_pause.reason,
+        )
     raise ThumbnailUploadPaused(
-        video_id,
-        datetime.now(timezone.utc) + timedelta(hours=2),
-        last_error,
+        video_id, datetime.now(timezone.utc) + timedelta(hours=2), last_error,
     )
 
 
@@ -1739,10 +1748,20 @@ def main():
             if datetime.now(timezone.utc) < retry_at:
                 saved_pool_size = int(saved_state.get("credential_pool_size") or 1)
                 current_pool_size = len(configured_youtube_account_slots())
-                if saved_state.get("reason") == "quotaExceeded" and current_pool_size > saved_pool_size:
+                legacy_thumbnail_pause = (
+                    saved_state.get("reason") == "thumbnailRateLimit"
+                    and bool(pending_thumbnails)
+                    and current_pool_size > 1
+                )
+                if (
+                    saved_state.get("reason") == "quotaExceeded"
+                    and current_pool_size > saved_pool_size
+                ) or legacy_thumbnail_pause:
                     logging.info(
-                        "🔄 YouTube 憑證池已從 %s 組擴充為 %s 組；忽略舊配額等待時間並立即輪替。",
-                        saved_pool_size, current_pool_size,
+                        "🔄 YouTube 憑證池可用 %s 組（舊斷點記錄 %s 組）；"
+                        "忽略舊縮圖等待時間並立即從下一個 API slot 繼續。",
+                        current_pool_size,
+                        saved_pool_size,
                     )
                 else:
                     logging.info("⏳ 尚未到安全重試時間 %s；本次排程不會呼叫 YouTube。", retry_at.isoformat())

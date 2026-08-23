@@ -445,6 +445,34 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         self.assertEqual(raised.exception.video_id, "video-11")
         self.assertEqual(sleep.call_count, 2)
 
+    @patch("src.youtube_api_uploader.MediaFileUpload")
+    def test_thumbnail_quota_walks_all_ten_slots_before_pausing(self, media):
+        calls = {"execute": 0, "rotate": 0}
+
+        def execute():
+            calls["execute"] += 1
+            raise Exception("403 quotaExceeded")
+
+        request = type("Request", (), {"execute": lambda self: execute()})()
+        thumbnails = type("Thumbnails", (), {"set": lambda self, **kwargs: request})()
+
+        class Pool:
+            accounts = [{} for _ in range(10)]
+
+            def thumbnails(self):
+                return thumbnails
+
+            def rotate_on_quota(self, error):
+                calls["rotate"] += 1
+                return True
+
+        with tempfile.NamedTemporaryFile() as cover:
+            with self.assertRaises(ThumbnailUploadPaused) as raised:
+                set_video_thumbnail(Pool(), "video-16", cover.name)
+        self.assertEqual(calls["execute"], 30)
+        self.assertEqual(calls["rotate"], 30)
+        self.assertEqual(raised.exception.reason, "quotaExceeded")
+
     def test_partial_worker_cannot_report_success(self):
         with self.assertRaisesRegex(RuntimeError, "1172"):
             require_complete_worker({1172}, 16)
