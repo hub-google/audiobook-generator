@@ -113,7 +113,8 @@ def render_viral_cover(bg_img, book_title, start_chap, end_chap, is_completed=Tr
     image = Image.alpha_composite(image, shadow)
     draw = ImageDraw.Draw(image)
     for x, y, line in positioned:
-        # Reference style: white brush lettering with one heavy black edge.
+        # Approved title style: pale cream-gold face, warm-gold inner edge,
+        # near-black outer edge and black blurred shadow.
         outer = _rgb(typography.get("title_outer_stroke"), (12, 8, 6)) + (255,)
         inner = _rgb(typography.get("title_inner_stroke"), (190, 128, 43)) + (255,)
         face = _rgb(typography.get("title_face"), (255, 244, 208)) + (255,)

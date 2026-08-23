@@ -49,8 +49,8 @@ cover:
     forbid_empty_space: true
   typography:
     title_font: fonts/YujiBoku.ttf
-    title_face: '#FFFFFF'
-    title_inner_stroke: '#111111'
-    title_outer_stroke: '#050505'
+    title_face: '#FFF4D0'
+    title_inner_stroke: '#BE802B'
+    title_outer_stroke: '#0C0806'
     title_shadow: '#000000'
     title_max_lines: 2
