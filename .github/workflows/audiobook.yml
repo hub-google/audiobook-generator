@@ -373,6 +373,7 @@ jobs:
           key: ${{ needs.setup.outputs.book_profile_id }}-${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             ${{ needs.setup.outputs.book_profile_id }}-${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-
+            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-
 
       - name: Log Cache Location
         run: |

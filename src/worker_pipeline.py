@@ -357,11 +357,23 @@ def _copy_artifact_files_to_workspace(src_dir, workspace_dir, book_title):
                 dest_folder = "Manifests"
             elif "source_missing" in f and f.endswith(".json"):
                 dest_folder = "SourceStatus"
+            elif (
+                f.startswith("worker-")
+                and f.endswith(".json")
+                and os.path.basename(root) == "Checkpoints"
+            ):
+                # The checkpoint carries stage input/settings signatures.  If
+                # it is discarded, reconcile() treats otherwise valid cleaner
+                # outputs as stale and needlessly rebuilds every chapter.
+                dest_folder = "Checkpoints"
             else:
                 ext = os.path.splitext(f)[1].lower()
                 dest_folder = subfolder_map.get(ext)
 
-            if dest_folder and ("chapter_" in f or dest_folder in {"Manifests", "SourceStatus"}):
+            if dest_folder and (
+                "chapter_" in f
+                or dest_folder in {"Manifests", "SourceStatus", "Checkpoints"}
+            ):
                 target_dir = os.path.join(workspace_dir, dest_folder)
                 os.makedirs(target_dir, exist_ok=True)
                 dest_path = os.path.join(target_dir, f)

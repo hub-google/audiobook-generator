@@ -144,6 +144,34 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
                     config, 0, [1, 2], artifact_dir, source_config, "123"
                 )
 
+    def test_artifact_restore_preserves_worker_checkpoint_signatures(self):
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            artifact = os.path.join(root, "artifact", "book", "Checkpoints")
+            workspace = os.path.join(root, "workspace")
+            os.makedirs(artifact)
+            checkpoint = {
+                "schema_version": 2,
+                "book_title": "book",
+                "worker_id": 0,
+                "chapters": {},
+                "worker_stages": {},
+            }
+            source = os.path.join(artifact, "worker-0.json")
+            with open(source, "w", encoding="utf-8") as handle:
+                json.dump(checkpoint, handle)
+
+            worker_pipeline._copy_artifact_files_to_workspace(
+                os.path.join(root, "artifact"), workspace, "book"
+            )
+
+            restored = os.path.join(workspace, "Checkpoints", "worker-0.json")
+            self.assertTrue(os.path.isfile(restored))
+            with open(restored, encoding="utf-8") as handle:
+                self.assertEqual(json.load(handle)["worker_id"], 0)
+
     def test_workflow_enforces_artifact_before_conditional_cache(self):
         from pathlib import Path
         workflow = (Path(__file__).parents[1] / ".github" / "workflows" / "audiobook.yml").read_text(encoding="utf-8")
@@ -154,6 +182,10 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
         self.assertLess(validation, cache)
         cache_block = workflow[cache:workflow.index("- name: Log Cache Location", cache)]
         self.assertIn("if: steps.artifact_restore.outputs.complete != 'true'", cache_block)
+        self.assertIn(
+            "${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-",
+            cache_block,
+        )
 
 
 if __name__ == "__main__":
