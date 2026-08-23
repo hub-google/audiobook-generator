@@ -7,6 +7,7 @@ import logging
 import time
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -79,7 +80,7 @@ def get_font(size):
         except Exception:
             pass
 
-    return ImageFont.load_default()
+    raise RuntimeError("找不到可正確顯示中文的封面字型；流程停止，不使用低品質預設字型")
 
 def clean_pure_plot_summary(text):
     if not text:
@@ -100,11 +101,49 @@ def clean_pure_plot_summary(text):
         return "。".join(plot_focused) + "。"
     return text
 
-def fetch_book_summary_details(book_title):
+def _catalog_book_url(catalog_url):
+    match = re.search(r"/Book/(?:Chapter/)?(\d+)", str(catalog_url or ""), re.I)
+    return f"https://tw.hjwzw.com/Book/{match.group(1)}" if match else ""
+
+
+def _validate_plot_source(book_title, text, source):
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    rejected = ("可以指", "消歧義", "同名", "公司、遊戲", "disambiguation")
+    if len(cleaned) < 45:
+        raise ValueError(f"《{book_title}》封面資料不足：{source} 簡介只有 {len(cleaned)} 字")
+    if any(marker.lower() in cleaned.lower() for marker in rejected):
+        raise ValueError(f"《{book_title}》封面資料錯誤：{source} 回傳同名／消歧義內容")
+    return cleaned
+
+
+def fetch_book_summary_details(book_title, catalog_url=None):
     """取得小說簡介及來源；找不到時明確回報，不製造替代劇情。"""
     logging.info(f"正在搜尋《{book_title}》的整體小說劇情大綱與簡介...")
     raw_summary = ""
     source = ""
+
+    # The catalog selected by the user is the identity source for this exact
+    # book. Prefer its own OpenGraph description over title-only web lookups.
+    book_url = _catalog_book_url(catalog_url or os.getenv("BOOK_CATALOG_URL", ""))
+    if book_url:
+        try:
+            res = requests.get(book_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+            res.raise_for_status()
+            soup = BeautifulSoup(res.content, "html.parser")
+            title_tag = soup.find("meta", attrs={"property": "og:title"})
+            desc_tag = soup.find("meta", attrs={"property": "og:description"})
+            author_tag = soup.find("meta", attrs={"property": "og:novel:author"})
+            category_tag = soup.find("meta", attrs={"property": "og:novel:category"})
+            page_title = str(title_tag.get("content") or "").strip() if title_tag else ""
+            description = str(desc_tag.get("content") or "").strip() if desc_tag else ""
+            author = str(author_tag.get("content") or "").strip() if author_tag else ""
+            category = str(category_tag.get("content") or "").strip() if category_tag else ""
+            if page_title and book_title not in page_title and page_title not in book_title:
+                raise ValueError(f"目錄書名是「{page_title}」，不是「{book_title}」")
+            identity = f"書名：《{page_title or book_title}》；作者：{author or '未標示'}；類型：{category or '未標示'}；原始簡介：{description}"
+            return _validate_plot_source(book_title, identity, book_url), book_url
+        except (requests.RequestException, ValueError) as exc:
+            raise RuntimeError(f"無法從目前小說目錄取得可靠封面簡介：{exc}") from exc
     
     # 嘗試 1: 中文維基百科 REST API
     try:
@@ -114,8 +153,11 @@ def fetch_book_summary_details(book_title):
         if res.status_code == 200:
             extract = res.json().get("extract", "")
             if extract:
-                raw_summary = extract
-                source = "zh.wikipedia.org"
+                try:
+                    raw_summary = _validate_plot_source(book_title, extract, "zh.wikipedia.org")
+                    source = "zh.wikipedia.org"
+                except ValueError:
+                    raw_summary = ""
     except Exception as e:
         logging.debug(f"[維基百科略過]: {e}")
 
@@ -127,14 +169,14 @@ def fetch_book_summary_details(book_title):
             if res.status_code == 200:
                 extract = res.json().get("AbstractText", "")
                 if extract:
-                    raw_summary = extract
+                    raw_summary = _validate_plot_source(book_title, extract, "api.duckduckgo.com")
                     source = "api.duckduckgo.com"
         except Exception:
             pass
 
-    pure_plot = clean_pure_plot_summary(raw_summary)
+    pure_plot = _validate_plot_source(book_title, raw_summary, source) if raw_summary else ""
     if not pure_plot:
-        logging.warning("查不到《%s》的可靠小說簡介；封面將使用題材中性備用方案。", book_title)
+        raise RuntimeError(f"查不到《{book_title}》的可靠小說簡介；已停止，不會產生通用封面 Prompt")
     return pure_plot, source
 
 
@@ -185,18 +227,8 @@ def generate_dynamic_taglines(book_title, pure_plot=""):
     except Exception as exc:
         raise RuntimeError(f"❌ AI 宣傳標語生成失敗或超時 ({exc})！嚴禁使用寫死備用方案，流程中止。")
 
-def _neutral_cover_prompt(book_title):
-    return (
-        f"Premium cinematic book-cover artwork inspired only by the title '{book_title}', "
-        "genre-neutral atmospheric environment, no specific character appearance or invented story event, "
-        "16:9 YouTube thumbnail composition, clear focal subject separated from a clean text-safe area, "
-        "high detail, crisp focus, strong silhouette and tonal separation, readable at small thumbnail size, "
-        "no text, no letters, no logo, no watermark"
-    )
-
-
 def analyze_cover_brief(book_title, pure_plot, source="", workspace_dir=None, analyzer=None):
-    """可替換的封面分析層：手動 JSON > 注入分析器 > 保守本地分析。"""
+    """可替換的封面分析層；任何無效來源都 fail closed。"""
     manual_path = os.path.join(workspace_dir, "Cover", "cover_brief.json") if workspace_dir else ""
     if manual_path and os.path.exists(manual_path):
         try:
@@ -205,13 +237,13 @@ def analyze_cover_brief(book_title, pure_plot, source="", workspace_dir=None, an
             brief["analysis_method"] = "manual"
             return brief
         except (OSError, ValueError) as exc:
-            logging.warning("手動封面分析檔無法讀取：%s", exc)
+            raise RuntimeError(f"手動封面分析檔存在但無法讀取：{exc}") from exc
     if analyzer:
         brief = analyzer(book_title=book_title, synopsis=pure_plot, source=source)
         brief["analysis_method"] = "external"
         return brief
     if not pure_plot:
-        return {"analysis_method": "neutral_fallback", "prompt": _neutral_cover_prompt(book_title)}
+        raise RuntimeError(f"《{book_title}》沒有可靠劇情簡介；停止封面流程")
 
     return {
         "analysis_method": "local_evidence_only",
@@ -298,6 +330,74 @@ def generate_gemini_art_prompt(book_title, pure_plot, max_attempts=4, retry_base
     )
 
 
+def generate_gemini_cover_information(book_title, pure_plot):
+    """One on-demand Gemini call returning both the readable brief and HF prompt."""
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("缺少 GEMINI_API_KEY")
+    _validate_plot_source(book_title, pure_plot, "送交 Gemini 的簡介")
+    instruction = f"""你是小說封面藝術總監。請先使用 Google Search，以書名、作者、類型交叉查證這一本小說，再嚴格分析《{book_title}》。
+目錄頁身分與簡介：{pure_plot}
+搜尋資料必須與目錄頁的書名及作者相符。不得把同名公司、遊戲、漫畫、動畫或其他作者作品混入。
+只回傳有效 JSON，格式：
+{{"status":"ok或insufficient_source","verified_facts":["經搜尋查證的事實1","事實2","事實3","事實4","事實5"],"analysis":{{"故事類型與時代":"...","世界觀":"...","主角外觀與身分":"...","代表性場景":"...","法寶武器或關鍵物件":"...","色彩氣氛與構圖":"...","應避免畫錯的內容":"..."}},"prompt":"英文生圖提示詞"}}
+至少五條 verified_facts 必須是搜尋結果支持的本書具體事實。若搜尋 grounding 不足、身分對不上，或資料不足以產出故事專屬封面，status 必須是 insufficient_source，且 prompt 留空。
+status=ok 時，各分析欄位不得填未知、未提供、無法判斷或通用抽象方案；prompt 至少 120 個英文單字，必須具體使用已查證的故事元素，並適用 16:9、1280x720 電影級無字主視覺，保留乾淨文字安全區；禁止文字、字母、Logo、水印與簽名。不得用與本書無關的通用奇幻風景敷衍。"""
+    errors = []
+    for model in ("gemini-flash-latest", "gemini-3.5-flash"):
+        try:
+            response = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
+                json={"contents": [{"parts": [{"text": instruction}]}], "tools": [{"google_search": {}}]},
+                timeout=60,
+            )
+            if response.status_code != 200:
+                try:
+                    api_error = (response.json().get("error") or {}).get("message") or response.text[:300]
+                except ValueError:
+                    api_error = response.text[:300]
+                raise RuntimeError(f"Gemini HTTP {response.status_code}: {api_error}")
+            candidate = response.json()["candidates"][0]
+            grounding = candidate.get("groundingMetadata") or {}
+            web_chunks = [
+                chunk.get("web") for chunk in grounding.get("groundingChunks") or []
+                if isinstance(chunk, dict) and isinstance(chunk.get("web"), dict)
+            ]
+            if len(web_chunks) < 2:
+                raise ValueError("Gemini 沒有提供至少兩個 Google Search grounding 來源")
+            text = candidate["content"]["parts"][0]["text"].strip()
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE)
+            result = json.loads(text)
+            if result.get("status") != "ok":
+                raise ValueError("Gemini 判定來源不足，拒絕產生 Prompt")
+            analysis = result.get("analysis")
+            required = {"故事類型與時代", "世界觀", "主角外觀與身分", "代表性場景", "法寶武器或關鍵物件", "色彩氣氛與構圖", "應避免畫錯的內容"}
+            if not isinstance(analysis, dict) or not required.issubset(analysis):
+                raise ValueError("Gemini JSON 缺少必要分析欄位")
+            bad_words = ("未知", "未提供", "未提及", "無法判斷", "查無", "通用")
+            if any(not str(analysis[key]).strip() or any(word in str(analysis[key]) for word in bad_words) for key in required):
+                raise ValueError("Gemini 分析包含未知或通用敷衍內容")
+            facts = result.get("verified_facts") or []
+            if len(facts) < 5 or any(len(str(fact).strip()) < 8 for fact in facts[:5]):
+                raise ValueError("Gemini 沒有提供五條具體且經搜尋查證的故事事實")
+            prompt = str(result.get("prompt") or "").strip()
+            if len(re.findall(r"[A-Za-z]+", prompt)) < 120:
+                raise ValueError("Gemini 生圖 Prompt 過短或不夠具體")
+            result["prompt"] = finalize_cover_prompt(prompt)
+            result["grounding_sources"] = web_chunks
+            return result
+        except Exception as exc:
+            errors.append(f"{model}: {exc}")
+    raise RuntimeError("Gemini 封面資訊產生失敗；已停止且未產生 Prompt：" + " | ".join(errors))
+
+
+def build_cover_information(book_title, catalog_url=None):
+    pure_plot, source = fetch_book_summary_details(book_title, catalog_url=catalog_url)
+    result = generate_gemini_cover_information(book_title, pure_plot)
+    result.update({"book_title": book_title, "synopsis": pure_plot, "source": source})
+    return result
+
+
 def auto_generate_prompt_from_summary(book_title, workspace_dir=None, analyzer=None):
     pure_plot, source = fetch_book_summary_details(book_title)
     brief = analyze_cover_brief(book_title, pure_plot, source=source, workspace_dir=workspace_dir, analyzer=analyzer)
@@ -306,8 +406,12 @@ def auto_generate_prompt_from_summary(book_title, workspace_dir=None, analyzer=N
         brief["prompt"] = final_prompt
         return pure_plot, "", final_prompt, brief
     
-    # 透過 Gemini LLM 藝術總監產生大師級 Prompt
-    final_prompt = finalize_cover_prompt(generate_gemini_art_prompt(book_title, pure_plot))
+    # GUI and production share the same strict Gemini response and validation.
+    information = generate_gemini_cover_information(book_title, pure_plot)
+    final_prompt = information["prompt"]
+    brief["analysis"] = information["analysis"]
+    brief["verified_facts"] = information["verified_facts"]
+    brief["grounding_sources"] = information["grounding_sources"]
     brief["prompt"] = final_prompt
     return pure_plot, pure_plot, final_prompt, brief
 
@@ -732,21 +836,6 @@ def _valid_youtube_cover(path):
             return tuple(image.size) == YOUTUBE_COVER_SIZE and image.format in {"JPEG", "PNG"}
     except (OSError, ValueError):
         return False
-
-
-def _neutral_master_image(width=1280, height=720):
-    """生圖服務不可用時的無文字、中性高品質本地備援。"""
-    image = Image.new("RGB", (width, height))
-    draw = ImageDraw.Draw(image)
-    for y in range(height):
-        t = y / height
-        draw.line([(0, y), (width, y)], fill=(int(12 + 20*t), int(22 + 24*t), int(50 + 42*t)))
-    for radius, alpha in [(650, 32), (430, 42), (260, 58)]:
-        glow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        gd = ImageDraw.Draw(glow)
-        gd.ellipse((width-900-radius, 380-radius, width-900+radius, 380+radius), fill=(224, 177, 76, alpha))
-        image = Image.alpha_composite(image.convert("RGBA"), glow).convert("RGB")
-    return image
 
 
 def ensure_master_cover(book_title, book_workspace_dir, force_regenerate=False, analyzer=None):

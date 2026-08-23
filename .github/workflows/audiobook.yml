@@ -565,6 +565,17 @@ jobs:
           name: prepared-plan
           path: prepared_plan
 
+      - name: Download locked source configuration
+        uses: actions/download-artifact@v4
+        with:
+          name: shared-config
+          path: prepared_source
+
+      - name: Restore verified manual cover when configured
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python src/cover_assets.py --restore-config prepared_source/config.yaml
+
       - name: Download merge-worker subtitles and verification sidecars
         uses: actions/download-artifact@v4
         with:
@@ -625,6 +636,7 @@ jobs:
           HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
           HF_MEDIA_PREUPLOADED: "true"
           QUEUE_TASK_ID: ${{ github.event.inputs.queue_task_id }}
+          BOOK_CATALOG_URL: ${{ github.event.inputs.catalog_url }}
 
         run: |
           set +e

@@ -471,6 +471,7 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
         "chapters_per_worker": chapters_per_worker,  # 新增：讓 Worker 知道每台機器的額度
         "book_profile_id": snapshot.get("book_profile_id", ""),
         "profile_revision": int(snapshot.get("profile_revision") or 0),
+        "manual_cover": dict(snapshot.get("manual_cover") or {}),
         "cleaner": {
             "remove_patterns": cleaner_patterns,
             "fingerprint": str(snapshot.get("cleaner_fingerprint") or ""),

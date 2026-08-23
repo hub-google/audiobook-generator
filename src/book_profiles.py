@@ -18,7 +18,7 @@ except ImportError:
 
 
 PROFILE_PATH = "audiobook-book-profiles.json"
-PROFILE_SCHEMA_VERSION = 2
+PROFILE_SCHEMA_VERSION = 3
 MAX_PATTERNS = 100
 MAX_PATTERN_LENGTH = 10_000
 
@@ -86,6 +86,7 @@ def normalize_profiles(value):
             "use_number_and_name": bool(detection.get("use_number_and_name", False)),
         }
         profile.setdefault("chapter_title_overrides", {})
+        profile.setdefault("manual_cover", {})
         profile["chapter_normalized_number_overrides"] = normalize_chapter_number_overrides(
             profile.get("chapter_normalized_number_overrides"), strict=False,
         )
@@ -114,7 +115,7 @@ def get_book_profile(data, catalog_url, book_title=""):
 
 def update_book_profile(data, catalog_url, book_title="", cleaner_remove_patterns=None,
                         duplicate_detection=None, chapter_title_overrides=None,
-                        chapter_normalized_number_overrides=None):
+                        chapter_normalized_number_overrides=None, manual_cover=None):
     data = normalize_profiles(data)
     key, profile = get_book_profile(data, catalog_url, book_title)
     changed = False
@@ -138,6 +139,8 @@ def update_book_profile(data, catalog_url, book_title="", cleaner_remove_pattern
         changes["chapter_normalized_number_overrides"] = normalize_chapter_number_overrides(
             chapter_normalized_number_overrides,
         )
+    if manual_cover is not None:
+        changes["manual_cover"] = copy.deepcopy(manual_cover)
     for name, value in changes.items():
         if profile.get(name) != value:
             profile[name] = value
@@ -158,6 +161,7 @@ def profile_snapshot(profile_id, profile):
         "cleaner_remove_patterns": validate_remove_patterns(profile.get("cleaner_remove_patterns")),
         "duplicate_detection": copy.deepcopy(profile.get("duplicate_detection") or {}),
         "chapter_title_overrides": copy.deepcopy(profile.get("chapter_title_overrides") or {}),
+        "manual_cover": copy.deepcopy(profile.get("manual_cover") or {}),
         "chapter_normalized_number_overrides": copy.deepcopy(
             profile.get("chapter_normalized_number_overrides") or {}
         ),

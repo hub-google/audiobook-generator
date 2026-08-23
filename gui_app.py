@@ -9,13 +9,14 @@ import requests
 import threading
 import tkinter as tk
 from decimal import Decimal, InvalidOperation
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import ttk, messagebox, scrolledtext, filedialog
 from dotenv import load_dotenv
 import re
 import webbrowser
 import base64
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from PIL import Image, ImageTk
 
 # 載入目錄解析器
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
@@ -38,6 +39,8 @@ try:
         error_observation, missing_observation, observation_text,
         successful_observation,
     )
+    from cover_assets import cache_path, normalize_manual_cover, restore_cover, upload_cover
+    from metadata_gen import build_cover_information
 except ImportError:
     parse_catalog = None
     GitHubQueueStore = None
@@ -69,6 +72,7 @@ class AudiobookGUIApp:
         self.chapter_normalized_number_overrides = {}
         self.cleaner_remove_patterns = []
         self.duplicate_detection = {"use_normalized_number": True, "use_chapter_name": True, "use_number_and_name": False}
+        self.current_book_profile = {}
 
         self._setup_style()
         self._build_ui()
@@ -155,6 +159,11 @@ class AudiobookGUIApp:
 
         self.btn_filter = ttk.Button(range_frame, text="篩選章節", command=self._open_chapter_filter_dialog, state=tk.DISABLED)
         self.btn_filter.pack(side=tk.LEFT, padx=(0, 15))
+
+        self.btn_manual_cover = ttk.Button(
+            range_frame, text="🖼 手動上傳封面", command=self.open_manual_cover_dialog, state=tk.DISABLED,
+        )
+        self.btn_manual_cover.pack(side=tk.LEFT)
 
         self.chapter_selection_var = tk.StringVar(value="尚未解析章節")
         ttk.Label(section1, textvariable=self.chapter_selection_var).pack(anchor=tk.W, pady=(3, 5))
@@ -1688,6 +1697,191 @@ class AudiobookGUIApp:
         self.log_text.insert(tk.END, "\n")
         self.log_text.see(tk.END)
 
+    def _resolve_hf_archive_repo(self):
+        configured = os.getenv("HF_ARCHIVE_REPO", "").strip()
+        if configured:
+            return configured
+        repo, token = self._github_settings()
+        response = requests.get(
+            f"https://api.github.com/repos/{repo}/actions/variables/HF_ARCHIVE_REPO",
+            headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+        return response.json().get("value", "").strip() if response.status_code == 200 else ""
+
+    def open_manual_cover_dialog(self):
+        if not self.catalog_data:
+            messagebox.showinfo("手動封面", "請先解析小說目錄。")
+            return
+        book_title = self.catalog_data.get("book_title", "")
+        catalog_url = self.url_entry.get().strip()
+        profile_id = book_profile_id(catalog_url)
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        local_cover = cache_path(project_root, profile_id)
+        info_file = local_cover.parent / "cover_information.json"
+
+        top = tk.Toplevel(self.root)
+        top.title(f"手動封面｜{book_title}")
+        top.geometry("850x650")
+        tabs = ttk.Notebook(top)
+        tabs.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        info_page, upload_page = ttk.Frame(tabs, padding=10), ttk.Frame(tabs, padding=10)
+        tabs.add(info_page, text="封面資訊")
+        tabs.add(upload_page, text="上傳封面圖片")
+
+        status = tk.StringVar(value="不會自動呼叫 Gemini；請按下按鈕後才會產生。")
+        ttk.Label(info_page, textvariable=status).pack(anchor=tk.W, pady=(0, 8))
+        info_tabs = ttk.Notebook(info_page)
+        info_tabs.pack(fill=tk.BOTH, expand=True)
+        analysis_text = scrolledtext.ScrolledText(info_tabs, wrap=tk.WORD)
+        prompt_text = scrolledtext.ScrolledText(info_tabs, wrap=tk.WORD)
+        info_tabs.add(analysis_text, text="小說架構／視覺分析")
+        info_tabs.add(prompt_text, text="HF 生圖 Prompt")
+
+        def fill_information(data):
+            analysis = data.get("analysis") or {}
+            analysis_text.delete("1.0", tk.END)
+            facts = "\n".join(f"• {value}" for value in data.get("verified_facts") or [])
+            sources = "\n".join(
+                f"• {item.get('title') or item.get('uri')}｜{item.get('uri')}"
+                for item in data.get("grounding_sources") or []
+            )
+            sections = [f"【Google Search 查證事實】\n{facts}", f"【Grounding 來源】\n{sources}"]
+            sections.extend(f"【{key}】\n{value}" for key, value in analysis.items())
+            analysis_text.insert("1.0", "\n\n".join(sections))
+            prompt_text.delete("1.0", tk.END)
+            prompt_text.insert("1.0", data.get("prompt", ""))
+            status.set("已讀取封面資訊；複製與切換頁面不會呼叫 Gemini。")
+
+        def valid_cached_information(data):
+            return (
+                data.get("status") == "ok" and len(data.get("verified_facts") or []) >= 5
+                and len(data.get("grounding_sources") or []) >= 2
+                and bool(data.get("analysis")) and bool(data.get("prompt"))
+            )
+
+        if info_file.is_file():
+            try:
+                cached = json.loads(info_file.read_text(encoding="utf-8"))
+                if valid_cached_information(cached):
+                    fill_information(cached)
+                else:
+                    status.set("舊封面資訊未通過品質檢查，請重新產生。")
+            except (OSError, ValueError):
+                pass
+
+        def generate_info():
+            if (analysis_text.get("1.0", tk.END).strip() and
+                    not messagebox.askyesno("重新產生", "這會再次使用 Gemini 額度，確定繼續？", parent=top)):
+                return
+            generate_button.config(state=tk.DISABLED)
+            analysis_text.delete("1.0", tk.END)
+            prompt_text.delete("1.0", tk.END)
+            status.set("正在取得簡介並呼叫 Gemini…")
+            def worker():
+                try:
+                    data = build_cover_information(book_title, catalog_url=catalog_url)
+                    info_file.parent.mkdir(parents=True, exist_ok=True)
+                    info_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+                    self.root.after(0, lambda: (fill_information(data), generate_button.config(state=tk.NORMAL)))
+                except Exception as error:
+                    self.root.after(0, lambda detail=str(error): (
+                        generate_button.config(state=tk.NORMAL), status.set("產生失敗"),
+                        messagebox.showerror("封面資訊", detail, parent=top),
+                    ))
+            threading.Thread(target=worker, daemon=True).start()
+
+        actions = ttk.Frame(info_page)
+        actions.pack(fill=tk.X, pady=(8, 0))
+        generate_button = ttk.Button(actions, text="開始產生封面資訊", command=generate_info)
+        generate_button.pack(side=tk.LEFT)
+        ttk.Button(actions, text="複製目前頁面", command=lambda: (
+            top.clipboard_clear(), top.clipboard_append(
+                analysis_text.get("1.0", tk.END).strip() if info_tabs.index("current") == 0
+                else prompt_text.get("1.0", tk.END).strip()
+            )
+        )).pack(side=tk.LEFT, padx=8)
+
+        upload_status = tk.StringVar(value="選擇或拖曳 JPG／PNG／WEBP；將中央裁切並標準化為 1280×720 JPEG。")
+        ttk.Label(upload_page, textvariable=upload_status, wraplength=780).pack(anchor=tk.W, pady=8)
+        preview = ttk.Label(upload_page, anchor=tk.CENTER)
+        preview.pack(fill=tk.BOTH, expand=True, pady=10)
+
+        def select_file():
+            path = filedialog.askopenfilename(parent=top, filetypes=[
+                ("圖片", "*.jpg *.jpeg *.png *.webp"), ("所有檔案", "*.*")
+            ])
+            if path:
+                process_file(path)
+
+        def process_file(path):
+            upload_status.set("正在檢查、裁切、壓縮並同步封面…")
+            def worker():
+                try:
+                    details = normalize_manual_cover(path, local_cover)
+                    hf_token = os.getenv("HF_TOKEN", "")
+                    if not hf_token:
+                        raise RuntimeError("本機 .env 缺少 HF_TOKEN")
+                    repo_id, remote_path = upload_cover(
+                        local_cover, profile_id, hf_token, self._resolve_hf_archive_repo()
+                    )
+                    record = {"source": "manual_upload", "repo_id": repo_id, "remote_path": remote_path, **details}
+                    store, _, _ = self._profile_store()
+                    store.mutate(
+                        lambda data: update_book_profile(data, catalog_url, book_title, manual_cover=record),
+                        f"Update manual cover for {book_title}",
+                    )
+                    self.current_book_profile["manual_cover"] = record
+                    def done():
+                        with Image.open(local_cover) as image:
+                            shown = image.copy(); shown.thumbnail((720, 405))
+                        preview.image = ImageTk.PhotoImage(shown)
+                        preview.config(image=preview.image)
+                        upload_status.set(
+                            f"✓ 上傳成功｜1280×720 JPEG｜{details['bytes']/1024:.0f} KB｜"
+                            f"指紋 {profile_id}｜HF: {repo_id}/{remote_path}"
+                        )
+                        self.log(f"✓ 《{book_title}》手動封面已同步；正式流程將跳過 Gemini 與 HF 生圖。")
+                    self.root.after(0, done)
+                except Exception as error:
+                    self.root.after(0, lambda detail=str(error): (
+                        upload_status.set("上傳失敗"), messagebox.showerror("手動封面", detail, parent=top)
+                    ))
+            threading.Thread(target=worker, daemon=True).start()
+
+        ttk.Button(upload_page, text="選擇圖片檔案", command=select_file).pack(pady=8)
+        if hasattr(upload_page, "drop_target_register"):
+            try:
+                upload_page.drop_target_register("DND_Files")
+                upload_page.dnd_bind("<<Drop>>", lambda event: process_file(top.tk.splitlist(event.data)[0]))
+            except tk.TclError:
+                pass
+        if local_cover.is_file():
+            try:
+                with Image.open(local_cover) as image:
+                    shown = image.copy(); shown.thumbnail((720, 405))
+                preview.image = ImageTk.PhotoImage(shown)
+                preview.config(image=preview.image)
+                record = self.current_book_profile.get("manual_cover") or {}
+                upload_status.set(f"已讀取這本書的手動封面｜指紋 {profile_id}｜{record.get('bytes', local_cover.stat().st_size)/1024:.0f} KB")
+            except OSError:
+                pass
+        elif self.current_book_profile.get("manual_cover"):
+            upload_status.set("已找到雲端手動封面紀錄，正在下載並驗證…")
+            def restore_worker():
+                try:
+                    restore_cover(self.current_book_profile["manual_cover"], local_cover, os.getenv("HF_TOKEN", ""))
+                    def restored():
+                        with Image.open(local_cover) as image:
+                            shown = image.copy(); shown.thumbnail((720, 405))
+                        preview.image = ImageTk.PhotoImage(shown)
+                        preview.config(image=preview.image)
+                        upload_status.set(f"✓ 已從 HF 讀取手動封面｜指紋 {profile_id}")
+                    self.root.after(0, restored)
+                except Exception as error:
+                    self.root.after(0, lambda detail=str(error): upload_status.set(f"雲端封面讀取失敗：{detail}"))
+            threading.Thread(target=restore_worker, daemon=True).start()
+
     # ── 解析目錄 ──
     def start_parse_catalog(self):
         url = self.url_entry.get().strip()
@@ -1720,6 +1914,7 @@ class AudiobookGUIApp:
         if res and res.get("success"):
             self.catalog_data = res
             profile = profile or {}
+            self.current_book_profile = dict(profile)
             self.chapter_title_overrides = dict(profile.get("chapter_title_overrides") or {})
             self.chapter_normalized_number_overrides = dict(
                 profile.get("chapter_normalized_number_overrides") or {}
@@ -1742,6 +1937,7 @@ class AudiobookGUIApp:
             self.entry_end.insert(0, str(total))
             
             self.btn_filter.config(state=tk.NORMAL)
+            self.btn_manual_cover.config(state=tk.NORMAL)
             self.excluded_chapters.clear()
             self.renumber_selected_chapters = True
             self.chapter_order = list(range(1, total + 1))
@@ -2504,6 +2700,7 @@ class AudiobookGUIApp:
                                     "duplicate_detection": self.duplicate_detection,
                                     "chapter_title_overrides": self.chapter_title_overrides,
                                     "chapter_normalized_number_overrides": self.chapter_normalized_number_overrides,
+                                    "manual_cover": dict(self.current_book_profile.get("manual_cover") or {}),
                                 }
                             ), ensure_ascii=False).encode("utf-8")
                         ).decode("ascii"),
@@ -3026,6 +3223,10 @@ class AudiobookGUIApp:
         messagebox.showerror("錯誤", f"發動雲端執行發生錯誤：\n{err_msg}")
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    try:
+        from tkinterdnd2 import TkinterDnD
+        root = TkinterDnD.Tk()
+    except ImportError:
+        root = tk.Tk()
     app = AudiobookGUIApp(root)
     root.mainloop()
