@@ -1741,12 +1741,15 @@ class AudiobookGUIApp:
         def fill_information(data):
             analysis = data.get("analysis") or {}
             analysis_text.delete("1.0", tk.END)
-            facts = "\n".join(f"• {value}" for value in data.get("verified_facts") or [])
-            sources = "\n".join(
-                f"• {item.get('title') or item.get('uri')}｜{item.get('uri')}"
-                for item in data.get("grounding_sources") or []
-            )
-            sections = [f"【Google Search 查證事實】\n{facts}", f"【Grounding 來源】\n{sources}"]
+            research = data.get("research") or {}
+            mode_text = {
+                "web_evidence": "聯網資料",
+                "hybrid_web_and_model_knowledge": "聯網資料＋Gemini 內建知識（已二次審核）",
+                "internal_knowledge_fallback": "Gemini 內建知識備援（已二次審核）",
+            }.get(research.get("mode"), "未知資料模式")
+            sources = "\n".join(f"• [{item.get('id')}] {item.get('title')}｜{item.get('url')}" for item in research.get("sources") or [])
+            facts = "\n".join(f"• {value.get('fact')}（{', '.join(value.get('source_ids') or [])}）" for value in data.get("story_facts") or [])
+            sections = [f"【資料模式】\n{mode_text}", f"【資料來源】\n{sources}", f"【Gemini 故事事實】\n{facts}"]
             sections.extend(f"【{key}】\n{value}" for key, value in analysis.items())
             analysis_text.insert("1.0", "\n\n".join(sections))
             prompt_text.delete("1.0", tk.END)
@@ -1755,8 +1758,7 @@ class AudiobookGUIApp:
 
         def valid_cached_information(data):
             return (
-                data.get("status") == "ok" and len(data.get("verified_facts") or []) >= 5
-                and len(data.get("grounding_sources") or []) >= 2
+                data.get("status") == "ok" and len(data.get("story_facts") or []) >= 5
                 and bool(data.get("analysis")) and bool(data.get("prompt"))
             )
 

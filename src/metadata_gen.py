@@ -2,6 +2,7 @@ import os
 import re
 import json
 import urllib.parse
+import base64
 import requests
 import logging
 import time
@@ -183,6 +184,80 @@ def fetch_book_summary_details(book_title, catalog_url=None):
 def fetch_book_summary_online(book_title):
     return fetch_book_summary_details(book_title)[0]
 
+
+def _decode_bing_result_url(url):
+    try:
+        encoded = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get("u", [""])[0]
+        if encoded.startswith("a1"):
+            payload = encoded[2:] + "=" * (-len(encoded[2:]) % 4)
+            return base64.urlsafe_b64decode(payload).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        pass
+    return url
+
+
+def collect_cover_research(book_title, synopsis, catalog_source):
+    """Collect web evidence first; explicitly label model-knowledge fallback."""
+    evidence = [{"id": "S1", "title": "目前小說目錄頁", "url": catalog_source, "text": synopsis}]
+    author_match = re.search(r"作者：([^；]+)", synopsis)
+    author = author_match.group(1).strip() if author_match else ""
+    author_variants = {author, author.replace("東", "东")}
+    queries = [
+        f'"{book_title}" "{author}" 小說 主角 世界觀',
+        f'"{book_title}" "{author}" 小說 法寶 場景',
+    ]
+    seen = {catalog_source}
+    for query in queries:
+        try:
+            response = requests.get(
+                "https://www.bing.com/search?q=" + urllib.parse.quote(query),
+                headers={"User-Agent": "Mozilla/5.0"}, timeout=15,
+            )
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, "html.parser")
+            for result in soup.select("li.b_algo"):
+                link, snippet_tag = result.select_one("h2 a"), result.select_one(".b_caption p")
+                if not link or not snippet_tag:
+                    continue
+                title = link.get_text(" ", strip=True)
+                snippet = snippet_tag.get_text(" ", strip=True)
+                combined = title + " " + snippet
+                if book_title not in combined or (author and not any(value and value in combined for value in author_variants)):
+                    continue
+                url = _decode_bing_result_url(str(link.get("href") or ""))
+                if not url.startswith("http") or url in seen or len(snippet) < 35:
+                    continue
+                detail = snippet
+                try:
+                    page = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+                    page.raise_for_status()
+                    page_soup = BeautifulSoup(page.content, "html.parser")
+                    summary_tag = page_soup.select_one(".J-summary")
+                    description_tag = page_soup.select_one('meta[name="description"]')
+                    expanded = (
+                        summary_tag.get_text(" ", strip=True) if summary_tag else
+                        str(description_tag.get("content") or "").strip() if description_tag else ""
+                    )
+                    if book_title in expanded and any(value and value in expanded for value in author_variants):
+                        detail = expanded[:6000]
+                except requests.RequestException:
+                    pass
+                seen.add(url)
+                evidence.append({"id": f"S{len(evidence)+1}", "title": title, "url": url, "text": detail})
+                if len(evidence) >= 5:
+                    break
+        except requests.RequestException:
+            continue
+        if len(evidence) >= 5:
+            break
+    external_chars = sum(len(item["text"]) for item in evidence[1:])
+    mode = (
+        "web_evidence" if external_chars >= 800 else
+        "hybrid_web_and_model_knowledge" if len(evidence) >= 2 else
+        "internal_knowledge_fallback"
+    )
+    return {"mode": mode, "sources": evidence}
+
 def get_calligraphy_font(size):
     """取得極具張力與狂草飛白筆觸的毛筆狂草字體 (Yuji Boku / 飛白勁道書法體)"""
     SRC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -330,25 +405,29 @@ def generate_gemini_art_prompt(book_title, pure_plot, max_attempts=4, retry_base
     )
 
 
-def generate_gemini_cover_information(book_title, pure_plot):
+def generate_gemini_cover_information(book_title, pure_plot, research=None):
     """One on-demand Gemini call returning both the readable brief and HF prompt."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("缺少 GEMINI_API_KEY")
     _validate_plot_source(book_title, pure_plot, "送交 Gemini 的簡介")
-    instruction = f"""你是小說封面藝術總監。請先使用 Google Search，以書名、作者、類型交叉查證這一本小說，再嚴格分析《{book_title}》。
+    research = research or {"mode": "internal_knowledge_fallback", "sources": []}
+    research_json = json.dumps(research, ensure_ascii=False)
+    instruction = f"""你是熟悉中文網路小說的封面藝術總監。請依提供的聯網資料與目錄頁身分，嚴格分析《{book_title}》。
 目錄頁身分與簡介：{pure_plot}
-搜尋資料必須與目錄頁的書名及作者相符。不得把同名公司、遊戲、漫畫、動畫或其他作者作品混入。
+資料模式與來源：{research_json}
+分析必須與目錄頁的書名及作者相符。不得把同名公司、遊戲、漫畫、動畫或其他作者作品混入；不確定時必須回 insufficient_source，不得猜測。
 只回傳有效 JSON，格式：
-{{"status":"ok或insufficient_source","verified_facts":["經搜尋查證的事實1","事實2","事實3","事實4","事實5"],"analysis":{{"故事類型與時代":"...","世界觀":"...","主角外觀與身分":"...","代表性場景":"...","法寶武器或關鍵物件":"...","色彩氣氛與構圖":"...","應避免畫錯的內容":"..."}},"prompt":"英文生圖提示詞"}}
-至少五條 verified_facts 必須是搜尋結果支持的本書具體事實。若搜尋 grounding 不足、身分對不上，或資料不足以產出故事專屬封面，status 必須是 insufficient_source，且 prompt 留空。
+{{"status":"ok或insufficient_source","story_facts":[{{"fact":"本書具體事實1","source_ids":["S1"]}}],"analysis":{{"故事類型與時代":"...","世界觀":"...","主角外觀與身分":"...","代表性場景":"...","法寶武器或關鍵物件":"...","色彩氣氛與構圖":"...","應避免畫錯的內容":"..."}},"prompt":"英文生圖提示詞"}}
+至少五條 story_facts 必須是這一本小說的具體事實，且至少包含主角姓名、核心世界觀、代表場景與代表物件。web_evidence 模式下每條 fact 必須列出支持它的來源編號，不得超出來源文字；internal_knowledge_fallback 模式才可使用 source_ids=["MODEL_KNOWLEDGE"]，但不確定就必須 insufficient_source。
+宣傳文案中的誇飾或比喻（例如「一粒塵填海、一根草斬星辰」）不得直接畫成法寶或實體事件，除非資料明確證實它是故事中的真實代表物件。
 status=ok 時，各分析欄位不得填未知、未提供、無法判斷或通用抽象方案；prompt 至少 120 個英文單字，必須具體使用已查證的故事元素，並適用 16:9、1280x720 電影級無字主視覺，保留乾淨文字安全區；禁止文字、字母、Logo、水印與簽名。不得用與本書無關的通用奇幻風景敷衍。"""
     errors = []
     for model in ("gemini-flash-latest", "gemini-3.5-flash"):
         try:
             response = requests.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
-                json={"contents": [{"parts": [{"text": instruction}]}], "tools": [{"google_search": {}}]},
+                json={"contents": [{"parts": [{"text": instruction}]}], "generationConfig": {"responseMimeType": "application/json"}},
                 timeout=60,
             )
             if response.status_code != 200:
@@ -358,13 +437,6 @@ status=ok 時，各分析欄位不得填未知、未提供、無法判斷或通�
                     api_error = response.text[:300]
                 raise RuntimeError(f"Gemini HTTP {response.status_code}: {api_error}")
             candidate = response.json()["candidates"][0]
-            grounding = candidate.get("groundingMetadata") or {}
-            web_chunks = [
-                chunk.get("web") for chunk in grounding.get("groundingChunks") or []
-                if isinstance(chunk, dict) and isinstance(chunk.get("web"), dict)
-            ]
-            if len(web_chunks) < 2:
-                raise ValueError("Gemini 沒有提供至少兩個 Google Search grounding 來源")
             text = candidate["content"]["parts"][0]["text"].strip()
             text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE)
             result = json.loads(text)
@@ -377,23 +449,79 @@ status=ok 時，各分析欄位不得填未知、未提供、無法判斷或通�
             bad_words = ("未知", "未提供", "未提及", "無法判斷", "查無", "通用")
             if any(not str(analysis[key]).strip() or any(word in str(analysis[key]) for word in bad_words) for key in required):
                 raise ValueError("Gemini 分析包含未知或通用敷衍內容")
-            facts = result.get("verified_facts") or []
-            if len(facts) < 5 or any(len(str(fact).strip()) < 8 for fact in facts[:5]):
-                raise ValueError("Gemini 沒有提供五條具體且經搜尋查證的故事事實")
+            facts = result.get("story_facts") or []
+            if len(facts) < 5 or any(not isinstance(item, dict) or len(str(item.get("fact") or "").strip()) < 8 for item in facts[:5]):
+                raise ValueError("Gemini 沒有提供五條具體故事事實")
+            valid_source_ids = {item["id"] for item in research.get("sources") or []}
+            mode = research.get("mode")
+            for item in facts:
+                ids = set(item.get("source_ids") or [])
+                if mode == "internal_knowledge_fallback":
+                    if ids != {"MODEL_KNOWLEDGE"}:
+                        raise ValueError("內建知識備援未正確標示 MODEL_KNOWLEDGE")
+                elif mode == "hybrid_web_and_model_knowledge":
+                    if not ids or not ids.issubset(valid_source_ids | {"MODEL_KNOWLEDGE"}):
+                        raise ValueError("混合資料模式使用了無效來源編號")
+                elif not ids or not ids.issubset(valid_source_ids):
+                    raise ValueError("Gemini 故事事實缺少有效聯網來源編號")
+            joined_facts = " ".join(str(item.get("fact") or "") for item in facts)
+            if book_title == "完美世界" and not all(marker in joined_facts for marker in ("石昊", "大荒")):
+                raise ValueError("Gemini 回覆未包含《完美世界》的關鍵身分事實")
             prompt = str(result.get("prompt") or "").strip()
             if len(re.findall(r"[A-Za-z]+", prompt)) < 120:
                 raise ValueError("Gemini 生圖 Prompt 過短或不夠具體")
             result["prompt"] = finalize_cover_prompt(prompt)
-            result["grounding_sources"] = web_chunks
+            result["research"] = research
             return result
         except Exception as exc:
             errors.append(f"{model}: {exc}")
     raise RuntimeError("Gemini 封面資訊產生失敗；已停止且未產生 Prompt：" + " | ".join(errors))
 
 
+def review_cover_information(book_title, pure_plot, research, draft):
+    """A separate Gemini pass must audit and rewrite the draft before acceptance."""
+    api_key = os.getenv("GEMINI_API_KEY")
+    prompt = f"""你是嚴格的小說考據編輯與封面總監。請審核下列《{book_title}》封面草稿，使用你對該小說的知識以及提供的資料逐項糾錯，最後只輸出完整 JSON。
+目錄身分：{pure_plot}
+資料：{json.dumps(research, ensure_ascii=False)}
+草稿：{json.dumps(draft, ensure_ascii=False)}
+輸出格式與草稿相同，status 只能 ok 或 insufficient_source。刪除所有無根據的年齡、髮型、服裝、武器與場景；不得把宣傳比喻「一粒塵填海、一根草斬星辰」畫成實體法寶。優先採用該作品公認且具辨識度的主角、柳神、石村、至尊骨等元素，但不確定就回 insufficient_source。保留至少五條 story_facts 及來源編號，英文 prompt 至少120字，必須具體、故事專屬、16:9、無文字。"""
+    errors = []
+    for model in ("gemini-flash-latest", "gemini-3.5-flash"):
+        try:
+            response = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
+                json={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"responseMimeType": "application/json"}},
+                timeout=60,
+            )
+            if response.status_code != 200:
+                message = (response.json().get("error") or {}).get("message") or response.text[:300]
+                raise RuntimeError(f"Gemini HTTP {response.status_code}: {message}")
+            text = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            result = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE))
+            if result.get("status") != "ok" or len(result.get("story_facts") or []) < 5:
+                raise ValueError("審核器拒絕草稿或缺少五條事實")
+            analysis = result.get("analysis") or {}
+            if len(analysis) < 7 or any(word in json.dumps(analysis, ensure_ascii=False) for word in ("未知", "未提供", "通用")):
+                raise ValueError("審核後分析仍不完整")
+            final_prompt = str(result.get("prompt") or "")
+            if len(re.findall(r"[A-Za-z]+", final_prompt)) < 120:
+                raise ValueError("審核後 Prompt 過短")
+            if re.search(r"(?:blade|weapon|sword).{0,20}(?:grass|dust)|(?:grass|dust).{0,20}(?:blade|weapon|sword)", final_prompt, re.I):
+                raise ValueError("審核後仍把宣傳比喻誤畫成實體武器")
+            result["prompt"] = finalize_cover_prompt(final_prompt)
+            result["research"] = research
+            return result
+        except Exception as exc:
+            errors.append(f"{model}: {exc}")
+    raise RuntimeError("Gemini 二次品質審核失敗；已停止且未產生 Prompt：" + " | ".join(errors))
+
+
 def build_cover_information(book_title, catalog_url=None):
     pure_plot, source = fetch_book_summary_details(book_title, catalog_url=catalog_url)
-    result = generate_gemini_cover_information(book_title, pure_plot)
+    research = collect_cover_research(book_title, pure_plot, source)
+    draft = generate_gemini_cover_information(book_title, pure_plot, research=research)
+    result = review_cover_information(book_title, pure_plot, research, draft)
     result.update({"book_title": book_title, "synopsis": pure_plot, "source": source})
     return result
 
@@ -407,11 +535,12 @@ def auto_generate_prompt_from_summary(book_title, workspace_dir=None, analyzer=N
         return pure_plot, "", final_prompt, brief
     
     # GUI and production share the same strict Gemini response and validation.
-    information = generate_gemini_cover_information(book_title, pure_plot)
+    research = collect_cover_research(book_title, pure_plot, source)
+    draft = generate_gemini_cover_information(book_title, pure_plot, research=research)
+    information = review_cover_information(book_title, pure_plot, research, draft)
     final_prompt = information["prompt"]
     brief["analysis"] = information["analysis"]
-    brief["verified_facts"] = information["verified_facts"]
-    brief["grounding_sources"] = information["grounding_sources"]
+    brief["story_facts"] = information["story_facts"]
     brief["prompt"] = final_prompt
     return pure_plot, pure_plot, final_prompt, brief
 

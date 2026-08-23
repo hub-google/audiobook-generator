@@ -19,16 +19,17 @@ FIELDS = {
 def response_payload(grounded=True):
     result = {
         "status": "ok",
-        "verified_facts": [f"這是經搜尋查證且足夠具體的故事事實 {i}" for i in range(1, 6)],
+        "story_facts": [
+            {"fact": "主角石昊從大荒石村成長", "source_ids": ["MODEL_KNOWLEDGE"]},
+            *[
+                {"fact": f"這是足夠具體的大荒故事事實 {i}", "source_ids": ["MODEL_KNOWLEDGE"]}
+                for i in range(2, 6)
+            ],
+        ],
         "analysis": FIELDS,
         "prompt": " ".join(["specific cinematic prehistoric oriental fantasy detail"] * 25),
     }
     candidate = {"content": {"parts": [{"text": json.dumps(result, ensure_ascii=False)}]}}
-    if grounded:
-        candidate["groundingMetadata"] = {"groundingChunks": [
-            {"web": {"title": "source one", "uri": "https://one.example/book"}},
-            {"web": {"title": "source two", "uri": "https://two.example/book"}},
-        ]}
     return {"candidates": [candidate]}
 
 
@@ -38,17 +39,21 @@ class CoverInformationQualityTests(unittest.TestCase):
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key"})
     @patch("src.metadata_gen.requests.post")
-    def test_accepts_only_grounded_detailed_result(self, post):
+    def test_accepts_detailed_story_specific_result(self, post):
         post.return_value = Mock(status_code=200, json=lambda: response_payload(), text="")
         result = generate_gemini_cover_information("完美世界", self.synopsis)
-        self.assertEqual(len(result["grounding_sources"]), 2)
-        self.assertGreaterEqual(len(result["verified_facts"]), 5)
+        self.assertGreaterEqual(len(result["story_facts"]), 5)
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key"})
     @patch("src.metadata_gen.requests.post")
-    def test_missing_grounding_fails_instead_of_returning_prompt(self, post):
-        post.return_value = Mock(status_code=200, json=lambda: response_payload(False), text="")
-        with self.assertRaisesRegex(RuntimeError, "沒有提供至少兩個"):
+    def test_missing_story_facts_fails_instead_of_returning_prompt(self, post):
+        payload = response_payload()
+        payload["candidates"][0]["content"]["parts"][0]["text"] = json.dumps(
+            {"status": "ok", "story_facts": [], "analysis": FIELDS, "prompt": "specific " * 150},
+            ensure_ascii=False,
+        )
+        post.return_value = Mock(status_code=200, json=lambda: payload, text="")
+        with self.assertRaisesRegex(RuntimeError, "五條具體"):
             generate_gemini_cover_information("完美世界", self.synopsis)
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key"})
