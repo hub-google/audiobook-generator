@@ -9,12 +9,12 @@ import yaml
 
 
 YOUTUBE_COVER_SIZE = (1280, 720)
+# YujiBoku's glyphs extend roughly 60 px below Pillow's nominal line block at
+# the largest title size. A 190 px layout margin preserves about 120 px of
+# visible bottom clearance, matching the approved reference thumbnail.
+TITLE_BOTTOM_SAFE_MARGIN = 190
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TITLE_FONT_PATH = PROJECT_ROOT / "fonts" / "YujiBoku.ttf"
-INFO_FONT_PATHS = (
-    Path(r"C:\Windows\Fonts\msjhbd.ttc"),
-    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
-)
 
 
 def _settings():
@@ -49,13 +49,6 @@ def _font(path, size):
     if not Path(path).is_file():
         raise RuntimeError(f"封面指定字型不存在：{path}")
     return ImageFont.truetype(str(path), size)
-
-
-def _info_font(size):
-    for path in INFO_FONT_PATHS:
-        if path.is_file():
-            return ImageFont.truetype(str(path), size)
-    raise RuntimeError("找不到封面資訊用粗體中文字型")
 
 
 def _width(draw, text, font, stroke=0):
@@ -96,21 +89,14 @@ def render_viral_cover(bg_img, book_title, start_chap, end_chap, is_completed=Tr
     configured_font = PROJECT_ROOT / str(typography.get("title_font") or "fonts/YujiBoku.ttf")
     image = bg_img.convert("RGB").resize((width, height), Image.Resampling.LANCZOS).convert("RGBA")
 
-    # Preserve a rich background while locally calming the title zone.
-    shade = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    shade_draw = ImageDraw.Draw(shade)
-    start = int(height * .60)
-    for y in range(start, height):
-        progress = (y - start) / max(1, height - start)
-        shade_draw.line((0, y, width, y), fill=(8, 5, 4, int(52 + 92 * progress)))
-    image = Image.alpha_composite(image, shade)
-
     clean_title = book_title.replace("《", "").replace("》", "").strip()
     draw = ImageDraw.Draw(image)
     title_font, lines = _fit_title(draw, clean_title, configured_font)
     line_step = int(title_font.size * .86)
     block_height = line_step * len(lines)
-    start_y = height - block_height - 60
+    # Match the approved reference: the title sits in the lower half, with a
+    # substantial clean margin below it instead of touching the thumbnail edge.
+    start_y = height - block_height - TITLE_BOTTOM_SAFE_MARGIN
 
     # One blurred black shadow behind the deterministic multi-stroke title.
     shadow = Image.new("RGBA", image.size, (0, 0, 0, 0))
@@ -127,26 +113,33 @@ def render_viral_cover(bg_img, book_title, start_chap, end_chap, is_completed=Tr
     image = Image.alpha_composite(image, shadow)
     draw = ImageDraw.Draw(image)
     for x, y, line in positioned:
-        # Outer near-black edge, warm-gold inner edge, ivory face.
+        # Reference style: white brush lettering with one heavy black edge.
         outer = _rgb(typography.get("title_outer_stroke"), (12, 8, 6)) + (255,)
         inner = _rgb(typography.get("title_inner_stroke"), (190, 128, 43)) + (255,)
         face = _rgb(typography.get("title_face"), (255, 244, 208)) + (255,)
         _draw_layer(draw, (x, y), line, title_font, inner, 14, outer)
         _draw_layer(draw, (x, y), line, title_font, face, 5, inner)
 
-    badge_text = "全集" if not part_num else f"第{part_num}部"
-    badge_font = _info_font(52)
-    badge_box = draw.textbbox((0, 0), badge_text, font=badge_font, stroke_width=5)
-    badge_w, badge_h = badge_box[2] - badge_box[0], badge_box[3] - badge_box[1]
-    bx, by = width - badge_w - 54, 30
-    draw.text((bx + 4, by + 5), badge_text, font=badge_font, fill=(0, 0, 0), stroke_width=8, stroke_fill=(255, 255, 255))
-    badge_fill = _rgb(typography.get("badge_fill"), (190, 15, 25))
-    badge_face = _rgb(typography.get("badge_face"), (255, 255, 255))
-    draw.text((bx, by), badge_text, font=badge_font, fill=badge_fill, stroke_width=4, stroke_fill=badge_face)
-
-    range_text = f"第{start_chap}–{end_chap}章 · {'已完結' if is_completed else '連載中'}"
-    info_font = _info_font(25)
-    draw.text((28, 24), range_text, font=info_font, fill=(255, 255, 255), stroke_width=3, stroke_fill=(8, 8, 8))
+    if is_completed:
+        status_text = "已完結"
+        status_font = _font(configured_font, max(68, title_font.size - 70))
+        status_box = draw.textbbox((0, 0), status_text, font=status_font, stroke_width=10)
+        status_width = status_box[2] - status_box[0]
+        status_x = width - status_width - 30
+        status_y = 24
+        status_shadow = Image.new("RGBA", image.size, (0, 0, 0, 0))
+        status_shadow_draw = ImageDraw.Draw(status_shadow)
+        shadow_color = _rgb(typography.get("title_shadow"), (0, 0, 0)) + (235,)
+        status_shadow_draw.text(
+            (status_x + 5, status_y + 6), status_text, font=status_font,
+            fill=shadow_color, stroke_width=11, stroke_fill=shadow_color,
+        )
+        image = Image.alpha_composite(image, status_shadow.filter(ImageFilter.GaussianBlur(4)))
+        draw = ImageDraw.Draw(image)
+        # Apply the reference's top-right badge verbatim: red face, thick white
+        # border and a final black edge/shadow, without a filled badge panel.
+        _draw_layer(draw, (status_x, status_y), status_text, status_font, (255, 255, 255, 255), 11, (5, 5, 5, 255))
+        _draw_layer(draw, (status_x, status_y), status_text, status_font, (205, 24, 32, 255), 5, (255, 255, 255, 255))
 
     output = os.path.abspath(output_filename)
     os.makedirs(os.path.dirname(output), exist_ok=True)
