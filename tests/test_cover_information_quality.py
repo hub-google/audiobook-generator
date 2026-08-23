@@ -63,6 +63,39 @@ class CoverInformationQualityTests(unittest.TestCase):
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key"})
     @patch("src.metadata_gen.requests.post")
+    def test_internal_fallback_accepts_catalog_and_model_knowledge_together(self, post):
+        payload = response_payload()
+        result = json.loads(payload["candidates"][0]["content"]["parts"][0]["text"])
+        result["story_facts"][0]["source_ids"] = ["S1", "MODEL_KNOWLEDGE"]
+        payload["candidates"][0]["content"]["parts"][0]["text"] = json.dumps(result, ensure_ascii=False)
+        post.return_value = Mock(status_code=200, json=lambda: payload, text="")
+
+        research = {
+            "mode": "internal_knowledge_fallback",
+            "sources": [{"id": "S1", "title": "目錄", "url": "https://example.test", "text": self.synopsis}],
+        }
+        generated = generate_gemini_cover_information("完美世界", self.synopsis, research=research)
+
+        self.assertEqual(generated["story_facts"][0]["source_ids"], ["S1", "MODEL_KNOWLEDGE"])
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key"})
+    @patch("src.metadata_gen.requests.post")
+    def test_internal_fallback_rejects_empty_or_unknown_source_ids(self, post):
+        payload = response_payload()
+        result = json.loads(payload["candidates"][0]["content"]["parts"][0]["text"])
+        result["story_facts"][0]["source_ids"] = ["S99"]
+        payload["candidates"][0]["content"]["parts"][0]["text"] = json.dumps(result, ensure_ascii=False)
+        post.return_value = Mock(status_code=200, json=lambda: payload, text="")
+
+        research = {
+            "mode": "internal_knowledge_fallback",
+            "sources": [{"id": "S1", "title": "目錄", "url": "https://example.test", "text": self.synopsis}],
+        }
+        with self.assertRaisesRegex(RuntimeError, "無效來源編號"):
+            generate_gemini_cover_information("完美世界", self.synopsis, research=research)
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key"})
+    @patch("src.metadata_gen.requests.post")
     def test_missing_story_facts_fails_instead_of_returning_prompt(self, post):
         payload = response_payload()
         payload["candidates"][0]["content"]["parts"][0]["text"] = json.dumps(

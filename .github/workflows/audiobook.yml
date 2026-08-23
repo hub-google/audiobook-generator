@@ -196,6 +196,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     outputs:
       matrix: ${{ steps.gen_matrix.outputs.matrix }}
+      book_profile_id: ${{ steps.gen_matrix.outputs.book_profile_id }}
 
     steps:
       - name: Checkout Code
@@ -230,6 +231,7 @@ jobs:
           cat matrix.json >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo 'EOF' >> $GITHUB_OUTPUT
+          python -c "import yaml; print('book_profile_id=' + str((yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}).get('book_profile_id') or ''))" >> $GITHUB_OUTPUT
 
       - name: Validate non-empty chapter matrix
         run: |
@@ -368,9 +370,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: Workspace/
-          key: ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ needs.setup.outputs.book_profile_id }}-${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-
+            ${{ needs.setup.outputs.book_profile_id }}-${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-
 
       - name: Log Cache Location
         run: |
@@ -406,7 +408,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: Workspace/
-          key: ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ needs.setup.outputs.book_profile_id }}-${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload worker manifest (Fast Part Planning)
         if: always()

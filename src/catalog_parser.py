@@ -12,10 +12,10 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
 try:
-    from .book_profiles import validate_remove_patterns
+    from .book_profiles import book_profile_id, validate_remove_patterns
     from .chapter_numbers import normalize_chapter_number_overrides, normalize_positive_chapter_number
 except ImportError:
-    from book_profiles import validate_remove_patterns
+    from book_profiles import book_profile_id, validate_remove_patterns
     from chapter_numbers import normalize_chapter_number_overrides, normalize_positive_chapter_number
 
 
@@ -469,7 +469,7 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
         "renumber_selected": bool(renumber_selected),
         "chapter_order": source_indices,
         "chapters_per_worker": chapters_per_worker,  # 新增：讓 Worker 知道每台機器的額度
-        "book_profile_id": snapshot.get("book_profile_id", ""),
+        "book_profile_id": snapshot.get("book_profile_id") or book_profile_id(catalog_url),
         "profile_revision": int(snapshot.get("profile_revision") or 0),
         "manual_cover": dict(snapshot.get("manual_cover") or {}),
         "cleaner": {
