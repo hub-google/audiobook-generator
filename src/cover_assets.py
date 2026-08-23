@@ -163,6 +163,37 @@ def restore_from_config(config_path, workspace_root="Workspace"):
     import yaml
     config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
     record = config.get("manual_cover") or {}
+    if not record and config.get("catalog_url") and os.environ.get("GITHUB_REPOSITORY"):
+        # Retry runs can recover worker artifacts from an older immutable source
+        # config.  The durable per-book profile remains authoritative for a
+        # user-uploaded cover and must be checked before starting paid AI image
+        # generation.
+        try:
+            try:
+                from .book_profiles import GitHubBookProfileStore, get_book_profile
+            except ImportError:
+                from book_profiles import GitHubBookProfileStore, get_book_profile
+            profile_token = os.environ.get("GH_TOKEN", "") or os.environ.get("GITHUB_TOKEN", "")
+            if profile_token:
+                profiles, _ = GitHubBookProfileStore(
+                    os.environ["GITHUB_REPOSITORY"], profile_token,
+                ).load()
+                profile_id, profile = get_book_profile(
+                    profiles, config["catalog_url"], config.get("book_title", ""),
+                )
+                configured_id = str(config.get("book_profile_id") or "")
+                if configured_id and configured_id != profile_id:
+                    raise RuntimeError(
+                        f"封面 profile 不一致：config={configured_id}, current={profile_id}"
+                    )
+                record = profile.get("manual_cover") or {}
+                if record:
+                    print(
+                        "♻️ [MANUAL_COVER_RECOVERY] locked config omitted manual_cover; "
+                        f"recovered profile {profile_id}", flush=True,
+                    )
+        except Exception as error:
+            print(f"⚠️ 無法查詢最新手動封面設定：{error}", flush=True)
     if not record:
         summary = os.environ.get("GITHUB_STEP_SUMMARY")
         if summary:

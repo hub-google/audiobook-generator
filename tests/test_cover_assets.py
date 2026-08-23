@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 from PIL import Image
 
 from src.cover_assets import (
-    normalize_manual_cover, restore_cover, upload_cover, upload_github_cover,
+    normalize_manual_cover, restore_cover, restore_from_config, upload_cover, upload_github_cover,
     validate_cached_cover,
 )
 
@@ -72,6 +72,29 @@ class ManualCoverTests(unittest.TestCase):
             with patch("src.cover_assets.requests.get", return_value=response):
                 restore_cover(record, destination, "token")
             self.assertEqual(validate_cached_cover(destination), details["sha256"])
+
+    def test_retry_recovers_manual_cover_from_durable_book_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.yaml"
+            config.write_text(
+                "book_title: 完美世界\n"
+                "catalog_url: https://example.com/book/1\n",
+                encoding="utf-8",
+            )
+            record = {"provider": "github", "sha256": "a" * 64}
+            store = Mock()
+            store.load.return_value = ({"books": {}}, None)
+            with patch.dict("os.environ", {
+                "GH_TOKEN": "token", "GITHUB_REPOSITORY": "owner/repo",
+            }), patch("src.book_profiles.GitHubBookProfileStore", return_value=store), \
+                    patch("src.book_profiles.get_book_profile", return_value=("profile-1", {"manual_cover": record})), \
+                    patch("src.cover_assets.restore_cover") as restore:
+                restored = restore_from_config(config, root / "Workspace")
+
+            self.assertTrue(restored)
+            destination = root / "Workspace" / "完美世界" / "Cover" / "master_cover.jpg"
+            restore.assert_called_once_with(record, destination, "token")
 
 
 if __name__ == "__main__":

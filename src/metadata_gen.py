@@ -608,7 +608,29 @@ def auto_generate_prompt_from_summary(book_title, workspace_dir=None, analyzer=N
     return pure_plot, pure_plot, final_prompt, brief
 
 
-def download_ai_image(prompt, width=1280, height=720):
+def _hf_error_is_retryable(error):
+    """Return whether an HF inference failure is likely temporary."""
+    retryable_statuses = {408, 425, 429, 500, 502, 503, 504}
+    current = error
+    while current is not None:
+        if isinstance(current, (requests.ConnectionError, requests.Timeout)):
+            return True
+        response = getattr(current, "response", None)
+        status = getattr(response, "status_code", None)
+        if status is not None:
+            return int(status) in retryable_statuses
+        current = current.__cause__ or current.__context__
+
+    message = str(error).lower()
+    return any(marker in message for marker in (
+        "name resolution", "failed to resolve", "temporary failure in name resolution",
+        "connection reset", "connection aborted", "timed out", "timeout",
+        "http 408", "http 425", "http 429", "http 500", "http 502",
+        "http 503", "http 504", "service unavailable", "rate limit",
+    ))
+
+
+def download_ai_image(prompt, width=1280, height=720, max_attempts=5, retry_base_seconds=15):
     import io
     cover_config = _cover_config()
     model = str(cover_config.get("hf_model") or "black-forest-labs/FLUX.1-schnell")
@@ -619,8 +641,12 @@ def download_ai_image(prompt, width=1280, height=720):
     if not hf_token or not hf_token.startswith("hf_"):
         raise ValueError("❌ [CRITICAL] 缺少有效 HF_TOKEN！無法啟動 Hugging Face 生圖，流程直接終止。")
 
-    img = None
-    try:
+    if max_attempts < 1:
+        raise ValueError("max_attempts 必須至少為 1")
+
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        img = None
         try:
             from huggingface_hub import InferenceClient
             client = InferenceClient(model=model, token=hf_token)
@@ -632,27 +658,39 @@ def download_ai_image(prompt, width=1280, height=720):
                 guidance_scale=guidance,
             )
         except Exception as hf_err:
-            logging.warning(f"⚠️ huggingface_hub 呼叫失敗，改用 REST API 重試: {hf_err}")
+            logging.warning("⚠️ HF SDK 呼叫失敗；同輪改用 REST API: %s", hf_err)
             api_url = f"https://api-inference.huggingface.co/models/{model}"
             headers = {"Authorization": f"Bearer {hf_token}"}
-            res = requests.post(
-                api_url,
-                headers=headers,
-                json={
-                    "inputs": prompt,
-                    "parameters": {
-                        "width": width,
-                        "height": height,
-                        "num_inference_steps": steps,
-                        "guidance_scale": guidance,
+            try:
+                res = requests.post(
+                    api_url,
+                    headers=headers,
+                    json={
+                        "inputs": prompt,
+                        "parameters": {
+                            "width": width,
+                            "height": height,
+                            "num_inference_steps": steps,
+                            "guidance_scale": guidance,
+                        },
                     },
-                },
-                timeout=60,
-            )
-            if res.status_code == 200:
-                img = Image.open(io.BytesIO(res.content))
-            else:
-                raise Exception(f"HTTP {res.status_code}: {res.text[:200]}")
+                    timeout=60,
+                )
+                if res.status_code == 200:
+                    img = Image.open(io.BytesIO(res.content))
+                else:
+                    raise RuntimeError(f"HTTP {res.status_code}: {res.text[:200]}")
+            except Exception as rest_err:
+                last_error = rest_err
+                if not _hf_error_is_retryable(rest_err) or attempt == max_attempts:
+                    break
+                delay = min(retry_base_seconds * (2 ** (attempt - 1)), 120)
+                logging.warning(
+                    "⚠️ HF 暫時性連線錯誤（第 %d/%d 次）：%s；%d 秒後重試",
+                    attempt, max_attempts, rest_err, delay,
+                )
+                time.sleep(delay)
+                continue
 
         if img:
             img = img.convert("RGB")
@@ -663,9 +701,13 @@ def download_ai_image(prompt, width=1280, height=720):
                 )
             logging.info("✅ 成功從 Hugging Face %s 生成底圖！", model)
             return img
-        raise RuntimeError("Hugging Face 沒有回傳圖片")
-    except Exception as e:
-        raise RuntimeError(f"❌ [CRITICAL] Hugging Face 生圖失敗: {e}！流程直接終止，嚴禁降級使用低品質備用圖。")
+        last_error = RuntimeError("Hugging Face 沒有回傳圖片")
+        break
+
+    raise RuntimeError(
+        f"❌ [CRITICAL] Hugging Face 生圖失敗（已嘗試 {max_attempts} 次）: "
+        f"{last_error}！流程直接終止，嚴禁降級使用低品質備用圖。"
+    ) from last_error
 
 
 
