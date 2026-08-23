@@ -694,6 +694,51 @@ def completed_playlist_title(book_title, total_duration_seconds):
     return f"[已完結]《{book_title}》{whole_hours}小時 全集"
 
 
+def load_measured_prepared_part_plan(input_dir, book_title):
+    """Load locked prepared Parts and replace planned durations with MP4 measurements."""
+    try:
+        from .metadata_gen import save_book_metadata as build_part_metadata
+    except ImportError:
+        from metadata_gen import save_book_metadata as build_part_metadata
+    if not input_dir:
+        return []
+    plan_path = os.path.join(input_dir, "parts-plan.json")
+    if not os.path.isfile(plan_path):
+        return []
+    with open(plan_path, "r", encoding="utf-8") as handle:
+        locked_plan = json.load(handle)
+    locked_parts = {int(part["part_num"]): part for part in (locked_plan.get("parts") or [])}
+    measured = []
+    for video_path in glob.glob(os.path.join(input_dir, "**", "*.mp4"), recursive=True):
+        filename = os.path.basename(video_path)
+        number_match = re.search(r"_Part_(\d+)_", filename)
+        if not number_match:
+            continue
+        part_num = int(number_match.group(1))
+        locked = locked_parts.get(part_num)
+        if not locked:
+            raise RuntimeError(f"prepared Part {part_num} is absent from the locked plan")
+        start_chap, end_chap = parse_chapter_info(filename)
+        if (int(locked["start_chap"]), int(locked["end_chap"])) != (start_chap, end_chap):
+            raise RuntimeError(f"prepared Part {part_num} filename disagrees with locked plan")
+        duration = float(get_media_duration(video_path) or 0)
+        if duration <= 0:
+            raise RuntimeError(f"prepared Part {part_num} has no measured MP4 duration")
+        metadata = build_part_metadata(
+            book_title=book_title, start_chap=start_chap, end_chap=end_chap,
+            is_completed=True, part_num=part_num,
+        )
+        measured.append({
+            "part_num": part_num, "start_chap": start_chap, "end_chap": end_chap,
+            "chapters": [int(value) for value in locked.get("chapters") or range(start_chap, end_chap + 1)],
+            "duration": duration, "title": metadata["title"],
+        })
+    measured.sort(key=lambda part: int(part["part_num"]))
+    if set(locked_parts) != {int(part["part_num"]) for part in measured}:
+        raise RuntimeError("HF prepared Parts do not exactly cover the locked Part plan")
+    return measured
+
+
 def update_playlist_metadata(youtube, playlist_id, title, description):
     """Update an existing playlist after every video has passed final validation."""
     while True:
@@ -1828,6 +1873,10 @@ def main():
 
     meta_info = save_book_metadata(book_title, start_chap, end_chap)
     cover_path = meta_info["cover_file"]
+    if not part_plan and args.input_dir:
+        part_plan = load_measured_prepared_part_plan(args.input_dir, book_title)
+        if part_plan:
+            logging.info("✅ 已在建立播放清單前實測 %s 個 prepared Part 的 MP4 時長。", len(part_plan))
     if part_plan:
         publication.lock_plan(part_plan, run_id=args.run_id, book_title=book_title)
 

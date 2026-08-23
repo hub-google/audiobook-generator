@@ -1,8 +1,10 @@
 import os
+import json
 import ssl
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from src.youtube_api_uploader import (
@@ -32,6 +34,7 @@ from src.youtube_api_uploader import (
     normalize_playlist_covers_to_last_part,
     validate_user_facing_playlist,
     completed_playlist_title,
+    load_measured_prepared_part_plan,
     update_playlist_metadata,
     build_video_description,
     build_chapter_timeline,
@@ -46,6 +49,23 @@ from src.worker_pipeline import (
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
+    @patch("src.metadata_gen.save_book_metadata")
+    @patch("src.youtube_api_uploader.get_media_duration")
+    def test_first_run_measures_prepared_parts_before_playlist(self, duration, metadata):
+        duration.side_effect = [36000.5, 35999.5]
+        metadata.side_effect = [{"title": "第一部"}, {"title": "第二部"}]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "parts-plan.json").write_text(json.dumps({"parts": [
+                {"part_num": 1, "start_chap": 1, "end_chap": 10, "chapters": list(range(1, 11))},
+                {"part_num": 2, "start_chap": 11, "end_chap": 20, "chapters": list(range(11, 21))},
+            ]}), encoding="utf-8")
+            (root / "書_Part_01_Ch0001_to_Ch0010.mp4").touch()
+            (root / "書_Part_02_Ch0011_to_Ch0020.mp4").touch()
+            plan = load_measured_prepared_part_plan(temp_dir, "書")
+        self.assertEqual([part["duration"] for part in plan], [36000.5, 35999.5])
+        self.assertEqual([part["title"] for part in plan], ["第一部", "第二部"])
+
     def test_chapter_timeline_uses_unrounded_cumulative_boundaries(self):
         items = [
             {"chap_num": 1043, "chapter_title": "第1043章 孟奇", "dur": 2595.372},
