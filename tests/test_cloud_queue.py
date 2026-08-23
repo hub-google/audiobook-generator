@@ -7,10 +7,27 @@ from src.cloud_queue import (
     mark_task_interrupted, mark_task_needs_attention, requeue_task_after_active, update_task,
     update_task_chapters, normalize_chapter_order, normalize_queue,
 )
-from src.queue_dispatcher import Dispatcher
+from src.queue_dispatcher import Dispatcher, artifact_source_run_id
 
 
 class CloudQueueTests(unittest.TestCase):
+    def test_artifact_source_is_latest_run_with_same_stable_book_fingerprint(self):
+        queue = {
+            "queue": [
+                {"task_id": "current", "book_profile_id": "book-fp", "run_history": [
+                    {"run_id": 100, "ended_at": "2026-08-20T00:00:00Z"},
+                    {"run_id": 300, "ended_at": "2026-08-22T00:00:00Z"},
+                ]},
+                {"task_id": "other-book", "book_profile_id": "other-fp", "run_history": [
+                    {"run_id": 999, "ended_at": "2026-08-23T00:00:00Z"},
+                ]},
+            ],
+            "completed": [{"task_id": "older-task", "book_profile_id": "book-fp", "run_history": [
+                {"run_id": 200, "ended_at": "2026-08-21T00:00:00Z"},
+            ]}],
+        }
+        self.assertEqual(artifact_source_run_id(queue, "book-fp", "current"), 300)
+
     def test_normalized_number_overrides_follow_stable_uuid(self):
         task = new_task(
             "https://example/1", "第一部", 1, 2000,
@@ -464,6 +481,7 @@ class CloudQueueTests(unittest.TestCase):
     @patch.object(Dispatcher, "request")
     def test_dispatcher_passes_book_title_to_workflow(self, request):
         task = new_task("https://example/1", "凡人修仙傳", 1, 100)
+        task["run_history"] = [{"run_id": 122, "ended_at": "2026-08-22T00:00:00Z"}]
         queue = add_tasks(empty_queue(), [task])
         dispatcher = Dispatcher("owner/repo", "token")
         dispatcher.store = Mock()
@@ -488,6 +506,10 @@ class CloudQueueTests(unittest.TestCase):
         )
         self.assertEqual(dispatch_call.kwargs["json"]["inputs"]["book_title"], "凡人修仙傳")
         self.assertEqual(dispatch_call.kwargs["json"]["inputs"]["chapter_label"], "Ch1-100")
+        self.assertEqual(dispatch_call.kwargs["json"]["inputs"]["resume_source_run_id"], "122")
+        reserved_queue = dispatcher.store.save.call_args_list[0].args[0]
+        self.assertEqual(reserved_queue["queue"][0]["artifact_source_run_id"], 122)
+        self.assertTrue(reserved_queue["queue"][0]["book_profile_id"])
 
     @patch.object(Dispatcher, "request")
     def test_dispatcher_does_not_bind_old_run_with_same_task_id(self, request):

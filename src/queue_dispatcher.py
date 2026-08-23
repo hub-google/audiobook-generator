@@ -41,6 +41,31 @@ TRANSIENT_REASONS = {
     "retryable YouTube API failure",
 }
 
+
+def artifact_source_run_id(queue, profile_id, current_task_id="", current_task=None):
+    """Return the newest finished Run bound to the same stable book profile."""
+    candidates = []
+    sequence = 0
+    tasks = list(queue.get("queue") or []) + list(queue.get("completed") or [])
+    if current_task is not None:
+        tasks = [task for task in tasks if task.get("task_id") != current_task_id] + [current_task]
+    for task in tasks:
+        if str(task.get("book_profile_id") or "") != str(profile_id or ""):
+            continue
+        history = list(task.get("run_history") or [])
+        if task.get("task_id") != current_task_id and task.get("run_id") and task.get("run_conclusion"):
+            history.append({
+                "run_id": task.get("run_id"),
+                "ended_at": task.get("run_completed_at") or task.get("updated_at") or "",
+            })
+        for item in history:
+            run_id = item.get("run_id")
+            if not str(run_id or "").isdigit():
+                continue
+            sequence += 1
+            candidates.append((str(item.get("ended_at") or ""), sequence, int(run_id)))
+    return max(candidates)[2] if candidates else None
+
 TAIPEI = ZoneInfo("Asia/Taipei")
 STATUS_LABELS = {
     "dispatching": "正在啟動",
@@ -257,7 +282,19 @@ class Dispatcher:
             )
         task["book_profile_id"] = profile_id
         task["profile_snapshot"] = snapshot
+        source_run_id = artifact_source_run_id(queue, profile_id, task_id, current_task=task)
+        task["artifact_source_run_id"] = source_run_id
         task.update({"status": "dispatching", "reason": None, "retry_at": None, "dispatched_at": datetime.now(timezone.utc).isoformat()})
+        queue = update_task(
+            queue, task_id,
+            book_profile_id=profile_id,
+            profile_snapshot=snapshot,
+            artifact_source_run_id=source_run_id,
+            status="dispatching",
+            reason=None,
+            retry_at=None,
+            dispatched_at=task["dispatched_at"],
+        )
         self.store.save(queue, sha=self.store.load()[1], message=f"Reserve audiobook task {task_id}")
 
         start_int = int(task.get("start_chapter") or 1)
@@ -270,6 +307,7 @@ class Dispatcher:
             "book_title": task.get("book_title") or "待解析書名",
             "chapter_label": chapter_label,
             "queue_task_id": task_id,
+            "resume_source_run_id": str(source_run_id or ""),
             "catalog_url": task["catalog_url"],
             "start_chap": str(start_int),
             "end_chap": str(end_int),
@@ -317,6 +355,10 @@ class Dispatcher:
             latest, latest_sha = self.store.load()
             running = update_task(latest, task_id, status="running", run_id=run_id, run_attempt=1)
             self.store.save(running, sha=latest_sha, message=f"Attach Run {run_id} to {task_id}")
+        else:
+            # The durable record remains reserved as dispatching, but never
+            # claim that a Run started until GitHub returns observable evidence.
+            queue = update_task(queue, task_id, status="queued")
         return queue, f"Dispatched {task.get('book_title')} ({task_id}) as Run {run_id or 'pending discovery'}."
 
     def summary(self, queue, action, task=None):

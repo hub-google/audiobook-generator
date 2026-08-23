@@ -361,7 +361,7 @@ def _copy_artifact_files_to_workspace(src_dir, workspace_dir, book_title):
                 ext = os.path.splitext(f)[1].lower()
                 dest_folder = subfolder_map.get(ext)
 
-            if dest_folder and "chapter_" in f:
+            if dest_folder and ("chapter_" in f or dest_folder in {"Manifests", "SourceStatus"}):
                 target_dir = os.path.join(workspace_dir, dest_folder)
                 os.makedirs(target_dir, exist_ok=True)
                 dest_path = os.path.join(target_dir, f)
@@ -518,7 +518,6 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
         cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
     )
     # ── 跨 Run 歷史 Artifacts 優先繼承 ───────────────────────────
-    inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices)
     logging.info("=== Worker %s resumable per-stage pipeline (%s chapters) ===",
                  worker_id, len(exact_indices))
 
@@ -570,12 +569,61 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
     return checkpoint
 
 
+def restore_locked_artifact(config, worker_id, exact_indices, artifact_dir,
+                            source_config_path, expected_source_run_id=""):
+    """Restore and strictly validate the one fingerprint-locked source Run artifact."""
+    book_title = config["book_title"]
+    workspace_dir = os.path.abspath(os.path.join(
+        SRC_DIR, "..", config["paths"]["workspace_base"], book_title
+    ))
+    artifact_dir = os.path.abspath(artifact_dir)
+    source_config_path = os.path.abspath(source_config_path)
+    artifact_files = []
+    if os.path.isdir(artifact_dir):
+        artifact_files = [
+            os.path.join(root, name)
+            for root, _, files in os.walk(artifact_dir)
+            for name in files
+        ]
+    if not artifact_files:
+        logging.warning("[ArtifactFirst] Run %s has no worker artifact; Cache fallback is allowed.", expected_source_run_id)
+        return False
+    if not os.path.isfile(source_config_path):
+        raise RuntimeError(f"Run {expected_source_run_id} worker artifact exists but shared-config is missing")
+    source_config = load_config(source_config_path)
+    current_profile = str(config.get("book_profile_id") or "")
+    source_profile = str(source_config.get("book_profile_id") or "")
+    if not current_profile or source_profile != current_profile:
+        raise RuntimeError(
+            f"Run {expected_source_run_id} book fingerprint mismatch: "
+            f"expected {current_profile or 'missing'}, got {source_profile or 'missing'}"
+        )
+    _copy_artifact_files_to_workspace(artifact_dir, workspace_dir, book_title)
+    checkpoint = PipelineCheckpoint(
+        workspace_dir, book_title, worker_id, exact_indices,
+        cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
+    )
+    checkpoint.reconcile()
+    incomplete = checkpoint.incomplete_chapters()
+    if incomplete:
+        logging.warning(
+            "[ArtifactFirst] Run %s artifact is incomplete for Worker %s (%s chapters); Cache fallback is allowed.",
+            expected_source_run_id, worker_id, len(incomplete),
+        )
+        return False
+    logging.info(
+        "[ArtifactFirst] Run %s artifact passed fingerprint and chapter validation for Worker %s; Cache is forbidden.",
+        expected_source_run_id, worker_id,
+    )
+    return True
+
+
 # ── 主程式 ────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="Audiobook Matrix Worker Pipeline")
     parser.add_argument("--stage",            required=True,
-                        choices=["crawl", "clean", "tts", "image_gen", "video_gen", "validate", "pipeline"],
+                        choices=["crawl", "clean", "tts", "image_gen", "video_gen", "validate", "pipeline", "restore_artifact"],
                         help="Pipeline stage to execute")
     parser.add_argument("--worker-id",        type=int, required=True,
                         help="Worker index (0-based)")
@@ -585,6 +633,9 @@ def main():
                         help="Force re-rendering images and videos even if cached MP4 exists")
     parser.add_argument("--config",           type=str, default="",
                         help="Path to config.yaml (defaults to ../config.yaml relative to src/)")
+    parser.add_argument("--artifact-dir", type=str, default="")
+    parser.add_argument("--source-config", type=str, default="")
+    parser.add_argument("--source-run-id", type=str, default="")
     args = parser.parse_args()
 
     config_path = args.config if args.config else None
@@ -613,7 +664,17 @@ def main():
     stage = args.stage
     tts_failed_chapters = set()
 
-    if stage == "pipeline":
+    if stage == "restore_artifact":
+        complete = restore_locked_artifact(
+            config, args.worker_id, exact_indices, args.artifact_dir,
+            args.source_config, args.source_run_id,
+        )
+        output_file = os.environ.get("GITHUB_OUTPUT")
+        if output_file:
+            with open(output_file, "a", encoding="utf-8") as handle:
+                handle.write(f"complete={'true' if complete else 'false'}\n")
+
+    elif stage == "pipeline":
         run_pipeline(
             config, worker_id=args.worker_id, chapters=chapters,
             # Matrix workers only publish per-chapter artifacts. The uploader

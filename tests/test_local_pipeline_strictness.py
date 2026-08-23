@@ -30,6 +30,7 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
             worker_pipeline.run_pipeline(self.config, build_parts=False)
 
         self.assertEqual(run_chapter.call_count, 2)
+        inherit.assert_not_called()
 
     @patch(
         "src.worker_pipeline.stage_video_gen",
@@ -102,6 +103,57 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
 
         # Checked runs: first tried 999, then 888
         self.assertTrue(download_task.called)
+
+    @patch("src.worker_pipeline._copy_artifact_files_to_workspace")
+    @patch("src.worker_pipeline.PipelineCheckpoint")
+    def test_locked_artifact_must_pass_fingerprint_and_chapter_validation(self, checkpoint_type, copy_files):
+        import tempfile
+        import yaml
+        checkpoint = Mock()
+        checkpoint.incomplete_chapters.return_value = []
+        checkpoint_type.return_value = checkpoint
+        config = dict(self.config, book_profile_id="fingerprint-1")
+        with tempfile.TemporaryDirectory() as root:
+            artifact_dir = os.path.join(root, "artifact")
+            os.makedirs(artifact_dir)
+            with open(os.path.join(artifact_dir, "chapter_1.mp4"), "wb") as handle:
+                handle.write(b"artifact")
+            source_config = os.path.join(root, "config.yaml")
+            with open(source_config, "w", encoding="utf-8") as handle:
+                yaml.safe_dump({"book_profile_id": "fingerprint-1"}, handle)
+            self.assertTrue(worker_pipeline.restore_locked_artifact(
+                config, 0, [1, 2], artifact_dir, source_config, "123"
+            ))
+        copy_files.assert_called_once()
+        checkpoint.reconcile.assert_called_once()
+
+    def test_locked_artifact_rejects_wrong_book_fingerprint(self):
+        import tempfile
+        import yaml
+        config = dict(self.config, book_profile_id="expected")
+        with tempfile.TemporaryDirectory() as root:
+            artifact_dir = os.path.join(root, "artifact")
+            os.makedirs(artifact_dir)
+            with open(os.path.join(artifact_dir, "chapter_1.mp4"), "wb") as handle:
+                handle.write(b"artifact")
+            source_config = os.path.join(root, "config.yaml")
+            with open(source_config, "w", encoding="utf-8") as handle:
+                yaml.safe_dump({"book_profile_id": "wrong"}, handle)
+            with self.assertRaisesRegex(RuntimeError, "fingerprint mismatch"):
+                worker_pipeline.restore_locked_artifact(
+                    config, 0, [1, 2], artifact_dir, source_config, "123"
+                )
+
+    def test_workflow_enforces_artifact_before_conditional_cache(self):
+        from pathlib import Path
+        workflow = (Path(__file__).parents[1] / ".github" / "workflows" / "audiobook.yml").read_text(encoding="utf-8")
+        artifact = workflow.index("Download previous Run worker artifact first")
+        validation = workflow.index("Validate and restore previous Run artifact")
+        cache = workflow.index("Restore Cache only when artifact is absent or incomplete")
+        self.assertLess(artifact, validation)
+        self.assertLess(validation, cache)
+        cache_block = workflow[cache:workflow.index("- name: Log Cache Location", cache)]
+        self.assertIn("if: steps.artifact_restore.outputs.complete != 'true'", cache_block)
 
 
 if __name__ == "__main__":
