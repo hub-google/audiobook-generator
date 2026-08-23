@@ -60,6 +60,20 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
             "01:25:51 第1045章 五行聚靈符",
         )
 
+    def test_chapter_timeline_replaces_website_number_with_output_number(self):
+        items = [
+            {"chap_num": 1, "chapter_title": "序章 大荒", "dur": 170},
+            {"chap_num": 2, "chapter_title": "第一章 朝氣蓬勃", "dur": 463},
+            {"chap_num": 3, "chapter_title": "第二章 骨文", "dur": 465},
+        ]
+        self.assertEqual(
+            build_chapter_timeline(items),
+            "⏳ 影片章節時間軸：\n"
+            "00:00:00 第1章 大荒\n"
+            "00:02:50 第2章 朝氣蓬勃\n"
+            "00:10:33 第3章 骨文",
+        )
+
     def test_video_description_contains_playlist_and_clickable_timeline_only(self):
         items = [
             {"chap_num": 1, "chapter_title": "第1章 甲", "dur": 30.2},

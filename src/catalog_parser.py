@@ -187,6 +187,15 @@ def split_chapter_title(title, normalized_override=None):
     }
 
 
+def format_output_chapter_title(output_number, source_title):
+    """Build a production title from 編號章節數, never from the website number."""
+    number = int(output_number)
+    if number < 1:
+        raise ValueError("編號章節數必須是正整數")
+    chapter_name = split_chapter_title(source_title)["chapter_name"].strip()
+    return f"第{number}章 {chapter_name}".strip()
+
+
 def normalize_chapter_name_for_comparison(name):
     """Remove all display whitespace from a chapter name for duplicate matching."""
     return re.sub(r"\s+", "", normalize_chapter_title(name))
@@ -460,11 +469,11 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
         "source_indices": source_indices,
         "selected_indices": selected_indices,
         "chapter_titles": selected_titles,
+        # All production stages use 編號章節數. Website numbering remains
+        # catalog metadata only and must never become the video/YT chapter number.
         "chapter_title_by_index": {
-            str(output_index): title
-            for output_index, source_index, title in zip(selected_indices, source_indices, selected_titles)
-            if (str(source_index) in (res.get("chapter_title_overrides") or {}) or
-                str(source_index) in (res.get("chapter_normalized_number_overrides") or {}))
+            str(output_index): format_output_chapter_title(output_index, title)
+            for output_index, title in zip(selected_indices, selected_titles)
         },
         "renumber_selected": bool(renumber_selected),
         "chapter_order": source_indices,

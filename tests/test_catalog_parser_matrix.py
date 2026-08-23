@@ -17,6 +17,7 @@ from src.catalog_parser import (
     parse_catalog,
     parse_chapter_number,
     split_chapter_title,
+    format_output_chapter_title,
 )
 
 
@@ -51,7 +52,15 @@ class CatalogParserMatrixTests(unittest.TestCase):
             )
         self.assertEqual(config["source_indices"], [2, 3])
         self.assertEqual(config["selected_indices"], [1, 2])
-        self.assertEqual(config["chapter_title_by_index"], {"1": "第二章 修正"})
+        self.assertEqual(config["chapter_title_by_index"], {
+            "1": "第1章 修正",
+            "2": "第2章 丙",
+        })
+
+    def test_production_title_uses_output_number_not_website_number(self):
+        self.assertEqual(format_output_chapter_title(1, "序章 大荒"), "第1章 大荒")
+        self.assertEqual(format_output_chapter_title(2, "第一章 朝氣蓬勃"), "第2章 朝氣蓬勃")
+        self.assertEqual(format_output_chapter_title(3, "第二章 骨文"), "第3章 骨文")
 
     @patch("src.catalog_parser.requests.get")
     def test_catalog_preserves_repeated_links_for_user_review(self, get):
@@ -146,7 +155,9 @@ class CatalogParserMatrixTests(unittest.TestCase):
                 os.path.join(directory, "config.yaml"), parsed_result=parsed,
             )
         self.assertEqual(config["chapter_titles"][0], "第1888章 開殺戒")
-        self.assertEqual(config["chapter_title_by_index"]["1"], "第1888章 開殺戒")
+        # Website normalization is for catalog identity/duplicate detection.
+        # Production numbering must always use 編號章節數.
+        self.assertEqual(config["chapter_title_by_index"]["1"], "第1章 開殺戒")
 
     def test_decimal_override_works_when_original_display_number_is_empty(self):
         parts = split_chapter_title("上古戰帝法身", "1249.50")

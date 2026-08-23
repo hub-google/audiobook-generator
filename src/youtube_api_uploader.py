@@ -43,6 +43,7 @@ try:
     from .artifact_validation import validate_image, validate_srt, validate_video
     from .source_status import confirmed_missing_from_directory
     from .huggingface_archiver import HuggingFaceArchiver
+    from .catalog_parser import format_output_chapter_title
 except ImportError:
     # Support running this file directly as ``python src/youtube_api_uploader.py``.
     from part_builder import parse_chapter_num, get_media_duration, merge_part_videos, duration_from_srt
@@ -50,6 +51,7 @@ except ImportError:
     from artifact_validation import validate_image, validate_srt, validate_video
     from source_status import confirmed_missing_from_directory
     from huggingface_archiver import HuggingFaceArchiver
+    from catalog_parser import format_output_chapter_title
 
 if sys.platform == "win32":
     try:
@@ -172,7 +174,7 @@ def recover_completed_titles_from_playlist(completed_titles, existing_titles, pl
 
 def _chapter_title(item):
     number = int(item["chap_num"])
-    return str(item.get("chapter_title") or f"第{number}章").strip()
+    return format_output_chapter_title(number, item.get("chapter_title") or "")
 
 
 def build_chapter_timeline(chapter_items):
