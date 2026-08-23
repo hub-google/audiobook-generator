@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "revision": 15,
   "updated_at": "2026-08-22T16:18:47.817988+00:00",
   "books": {
@@ -19,7 +19,8 @@
         "1": "1"
       },
       "profile_revision": 3,
-      "updated_at": "2026-08-22T15:03:24.473930+00:00"
+      "updated_at": "2026-08-22T15:03:24.473930+00:00",
+      "manual_cover": {}
     },
     "775556040cc321fe": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/35593",
@@ -33,7 +34,8 @@
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
       "profile_revision": 1,
-      "updated_at": "2026-08-22T15:27:18.740524+00:00"
+      "updated_at": "2026-08-22T15:27:18.740524+00:00",
+      "manual_cover": {}
     },
     "e6bd78f052f4906f": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/30906",
@@ -49,7 +51,8 @@
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
       "profile_revision": 2,
-      "updated_at": "2026-08-22T16:18:47.817988+00:00"
+      "updated_at": "2026-08-22T16:18:47.817988+00:00",
+      "manual_cover": {}
     },
     "f4373967b52d240b": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33644",
@@ -76,7 +79,8 @@
         "698": "697"
       },
       "profile_revision": 6,
-      "updated_at": "2026-08-22T16:02:41.175519+00:00"
+      "updated_at": "2026-08-22T16:02:41.175519+00:00",
+      "manual_cover": {}
     },
     "a75e9c51c7d2494d": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/1642",
@@ -93,7 +97,8 @@
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
       "profile_revision": 2,
-      "updated_at": "2026-08-22T16:06:40.039431+00:00"
+      "updated_at": "2026-08-22T16:06:40.039431+00:00",
+      "manual_cover": {}
     },
     "f7b4fca623476708": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/36278",
@@ -109,7 +114,8 @@
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
       "profile_revision": 1,
-      "updated_at": "2026-08-22T16:09:27.332498+00:00"
+      "updated_at": "2026-08-22T16:09:27.332498+00:00",
+      "manual_cover": {}
     }
   }
 }
