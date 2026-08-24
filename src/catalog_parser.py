@@ -273,6 +273,50 @@ def analyze_duplicate_chapters(
     }
 
 
+def find_direct_duplicate_matches(
+    chapter_titles, index, use_normalized_number=True, use_chapter_name=True,
+    normalized_number_overrides=None, use_number_and_name=False,
+):
+    """Return only entries that directly match the selected chapter.
+
+    Unlike the GUI's former graph traversal, this deliberately does not follow
+    matches through a third chapter. Each returned reason therefore describes
+    a comparison between ``index`` and that exact entry.
+    """
+    titles = list(chapter_titles or [])
+    selected_index = int(index)
+    if not 1 <= selected_index <= len(titles):
+        return []
+
+    overrides = normalized_number_overrides or {}
+    selected = split_chapter_title(
+        titles[selected_index - 1], overrides.get(str(selected_index)),
+    )
+    selected_number = selected["normalized_number"]
+    selected_name = normalize_chapter_name_for_comparison(selected["chapter_name"])
+    matches = []
+
+    for other_index, raw_title in enumerate(titles, 1):
+        if other_index == selected_index:
+            continue
+        other = split_chapter_title(raw_title, overrides.get(str(other_index)))
+        other_number = other["normalized_number"]
+        other_name = normalize_chapter_name_for_comparison(other["chapter_name"])
+        reasons = []
+        if (use_normalized_number and selected_number and
+                selected_number == other_number):
+            reasons.append("normalized_chapter_number")
+        if use_chapter_name and selected_name and selected_name == other_name:
+            reasons.append("chapter_name_without_whitespace")
+        if (use_number_and_name and selected_number and selected_name and
+                selected_number == other_number and selected_name == other_name):
+            reasons.append("normalized_chapter_number_and_name_without_whitespace")
+        if reasons:
+            matches.append({"index": other_index, "reasons": reasons})
+
+    return matches
+
+
 def normalize_number_overrides(overrides=None):
     """Validate stable catalog UUID -> positive normalized chapter number."""
     return normalize_chapter_number_overrides(overrides)

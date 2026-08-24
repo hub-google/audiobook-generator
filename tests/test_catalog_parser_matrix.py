@@ -10,6 +10,7 @@ from src.catalog_parser import (
     MAX_PARALLEL_WORKERS,
     apply_chapter_title_overrides,
     analyze_duplicate_chapters,
+    find_direct_duplicate_matches,
     generate_config_yaml,
     generate_matrix,
     normalize_chapter_title,
@@ -239,6 +240,44 @@ class CatalogParserMatrixTests(unittest.TestCase):
             "normalized_chapter_number", "chapter_name_without_whitespace",
         ])
         self.assertEqual(result["duplicate_chapters"][0]["original_indices"], [1, 2])
+
+    def test_direct_duplicate_matches_do_not_follow_transitive_links(self):
+        titles = [
+            "第一章 起點",
+            "第七十章 另一條線",
+            "第一章 橋接名稱",
+            "第七十章 橋接名稱",
+        ]
+
+        first_matches = find_direct_duplicate_matches(titles, 1)
+        seventy_matches = find_direct_duplicate_matches(titles, 2)
+
+        self.assertEqual([item["index"] for item in first_matches], [3])
+        self.assertEqual(first_matches[0]["reasons"], ["normalized_chapter_number"])
+        self.assertEqual([item["index"] for item in seventy_matches], [4])
+        self.assertEqual(seventy_matches[0]["reasons"], ["normalized_chapter_number"])
+
+    def test_direct_duplicate_matches_report_each_enabled_reason(self):
+        titles = ["第一章 相同名稱", "第一章 相同名稱", "第二章 相同名稱"]
+
+        matches = find_direct_duplicate_matches(
+            titles, 1,
+            use_normalized_number=True,
+            use_chapter_name=True,
+            use_number_and_name=True,
+        )
+
+        self.assertEqual(matches, [
+            {
+                "index": 2,
+                "reasons": [
+                    "normalized_chapter_number",
+                    "chapter_name_without_whitespace",
+                    "normalized_chapter_number_and_name_without_whitespace",
+                ],
+            },
+            {"index": 3, "reasons": ["chapter_name_without_whitespace"]},
+        ])
 
     def test_number_and_name_condition_requires_both_values_to_match(self):
         result = analyze_duplicate_chapters(

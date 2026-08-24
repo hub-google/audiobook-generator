@@ -21,7 +21,7 @@ from PIL import Image, ImageTk
 # 載入目錄解析器
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 try:
-    from catalog_parser import analyze_duplicate_chapters, apply_chapter_title_overrides, parse_catalog, split_chapter_title
+    from catalog_parser import analyze_duplicate_chapters, apply_chapter_title_overrides, find_direct_duplicate_matches, parse_catalog, split_chapter_title
     from chapter_numbers import normalize_positive_chapter_number
     from cleaner import chunk_text, clean_text_content
     from book_profiles import (
@@ -1993,7 +1993,7 @@ class AudiobookGUIApp:
         top.title("選擇要轉換的章節")
         top.geometry("1280x680")
         top.minsize(1050, 480)
-        top.transient(self.root)
+        top.resizable(True, True)
         top.grab_set()
 
         BG_COLOR = "#f5f6fa"
@@ -2183,29 +2183,19 @@ class AudiobookGUIApp:
 
         search_entry.bind("<KeyRelease>", lambda e: _update_listbox())
 
-        def _duplicate_group(index):
-            links = {}
-            for item in duplicate_analysis.get("duplicate_chapters") or []:
-                duplicate = int(item["index"])
-                for original in item.get("original_indices") or []:
-                    links.setdefault(duplicate, set()).add(int(original))
-                    links.setdefault(int(original), set()).add(duplicate)
-            group, pending = set(), [index]
-            while pending:
-                current = pending.pop()
-                if current in group:
-                    continue
-                group.add(current)
-                pending.extend(links.get(current, set()) - group)
-            return sorted(group)
-
         def _show_duplicate_details(index):
-            group = _duplicate_group(index)
-            if len(group) < 2:
+            matches = find_direct_duplicate_matches(
+                titles, index,
+                use_normalized_number=duplicate_use_number.get(),
+                use_chapter_name=duplicate_use_name.get(),
+                normalized_number_overrides=self.chapter_normalized_number_overrides,
+                use_number_and_name=duplicate_use_number_and_name.get(),
+            )
+            if not matches:
                 return
             dialog = tk.Toplevel(top)
             dialog.title(f"重複章節明細｜UUID {index}")
-            dialog.geometry("820x300")
+            dialog.geometry("1050x340")
             dialog.transient(top)
             body = ttk.Frame(dialog, padding=10)
             body.pack(fill=tk.BOTH, expand=True)
@@ -2214,29 +2204,31 @@ class AudiobookGUIApp:
                 "chapter_name_without_whitespace": "章節名稱（去除空白）",
                 "normalized_chapter_number_and_name_without_whitespace": "網站章節數正規化 & 章節名稱（去除空白）",
             }
-            group_set = set(group)
-            group_reasons = []
-            for item in duplicate_analysis.get("duplicate_chapters") or []:
-                if int(item["index"]) not in group_set:
-                    continue
-                for reason in item.get("reasons") or []:
-                    label = reason_labels.get(reason, reason)
-                    if label not in group_reasons:
-                        group_reasons.append(label)
             ttk.Label(
-                body, text="目前符合條件：" + "、".join(group_reasons),
+                body, text=f"UUID {index} 的直接符合章節：{len(matches)} 筆（不串聯其他章節的關係）",
             ).pack(anchor=tk.W, pady=(0, 8))
-            detail_columns = ("uuid", "normalized", "display", "name")
+            detail_columns = ("uuid", "normalized", "display", "name", "reason")
             detail = ttk.Treeview(body, columns=detail_columns, show="headings")
             for key, label, width in (
                 ("uuid", "UUID", 70), ("normalized", "網站章節數正規化", 160),
-                ("display", "網站顯示章節數", 180), ("name", "章節名稱", 360),
+                ("display", "網站顯示章節數", 160), ("name", "章節名稱", 300),
+                ("reason", "與目前章節直接符合的條件", 310),
             ):
                 detail.heading(key, text=label)
-                detail.column(key, width=width, anchor=tk.W if key == "name" else tk.CENTER)
-            for uuid_value in group:
+                detail.column(key, width=width, anchor=tk.W if key in {"name", "reason"} else tk.CENTER)
+            selected_parts = chapter_parts[index - 1]
+            detail.insert("", tk.END, values=(
+                index, selected_parts["normalized_number"], selected_parts["display_number"],
+                selected_parts["chapter_name"], "目前章節",
+            ))
+            for match in matches:
+                uuid_value = int(match["index"])
                 parts = chapter_parts[uuid_value - 1]
-                detail.insert("", tk.END, values=(uuid_value, parts["normalized_number"], parts["display_number"], parts["chapter_name"]))
+                reasons = "、".join(reason_labels.get(value, value) for value in match["reasons"])
+                detail.insert("", tk.END, values=(
+                    uuid_value, parts["normalized_number"], parts["display_number"],
+                    parts["chapter_name"], reasons,
+                ))
             detail.pack(fill=tk.BOTH, expand=True)
             ttk.Button(body, text="關閉", command=dialog.destroy).pack(anchor=tk.E, pady=(8, 0))
 
