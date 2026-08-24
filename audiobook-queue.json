@@ -17,14 +17,14 @@
       ],
       "renumber_selected": true,
       "duplicate_chapter_count": 47,
-      "status": "running",
+      "status": "waiting_retry",
       "run_id": 32700998608,
       "run_attempt": 1,
       "execution_generation": 1,
       "retry_requested_at": null,
       "run_history": [],
       "retry_at": "2026-08-24T12:55:08.516037+00:00",
-      "reason": null,
+      "reason": "thumbnailRateLimit",
       "hf_progress": {
         "completed": 0,
         "total": 0
