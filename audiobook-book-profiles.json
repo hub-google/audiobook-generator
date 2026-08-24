@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 21,
-  "updated_at": "2026-08-24T01:09:38.009422+00:00",
+  "revision": 22,
+  "updated_at": "2026-08-24T01:11:58.394530+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -193,6 +193,21 @@
       "chapter_normalized_number_overrides": {},
       "profile_revision": 1,
       "updated_at": "2026-08-24T01:09:38.009422+00:00",
+      "manual_cover": {}
+    },
+    "444c39fed4ab2ee3": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/47245",
+      "book_title": "一劍獨尊",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "updated_at": "2026-08-24T01:11:58.394530+00:00",
       "manual_cover": {}
     }
   }
