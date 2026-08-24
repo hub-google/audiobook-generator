@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 18,
-  "updated_at": "2026-08-24T00:54:38.311801+00:00",
+  "revision": 19,
+  "updated_at": "2026-08-24T00:57:40.476932+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -62,9 +62,21 @@
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 2,
-      "updated_at": "2026-08-22T16:18:47.817988+00:00",
-      "manual_cover": {}
+      "profile_revision": 3,
+      "updated_at": "2026-08-24T00:57:40.476932+00:00",
+      "manual_cover": {
+        "source": "manual_upload",
+        "provider": "github",
+        "repo": "hub-google/audiobook-generator",
+        "branch": "automation-state",
+        "remote_path": "manual-covers/e6bd78f052f4906f/master_cover.jpg",
+        "blob_sha": "61ad183ef753e9d218dc47d3deb9f59f4e457f1a",
+        "width": 1280,
+        "height": 720,
+        "bytes": 653041,
+        "sha256": "a26f88686271967d14df3f6851f5144ab507d0362bbdad73ae270d809a42e3c7",
+        "quality": 98
+      }
     },
     "f4373967b52d240b": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33644",
