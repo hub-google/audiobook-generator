@@ -3,7 +3,7 @@ import os
 import unittest
 from unittest.mock import Mock, patch
 
-from src.metadata_gen import generate_gemini_cover_information
+from src.metadata_gen import generate_gemini_cover_information, review_cover_information
 
 FIELDS = {
     "故事類型與時代": "東方玄幻遠古時代，有明確的修行文明。",
@@ -84,8 +84,9 @@ class CoverInformationQualityTests(unittest.TestCase):
         self.assertEqual(generated["story_facts"][0]["source_ids"], ["S1", "MODEL_KNOWLEDGE"])
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key"})
+    @patch("src.metadata_gen.time.sleep")
     @patch("src.metadata_gen.requests.post")
-    def test_internal_fallback_rejects_empty_or_unknown_source_ids(self, post):
+    def test_internal_fallback_rejects_empty_or_unknown_source_ids(self, post, sleep):
         payload = response_payload()
         result = json.loads(payload["candidates"][0]["content"]["parts"][0]["text"])
         result["story_facts"][0]["source_ids"] = ["S99"]
@@ -100,8 +101,9 @@ class CoverInformationQualityTests(unittest.TestCase):
             generate_gemini_cover_information("完美世界", self.synopsis, research=research)
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key"})
+    @patch("src.metadata_gen.time.sleep")
     @patch("src.metadata_gen.requests.post")
-    def test_missing_story_facts_fails_instead_of_returning_prompt(self, post):
+    def test_missing_story_facts_fails_instead_of_returning_prompt(self, post, sleep):
         payload = response_payload()
         payload["candidates"][0]["content"]["parts"][0]["text"] = json.dumps(
             {"status": "ok", "story_facts": [], "analysis": FIELDS, "visual_brief": VISUAL_BRIEF},
@@ -112,8 +114,9 @@ class CoverInformationQualityTests(unittest.TestCase):
             generate_gemini_cover_information("完美世界", self.synopsis)
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key"})
+    @patch("src.metadata_gen.time.sleep")
     @patch("src.metadata_gen.requests.post")
-    def test_api_error_does_not_expose_key(self, post):
+    def test_api_error_does_not_expose_key(self, post, sleep):
         post.return_value = Mock(
             status_code=429,
             json=lambda: {"error": {"message": "quota exhausted"}},
@@ -123,6 +126,29 @@ class CoverInformationQualityTests(unittest.TestCase):
             generate_gemini_cover_information("完美世界", self.synopsis)
         self.assertNotIn("secret-test-key", str(caught.exception))
         self.assertIn("429", str(caught.exception))
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key"})
+    @patch("src.metadata_gen.time.sleep")
+    @patch("src.metadata_gen.requests.post")
+    def test_review_retries_any_failure(self, post, sleep):
+        failed = Mock(
+            status_code=503,
+            json=lambda: {"error": {"message": "temporary overload"}},
+            text="temporary overload",
+        )
+        succeeded = Mock(status_code=200, json=lambda: response_payload(), text="")
+        post.side_effect = [failed, succeeded]
+
+        result = review_cover_information(
+            "完美世界",
+            self.synopsis,
+            {"mode": "internal_knowledge_fallback", "sources": []},
+            response_payload(),
+        )
+
+        self.assertIn("prompt", result)
+        self.assertEqual(post.call_count, 2)
+        sleep.assert_called_once_with(15)
 
 
 if __name__ == "__main__":

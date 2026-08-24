@@ -455,7 +455,7 @@ def generate_gemini_art_prompt(book_title, pure_plot, max_attempts=4, retry_base
     )
 
 
-def generate_gemini_cover_information(book_title, pure_plot, research=None):
+def generate_gemini_cover_information(book_title, pure_plot, research=None, max_attempts=4, retry_base_seconds=15):
     """One on-demand Gemini call returning both the readable brief and HF prompt."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -473,7 +473,9 @@ def generate_gemini_cover_information(book_title, pure_plot, research=None):
 宣傳文案中的任何誇飾或比喻不得直接畫成法寶或實體事件，除非資料明確證實它是故事中的真實代表物件。
 status=ok 時，各分析欄位及 visual_brief 不得填未知、未提供、無法判斷或通用抽象方案。supporting_characters 只能是 0 至 2 項。iconic_story_symbol 必須是資料支持且一眼可辨識的巨大人物、物件、生物、建築或環境標誌，不能只寫神秘力量。不得要求留白、文字安全區、遠景小人物、大片天空或極簡構圖。"""
     errors = []
-    for model in ("gemini-flash-latest", "gemini-3.5-flash"):
+    models = ("gemini-flash-latest", "gemini-3.5-flash")
+    for attempt in range(1, max_attempts + 1):
+        model = models[(attempt - 1) % len(models)]
         try:
             response = requests.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
@@ -521,10 +523,17 @@ status=ok 時，各分析欄位及 visual_brief 不得填未知、未提供、�
             return result
         except Exception as exc:
             errors.append(f"{model}: {exc}")
+            if attempt < max_attempts:
+                delay = retry_base_seconds * (2 ** ((attempt - 1) // len(models)))
+                logging.warning(
+                    "Gemini 封面資訊失敗（第 %d/%d 次，%s）：%s；%d 秒後重試",
+                    attempt, max_attempts, model, exc, delay,
+                )
+                time.sleep(delay)
     raise RuntimeError("Gemini 封面資訊產生失敗；已停止且未產生 Prompt：" + " | ".join(errors))
 
 
-def review_cover_information(book_title, pure_plot, research, draft):
+def review_cover_information(book_title, pure_plot, research, draft, max_attempts=4, retry_base_seconds=15):
     """A separate Gemini pass must audit and rewrite the draft before acceptance."""
     api_key = os.getenv("GEMINI_API_KEY")
     prompt = f"""你是嚴格的小說考據編輯與熱門縮圖規格審核員。請審核下列《{book_title}》封面草稿，使用你對該小說的知識以及提供的資料逐項糾錯，最後只輸出完整 JSON。
@@ -533,7 +542,9 @@ def review_cover_information(book_title, pure_plot, research, draft):
 草稿：{json.dumps(draft, ensure_ascii=False)}
 輸出格式與草稿相同，status 只能 ok 或 insufficient_source。只審核指定小說的原著版本，不得混入動畫、漫畫、遊戲、影視改編或其他同名作品新增、修改或特有的設定；若改編內容與小說原著不同，一律以小說原著為準。刪除所有無根據的年齡、髮型、服裝、武器與場景；辨識宣傳文案中的誇飾與比喻，不得把比喻直接畫成實體法寶或事件。只採用該作品有資料支持、公認且具辨識度的角色、地點與物件，不確定就回 insufficient_source。保留至少五條 story_facts 及合法來源編號。visual_brief 必須完整、最多兩位輔角，且不得要求遠景小人物、大片留白、文字安全區或極簡構圖。不要輸出或改寫最終英文 prompt，Python 會套用固定模板。"""
     errors = []
-    for model in ("gemini-flash-latest", "gemini-3.5-flash"):
+    models = ("gemini-flash-latest", "gemini-3.5-flash")
+    for attempt in range(1, max_attempts + 1):
+        model = models[(attempt - 1) % len(models)]
         try:
             response = requests.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
@@ -565,6 +576,13 @@ def review_cover_information(book_title, pure_plot, research, draft):
             return result
         except Exception as exc:
             errors.append(f"{model}: {exc}")
+            if attempt < max_attempts:
+                delay = retry_base_seconds * (2 ** ((attempt - 1) // len(models)))
+                logging.warning(
+                    "Gemini 二次品質審核失敗（第 %d/%d 次，%s）：%s；%d 秒後重試",
+                    attempt, max_attempts, model, exc, delay,
+                )
+                time.sleep(delay)
     raise RuntimeError("Gemini 二次品質審核失敗；已停止且未產生 Prompt：" + " | ".join(errors))
 
 
