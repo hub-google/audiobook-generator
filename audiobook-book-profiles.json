@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 26,
-  "updated_at": "2026-08-24T01:46:32.749409+00:00",
+  "revision": 27,
+  "updated_at": "2026-08-24T01:49:37.926842+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -221,10 +221,13 @@
         "use_chapter_name": true,
         "use_number_and_name": false
       },
-      "chapter_title_overrides": {},
+      "chapter_title_overrides": {
+        "1672": "那個人",
+        "1671": "大結局"
+      },
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 1,
-      "updated_at": "2026-08-24T01:18:00.107633+00:00",
+      "profile_revision": 2,
+      "updated_at": "2026-08-24T01:49:37.926842+00:00",
       "manual_cover": {}
     }
   }
