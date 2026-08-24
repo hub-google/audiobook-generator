@@ -133,6 +133,14 @@ def split_chapter_title(title, normalized_override=None):
         rf"^(?P<identifier>(?:序章|楔子|番外|後記|后记)\s*(?:第?\s*{spaced_number})?(?:\s*(?:篇|章|回|集))?)",
         value,
     )
+    # Some catalogs reverse the ordinary chapter shape and put the unit first,
+    # for example `章八十四 借兵` or `章101 新的金主`. Require a separator or
+    # the end of the label after the number so a title such as `章一個意外`
+    # cannot be misread as chapter 1.
+    reversed_chapter = re.match(
+        rf"^(?P<identifier>章\s*{spaced_number})(?=\s|[.．、:：\-—]|$)",
+        value,
+    )
     plain = re.match(
         rf"^(?P<identifier>{spaced_number})(?=\s|[.．、:：\-—])",
         value,
@@ -155,7 +163,10 @@ def split_chapter_title(title, normalized_override=None):
         rf"^(?P<identifier>第\s*{spaced_number})(?=[^\d\s.．、:：\-—])",
         value,
     )
-    match = structural or special or missing_unit or plain or damaged_leading_ordinal or missing_unit_before_name
+    match = (
+        structural or special or reversed_chapter or missing_unit or plain or
+        damaged_leading_ordinal or missing_unit_before_name
+    )
     if not match:
         return {
             "display_number": "",
@@ -172,6 +183,13 @@ def split_chapter_title(title, normalized_override=None):
     simple = re.fullmatch(rf"(?:第|地)?({_NUMBER_TOKEN})(?:章|回|節|节|集|話|话)?", re.sub(r"\s+", "", display_number))
     if simple:
         normalized_number = str(_chinese_number_to_int(simple.group(1)))
+    elif match is reversed_chapter:
+        reversed_number = re.fullmatch(
+            rf"章\s*({spaced_number})", display_number,
+        )
+        normalized_number = str(_chinese_number_to_int(
+            re.sub(r"\s+", "", reversed_number.group(1)),
+        ))
     elif match is damaged_leading_ordinal:
         damaged_number = re.search(_NUMBER_TOKEN, display_number)
         normalized_number = str(_chinese_number_to_int(damaged_number.group(0)))

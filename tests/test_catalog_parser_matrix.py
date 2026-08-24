@@ -114,6 +114,32 @@ class CatalogParserMatrixTests(unittest.TestCase):
         self.assertEqual(parse_chapter_number("第二〇一章"), 201)
         self.assertIsNone(parse_chapter_number("番外篇 喋血藍原谷"))
 
+    def test_unit_first_chapter_numbers(self):
+        cases = {
+            "章八十四 借兵": ("章八十四", "84", "借兵"),
+            "章九十九 軟蛋之謎": ("章九十九", "99", "軟蛋之謎"),
+            "章一百 不可控的未來": ("章一百", "100", "不可控的未來"),
+            "章一百零一 新的金主": ("章一百零一", "101", "新的金主"),
+            "章 101、新的金主": ("章 101", "101", "新的金主"),
+        }
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                parts = split_chapter_title(title)
+                self.assertEqual(
+                    (parts["display_number"], parts["normalized_number"], parts["chapter_name"]),
+                    expected,
+                )
+                self.assertEqual(parse_chapter_number(title), int(expected[1]))
+
+    def test_unit_first_rule_does_not_consume_ordinary_titles(self):
+        for title in ("章節介紹", "章魚的故事", "章法與修行", "章一個意外"):
+            with self.subTest(title=title):
+                self.assertEqual(split_chapter_title(title), {
+                    "display_number": "",
+                    "normalized_number": "",
+                    "chapter_name": title,
+                })
+
     def test_tolerates_known_malformed_thousands_ordinal(self):
         cases = {
             "第一千七八零二章 開殺戒": ("第一千七八零二章", "1782", "開殺戒"),
