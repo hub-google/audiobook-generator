@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 19,
-  "updated_at": "2026-08-24T00:57:40.476932+00:00",
+  "revision": 20,
+  "updated_at": "2026-08-24T01:05:12.187052+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -164,6 +164,21 @@
         "sha256": "b3fc624b8feb2a7bee4b5743b1ef41bb6d14460f4c250a6277f7db95146293f0",
         "quality": 98
       }
+    },
+    "8bccfd609f00e032": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/35665",
+      "book_title": "萬古至尊",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "updated_at": "2026-08-24T01:05:12.187052+00:00",
+      "manual_cover": {}
     }
   }
 }
