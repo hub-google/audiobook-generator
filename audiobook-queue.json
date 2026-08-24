@@ -13,7 +13,7 @@
       "excluded_chapters": [],
       "renumber_selected": true,
       "duplicate_chapter_count": 162,
-      "status": "canceling",
+      "status": "running",
       "run_id": 32692458131,
       "run_attempt": 1,
       "execution_generation": 2,
@@ -41,7 +41,7 @@
         }
       ],
       "retry_at": null,
-      "reason": "user_cancelled",
+      "reason": null,
       "hf_progress": {
         "completed": 0,
         "total": 0
