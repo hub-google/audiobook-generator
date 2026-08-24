@@ -35,7 +35,6 @@ VISUAL_BRIEF = {
 def response_payload(grounded=True):
     result = {
         "status": "ok",
-        "identity": {"book_title": "完美世界", "author": "辰東"},
         "story_facts": [
             {"fact": "主角石昊從大荒石村成長", "source_ids": ["MODEL_KNOWLEDGE"]},
             *[
@@ -60,6 +59,12 @@ class CoverInformationQualityTests(unittest.TestCase):
         post.return_value = Mock(status_code=200, json=lambda: response_payload(), text="")
         result = generate_gemini_cover_information("完美世界", self.synopsis)
         self.assertGreaterEqual(len(result["story_facts"]), 5)
+        self.assertIn("prompt", result)
+
+        sent_instruction = post.call_args.kwargs["json"]["contents"][0]["parts"][0]["text"]
+        self.assertIn("只分析指定小說的原著版本", sent_instruction)
+        self.assertIn("動畫、漫畫、遊戲、影視改編", sent_instruction)
+        self.assertNotIn('"identity"', sent_instruction)
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key"})
     @patch("src.metadata_gen.requests.post")
@@ -99,7 +104,7 @@ class CoverInformationQualityTests(unittest.TestCase):
     def test_missing_story_facts_fails_instead_of_returning_prompt(self, post):
         payload = response_payload()
         payload["candidates"][0]["content"]["parts"][0]["text"] = json.dumps(
-            {"status": "ok", "identity": {"book_title": "完美世界", "author": "辰東"}, "story_facts": [], "analysis": FIELDS, "visual_brief": VISUAL_BRIEF},
+            {"status": "ok", "story_facts": [], "analysis": FIELDS, "visual_brief": VISUAL_BRIEF},
             ensure_ascii=False,
         )
         post.return_value = Mock(status_code=200, json=lambda: payload, text="")

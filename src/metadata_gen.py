@@ -462,15 +462,13 @@ def generate_gemini_cover_information(book_title, pure_plot, research=None):
         raise ValueError("缺少 GEMINI_API_KEY")
     _validate_plot_source(book_title, pure_plot, "送交 Gemini 的簡介")
     research = research or {"mode": "internal_knowledge_fallback", "sources": []}
-    expected_author_match = re.search(r"作者：([^；]+)", pure_plot)
-    expected_author = expected_author_match.group(1).strip() if expected_author_match else ""
     research_json = json.dumps(research, ensure_ascii=False)
     instruction = f"""你是熟悉中文網路小說的考據編輯。請依提供的聯網資料與目錄頁身分，嚴格分析《{book_title}》。你只負責填入故事變數，無權改變固定的熱門短劇縮圖構圖。
 目錄頁身分與簡介：{pure_plot}
 資料模式與來源：{research_json}
-分析必須與目錄頁的書名及作者相符。不得把同名公司、遊戲、漫畫、動畫或其他作者作品混入；不確定時必須回 insufficient_source，不得猜測。
+只分析指定小說的原著版本。不得混入動畫、漫畫、遊戲、影視改編或其他同名作品新增、修改或特有的角色造型、場景、武器與設定；若改編內容與小說原著不同，一律以小說原著為準。不確定時必須回 insufficient_source，不得猜測。
 只回傳有效 JSON，格式：
-{{"status":"ok或insufficient_source","identity":{{"book_title":"目錄中的書名","author":"目錄中的作者"}},"story_facts":[{{"fact":"本書具體事實1","source_ids":["S1"]}}],"analysis":{{"故事類型與時代":"...","世界觀":"...","主角外觀與身分":"...","代表性場景":"...","法寶武器或關鍵物件":"...","色彩氣氛與構圖":"...","應避免畫錯的內容":"..."}},"visual_brief":{{"genre":"英文題材","era_and_setting":"英文時代與場景","core_conflict":"英文核心衝突","main_character_identity":"英文主角身分","appearance":"英文外觀","clothing":"英文服裝","expression_and_action":"英文表情與動作","supporting_characters":["英文輔角一","英文輔角二"],"iconic_story_symbol":"英文巨大故事識別符號","iconic_prop_or_power":"英文代表物件或能力","genre_color_palette":"英文題材色盤","lighting_and_mood":"英文光線氣氛","avoid_story_errors":["英文禁畫錯誤"]}}}}
+{{"status":"ok或insufficient_source","story_facts":[{{"fact":"本書具體事實1","source_ids":["S1"]}}],"analysis":{{"故事類型與時代":"...","世界觀":"...","主角外觀與身分":"...","代表性場景":"...","法寶武器或關鍵物件":"...","色彩氣氛與構圖":"...","應避免畫錯的內容":"..."}},"visual_brief":{{"genre":"英文題材","era_and_setting":"英文時代與場景","core_conflict":"英文核心衝突","main_character_identity":"英文主角身分","appearance":"英文外觀","clothing":"英文服裝","expression_and_action":"英文表情與動作","supporting_characters":["英文輔角一","英文輔角二"],"iconic_story_symbol":"英文巨大故事識別符號","iconic_prop_or_power":"英文代表物件或能力","genre_color_palette":"英文題材色盤","lighting_and_mood":"英文光線氣氛","avoid_story_errors":["英文禁畫錯誤"]}}}}
 至少五條 story_facts 必須是這一本小說的具體事實，且至少包含主角姓名、核心世界觀、代表場景與代表物件。每條 fact 的 source_ids 都不得為空：來自資料來源時使用其 S 編號，來自模型內建知識時使用 "MODEL_KNOWLEDGE"，同時受兩者支持時可同時列出。web_evidence 模式不得使用 MODEL_KNOWLEDGE；hybrid_web_and_model_knowledge 與 internal_knowledge_fallback 模式可使用資料中已有的 S 編號及 MODEL_KNOWLEDGE。不得捏造來源編號，不確定就必須 insufficient_source。
 宣傳文案中的任何誇飾或比喻不得直接畫成法寶或實體事件，除非資料明確證實它是故事中的真實代表物件。
 status=ok 時，各分析欄位及 visual_brief 不得填未知、未提供、無法判斷或通用抽象方案。supporting_characters 只能是 0 至 2 項。iconic_story_symbol 必須是資料支持且一眼可辨識的巨大人物、物件、生物、建築或環境標誌，不能只寫神秘力量。不得要求留白、文字安全區、遠景小人物、大片天空或極簡構圖。"""
@@ -494,9 +492,6 @@ status=ok 時，各分析欄位及 visual_brief 不得填未知、未提供、�
             result = json.loads(text)
             if result.get("status") != "ok":
                 raise ValueError("Gemini 判定來源不足，拒絕產生 Prompt")
-            identity = result.get("identity") or {}
-            if identity.get("book_title") != book_title or (expected_author and identity.get("author") not in {expected_author, expected_author.replace("東", "东")}):
-                raise ValueError("Gemini 回覆的書名或作者與目前目錄不符")
             analysis = result.get("analysis")
             required = {"故事類型與時代", "世界觀", "主角外觀與身分", "代表性場景", "法寶武器或關鍵物件", "色彩氣氛與構圖", "應避免畫錯的內容"}
             if not isinstance(analysis, dict) or not required.issubset(analysis):
@@ -536,7 +531,7 @@ def review_cover_information(book_title, pure_plot, research, draft):
 目錄身分：{pure_plot}
 資料：{json.dumps(research, ensure_ascii=False)}
 草稿：{json.dumps(draft, ensure_ascii=False)}
-輸出格式與草稿相同，status 只能 ok 或 insufficient_source。identity 的書名與作者必須逐字符合目錄。刪除所有無根據的年齡、髮型、服裝、武器與場景；辨識宣傳文案中的誇飾與比喻，不得把比喻直接畫成實體法寶或事件。只採用該作品有資料支持、公認且具辨識度的角色、地點與物件，不確定就回 insufficient_source。保留至少五條 story_facts 及合法來源編號。visual_brief 必須完整、最多兩位輔角，且不得要求遠景小人物、大片留白、文字安全區或極簡構圖。不要輸出或改寫最終英文 prompt，Python 會套用固定模板。"""
+輸出格式與草稿相同，status 只能 ok 或 insufficient_source。只審核指定小說的原著版本，不得混入動畫、漫畫、遊戲、影視改編或其他同名作品新增、修改或特有的設定；若改編內容與小說原著不同，一律以小說原著為準。刪除所有無根據的年齡、髮型、服裝、武器與場景；辨識宣傳文案中的誇飾與比喻，不得把比喻直接畫成實體法寶或事件。只採用該作品有資料支持、公認且具辨識度的角色、地點與物件，不確定就回 insufficient_source。保留至少五條 story_facts 及合法來源編號。visual_brief 必須完整、最多兩位輔角，且不得要求遠景小人物、大片留白、文字安全區或極簡構圖。不要輸出或改寫最終英文 prompt，Python 會套用固定模板。"""
     errors = []
     for model in ("gemini-flash-latest", "gemini-3.5-flash"):
         try:
@@ -552,11 +547,6 @@ def review_cover_information(book_title, pure_plot, research, draft):
             result = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE))
             if result.get("status") != "ok" or len(result.get("story_facts") or []) < 5:
                 raise ValueError("審核器拒絕草稿或缺少五條事實")
-            expected_author_match = re.search(r"作者：([^；]+)", pure_plot)
-            expected_author = expected_author_match.group(1).strip() if expected_author_match else ""
-            identity = result.get("identity") or {}
-            if identity.get("book_title") != book_title or (expected_author and identity.get("author") not in {expected_author, expected_author.replace("東", "东")}):
-                raise ValueError("審核器回覆的書名或作者與目錄不符")
             valid_ids = {item["id"] for item in research.get("sources") or []} | {"MODEL_KNOWLEDGE"}
             for fact in result.get("story_facts") or []:
                 ids = set(fact.get("source_ids") or []) if isinstance(fact, dict) else set()
