@@ -155,12 +155,12 @@
       "retry_at": null,
       "reason": null,
       "hf_progress": {
-        "completed": 31,
-        "total": 31
+        "completed": 0,
+        "total": 0
       },
       "youtube_progress": {
         "completed": 0,
-        "total": 31
+        "total": 0
       },
       "created_at": "2026-08-22T09:51:02.489262+00:00",
       "updated_at": "2026-08-24T22:21:18.477717+00:00",
