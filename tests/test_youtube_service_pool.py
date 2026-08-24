@@ -5,7 +5,7 @@ from src.youtube_api_uploader import YouTubeServicePool, configured_youtube_acco
 
 class YouTubeServicePoolTests(unittest.TestCase):
     @patch.dict(os.environ, {
-        "YOUTUBE_CLIENT_ID": "c1", "YOUTUBE_CLIENT_SECRET": "s1", "YOUTUBE_REFRESH_TOKEN": "r1",
+        "YOUTUBE_CLIENT_ID_1": "c1", "YOUTUBE_CLIENT_SECRET_1": "s1", "YOUTUBE_REFRESH_TOKEN_1": "r1",
         "YOUTUBE_CLIENT_ID_2": "c2", "YOUTUBE_CLIENT_SECRET_2": "s2", "YOUTUBE_REFRESH_TOKEN_2": "r2",
         "YOUTUBE_CLIENT_ID_3": "incomplete",
     }, clear=True)
@@ -13,15 +13,15 @@ class YouTubeServicePoolTests(unittest.TestCase):
         self.assertEqual(configured_youtube_account_slots(), {1, 2})
 
     @patch.dict(os.environ, {
-        "YOUTUBE_CLIENT_ID_1": "c1", "YOUTUBE_CLIENT_SECRET": "s1",
-        "YOUTUBE_REFRESH_TOKEN_1": "r1",
+        "YOUTUBE_CLIENT_ID": "legacy-c1", "YOUTUBE_CLIENT_SECRET": "legacy-s1",
+        "YOUTUBE_REFRESH_TOKEN": "legacy-r1",
     }, clear=True)
-    def test_slot_one_allows_mixed_legacy_and_numbered_names(self):
-        self.assertEqual(configured_youtube_account_slots(), {1})
+    def test_slot_one_rejects_legacy_unnumbered_names(self):
+        self.assertEqual(configured_youtube_account_slots(), set())
 
     @patch.dict(os.environ, {
         "YOUTUBE_EXPECTED_ACCOUNT_COUNT": "2",
-        "YOUTUBE_CLIENT_ID": "c1", "YOUTUBE_CLIENT_SECRET": "s1", "YOUTUBE_REFRESH_TOKEN": "r1",
+        "YOUTUBE_CLIENT_ID_1": "c1", "YOUTUBE_CLIENT_SECRET_1": "s1", "YOUTUBE_REFRESH_TOKEN_1": "r1",
         "YOUTUBE_CLIENT_ID_2": "c2", "YOUTUBE_CLIENT_SECRET_2": "s2",
     }, clear=True)
     def test_expected_pool_rejects_partially_configured_slot(self):
@@ -31,9 +31,9 @@ class YouTubeServicePoolTests(unittest.TestCase):
 
     @patch.dict(os.environ, {
         "YOUTUBE_EXPECTED_ACCOUNT_COUNT": "10",
-        "YOUTUBE_CLIENT_ID": "c1",
-        "YOUTUBE_CLIENT_SECRET": "s1",
-        "YOUTUBE_REFRESH_TOKEN": "r1",
+        "YOUTUBE_CLIENT_ID_1": "c1",
+        "YOUTUBE_CLIENT_SECRET_1": "s1",
+        "YOUTUBE_REFRESH_TOKEN_1": "r1",
     }, clear=True)
     def test_expected_pool_size_rejects_silent_single_account_fallback(self):
         with patch("src.youtube_api_uploader.os.path.exists", return_value=False):
@@ -150,20 +150,41 @@ class YouTubeServicePoolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "spans different channels"):
             pool.require_same_channel()
 
-    def test_pool_channel_validation_preserves_quota_pause(self):
-        from src.youtube_api_uploader import UploadPaused
+    def test_pool_channel_validation_skips_exhausted_slot_and_uses_next(self):
         pool = YouTubeServicePool()
-        service = MagicMock()
-        service.channels.return_value.list.return_value.execute.side_effect = Exception("quotaExceeded")
+        exhausted_service = MagicMock()
+        exhausted_service.channels.return_value.list.return_value.execute.side_effect = Exception("quotaExceeded")
+        usable_service = MagicMock()
+        usable_service.channels.return_value.list.return_value.execute.return_value = {
+            "items": [{"id": "channel-1"}]
+        }
         pool.accounts = [
-            {"slot": 1, "service": service, "creds": MagicMock(), "channel_id": None,
+            {"slot": 1, "service": exhausted_service, "creds": MagicMock(), "channel_id": None,
              "exhausted": False},
-            {"slot": 2, "service": MagicMock(), "creds": MagicMock(), "channel_id": None,
+            {"slot": 2, "service": usable_service, "creds": MagicMock(), "channel_id": None,
              "exhausted": False},
         ]
 
-        with self.assertRaises(UploadPaused):
+        self.assertEqual(pool.require_same_channel(), "channel-1")
+        self.assertTrue(pool.accounts[0]["exhausted"])
+        self.assertEqual(pool.active_account["slot"], 2)
+
+    def test_pool_channel_validation_pauses_only_when_all_slots_exhausted(self):
+        from src.youtube_api_uploader import UploadPaused
+        pool = YouTubeServicePool()
+        services = [MagicMock(), MagicMock()]
+        for service in services:
+            service.channels.return_value.list.return_value.execute.side_effect = Exception("quotaExceeded")
+        pool.accounts = [
+            {"slot": slot, "service": service, "creds": MagicMock(), "channel_id": None,
+             "exhausted": False}
+            for slot, service in enumerate(services, 1)
+        ]
+
+        with self.assertRaises(UploadPaused) as raised:
             pool.require_same_channel()
+        self.assertEqual(raised.exception.reason, "quotaExceeded")
+        self.assertTrue(all(account["exhausted"] for account in pool.accounts))
 
     def test_get_playlist_video_index_rotates_and_recovers(self):
         from src.youtube_api_uploader import get_playlist_video_index

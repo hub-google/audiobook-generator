@@ -80,14 +80,7 @@ YOUTUBE_SLOT_ROTATION_ROUNDS = 3
 def configured_youtube_account_slots():
     """Return complete environment-backed credential slots without authenticating."""
     slots = set()
-    # Slot 1 accepts either spelling and, like discovery, may mix the numbered
-    # and legacy names field-by-field during a secret-name migration.
-    if all(
-        (os.environ.get(f"{name}_1") or os.environ.get(name, "")).strip()
-        for name in ("YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN")
-    ):
-        slots.add(1)
-    for slot in range(2, MAX_YOUTUBE_ACCOUNT_SLOTS + 1):
+    for slot in range(1, MAX_YOUTUBE_ACCOUNT_SLOTS + 1):
         if all(os.environ.get(f"{name}_{slot}", "").strip() for name in (
             "YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN",
         )):
@@ -279,15 +272,10 @@ class YouTubeServicePool:
 
             tok_path = os.path.join(cs_dir, f"token_{slot}.json")
 
-            # 2. 環境變數檢查 (Slot 1 支援標準 YOUTUBE_*，Slot 2..10 支援 YOUTUBE_*_N)
-            if slot == 1:
-                ref_token = os.environ.get("YOUTUBE_REFRESH_TOKEN_1") or os.environ.get("YOUTUBE_REFRESH_TOKEN", "").strip()
-                client_id = os.environ.get("YOUTUBE_CLIENT_ID_1") or os.environ.get("YOUTUBE_CLIENT_ID", "").strip()
-                client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET_1") or os.environ.get("YOUTUBE_CLIENT_SECRET", "").strip()
-            else:
-                ref_token = os.environ.get(f"YOUTUBE_REFRESH_TOKEN_{slot}", "").strip()
-                client_id = os.environ.get(f"YOUTUBE_CLIENT_ID_{slot}", "").strip()
-                client_secret = os.environ.get(f"YOUTUBE_CLIENT_SECRET_{slot}", "").strip()
+            # 2. 環境變數固定使用 YOUTUBE_*_1 .. YOUTUBE_*_10。
+            ref_token = os.environ.get(f"YOUTUBE_REFRESH_TOKEN_{slot}", "").strip()
+            client_id = os.environ.get(f"YOUTUBE_CLIENT_ID_{slot}", "").strip()
+            client_secret = os.environ.get(f"YOUTUBE_CLIENT_SECRET_{slot}", "").strip()
 
             has_file = (os.path.exists(cs_path) or os.path.exists(tok_path))
             has_env = bool((client_id and client_secret) or ref_token)
@@ -428,11 +416,12 @@ class YouTubeServicePool:
         return service, creds
 
     def require_same_channel(self):
-        """Verify every configured credential controls the same YouTube channel."""
-        if len(self.accounts) < 2:
+        """Verify usable credentials share one channel, skipping quota-exhausted slots."""
+        if not self.accounts:
             return None
 
         channel_slots = {}
+        last_quota_pause = None
         for index, acc in enumerate(self.accounts):
             service = self.get_service(index)
             if service is None:
@@ -444,7 +433,13 @@ class YouTubeServicePool:
             except Exception as error:
                 paused = classify_daily_limit(error)
                 if paused:
-                    raise paused from error
+                    acc["exhausted"] = True
+                    last_quota_pause = paused
+                    logging.warning(
+                        "⏭️ [專案 #%s] 頻道驗證遇到 %s，標記本日配額耗盡並繼續下一個 slot。",
+                        acc["slot"], paused.reason,
+                    )
+                    continue
                 raise RuntimeError(
                     f"Could not verify YouTube channel for credential slot {acc['slot']}: {error}"
                 ) from error
@@ -455,6 +450,11 @@ class YouTubeServicePool:
             channel_id = str(items[0]["id"])
             acc["channel_id"] = channel_id
             channel_slots.setdefault(channel_id, []).append(acc["slot"])
+
+        if not channel_slots:
+            if last_quota_pause:
+                raise last_quota_pause from last_quota_pause.original_error
+            raise RuntimeError("No YouTube credential slot could be verified")
 
         if len(channel_slots) != 1:
             details = "; ".join(
@@ -467,9 +467,17 @@ class YouTubeServicePool:
             )
 
         channel_id = next(iter(channel_slots))
+        first_usable_index = next(
+            index for index, account in enumerate(self.accounts)
+            if account.get("channel_id") == channel_id and not account["exhausted"]
+        )
+        self.active_index = first_usable_index
         logging.info(
-            "✅ [YouTube-Pool] 已驗證 %s 組憑證均管理同一頻道 %s。",
-            len(self.accounts), channel_id,
+            "✅ [YouTube-Pool] %s 組憑證通過同頻道驗證、%s 組配額耗盡；"
+            "將由專案 #%s 繼續發布至頻道 %s。",
+            len(channel_slots[channel_id]),
+            sum(1 for account in self.accounts if account["exhausted"]),
+            self.accounts[first_usable_index]["slot"], channel_id,
         )
         return channel_id
 
@@ -585,7 +593,7 @@ class YouTubeServicePool:
                         csec = cs_info.get("client_secret", "")
                         if cid and csec:
                             gh_bin = _find_gh()
-                            suffix = f"_{slot}" if slot > 1 else ""
+                            suffix = f"_{slot}"
                             # Set secrets via gh
                             subprocess.run([gh_bin, "secret", "set", f"YOUTUBE_CLIENT_ID{suffix}", "--body", cid], check=False)
                             subprocess.run([gh_bin, "secret", "set", f"YOUTUBE_CLIENT_SECRET{suffix}", "--body", csec], check=False)
@@ -1850,7 +1858,24 @@ def main():
                           pending_captions=pending_captions,
                           pending_publish=pending_publish)
 
-    youtube = get_authenticated_service()
+    try:
+        youtube = get_authenticated_service()
+    except UploadPaused as paused:
+        save_resume_state(
+            args.state_file, args.run_id, args.privacy, "paused",
+            reason=paused.reason, retry_at=paused.retry_at,
+            completed_titles=completed_titles, part_plan=part_plan,
+            pending_thumbnails=pending_thumbnails,
+            pending_playlist=pending_playlist,
+            pending_captions=pending_captions,
+            pending_publish=pending_publish,
+        )
+        logging.error(
+            "[API_UPLOAD_STATUS] PAUSED during credential validation | "
+            "retry_at=%s | source_run=%s | reason=%s",
+            paused.retry_at.isoformat(), args.run_id, paused.reason,
+        )
+        return EXIT_RETRY_LATER
 
     SRC_DIR = os.path.dirname(os.path.abspath(__file__))
     sys.path.insert(0, SRC_DIR)
