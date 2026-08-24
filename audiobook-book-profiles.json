@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 28,
-  "updated_at": "2026-08-24T01:50:36.794107+00:00",
+  "revision": 29,
+  "updated_at": "2026-08-24T01:59:51.961506+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -230,6 +230,23 @@
       "chapter_normalized_number_overrides": {},
       "profile_revision": 3,
       "updated_at": "2026-08-24T01:50:36.794107+00:00",
+      "manual_cover": {}
+    },
+    "3cdd876b035be4ae": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/34810",
+      "book_title": "永夜君王",
+      "cleaner_remove_patterns": [
+        "《之王旗飛揚》完。"
+      ],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "updated_at": "2026-08-24T01:59:51.961506+00:00",
       "manual_cover": {}
     }
   }
