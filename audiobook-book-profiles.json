@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 24,
-  "updated_at": "2026-08-24T01:14:37.976820+00:00",
+  "revision": 25,
+  "updated_at": "2026-08-24T01:18:00.107633+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -210,6 +210,21 @@
       "chapter_normalized_number_overrides": {},
       "profile_revision": 3,
       "updated_at": "2026-08-24T01:14:37.976820+00:00",
+      "manual_cover": {}
+    },
+    "0cc8286ee35f2cde": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/36170",
+      "book_title": "圣墟",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "updated_at": "2026-08-24T01:18:00.107633+00:00",
       "manual_cover": {}
     }
   }
