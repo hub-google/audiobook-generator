@@ -249,6 +249,23 @@ def is_transient_upload_error(error):
     # evaluated only around next_chunk(), so retrying is safe and bounded.
     return isinstance(error, OSError)
 
+
+def is_transient_youtube_api_error(error):
+    """Return whether a non-upload YouTube API request is safe to retry."""
+    if isinstance(error, (ssl.SSLError, socket.timeout, TimeoutError, ConnectionError, OSError)):
+        return True
+    if not isinstance(error, HttpError):
+        return False
+    status = getattr(getattr(error, "resp", None), "status", None)
+    if status in {429, 500, 502, 503, 504}:
+        return True
+    # YouTube occasionally reports a backend outage as HTTP 409 instead of
+    # 503. Do not retry ordinary conflicts; require the explicit backend reason.
+    content = getattr(error, "content", b"")
+    if isinstance(content, bytes):
+        content = content.decode("utf-8", errors="replace")
+    return status == 409 and "SERVICE_UNAVAILABLE" in f"{error} {content}".upper()
+
 class YouTubeServicePool:
     """管理多組 YouTube API 專案金鑰，支援自動探索、單一介面調用與 403 quotaExceeded 無縫輪替"""
 
@@ -747,8 +764,10 @@ def load_measured_prepared_part_plan(input_dir, book_title):
     return measured
 
 
-def update_playlist_metadata(youtube, playlist_id, title, description):
+def update_playlist_metadata(youtube, playlist_id, title, description,
+                             network_attempts=5, initial_retry_delay=2):
     """Update an existing playlist after every video has passed final validation."""
+    transient_failures = 0
     while True:
         try:
             youtube.playlists().update(
@@ -771,6 +790,15 @@ def update_playlist_metadata(youtube, playlist_id, title, description):
             paused = classify_daily_limit(e)
             if paused:
                 raise paused from e
+            if is_transient_youtube_api_error(e) and transient_failures < network_attempts - 1:
+                delay = min(initial_retry_delay * (2 ** transient_failures), 60)
+                transient_failures += 1
+                logging.warning(
+                    "YouTube 暫時無法更新播放清單（第 %s/%s 次）；%s 秒後重試：%s",
+                    transient_failures, network_attempts, delay, e,
+                )
+                time.sleep(delay)
+                continue
             raise RuntimeError(f"更新播放清單正式標題失敗：{e}") from e
 
 

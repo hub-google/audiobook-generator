@@ -19,6 +19,7 @@ from src.youtube_api_uploader import (
     get_channel_upload_video_index,
     add_video_to_playlist,
     is_transient_upload_error,
+    is_transient_youtube_api_error,
     load_resume_state,
     save_resume_state,
     recover_completed_titles_from_playlist,
@@ -525,6 +526,39 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         self.assertEqual(calls["execute"], 30)
         self.assertEqual(calls["rotate"], 30)
         self.assertEqual(raised.exception.reason, "quotaExceeded")
+
+    @patch("src.youtube_api_uploader.time.sleep")
+    def test_playlist_metadata_retries_youtube_409_service_unavailable(self, sleep):
+        unavailable = HttpError(
+            Response({"status": "409"}),
+            b'{"error":{"errors":[{"reason":"SERVICE_UNAVAILABLE"}]}}',
+        )
+        youtube = MagicMock()
+        execute = youtube.playlists.return_value.update.return_value.execute
+        execute.side_effect = [unavailable, None]
+
+        self.assertTrue(update_playlist_metadata(
+            youtube, "playlist-1", "title", "description",
+            network_attempts=3, initial_retry_delay=1,
+        ))
+
+        self.assertEqual(execute.call_count, 2)
+        sleep.assert_called_once_with(1)
+        self.assertTrue(is_transient_youtube_api_error(unavailable))
+
+    @patch("src.youtube_api_uploader.time.sleep")
+    def test_playlist_metadata_does_not_retry_ordinary_409(self, sleep):
+        conflict = HttpError(
+            Response({"status": "409"}),
+            b'{"error":{"errors":[{"reason":"conflict"}]}}',
+        )
+        youtube = MagicMock()
+        youtube.playlists.return_value.update.return_value.execute.side_effect = conflict
+
+        with self.assertRaises(RuntimeError):
+            update_playlist_metadata(youtube, "playlist-1", "title", "description")
+
+        sleep.assert_not_called()
 
     def test_partial_worker_cannot_report_success(self):
         with self.assertRaisesRegex(RuntimeError, "1172"):
