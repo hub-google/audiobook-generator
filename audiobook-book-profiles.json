@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 27,
-  "updated_at": "2026-08-24T01:49:37.926842+00:00",
+  "revision": 28,
+  "updated_at": "2026-08-24T01:50:36.794107+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -215,7 +215,9 @@
     "0cc8286ee35f2cde": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/36170",
       "book_title": "圣墟",
-      "cleaner_remove_patterns": [],
+      "cleaner_remove_patterns": [
+        "接下來，我又要寫一次感言了嗎？發愁，我居然要寫兩次完本感言。5月1日再聚。"
+      ],
       "duplicate_detection": {
         "use_normalized_number": true,
         "use_chapter_name": true,
@@ -226,8 +228,8 @@
         "1671": "大結局"
       },
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 2,
-      "updated_at": "2026-08-24T01:49:37.926842+00:00",
+      "profile_revision": 3,
+      "updated_at": "2026-08-24T01:50:36.794107+00:00",
       "manual_cover": {}
     }
   }
