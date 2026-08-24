@@ -15,7 +15,7 @@
       ],
       "renumber_selected": true,
       "duplicate_chapter_count": 130,
-      "status": "queued",
+      "status": "waiting_retry",
       "run_id": 32784238990,
       "run_attempt": 1,
       "execution_generation": 12,
@@ -157,8 +157,8 @@
           "ended_at": "2026-08-24T22:43:47Z"
         }
       ],
-      "retry_at": null,
-      "reason": null,
+      "retry_at": "2026-08-25T00:45:10.630260+00:00",
+      "reason": "otherError",
       "hf_progress": {
         "completed": 31,
         "total": 31
