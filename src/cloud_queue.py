@@ -409,6 +409,30 @@ def requeue_task_after_active(queue, task_id, active_id=None):
     return touch(queue)
 
 
+def settle_interrupted_task(queue, task_id, reason="run_cancelled",
+                            conclusion="cancelled", ended_at=None):
+    """Record a stopped execution and honor a pending edit-triggered restart.
+
+    GUI polling and the queue dispatcher can observe the same terminal Run in
+    either order.  Keeping the decision here makes both observers idempotent:
+    an edit-triggered cancellation is always requeued, while an ordinary user
+    cancellation remains interrupted and non-blocking.
+    """
+    queue = normalize_queue(queue)
+    task = next((item for item in queue["queue"] if item.get("task_id") == task_id), None)
+    if task is None:
+        raise KeyError(task_id)
+    restart = bool(task.get("requeue_after_edit"))
+    if task.get("status") != "interrupted":
+        queue = mark_task_interrupted(
+            queue, task_id, reason=reason, conclusion=conclusion, ended_at=ended_at,
+        )
+    if restart:
+        queue = requeue_task_after_active(queue, task_id)
+        queue = update_task(queue, task_id, requeue_after_edit=False)
+    return queue
+
+
 def current_task(queue):
     queue = normalize_queue(queue)
     return next((item for item in queue["queue"] if is_task_blocking(item)), None)

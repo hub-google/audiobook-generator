@@ -347,8 +347,18 @@ jobs:
           SOURCE_RUN_ID: ${{ inputs.resume_source_run_id }}
           ARTIFACT_NAME: video-worker-${{ matrix.worker_id }}
         run: |
-          exists=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
-            --jq ".artifacts[] | select(.expired == false and .name == \"$ARTIFACT_NAME\") | .id" | head -n 1)
+          api_error="$(mktemp)"
+          if ! exists=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.expired == false and .name == \"$ARTIFACT_NAME\") | .id" \
+            2>"$api_error"); then
+            if grep -q "HTTP 404" "$api_error"; then
+              echo "Locked Run $SOURCE_RUN_ID no longer exists; historical Run and Cache fallback are allowed."
+              exit 0
+            fi
+            echo "Unable to inspect locked Run $SOURCE_RUN_ID:" >&2
+            sed 's/^/  /' "$api_error" >&2
+            exit 1
+          fi
           if [ -n "$exists" ]; then
             echo "Locked artifact $ARTIFACT_NAME exists in Run $SOURCE_RUN_ID but download failed." >&2
             exit 1

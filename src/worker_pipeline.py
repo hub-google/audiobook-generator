@@ -389,6 +389,7 @@ def inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices):
         return
 
     book_title = config.get("book_title", "")
+    book_profile_id = str(config.get("book_profile_id") or "")
     task_id = config.get("queue_task_id") or os.environ.get("QUEUE_TASK_ID", "")
     current_run_id = os.environ.get("GITHUB_RUN_ID", "")
     repo = os.environ.get("GITHUB_REPOSITORY", "hub-google/audiobook-generator")
@@ -414,7 +415,12 @@ def inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices):
             queue, _ = store.load()
             pending = queue.get("queue", queue.get("tasks", []))
             for t in pending + queue.get("completed", []):
-                if (task_id and t.get("task_id") == task_id) or (book_title and t.get("book_title") == book_title):
+                same_book = (
+                    (task_id and t.get("task_id") == task_id)
+                    or (book_title and t.get("book_title") == book_title)
+                )
+                same_profile = not book_profile_id or str(t.get("book_profile_id") or "") == book_profile_id
+                if same_book and same_profile:
                     history = t.get("run_history") or []
                     for item in reversed(history):
                         rid = item.get("run_id")
@@ -429,7 +435,8 @@ def inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices):
         try:
             cmd = [
                 gh_bin, "api",
-                f"repos/{repo}/actions/workflows/audiobook.yml/runs?per_page=30",
+                "--paginate",
+                f"repos/{repo}/actions/workflows/audiobook.yml/runs?per_page=100",
                 "--jq", ".workflow_runs[] | {id: .id, title: (.display_title // .name)}"
             ]
             res = subprocess.run(
@@ -485,6 +492,26 @@ def inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices):
                 break
             logging.info("🔎 [Inherit] 正在檢查歷史 Run %s 的產物...", past_run_id)
             downloaded = False
+            if book_profile_id:
+                config_dest = os.path.join(temp_dir, f"run_{past_run_id}_shared_config")
+                try:
+                    config_ok = download_artifact_task(
+                        str(past_run_id), repo, "shared-config", config_dest,
+                    )
+                    source_config_path = os.path.join(config_dest, "config.yaml")
+                    if not config_ok or not os.path.isfile(source_config_path):
+                        logging.info("[Inherit] Run %s 沒有可驗證的 shared-config，繼續更舊 Run。", past_run_id)
+                        continue
+                    source_profile_id = str(load_config(source_config_path).get("book_profile_id") or "")
+                    if source_profile_id != book_profile_id:
+                        logging.info(
+                            "[Inherit] Run %s 書籍指紋不符（%s != %s），略過。",
+                            past_run_id, source_profile_id or "missing", book_profile_id,
+                        )
+                        continue
+                except Exception as config_error:
+                    logging.warning("[Inherit] 驗證 Run %s shared-config 失敗：%s", past_run_id, config_error)
+                    continue
             for art_name in target_artifacts:
                 art_dest = os.path.join(temp_dir, f"run_{past_run_id}_{art_name}")
                 try:
@@ -530,6 +557,12 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
         cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
     )
     # ── 跨 Run 歷史 Artifacts 優先繼承 ───────────────────────────
+    if (
+        os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+        and (config.get("queue_task_id") or os.environ.get("QUEUE_TASK_ID"))
+        and (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))
+    ):
+        inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices)
     logging.info("=== Worker %s resumable per-stage pipeline (%s chapters) ===",
                  worker_id, len(exact_indices))
 

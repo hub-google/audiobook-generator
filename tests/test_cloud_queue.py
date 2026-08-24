@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 from src.cloud_queue import (
     add_tasks, current_task, empty_queue, format_chapter_label, move_chapter_order, move_task, move_tasks, new_task, next_task,
-    mark_task_interrupted, mark_task_needs_attention, requeue_task_after_active, update_task,
+    mark_task_interrupted, mark_task_needs_attention, requeue_task_after_active, settle_interrupted_task, update_task,
     update_task_chapters, normalize_chapter_order, normalize_queue,
 )
 from src.queue_dispatcher import Dispatcher, artifact_source_run_id
@@ -333,6 +333,39 @@ class CloudQueueTests(unittest.TestCase):
         self.assertEqual(edited["status"], "queued")
         self.assertFalse(edited["requeue_after_edit"])
         self.assertIsNone(edited["run_id"])
+
+    def test_gui_first_cancel_race_still_requeues_edited_book(self):
+        task = new_task("https://example/1", "第一部", 1, 100)
+        queue = add_tasks(empty_queue(), [task])
+        queue = update_task(
+            queue, task["task_id"], status="canceling", run_id=123,
+            requeue_after_edit=True,
+        )
+        queue = mark_task_interrupted(
+            queue, task["task_id"], reason="run_cancelled",
+            conclusion="cancelled", ended_at="2026-08-19T02:00:00Z",
+        )
+
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.runs = Mock(return_value=[])
+        queue, changed = dispatcher.reconcile(queue)
+
+        self.assertTrue(changed)
+        recovered = queue["queue"][0]
+        self.assertEqual(recovered["status"], "queued")
+        self.assertFalse(recovered["requeue_after_edit"])
+        self.assertIsNone(recovered["run_id"])
+        self.assertEqual(recovered["run_history"][0]["run_id"], 123)
+
+    def test_plain_user_cancel_remains_interrupted(self):
+        task = new_task("https://example/1", "第一部", 1, 100)
+        queue = add_tasks(empty_queue(), [task])
+        queue = update_task(queue, task["task_id"], status="running", run_id=123)
+
+        queue = settle_interrupted_task(queue, task["task_id"])
+
+        self.assertEqual(queue["queue"][0]["status"], "interrupted")
+        self.assertEqual(queue["queue"][0]["run_id"], 123)
 
     def test_dispatcher_starts_next_book_after_cancelled_run(self):
         first = new_task("https://example/1", "第一部")

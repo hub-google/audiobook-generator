@@ -32,6 +32,27 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
         self.assertEqual(run_chapter.call_count, 2)
         inherit.assert_not_called()
 
+    @patch("src.worker_pipeline.PipelineCheckpoint")
+    @patch("src.worker_pipeline.run_resumable_chapter")
+    @patch("src.worker_pipeline.inherit_historical_artifacts")
+    def test_actions_queue_worker_inherits_history_before_processing(
+        self, inherit, run_chapter, checkpoint_type
+    ):
+        checkpoint = Mock()
+        checkpoint.incomplete_chapters.return_value = []
+        checkpoint.source_missing_chapters.return_value = []
+        checkpoint_type.return_value = checkpoint
+        config = dict(self.config, queue_task_id="task-123", book_profile_id="book-fp")
+
+        with patch.dict(os.environ, {
+            "GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "1000",
+            "GH_TOKEN": "token", "QUEUE_TASK_ID": "task-123",
+        }):
+            worker_pipeline.run_pipeline(config, build_parts=False)
+
+        inherit.assert_called_once_with(config, checkpoint, 0, [1, 2])
+        self.assertEqual(run_chapter.call_count, 2)
+
     @patch(
         "src.worker_pipeline.stage_video_gen",
         return_value=[{"merged_video": "part-1.mp4", "part_num": 1}],
@@ -103,6 +124,52 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
 
         # Checked runs: first tried 999, then 888
         self.assertTrue(download_task.called)
+
+    @patch("src.worker_pipeline._copy_artifact_files_to_workspace")
+    @patch("src.worker_pipeline.subprocess.run")
+    @patch("src.youtube_api_uploader.download_artifact_task")
+    def test_fingerprint_locked_history_skips_deleted_latest_and_uses_older_run(
+        self, download_task, run_command, copy_files
+    ):
+        import yaml
+
+        checkpoint = Mock()
+        checkpoint.workspace_dir = "/tmp/workspace"
+        checkpoint.incomplete_chapters.side_effect = [[1, 2], []]
+        run_command.return_value = Mock(returncode=0, stdout="", stderr="")
+
+        def download(run_id, _repo, artifact_name, destination):
+            if str(run_id) == "999":
+                return False
+            os.makedirs(destination, exist_ok=True)
+            if artifact_name == "shared-config":
+                with open(os.path.join(destination, "config.yaml"), "w", encoding="utf-8") as handle:
+                    yaml.safe_dump({"book_profile_id": "book-fp"}, handle)
+                return True
+            return artifact_name == "video-worker-0"
+
+        download_task.side_effect = download
+        config = dict(self.config, queue_task_id="task-123", book_profile_id="book-fp")
+        with patch("src.cloud_queue.GitHubQueueStore") as mock_store_cls:
+            mock_store_cls.return_value.load.return_value = ({
+                "tasks": [{
+                    "task_id": "task-123", "book_title": "book",
+                    "book_profile_id": "book-fp",
+                    "run_history": [{"run_id": 888}, {"run_id": 999}],
+                }]
+            }, "sha-1")
+            with patch.dict(os.environ, {
+                "GH_TOKEN": "token", "QUEUE_TASK_ID": "task-123",
+                "GITHUB_RUN_ID": "1000",
+            }):
+                worker_pipeline.inherit_historical_artifacts(config, checkpoint, 0, [1, 2])
+
+        calls = [(str(call.args[0]), call.args[2]) for call in download_task.call_args_list]
+        self.assertEqual(calls[0], ("999", "shared-config"))
+        self.assertIn(("888", "shared-config"), calls)
+        self.assertIn(("888", "video-worker-0"), calls)
+        copy_files.assert_called_once()
+        checkpoint.reconcile.assert_called_once()
 
     @patch("src.worker_pipeline._copy_artifact_files_to_workspace")
     @patch("src.worker_pipeline.PipelineCheckpoint")

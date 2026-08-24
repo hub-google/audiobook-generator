@@ -32,7 +32,7 @@ try:
     from cloud_queue import (
         BLOCKING_STATES, GitHubQueueStore, add_tasks, delete_task,
         format_chapter_label, is_task_active, mark_task_interrupted, mark_task_waiting_retry,
-        move_chapter_order, move_tasks, new_task, normalize_chapter_order, requeue_task_after_active,
+        move_chapter_order, move_tasks, new_task, normalize_chapter_order, requeue_task_after_active, settle_interrupted_task,
         update_task, update_task_chapters,
     )
     from github_run_status import (
@@ -523,7 +523,10 @@ class AudiobookGUIApp:
                             )
                             if current and current.get("run_id") == run_id and current.get("status") in BLOCKING_STATES:
                                 if target == "interrupted":
-                                    latest = mark_task_interrupted(latest, task_id, reason=reason, conclusion=conclusion, ended_at=ended_at)
+                                    latest = settle_interrupted_task(
+                                        latest, task_id, reason=reason,
+                                        conclusion=conclusion, ended_at=ended_at,
+                                    )
                                 else:
                                     if current.get("status") == "waiting_retry" and current.get("retry_at"):
                                         continue

@@ -17,10 +17,10 @@ from zoneinfo import ZoneInfo
 import requests
 
 try:
-    from .cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
+    from .cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, next_task, settle_interrupted_task, task_id_from_run_name, update_task
     from .book_profiles import GitHubBookProfileStore, get_book_profile, profile_snapshot
 except ImportError:
-    from cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, mark_task_interrupted, next_task, requeue_task_after_active, task_id_from_run_name, update_task
+    from cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, next_task, settle_interrupted_task, task_id_from_run_name, update_task
     from book_profiles import GitHubBookProfileStore, get_book_profile, profile_snapshot
 
 
@@ -171,6 +171,12 @@ class Dispatcher:
                 by_task.setdefault(task_id, []).append(run)
         changed = False
         for task in list(queue["queue"]):
+            # Recover the GUI/dispatcher race where GUI records the cancelled
+            # Run first.  The durable edit intent must still win.
+            if task.get("status") == "interrupted" and task.get("requeue_after_edit"):
+                queue = settle_interrupted_task(queue, task["task_id"])
+                changed = True
+                continue
             candidates = by_task.get(task.get("task_id"), [])
             retry_requested_at = parse_time(task.get("retry_requested_at"))
             if retry_requested_at:
@@ -181,14 +187,10 @@ class Dispatcher:
                 if bound_run_id and task.get("status") in BLOCKING_STATES:
                     run = self.run_by_id(bound_run_id)
                     if run is None:
-                        restart = bool(task.get("requeue_after_edit"))
-                        queue = mark_task_interrupted(
+                        queue = settle_interrupted_task(
                             queue, task["task_id"], reason="run_not_found",
                             conclusion="missing", ended_at=datetime.now(timezone.utc).isoformat(),
                         )
-                        if restart:
-                            queue = requeue_task_after_active(queue, task["task_id"])
-                            queue = update_task(queue, task["task_id"], requeue_after_edit=False)
                         changed = True
                         continue
                 if not run:
@@ -244,15 +246,11 @@ class Dispatcher:
                     "retry_at": retry_at.isoformat(),
                 })
                 changed = True
-            elif status == "completed" and conclusion == "cancelled" and task.get("status") not in {"interrupted", "paused"}:
-                restart = bool(task.get("requeue_after_edit"))
-                queue = mark_task_interrupted(
+            elif status == "completed" and conclusion == "cancelled" and task.get("status") != "paused":
+                queue = settle_interrupted_task(
                     queue, task["task_id"], reason="run_cancelled",
                     conclusion="cancelled", ended_at=run.get("updated_at"),
                 )
-                if restart:
-                    queue = requeue_task_after_active(queue, task["task_id"])
-                    queue = update_task(queue, task["task_id"], requeue_after_edit=False)
                 changed = True
         return queue, changed
 
