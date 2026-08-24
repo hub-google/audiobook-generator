@@ -2151,7 +2151,6 @@ def main():
                 pending_publish=pending_publish,
             )
             return EXIT_RETRY_LATER
-        del pending_captions[pending_title]
         if pending_part_num:
             publication.complete(pending_part_num, "upload_caption", youtube_video_id=video_id)
 
@@ -2211,6 +2210,15 @@ def main():
     # private even if every other YouTube resource already exists.
     for pending_title, pending_video_id in list(pending_publish.items()):
         pending_part_num = part_number_for_title(part_plan, pending_title)
+        pending_srt_path = resolve_part_srt(
+            title=pending_title,
+            part_num=pending_part_num,
+        )
+        if pending_srt_path:
+            pending_captions[pending_title] = {
+                "video_id": pending_video_id,
+                "srt_path": pending_srt_path,
+            }
         try:
             published = set_video_privacy(youtube, pending_video_id, args.privacy)
         except UploadPaused as paused:
@@ -2247,7 +2255,13 @@ def main():
             publication.complete(pending_part_num, "publish", youtube_video_id=pending_video_id, privacy=args.privacy)
             publication.mark(pending_part_num, "final_validation", "running")
             try:
-                evidence = verify_published_part(youtube, pending_video_id, playlist_id, args.privacy)
+                evidence = verify_published_part(
+                    youtube, pending_video_id, playlist_id, args.privacy,
+                    srt_path=pending_srt_path,
+                    part_title=pending_title,
+                    part_num=pending_part_num,
+                    playlist_position=pending_part_num - 1 if pending_part_num else None,
+                )
             except UploadPaused as paused:
                 save_resume_state(
                     args.state_file, args.run_id, args.privacy, "paused",
@@ -2261,6 +2275,7 @@ def main():
                 logging.error("Validation quota exhausted: %s; retry after %s", pending_title, paused.retry_at.isoformat())
                 return EXIT_RETRY_LATER
             publication.complete(pending_part_num, "final_validation", **evidence)
+            pending_captions.pop(pending_title, None)
         save_resume_state(
             args.state_file, args.run_id, args.privacy, "running",
             completed_titles=completed_titles, part_plan=part_plan,
@@ -2591,7 +2606,13 @@ def main():
                                 publication.complete(part_counter, step, youtube_video_id=preexisting_video_id, recovered=True)
                             publication.complete(
                                 part_counter, "final_validation",
-                                **verify_published_part(youtube, preexisting_video_id, playlist_id, args.privacy),
+                                **verify_published_part(
+                                    youtube, preexisting_video_id, playlist_id, args.privacy,
+                                    srt_path=out_srt_path,
+                                    part_title=p_meta["title"],
+                                    part_num=part_counter,
+                                    playlist_position=part_counter - 1,
+                                ),
                             )
                         except Exception as error:
                             publication.fail(part_counter, "archive_hf", error)
@@ -2666,6 +2687,9 @@ def main():
                         publication.complete(part_counter, "upload_thumbnail", youtube_video_id=v_id)
                         total_uploaded += 1
                         pending_playlist[p_meta["title"]] = v_id
+                        pending_captions[p_meta["title"]] = {
+                            "video_id": v_id, "srt_path": out_srt_path,
+                        }
                         # Persist the video id before post-upload work so resume
                         # repairs this exact upload instead of uploading a duplicate.
                         save_resume_state(args.state_file, args.run_id, args.privacy, "running",
@@ -2741,8 +2765,15 @@ def main():
                         publication.complete(part_counter, "publish", youtube_video_id=v_id, privacy=args.privacy)
                         del pending_publish[p_meta["title"]]
                         publication.mark(part_counter, "final_validation", "running")
-                        evidence = verify_published_part(youtube, v_id, playlist_id, args.privacy)
+                        evidence = verify_published_part(
+                            youtube, v_id, playlist_id, args.privacy,
+                            srt_path=out_srt_path,
+                            part_title=p_meta["title"],
+                            part_num=part_counter,
+                            playlist_position=part_counter - 1,
+                        )
                         publication.complete(part_counter, "final_validation", **evidence)
+                        pending_captions.pop(p_meta["title"], None)
                         try:
                             hf_future.result()
                             archive_record = hf_archiver.finalize_part(
@@ -3048,6 +3079,7 @@ def main():
                 publication.complete(part_n, "upload_thumbnail", youtube_video_id=v_id)
                 total_uploaded += 1
                 pending_playlist[v_title] = v_id
+                pending_captions[v_title] = {"video_id": v_id, "srt_path": v_srt}
                 save_resume_state(args.state_file, args.run_id, args.privacy, "running",
                                   completed_titles=completed_titles, part_plan=part_plan,
                                   pending_thumbnails=pending_thumbnails,
@@ -3150,7 +3182,13 @@ def main():
                 completed_titles.add(v_title)
                 publication.mark(part_n, "final_validation", "running")
                 try:
-                    evidence = verify_published_part(youtube, v_id, playlist_id, args.privacy)
+                    evidence = verify_published_part(
+                        youtube, v_id, playlist_id, args.privacy,
+                        srt_path=v_srt,
+                        part_title=v_title,
+                        part_num=part_n,
+                        playlist_position=part_n - 1,
+                    )
                 except UploadPaused as paused:
                     save_resume_state(
                         args.state_file, args.run_id, args.privacy, "paused",
@@ -3164,6 +3202,7 @@ def main():
                     logging.error("Validation quota exhausted: %s; retry after %s", v_title, paused.retry_at.isoformat())
                     return EXIT_RETRY_LATER
                 publication.complete(part_n, "final_validation", **evidence)
+                pending_captions.pop(v_title, None)
                 archive_record = hf_archiver.finalize_part(
                     book_title=book_title, part_num=part_n,
                     youtube_video_id=v_id, playlist_id=playlist_id,
