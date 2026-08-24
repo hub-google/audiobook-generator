@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 549,
-  "updated_at": "2026-08-24T01:14:42.284453+00:00",
+  "revision": 550,
+  "updated_at": "2026-08-24T01:47:11.233933+00:00",
   "queue": [
     {
       "task_id": "book-20260822-a49e60a1",
@@ -12177,9 +12177,11 @@
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/43236",
       "start_chapter": 1,
       "end_chapter": 914,
-      "excluded_chapters": [],
+      "excluded_chapters": [
+        914
+      ],
       "renumber_selected": true,
-      "duplicate_chapter_count": 653,
+      "duplicate_chapter_count": 28,
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
       "chapter_order": [
@@ -13115,7 +13117,7 @@
         "total": 0
       },
       "created_at": "2026-08-24T01:02:23.633047+00:00",
-      "updated_at": "2026-08-24T01:02:23.633047+00:00"
+      "updated_at": "2026-08-24T01:47:11.233933+00:00"
     },
     {
       "task_id": "book-20260824-edecafca",
