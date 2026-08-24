@@ -759,11 +759,12 @@ jobs:
           pending_publish = len(state.get("pending_publish", {}))
           viewer_gate = state.get("final_playlist_validation") or {}
           status = state.get("status", "unknown")
+          publication = PublicationCheckpoint(state_file)
+          book_title = publication.data.get("book_title", "")
           books = hf_state.get("books", {})
-          hf_parts = []
           hf_repo = hf_state.get("repo_id", "尚未建立")
-          for book in books.values():
-              hf_parts.extend((book.get("parts") or {}).values())
+          current_hf_book = books.get(book_title, {}) if book_title else {}
+          hf_parts = (current_hf_book.get("parts") or {}).values()
           hf_done = sum(item.get("status") == "complete" for item in hf_parts)
           print("[RUN_SUMMARY] " + json.dumps({
               "kind": "youtube", "status": status, "completed": done, "total": total,
@@ -796,7 +797,9 @@ jobs:
               f.write(f"| **Part 排序** | **{viewer_gate.get('ordered_parts', [])}** |\n")
               f.write(f"| **唯一標準封面 SHA-256** | `{viewer_gate.get('canonical_cover_sha256', '')}` |\n")
               f.write(f"| **封面一致化修復** | **{'已套用（以最後一部封面覆蓋全部影片）' if viewer_gate.get('cover_repair_applied') else '不需要'}** |\n")
-              f.write(f"| **Hugging Face Parts** | **{hf_done} / {total}** |\n")
+              f.write(f"| **Current Book Hugging Face Parts** | **{hf_done} / {total}** |\n")
+              if not book_title:
+                  f.write("| **Hugging Face Summary Warning** | `本次 checkpoint 缺少 book_title，無法統計本書 HF Parts` |\n")
               f.write(f"| **Hugging Face Repo** | `{hf_repo}` |\n")
               if "reason" in state and state["reason"]:
                   f.write(f"| **Reason** | `{state['reason']}` |\n")
@@ -807,7 +810,7 @@ jobs:
               if playlist_url and playlist_url.startswith("http"):
                   f.write(f"| **播放清單** | [點此開啟 YouTube 播放清單]({playlist_url}) |\n")
               f.write("\n")
-              f.write(PublicationCheckpoint(state_file).markdown_summary())
+              f.write(publication.markdown_summary())
           PY
 
       - name: Save YouTube upload checkpoint

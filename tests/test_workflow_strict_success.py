@@ -103,6 +103,16 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("HF_ARCHIVE_REPO", upload)
         self.assertIn("hf_archive_state.json", upload)
 
+    def test_hf_summary_counts_only_the_current_book(self):
+        summary = next(
+            step["run"] for step in self.jobs["upload_to_youtube"]["steps"]
+            if step.get("name") == "Generate Job Summary"
+        )
+        self.assertIn('book_title = publication.data.get("book_title", "")', summary)
+        self.assertIn("books.get(book_title, {})", summary)
+        self.assertNotIn("for book in books.values()", summary)
+        self.assertIn("Current Book Hugging Face Parts", summary)
+
     def test_hf_receives_complete_part_archives_in_one_commit_per_worker(self):
         merge = self.jobs["merge_parts"]
         upload_steps = [step for step in merge["steps"] if step.get("uses") == "actions/upload-artifact@v4"]
