@@ -153,9 +153,15 @@ jobs:
             eligible_epoch=$((updated_epoch + 7200))
             retry_reason="otherError"
 
+            failure_log=$(gh run view "$run_id" --repo "$REPOSITORY" --log-failed 2>/dev/null || true)
+            if grep -q 'reason=permanentFailure' <<< "$failure_log"; then
+              echo "Run [$run_id](https://github.com/$REPOSITORY/actions/runs/$run_id) has a permanent code/data failure (attempt $run_attempt). Automatic retry is disabled until a corrected commit is dispatched." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+
             # Daily-limit failures emit a durable retry_at marker. Reading the
             # failed-job log avoids touching YouTube before that exact time.
-            retry_line=$(gh run view "$run_id" --repo "$REPOSITORY" --log-failed 2>/dev/null |
+            retry_line=$(printf '%s\n' "$failure_log" |
               grep -oE 'retry after [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+[+-][0-9:]+|retry_at=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+[+-][0-9:]+' |
               tail -n 1 || true)
             retry_at=$(sed -E 's/^retry after |^retry_at=//' <<< "$retry_line")
@@ -715,8 +721,8 @@ jobs:
             exit 1
           fi
 
-          echo "::error title=YouTube upload failed::checkpoint preserved; next retry is eligible after two hours"
-          echo "❌ YouTube upload failed with exit code **$code**. Checkpoint preserved; the next retry is eligible after **two hours**." >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=YouTube publication code failure::reason=permanentFailure; checkpoint preserved; fix the code or data before retrying"
+          echo "❌ YouTube publication failed with exit code **$code**. This is not classified as a retryable API limit; the checkpoint is preserved and automatic retry is disabled." >> "$GITHUB_STEP_SUMMARY"
           exit "$code"
 
       - name: Enforce strict publication evidence

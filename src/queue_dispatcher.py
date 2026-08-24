@@ -238,7 +238,13 @@ class Dispatcher:
                 existing_retry_at = parse_time(task.get("retry_at"))
                 reason, retry_at = self.retry_marker(run_id)
                 if reason not in TRANSIENT_REASONS:
-                    reason = "otherError"
+                    task.update({
+                        "status": "needs_attention",
+                        "reason": reason or "permanentFailure",
+                        "retry_at": None,
+                    })
+                    changed = True
+                    continue
                 retry_at = existing_retry_at or retry_at or (datetime.now(timezone.utc) + timedelta(hours=2))
                 task.update({
                     "status": "waiting_retry",

@@ -233,8 +233,9 @@ class CloudQueueTests(unittest.TestCase):
         reconciled, changed = dispatcher.reconcile(queue)
 
         self.assertTrue(changed)
-        self.assertEqual(reconciled["queue"][0]["status"], "waiting_retry")
-        self.assertEqual(reconciled["queue"][0]["reason"], "otherError")
+        self.assertEqual(reconciled["queue"][0]["status"], "needs_attention")
+        self.assertEqual(reconciled["queue"][0]["reason"], "$(python")
+        self.assertIsNone(reconciled["queue"][0]["retry_at"])
 
     def test_paused_task_is_skipped_and_can_be_reordered(self):
         first = new_task("https://example/1", "第一部")

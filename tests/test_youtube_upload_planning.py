@@ -125,6 +125,31 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         self.assertNotIn("歡迎訂閱", description)
         self.assertNotIn("請依順序播放", description)
 
+    def test_video_description_omits_timeline_for_short_final_part(self):
+        playlist_only = (
+            "▶️《測試書》播放清單全集\n"
+            "https://www.youtube.com/playlist?list=PL123"
+        )
+        for items in (
+            [],
+            [{"chap_num": 2015, "chapter_title": "第2015章 大結局", "dur": 600}],
+            [
+                {"chap_num": 2014, "chapter_title": "第2014章 終戰", "dur": 600},
+                {"chap_num": 2015, "chapter_title": "第2015章 大結局", "dur": 600},
+            ],
+        ):
+            with self.subTest(chapter_count=len(items)):
+                self.assertEqual(
+                    build_video_description("測試書", "", "PL123", items),
+                    playlist_only,
+                )
+
+    def test_timeline_validator_remains_strict_when_called_directly(self):
+        with self.assertRaisesRegex(ValueError, "at least three chapters"):
+            build_chapter_timeline([
+                {"chap_num": 2015, "chapter_title": "第2015章 大結局", "dur": 600},
+            ])
+
     def test_video_description_requires_playlist_id(self):
         with self.assertRaisesRegex(ValueError, "playlist id"):
             build_video_description("吞噬星空", "說明", "")

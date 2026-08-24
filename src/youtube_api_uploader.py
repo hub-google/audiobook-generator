@@ -198,7 +198,12 @@ def build_chapter_timeline(chapter_items):
 
 
 def build_video_description(book_title, description, playlist_id, chapter_items=None):
-    """Put the playlist first, followed only by the verified chapter timeline."""
+    """Build a publishable description, adding chapters only when YouTube accepts them.
+
+    YouTube chapter timestamps are optional metadata and require at least three
+    entries.  A short final Part is still a valid video, so it must not make the
+    entire publication fail merely because it cannot have a chapter timeline.
+    """
     title = str(book_title or "").strip()
     playlist = str(playlist_id or "").strip()
     if not title:
@@ -210,7 +215,7 @@ def build_video_description(book_title, description, playlist_id, chapter_items=
         f"https://www.youtube.com/playlist?list={playlist}"
     )
     sections = [playlist_header]
-    if chapter_items is not None:
+    if chapter_items is not None and len(chapter_items) >= 3:
         sections.append(build_chapter_timeline(chapter_items))
     return "\n\n".join(sections)
 
