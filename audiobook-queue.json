@@ -15,7 +15,7 @@
       ],
       "renumber_selected": true,
       "duplicate_chapter_count": 130,
-      "status": "running",
+      "status": "needs_attention",
       "run_id": 32814338238,
       "run_attempt": 1,
       "execution_generation": 14,
@@ -173,14 +173,14 @@
         }
       ],
       "retry_at": null,
-      "reason": null,
+      "reason": "permanentFailure;",
       "hf_progress": {
-        "completed": 0,
-        "total": 0
+        "completed": 31,
+        "total": 31
       },
       "youtube_progress": {
-        "completed": 0,
-        "total": 0
+        "completed": 1,
+        "total": 31
       },
       "created_at": "2026-08-22T09:51:02.489262+00:00",
       "updated_at": "2026-08-25T05:49:12.085282+00:00",
