@@ -7,26 +7,65 @@ from src.cloud_queue import (
     mark_task_interrupted, mark_task_needs_attention, requeue_task_after_active, settle_interrupted_task, update_task,
     update_task_chapters, normalize_chapter_order, normalize_queue,
 )
-from src.queue_dispatcher import Dispatcher, artifact_source_run_id
+from src.queue_dispatcher import Dispatcher, artifact_source_run_id, failed_artifact_source_candidates
 
 
 class CloudQueueTests(unittest.TestCase):
-    def test_artifact_source_is_latest_run_with_same_stable_book_fingerprint(self):
+    def test_artifact_source_is_latest_failed_run_with_same_stable_book_fingerprint(self):
         queue = {
             "queue": [
                 {"task_id": "current", "book_profile_id": "book-fp", "run_history": [
-                    {"run_id": 100, "ended_at": "2026-08-20T00:00:00Z"},
-                    {"run_id": 300, "ended_at": "2026-08-22T00:00:00Z"},
+                    {"run_id": 100, "conclusion": "failure", "ended_at": "2026-08-20T00:00:00Z"},
+                    {"run_id": 300, "conclusion": "failure", "ended_at": "2026-08-22T00:00:00Z"},
+                    {"run_id": 400, "conclusion": "cancelled", "ended_at": "2026-08-24T00:00:00Z"},
                 ]},
                 {"task_id": "other-book", "book_profile_id": "other-fp", "run_history": [
-                    {"run_id": 999, "ended_at": "2026-08-23T00:00:00Z"},
+                    {"run_id": 999, "conclusion": "failure", "ended_at": "2026-08-23T00:00:00Z"},
                 ]},
             ],
             "completed": [{"task_id": "older-task", "book_profile_id": "book-fp", "run_history": [
-                {"run_id": 200, "ended_at": "2026-08-21T00:00:00Z"},
+                {"run_id": 200, "conclusion": "failure", "ended_at": "2026-08-21T00:00:00Z"},
             ]}],
         }
         self.assertEqual(artifact_source_run_id(queue, "book-fp", "current"), 300)
+
+    def test_failed_source_candidates_exclude_cancelled_success_missing_and_active(self):
+        queue = {"queue": [{
+            "task_id": "current", "book_profile_id": "book-fp", "run_history": [
+                {"run_id": 10, "conclusion": "failure", "ended_at": "2026-08-20T00:00:00Z"},
+                {"run_id": 20, "conclusion": "success", "ended_at": "2026-08-21T00:00:00Z"},
+                {"run_id": 30, "conclusion": "cancelled", "ended_at": "2026-08-22T00:00:00Z"},
+                {"run_id": 40, "conclusion": "missing", "ended_at": "2026-08-23T00:00:00Z"},
+                {"run_id": 50, "conclusion": None, "ended_at": "2026-08-24T00:00:00Z"},
+            ],
+        }], "completed": []}
+        self.assertEqual(failed_artifact_source_candidates(queue, "book-fp", "current"), [10])
+
+    def test_dispatcher_skips_deleted_or_unusable_failed_runs_and_locks_one_source(self):
+        queue = {"queue": [{
+            "task_id": "current", "book_profile_id": "book-fp", "run_history": [
+                {"run_id": 100, "conclusion": "failure", "ended_at": "2026-08-20T00:00:00Z"},
+                {"run_id": 200, "conclusion": "failure", "ended_at": "2026-08-21T00:00:00Z"},
+                {"run_id": 300, "conclusion": "failure", "ended_at": "2026-08-22T00:00:00Z"},
+            ],
+        }], "completed": []}
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.run_by_id = Mock(side_effect=lambda run_id: {
+            300: None,
+            200: {"id": 200, "status": "completed", "conclusion": "failure"},
+            100: {"id": 100, "status": "completed", "conclusion": "failure"},
+        }[run_id])
+        dispatcher.run_artifact_names = Mock(side_effect=lambda run_id: {
+            200: {"shared-config"},
+            100: {"shared-config", "video-worker-0"},
+        }[run_id])
+
+        selected = dispatcher.select_artifact_source_run_id(queue, "book-fp", "current")
+
+        self.assertEqual(selected, 100)
+        self.assertEqual(dispatcher.run_by_id.call_args_list, [
+            unittest.mock.call(300), unittest.mock.call(200), unittest.mock.call(100),
+        ])
 
     def test_normalized_number_overrides_follow_stable_uuid(self):
         task = new_task(
@@ -515,13 +554,16 @@ class CloudQueueTests(unittest.TestCase):
     @patch.object(Dispatcher, "request")
     def test_dispatcher_passes_book_title_to_workflow(self, request):
         task = new_task("https://example/1", "凡人修仙傳", 1, 100)
-        task["run_history"] = [{"run_id": 122, "ended_at": "2026-08-22T00:00:00Z"}]
+        task["run_history"] = [{
+            "run_id": 122, "conclusion": "failure", "ended_at": "2026-08-22T00:00:00Z",
+        }]
         queue = add_tasks(empty_queue(), [task])
         dispatcher = Dispatcher("owner/repo", "token")
         dispatcher.store = Mock()
         dispatcher.store.load.return_value = (queue, "sha")
         dispatcher.store.save.return_value = "next-sha"
         dispatcher.profile_store.load = Mock(return_value=({"books": {}}, None))
+        dispatcher.select_artifact_source_run_id = Mock(return_value=122)
         dispatcher.runs = Mock(side_effect=[
             [],
             [{

@@ -42,8 +42,13 @@ TRANSIENT_REASONS = {
 }
 
 
-def artifact_source_run_id(queue, profile_id, current_task_id="", current_task=None):
-    """Return the newest finished Run bound to the same stable book profile."""
+def failed_artifact_source_candidates(queue, profile_id, current_task_id="", current_task=None):
+    """Return newest-to-oldest failed Run IDs for exactly one stable book profile.
+
+    Cancellation, interruption, missing runs, successful runs, and active runs are
+    not production checkpoints.  The dispatcher performs the live GitHub and
+    artifact checks before locking one candidate for the next execution.
+    """
     candidates = []
     sequence = 0
     tasks = list(queue.get("queue") or []) + list(queue.get("completed") or [])
@@ -53,18 +58,36 @@ def artifact_source_run_id(queue, profile_id, current_task_id="", current_task=N
         if str(task.get("book_profile_id") or "") != str(profile_id or ""):
             continue
         history = list(task.get("run_history") or [])
-        if task.get("task_id") != current_task_id and task.get("run_id") and task.get("run_conclusion"):
+        if task.get("task_id") != current_task_id and task.get("run_id") and task.get("run_conclusion") == "failure":
             history.append({
                 "run_id": task.get("run_id"),
+                "conclusion": "failure",
                 "ended_at": task.get("run_completed_at") or task.get("updated_at") or "",
             })
         for item in history:
+            if item.get("conclusion") != "failure":
+                continue
             run_id = item.get("run_id")
             if not str(run_id or "").isdigit():
                 continue
             sequence += 1
             candidates.append((str(item.get("ended_at") or ""), sequence, int(run_id)))
-    return max(candidates)[2] if candidates else None
+    newest_by_run = {}
+    for ended_at, order, run_id in candidates:
+        newest_by_run[run_id] = max(newest_by_run.get(run_id, ("", -1)), (ended_at, order))
+    return [
+        run_id for run_id, _ in sorted(
+            newest_by_run.items(), key=lambda item: (item[1][0], item[1][1]), reverse=True,
+        )
+    ]
+
+
+def artifact_source_run_id(queue, profile_id, current_task_id="", current_task=None):
+    """Return the newest recorded failed Run; live validation is done by Dispatcher."""
+    candidates = failed_artifact_source_candidates(
+        queue, profile_id, current_task_id, current_task=current_task,
+    )
+    return candidates[0] if candidates else None
 
 TAIPEI = ZoneInfo("Asia/Taipei")
 STATUS_LABELS = {
@@ -115,6 +138,35 @@ class Dispatcher:
         if response.status_code >= 400:
             raise RuntimeError(f"GitHub API GET /actions/runs/{run_id} failed ({response.status_code}): {response.text}")
         return response.json()
+
+    def run_artifact_names(self, run_id):
+        """Return non-expired artifact names for one existing Actions Run."""
+        response = self.request(
+            "GET", f"/actions/runs/{run_id}/artifacts", params={"per_page": 100},
+        )
+        return {
+            str(item.get("name") or "")
+            for item in response.json().get("artifacts", [])
+            if not item.get("expired") and item.get("name")
+        }
+
+    def select_artifact_source_run_id(self, queue, profile_id, current_task_id="", current_task=None):
+        """Lock the newest live, completed, failed Run with reusable worker artifacts."""
+        for run_id in failed_artifact_source_candidates(
+            queue, profile_id, current_task_id, current_task=current_task,
+        ):
+            run = self.run_by_id(run_id)
+            if not run:
+                continue
+            if run.get("status") != "completed" or run.get("conclusion") != "failure":
+                continue
+            names = self.run_artifact_names(run_id)
+            if "shared-config" not in names:
+                continue
+            if not any(name.startswith("video-worker-") for name in names):
+                continue
+            return int(run_id)
+        return None
 
     def run_uses_current_master(self, run_id):
         """Only rerun in place when GitHub would execute the current code."""
@@ -286,7 +338,9 @@ class Dispatcher:
             )
         task["book_profile_id"] = profile_id
         task["profile_snapshot"] = snapshot
-        source_run_id = artifact_source_run_id(queue, profile_id, task_id, current_task=task)
+        source_run_id = self.select_artifact_source_run_id(
+            queue, profile_id, task_id, current_task=task,
+        )
         task["artifact_source_run_id"] = source_run_id
         task.update({"status": "dispatching", "reason": None, "retry_at": None, "dispatched_at": datetime.now(timezone.utc).isoformat()})
         queue = update_task(

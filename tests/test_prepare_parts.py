@@ -6,12 +6,40 @@ from unittest.mock import MagicMock, patch
 
 import yaml
 
-from src.prepare_parts import merge_assigned_parts, plan_parts
+from src.prepare_parts import merge_assigned_parts, plan_parts, restore_locked_merge_result, restore_locked_plan
 from src.youtube_api_uploader import scan_artifact_chapters
 from src.part_builder import get_media_duration
 
 
 class PreparePartsTests(unittest.TestCase):
+    def test_restores_only_fingerprint_matching_locked_plan(self):
+        with tempfile.TemporaryDirectory() as root:
+            root=Path(root); source=root/'source'; source.mkdir(); output=root/'output'
+            config={'book_profile_id':'fp-1','selected_indices':[1,2],'cleaner':{'fingerprint':'clean-1'}}
+            (source/'config.yaml').write_text(yaml.safe_dump(config),encoding='utf-8')
+            (root/'current.yaml').write_text(yaml.safe_dump(config),encoding='utf-8')
+            plan={'source_run_id':'123','selected_indices':[1,2],'parts':[{'part_num':1}], 'matrix':{'include':[{'merge_worker_id':0,'part_numbers':'1'}]}}
+            (source/'parts-plan.json').write_text(json.dumps(plan),encoding='utf-8')
+            self.assertEqual(restore_locked_plan(source,root/'current.yaml',output)['source_run_id'],'123')
+            self.assertTrue((output/'parts-plan.json').is_file())
+            config['book_profile_id']='wrong'; (root/'current.yaml').write_text(yaml.safe_dump(config),encoding='utf-8')
+            self.assertIsNone(restore_locked_plan(source,root/'current.yaml',root/'wrong-output'))
+
+    def test_valid_locked_merge_result_skips_remerge_and_wrong_source_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            root=Path(root); source=root/'source'; source.mkdir(); output=root/'output'
+            plan={'source_run_id':'123','parts':[{'part_num':1,'duration':1.0}]}
+            (root/'plan.json').write_text(json.dumps(plan),encoding='utf-8')
+            item={'part_num':1,'duration':1.0,'subtitle':'part-1.srt'}
+            (source/'part-1.srt').write_text('subtitle',encoding='utf-8')
+            manifest=source/'shard-manifest-1.json'
+            manifest.write_text(json.dumps({'source_run_id':'123','parts':[item]}),encoding='utf-8')
+            with patch('src.prepare_parts.validate_srt',return_value={'valid':True}):
+                self.assertTrue(restore_locked_merge_result(root/'plan.json',[1],source,output))
+            self.assertTrue((output/'shard-manifest-1.json').is_file())
+            manifest.write_text(json.dumps({'source_run_id':'999','parts':[item]}),encoding='utf-8')
+            self.assertFalse(restore_locked_merge_result(root/'plan.json',[1],source,root/'wrong'))
+
     def test_merge_uploads_complete_part_tree_in_one_hf_commit(self):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)

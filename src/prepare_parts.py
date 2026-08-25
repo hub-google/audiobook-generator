@@ -78,6 +78,38 @@ def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17):
     (output/"parts-plan.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
     shutil.copy2(config_path, output/"config.yaml"); return manifest
 
+def restore_locked_plan(source_dir, current_config_path, output_dir):
+    source=Path(source_dir); plan_path=source/"parts-plan.json"; source_config_path=source/"config.yaml"
+    if not plan_path.is_file() or not source_config_path.is_file(): return None
+    current=yaml.safe_load(Path(current_config_path).read_text(encoding="utf-8")) or {}
+    previous=yaml.safe_load(source_config_path.read_text(encoding="utf-8")) or {}
+    if str(previous.get("book_profile_id") or "") != str(current.get("book_profile_id") or ""): return None
+    if [int(x) for x in previous.get("selected_indices") or []] != [int(x) for x in current.get("selected_indices") or []]: return None
+    if str((previous.get("cleaner") or {}).get("fingerprint") or "") != str((current.get("cleaner") or {}).get("fingerprint") or ""): return None
+    plan=json.loads(plan_path.read_text(encoding="utf-8"))
+    if [int(x) for x in plan.get("selected_indices") or []] != [int(x) for x in current.get("selected_indices") or []]: return None
+    output=Path(output_dir); output.mkdir(parents=True,exist_ok=True)
+    shutil.copy2(plan_path,output/"parts-plan.json"); shutil.copy2(source_config_path,output/"config.yaml")
+    return plan
+
+def restore_locked_merge_result(plan_path, part_numbers, source_dir, output_dir):
+    plan=json.loads(Path(plan_path).read_text(encoding="utf-8")); wanted={int(x) for x in part_numbers}
+    source=Path(source_dir); manifests=list(source.glob("**/shard-manifest-*.json"))
+    if not manifests: return False
+    recovered={}
+    for path in manifests:
+        data=json.loads(path.read_text(encoding="utf-8"))
+        if str(data.get("source_run_id")) != str(plan.get("source_run_id")): return False
+        for item in data.get("parts") or []: recovered[int(item["part_num"])]=item
+    if set(recovered) != wanted: return False
+    output=Path(output_dir); output.mkdir(parents=True,exist_ok=True)
+    for number,item in recovered.items():
+        subtitle=next(iter(source.glob(f"**/{item['subtitle']}")),None)
+        if not subtitle or not subtitle.is_file(): return False
+        validate_srt(str(subtitle),float(item["duration"])); shutil.copy2(subtitle,output/subtitle.name)
+    for path in source.glob("**/shard-manifest-*.json"): shutil.copy2(path,output/path.name)
+    return True
+
 def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir):
     plan = json.loads(Path(plan_path).read_text(encoding="utf-8")); wanted = {int(n) for n in part_numbers}
     assigned = [p for p in plan["parts"] if int(p["part_num"]) in wanted]
@@ -188,11 +220,18 @@ def safe_hf_name(value):
     return re.sub(r"\s+"," ",value).strip(" ._") or "未命名"
 
 def main():
-    p=argparse.ArgumentParser(); p.add_argument("--mode",required=True,choices=["plan","merge","fetch"]); p.add_argument("--run-id"); p.add_argument("--repo",default=""); p.add_argument("--config"); p.add_argument("--plan"); p.add_argument("--part-numbers",default=""); p.add_argument("--output-dir",required=True); p.add_argument("--sidecar-dir"); p.add_argument("--work-dir",default="temp_prepare_parts"); p.add_argument("--github-output"); a=p.parse_args()
+    p=argparse.ArgumentParser(); p.add_argument("--mode",required=True,choices=["plan","merge","fetch","restore-plan","restore-merge"]); p.add_argument("--run-id"); p.add_argument("--repo",default=""); p.add_argument("--config"); p.add_argument("--plan"); p.add_argument("--source-dir"); p.add_argument("--part-numbers",default=""); p.add_argument("--output-dir",required=True); p.add_argument("--sidecar-dir"); p.add_argument("--work-dir",default="temp_prepare_parts"); p.add_argument("--github-output"); a=p.parse_args()
     if a.mode=="plan":
         result=plan_parts(a.run_id,a.repo,a.config,a.output_dir,a.work_dir)
         if a.github_output:
             with open(a.github_output,"a",encoding="utf-8") as h: h.write("matrix="+json.dumps(result["matrix"],separators=(",",":"))+"\n"+f"part_count={len(result['parts'])}\n")
+    elif a.mode=="restore-plan":
+        result=restore_locked_plan(a.source_dir,a.config,a.output_dir)
+        if not result: raise SystemExit(1)
+        if a.github_output:
+            with open(a.github_output,"a",encoding="utf-8") as h: h.write("matrix="+json.dumps(result["matrix"],separators=(",",":"))+"\n"+f"part_count={len(result['parts'])}\n")
+    elif a.mode=="restore-merge":
+        if not restore_locked_merge_result(a.plan,[int(n) for n in a.part_numbers.split(",") if n],a.source_dir,a.output_dir): raise SystemExit(1)
     elif a.mode=="merge": merge_assigned_parts(a.plan,[int(n) for n in a.part_numbers.split(",") if n],a.repo,a.output_dir,a.work_dir)
     else: fetch_parts_from_hf(a.plan,a.output_dir,a.sidecar_dir)
 if __name__=="__main__": main()

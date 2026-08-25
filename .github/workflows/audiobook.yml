@@ -322,19 +322,52 @@ jobs:
         with:
           name: shared-config
 
-      - name: Restore same-book historical Run artifacts newest-to-oldest
-        id: history_restore
+      - name: Download only the locked failed Run (maximum 3 attempts)
+        id: locked_source_download
+        if: inputs.resume_source_run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_ID: ${{ inputs.resume_source_run_id }}
+          WORKER_ID: ${{ matrix.worker_id }}
+        run: |
+          for attempt in 1 2 3; do
+            echo "Locked source Run $SOURCE_RUN_ID download attempt $attempt/3"
+            rm -rf previous-run-config previous-worker-artifact
+            config_ok=false
+            worker_ok=false
+            if gh run download "$SOURCE_RUN_ID" --repo "${{ github.repository }}" \
+              --name shared-config --dir previous-run-config; then
+              config_ok=true
+            fi
+            if gh run download "$SOURCE_RUN_ID" --repo "${{ github.repository }}" \
+              --name "video-worker-$WORKER_ID" --dir previous-worker-artifact; then
+              worker_ok=true
+            fi
+            if [ "$config_ok" = true ] && [ "$worker_ok" = true ]; then
+              echo "downloaded=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then sleep 15; fi
+          done
+          rm -rf previous-run-config previous-worker-artifact
+          echo "::warning title=Locked source unavailable::Run $SOURCE_RUN_ID could not be restored after 3 attempts; this worker will use exact Cache or rebuild only missing stages."
+          echo "downloaded=false" >> "$GITHUB_OUTPUT"
+
+      - name: Validate and restore only the locked failed Run
+        id: artifact_restore
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          QUEUE_STATE_BRANCH: automation-state
         run: |
           python src/worker_pipeline.py \
-            --stage restore_history \
-            --worker-id ${{ matrix.worker_id }}
+            --stage restore_artifact \
+            --worker-id ${{ matrix.worker_id }} \
+            --artifact-dir previous-worker-artifact \
+            --source-config previous-run-config/config.yaml \
+            --source-run-id "${{ inputs.resume_source_run_id }}"
 
       - name: Restore Cache only when artifact is absent or incomplete
-        if: steps.history_restore.outputs.complete != 'true'
+        if: steps.artifact_restore.outputs.complete != 'true'
         uses: actions/cache/restore@v4
         with:
           path: Workspace/
@@ -355,7 +388,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HISTORY_ARTIFACTS_SCANNED: "true"
           QUEUE_TASK_ID: ${{ github.event.inputs.queue_task_id }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -476,8 +508,8 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
-      part_count: ${{ steps.plan.outputs.part_count }}
+      matrix: ${{ steps.restore_plan.outputs.matrix || steps.plan.outputs.matrix }}
+      part_count: ${{ steps.restore_plan.outputs.part_count || steps.plan.outputs.part_count }}
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
@@ -486,8 +518,30 @@ jobs:
         with:
           name: shared-config
           path: prepared_source
+      - name: Try locked failed Run Part plan (maximum 3 attempts)
+        if: inputs.resume_source_run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_ID: ${{ inputs.resume_source_run_id }}
+        run: |
+          for attempt in 1 2 3; do
+            rm -rf previous_prepared_plan
+            if gh run download "$SOURCE_RUN_ID" --repo "${{ github.repository }}" --name prepared-plan --dir previous_prepared_plan; then exit 0; fi
+            if [ "$attempt" -lt 3 ]; then sleep 15; fi
+          done
+          exit 0
+      - name: Validate and restore locked failed Run Part plan
+        id: restore_plan
+        continue-on-error: true
+        run: |
+          python src/prepare_parts.py --mode restore-plan \
+            --source-dir previous_prepared_plan \
+            --config prepared_source/config.yaml \
+            --output-dir prepared_plan \
+            --github-output "$GITHUB_OUTPUT"
       - name: Inventory every chapter and lock the complete plan
         id: plan
+        if: steps.restore_plan.outcome != 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -527,7 +581,30 @@ jobs:
         with:
           name: prepared-plan
           path: prepared_plan
+      - name: Try locked failed Run Merge result (maximum 3 attempts)
+        if: inputs.resume_source_run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_ID: ${{ inputs.resume_source_run_id }}
+          MERGE_WORKER_ID: ${{ matrix.merge_worker_id }}
+        run: |
+          for attempt in 1 2 3; do
+            rm -rf previous_merge_result
+            if gh run download "$SOURCE_RUN_ID" --repo "${{ github.repository }}" --name "merge-result-$MERGE_WORKER_ID" --dir previous_merge_result; then exit 0; fi
+            if [ "$attempt" -lt 3 ]; then sleep 15; fi
+          done
+          exit 0
+      - name: Validate and restore locked failed Run Merge result
+        id: restore_merge
+        continue-on-error: true
+        run: |
+          python src/prepare_parts.py --mode restore-merge \
+            --plan prepared_plan/parts-plan.json \
+            --part-numbers "${{ matrix.part_numbers }}" \
+            --source-dir previous_merge_result \
+            --output-dir prepared_parts
       - name: Merge only assigned locked Parts
+        if: steps.restore_merge.outcome != 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}

@@ -363,148 +363,18 @@ def _copy_artifact_files_to_workspace(src_dir, workspace_dir, book_title):
                 target_dir = os.path.join(workspace_dir, dest_folder)
                 os.makedirs(target_dir, exist_ok=True)
                 dest_path = os.path.join(target_dir, f)
-                if not os.path.exists(dest_path) or os.path.getsize(dest_path) < os.path.getsize(src_path):
+                # The dispatcher has already fingerprint-locked this single
+                # source Run.  Its checkpoint is authoritative even when a
+                # freshly reconciled local placeholder happens to be larger.
+                # Comparing JSON file sizes can discard valid stage signatures
+                # and force needless cleaner/TTS/video regeneration.
+                if (
+                    dest_folder == "Checkpoints"
+                    or not os.path.exists(dest_path)
+                    or os.path.getsize(dest_path) < os.path.getsize(src_path)
+                ):
                     shutil.copy2(src_path, dest_path)
 
-
-def historical_run_candidates(queue, book_profile_id, current_run_id=""):
-    """Return newest-to-oldest Run IDs recorded for exactly one book profile."""
-    profile_id = str(book_profile_id or "")
-    if not profile_id:
-        return []
-    candidates = []
-    sequence = 0
-    for task in list(queue.get("queue") or []) + list(queue.get("completed") or []):
-        if str(task.get("book_profile_id") or "") != profile_id:
-            continue
-        for item in task.get("run_history") or []:
-            run_id = item.get("run_id")
-            if not str(run_id or "").isdigit() or str(run_id) == str(current_run_id):
-                continue
-            sequence += 1
-            candidates.append((str(item.get("ended_at") or ""), sequence, int(run_id)))
-    newest_by_run = {}
-    for ended_at, order, run_id in candidates:
-        newest_by_run[run_id] = max(newest_by_run.get(run_id, ("", -1)), (ended_at, order))
-    return [
-        run_id for run_id, _ in sorted(
-            newest_by_run.items(), key=lambda item: (item[1][0], item[1][1]), reverse=True
-        )
-    ]
-
-
-def inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices):
-    """Scan and download completed chapter artifacts from previous runs of the same novel."""
-    incomplete = set(checkpoint.incomplete_chapters())
-    if not incomplete:
-        logging.info("[Inherit] Worker %s 所有章節已由本機快取命中，無需拉取歷史 Artifacts。", worker_id)
-        return
-
-    book_profile_id = str(config.get("book_profile_id") or "")
-    if not book_profile_id:
-        logging.warning("[Inherit] 缺少 book_profile_id；禁止用書名或 task ID 猜測歷史 Run。")
-        return
-    book_title = config.get("book_title", "")
-    current_run_id = os.environ.get("GITHUB_RUN_ID", "")
-    repo = os.environ.get("GITHUB_REPOSITORY", "hub-google/audiobook-generator")
-    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
-
-    logging.info("🔍 [Inherit] 正在為 Worker %s 搜尋同本小說（%s）的歷史 Run Artifacts...", worker_id, book_title)
-
-    candidate_runs = []
-    # 唯一候選來源是 audiobook-queue.json 中相同 book_profile_id 的 run_history。
-    try:
-        from .cloud_queue import GitHubQueueStore
-    except ImportError:
-        try:
-            from cloud_queue import GitHubQueueStore
-        except ImportError:
-            GitHubQueueStore = None
-
-    if GitHubQueueStore and token:
-        try:
-            store = GitHubQueueStore(repo, token, branch=os.environ.get("QUEUE_STATE_BRANCH", "automation-state"))
-            queue, _ = store.load()
-            candidate_runs = historical_run_candidates(queue, book_profile_id, current_run_id)
-        except Exception as queue_err:
-            logging.warning("[Inherit] 讀取雲端隊列歷史失敗: %s", queue_err)
-
-    if not candidate_runs:
-        logging.info("[Inherit] queue 中沒有相同 book_profile_id 的歷史 Run；允許後續 Cache／重新製作。")
-        return
-
-    logging.info("📋 [Inherit] 找到 %d 個歷史 Run 候選：%s", len(candidate_runs), candidate_runs)
-
-    # 2. 依序倒序遍歷所有歷史 Run
-    target_artifacts = [
-        f"video-worker-{worker_id}",
-        f"mp4-worker-{worker_id}",
-    ]
-
-    try:
-        from .youtube_api_uploader import download_artifact_task
-    except ImportError:
-        try:
-            from youtube_api_uploader import download_artifact_task
-        except ImportError:
-            download_artifact_task = None
-
-    if not download_artifact_task:
-        logging.warning("[Inherit] download_artifact_task 不可用，略過歷史 Artifact 下載")
-        return
-
-    import tempfile
-    with tempfile.TemporaryDirectory() as temp_dir:
-        for past_run_id in candidate_runs:
-            if not incomplete:
-                break
-            logging.info("🔎 [Inherit] 正在檢查歷史 Run %s 的產物...", past_run_id)
-            downloaded = False
-            if book_profile_id:
-                config_dest = os.path.join(temp_dir, f"run_{past_run_id}_shared_config")
-                try:
-                    config_ok = download_artifact_task(
-                        str(past_run_id), repo, "shared-config", config_dest,
-                    )
-                    source_config_path = os.path.join(config_dest, "config.yaml")
-                    if not config_ok or not os.path.isfile(source_config_path):
-                        logging.info("[Inherit] Run %s 沒有可驗證的 shared-config，繼續更舊 Run。", past_run_id)
-                        continue
-                    source_profile_id = str(load_config(source_config_path).get("book_profile_id") or "")
-                    if source_profile_id != book_profile_id:
-                        logging.info(
-                            "[Inherit] Run %s 書籍指紋不符（%s != %s），略過。",
-                            past_run_id, source_profile_id or "missing", book_profile_id,
-                        )
-                        continue
-                except Exception as config_error:
-                    logging.warning("[Inherit] 驗證 Run %s shared-config 失敗：%s", past_run_id, config_error)
-                    continue
-            for art_name in target_artifacts:
-                art_dest = os.path.join(temp_dir, f"run_{past_run_id}_{art_name}")
-                try:
-                    success = download_artifact_task(str(past_run_id), repo, art_name, art_dest)
-                except Exception as dl_err:
-                    logging.warning("[Inherit] 下載 Run %s 產物 %s 失敗（可能已被手動刪除）: %s", past_run_id, art_name, dl_err)
-                    continue
-
-                if success and os.path.exists(art_dest):
-                    downloaded = True
-                    _copy_artifact_files_to_workspace(art_dest, checkpoint.workspace_dir, book_title)
-
-            if downloaded:
-                checkpoint.reconcile()
-                incomplete = set(checkpoint.incomplete_chapters())
-                recovered_count = len(exact_indices) - len(incomplete)
-                logging.info("📥 [Inherit] 從歷史 Run %s 成功還原！目前 Worker %s 進度：%d/%d 章",
-                             past_run_id, worker_id, recovered_count, len(exact_indices))
-
-    if not incomplete:
-        logging.info("🎉 [Inherit] Worker %s 所有章節（%d 章）已全數從歷史 Run 還原完畢，100%% 齊全！",
-                     worker_id, len(exact_indices))
-    else:
-        logging.info("⚠️ [Inherit] 經過歷史回溯，Worker %s 仍有 %d 章缺失，將由 TTS 引擎自動補齊。",
-                     worker_id, len(incomplete))
 
 def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
                  build_parts=True, force=False):
@@ -524,14 +394,6 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
         workspace_dir, book_title, worker_id, exact_indices,
         cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
     )
-    # ── 跨 Run 歷史 Artifacts 優先繼承 ───────────────────────────
-    if (
-        os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
-        and os.environ.get("HISTORY_ARTIFACTS_SCANNED", "").lower() != "true"
-        and (config.get("queue_task_id") or os.environ.get("QUEUE_TASK_ID"))
-        and (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))
-    ):
-        inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices)
     logging.info("=== Worker %s resumable per-stage pipeline (%s chapters) ===",
                  worker_id, len(exact_indices))
 
@@ -637,7 +499,7 @@ def restore_locked_artifact(config, worker_id, exact_indices, artifact_dir,
 def main():
     parser = argparse.ArgumentParser(description="Audiobook Matrix Worker Pipeline")
     parser.add_argument("--stage",            required=True,
-                        choices=["crawl", "clean", "tts", "image_gen", "video_gen", "validate", "pipeline", "restore_artifact", "restore_history"],
+                        choices=["crawl", "clean", "tts", "image_gen", "video_gen", "validate", "pipeline", "restore_artifact"],
                         help="Pipeline stage to execute")
     parser.add_argument("--worker-id",        type=int, required=True,
                         help="Worker index (0-based)")
@@ -678,24 +540,7 @@ def main():
     stage = args.stage
     tts_failed_chapters = set()
 
-    if stage == "restore_history":
-        book_title = config["book_title"]
-        workspace_dir = os.path.abspath(os.path.join(
-            SRC_DIR, "..", config["paths"]["workspace_base"], book_title
-        ))
-        checkpoint = PipelineCheckpoint(
-            workspace_dir, book_title, args.worker_id, exact_indices,
-            cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
-        )
-        inherit_historical_artifacts(config, checkpoint, args.worker_id, exact_indices)
-        checkpoint.reconcile()
-        complete = not checkpoint.incomplete_chapters()
-        output_file = os.environ.get("GITHUB_OUTPUT")
-        if output_file:
-            with open(output_file, "a", encoding="utf-8") as handle:
-                handle.write(f"complete={'true' if complete else 'false'}\n")
-
-    elif stage == "restore_artifact":
+    if stage == "restore_artifact":
         complete = restore_locked_artifact(
             config, args.worker_id, exact_indices, args.artifact_dir,
             args.source_config, args.source_run_id,

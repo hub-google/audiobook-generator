@@ -74,13 +74,15 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         manifest_step = next(step for step in upload_steps if "manifest-worker" in step["with"]["name"])
         self.assertIn("manifest-worker-", manifest_step["with"]["path"])
 
-    def test_history_restore_runs_before_cache(self):
+    def test_only_locked_failed_run_is_restored_before_cache(self):
         step = next(
             item for item in self.jobs["process_chapters"]["steps"]
-            if item.get("name") == "Restore same-book historical Run artifacts newest-to-oldest"
+            if item.get("name") == "Download only the locked failed Run (maximum 3 attempts)"
         )
         command = step["run"]
-        self.assertIn("--stage restore_history", command)
+        self.assertIn('for attempt in 1 2 3', command)
+        self.assertIn('--name "video-worker-$WORKER_ID"', command)
+        self.assertNotIn("mp4-worker", command)
         steps = self.jobs["process_chapters"]["steps"]
         history_index = steps.index(step)
         cache_index = next(
@@ -88,6 +90,12 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
             if item.get("name") == "Restore Cache only when artifact is absent or incomplete"
         )
         self.assertLess(history_index, cache_index)
+        restore = next(
+            item for item in steps
+            if item.get("name") == "Validate and restore only the locked failed Run"
+        )
+        self.assertIn("--stage restore_artifact", restore["run"])
+        self.assertNotIn("restore_history", self.text)
 
     def test_youtube_job_waits_for_plan_and_every_merge_worker(self):
         steps = self.jobs["upload_to_youtube"]["steps"]
@@ -99,6 +107,16 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("needs.setup.result == 'success'", self.jobs["upload_to_youtube"]["if"])
         self.assertIn("needs.merge_parts.result == 'success'", self.jobs["upload_to_youtube"]["if"])
         self.assertEqual(self.jobs["merge_parts"]["strategy"]["max-parallel"], 17)
+
+    def test_locked_plan_and_completed_merge_shards_are_reused(self):
+        plan_steps=self.jobs["plan_parts"]["steps"]
+        self.assertTrue(any(step.get("id")=="restore_plan" for step in plan_steps))
+        plan=next(step for step in plan_steps if step.get("id")=="plan")
+        self.assertEqual(plan.get("if"),"steps.restore_plan.outcome != 'success'")
+        merge_steps=self.jobs["merge_parts"]["steps"]
+        self.assertTrue(any(step.get("id")=="restore_merge" for step in merge_steps))
+        merge=next(step for step in merge_steps if step.get("name")=="Merge only assigned locked Parts")
+        self.assertEqual(merge.get("if"),"steps.restore_merge.outcome != 'success'")
 
     def test_matrix_validation_imports_yaml(self):
         step = next(

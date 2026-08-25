@@ -11,7 +11,7 @@
 - `queue`：只保存尚未嚴格成功完成的任務。每筆任務至少包含 `task_id`、`position`、book title、catalog URL、選章設定、固定 UUID 對應的 `chapter_title_overrides`、status、run ID/attempt、HF/YouTube progress、reason、retry_at 與 timestamps。
 - `completed`：只保存已通過 strict success gate 的完成紀錄，保留 task/run、章節、進度及完成時間，但不得包含 `position`，也不得參與調度。
 
-`queue` 與 `completed` 的每筆書籍任務都必須保留穩定 `book_profile_id` 與歷次執行的 `run_history`。同一本書可跨多個 task 保存紀錄；artifact 恢復時以 `book_profile_id` 合併全部歷史，而不是只看目前 task。`run_history` 是候選 Run 的權威索引，書名與 Actions 顯示名稱只供人閱讀。
+`queue` 與 `completed` 的每筆書籍任務都必須保留穩定 `book_profile_id` 與歷次執行的 `run_history`。同一本書可跨多個 task 保存紀錄；調度器以 `book_profile_id` 合併紀錄，但只可從 `conclusion=failure` 候選中鎖定一個經 GitHub API 驗證仍存在且 artifacts 可用的最新 Run。Worker 只讀 `artifact_source_run_id`，不得自行合併多個 Run。書名與 Actions 顯示名稱只供人閱讀。
 
 同一個 `task_id` 不得同時存在於 `queue` 與 `completed`。schema v1 的單一 `tasks` 陣列在讀取時必須依 `status == completed` 分流，移除完成項目的順位，將未完成項目重新連續編號，並在下一次狀態寫入時保存為 schema v2。不得繼續將兩類任務保存在同一個底層陣列後僅由 GUI 篩選。
 
