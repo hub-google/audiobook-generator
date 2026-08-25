@@ -231,6 +231,55 @@ class CloudQueueTests(unittest.TestCase):
         self.assertEqual(reason, "rateLimitExceeded")
         self.assertIsNotNone(retry_at)
 
+    @patch("src.queue_dispatcher.subprocess.run")
+    def test_progress_markers_falls_back_to_job_log_on_too_many_api_requests(self, run):
+        run.return_value = Mock(stdout="", stderr="too many API requests needed to fetch logs", returncode=1)
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.run_jobs = Mock(return_value=[
+            {"id": 999, "name": "Ordered HF + YouTube publication"},
+        ])
+        dispatcher.job_log = Mock(return_value="""
+[API_UPLOAD_MARKER] DONE | Part 1 | Ch 1-50 | title
+[API_UPLOAD_MARKER] DONE | Part 2 | Ch 51-100 | title
+[HF_MEDIA_MARKER] DONE | Part 1 | title
+[HF_MEDIA_MARKER] DONE | Part 2 | title
+Part 1/2 | Ch 1-50
+Part 2/2 | Ch 51-100
+""")
+        markers = dispatcher.progress_markers(123)
+        self.assertIsNotNone(markers)
+        self.assertEqual(markers["youtube_progress"], {"completed": 2, "total": 2})
+        self.assertEqual(markers["hf_progress"], {"completed": 2, "total": 2})
+
+    @patch("src.queue_dispatcher.subprocess.run")
+    def test_progress_markers_returns_none_when_no_text(self, run):
+        run.return_value = Mock(stdout="", stderr="too many API requests", returncode=1)
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.run_jobs = Mock(return_value=[])
+        markers = dispatcher.progress_markers(123)
+        self.assertIsNone(markers)
+
+    def test_reconcile_backfills_completed_task_with_zero_progress(self):
+        task = new_task("https://example/1", "已完成零進度書")
+        queue = add_tasks(empty_queue(), [task])
+        queue = update_task(
+            queue, task["task_id"], status="completed", run_id=123,
+            hf_progress={"completed": 0, "total": 0},
+            youtube_progress={"completed": 0, "total": 0},
+        )
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.runs = Mock(return_value=[])
+        dispatcher.progress_markers = Mock(return_value={
+            "youtube_progress": {"completed": 24, "total": 24},
+            "hf_progress": {"completed": 24, "total": 24},
+        })
+
+        reconciled, changed = dispatcher.reconcile(queue)
+        self.assertTrue(changed)
+        comp = reconciled["completed"][0]
+        self.assertEqual(comp["youtube_progress"], {"completed": 24, "total": 24})
+        self.assertEqual(comp["hf_progress"], {"completed": 24, "total": 24})
+
     def test_reconcile_does_not_keep_postponing_an_existing_retry(self):
         task = new_task("https://example/1", "限流書")
         queue = add_tasks(empty_queue(), [task])

@@ -177,16 +177,61 @@ class Dispatcher:
         master_sha = ((master.get("object") or {}).get("sha") or "").strip()
         return bool(master_sha and run["head_sha"] == master_sha)
 
+    def run_jobs(self, run_id):
+        try:
+            response = requests.get(
+                f"{self.api}/actions/runs/{run_id}/jobs",
+                headers=self.headers, params={"per_page": 100}, timeout=30,
+            )
+            if response.status_code == 200:
+                return response.json().get("jobs", [])
+        except Exception:
+            pass
+        return []
+
+    def job_log(self, job_id):
+        try:
+            response = requests.get(
+                f"{self.api}/actions/jobs/{job_id}/logs",
+                headers=self.headers, timeout=15, allow_redirects=True,
+            )
+            if response.status_code == 200 and response.text:
+                return response.text
+        except Exception:
+            pass
+        try:
+            res = subprocess.run(
+                [_find_gh(), "run", "view", f"--job={job_id}", "--repo", self.repo, "--log"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=15, check=False,
+            )
+            if res.returncode == 0 and res.stdout:
+                return res.stdout
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return ""
+
     def retry_marker(self, run_id):
+        text = ""
         try:
             command = [_find_gh(), "run", "view", str(run_id), "--repo", self.repo, "--log-failed"]
             result = subprocess.run(
                 command, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=90, check=False,
+                timeout=20, check=False,
             )
             text = (result.stdout or "") + (result.stderr or "")
         except (OSError, subprocess.SubprocessError):
+            pass
+
+        if not text or "too many API requests" in text:
+            jobs = self.run_jobs(run_id)
+            failed_jobs = [j for j in jobs if j.get("conclusion") == "failure"]
+            logs = [self.job_log(j["id"]) for j in failed_jobs if j.get("id")]
+            text = "\n".join(log for log in logs if log)
+
+        if not text:
             return "otherError", datetime.now(timezone.utc) + timedelta(hours=2)
+
         reason_match = re.findall(r"reason=([^ |\r\n]+)", text)
         retry_match = re.findall(r"retry(?: after|_at=)([0-9T:.+\-Z]+)", text)
         reason = reason_match[-1] if reason_match else "otherError"
@@ -196,19 +241,37 @@ class Dispatcher:
         return reason, retry_at or (datetime.now(timezone.utc) + timedelta(hours=2))
 
     def progress_markers(self, run_id):
+        text = ""
         try:
             result = subprocess.run(
                 [_find_gh(), "run", "view", str(run_id), "--repo", self.repo, "--log"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=120, check=False,
+                timeout=15, check=False,
             )
-            text = result.stdout or ""
+            if result.returncode == 0 and result.stdout and result.stdout.strip():
+                text = result.stdout
         except (OSError, subprocess.SubprocessError):
+            pass
+
+        if not text:
+            jobs = self.run_jobs(run_id)
+            target_keywords = ["publication", "publish", "part plan"]
+            priority_jobs = [
+                j for j in jobs
+                if any(kw in (j.get("name") or "").lower() for kw in target_keywords)
+            ]
+            logs = [self.job_log(j["id"]) for j in priority_jobs if j.get("id")]
+            text = "\n".join(log for log in logs if log)
+
+        if not text:
             return None
+
         yt_parts = {int(value) for value in re.findall(r"\[API_UPLOAD_MARKER\] DONE \| Part (\d+)", text)}
         hf_parts = {int(value) for value in re.findall(r"\[HF_(?:MEDIA|ARCHIVE)_MARKER\] DONE \| Part (\d+)", text)}
         planned = {int(value) for value in re.findall(r"Part (\d+)(?:/\d+)? \| Ch", text)}
         total = max(planned | yt_parts | hf_parts, default=0)
+        if total == 0 and not yt_parts and not hf_parts:
+            return None
         return {
             "youtube_progress": {"completed": len(yt_parts), "total": total},
             "hf_progress": {"completed": len(hf_parts), "total": total},
@@ -310,6 +373,16 @@ class Dispatcher:
                     conclusion="cancelled", ended_at=run.get("updated_at"),
                 )
                 changed = True
+        for task in list(queue.get("completed", [])):
+            hf = task.get("hf_progress") or {}
+            yt = task.get("youtube_progress") or {}
+            if (hf.get("total", 0) == 0 or yt.get("total", 0) == 0) and task.get("run_id"):
+                progress = self.progress_markers(task["run_id"])
+                if progress:
+                    for key, value in progress.items():
+                        if value.get("total", 0) > 0 and task.get(key) != value:
+                            task[key] = value
+                            changed = True
         return queue, changed
 
     def dispatch_next(self, queue):
