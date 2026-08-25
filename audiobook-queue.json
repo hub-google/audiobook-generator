@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 673,
-  "updated_at": "2026-08-25T12:13:20.481451+00:00",
+  "revision": 674,
+  "updated_at": "2026-08-25T12:28:07.838000+00:00",
   "queue": [
     {
       "task_id": "book-20260822-e697f308",
@@ -15,7 +15,7 @@
       ],
       "renumber_selected": true,
       "duplicate_chapter_count": 130,
-      "status": "running",
+      "status": "waiting_retry",
       "run_id": 32846396922,
       "run_attempt": 1,
       "execution_generation": 15,
@@ -195,10 +195,15 @@
           "run_id": 32844937112,
           "conclusion": "failure",
           "ended_at": "2026-08-25T12:12:27Z"
+        },
+        {
+          "run_id": 32846396922,
+          "conclusion": "failure",
+          "ended_at": "2026-08-25T12:28:02Z"
         }
       ],
-      "retry_at": null,
-      "reason": null,
+      "retry_at": "2026-08-25T14:28:07.836863+00:00",
+      "reason": "run_failure",
       "hf_progress": {
         "completed": 31,
         "total": 31
@@ -208,9 +213,9 @@
         "total": 31
       },
       "created_at": "2026-08-22T09:51:02.489262+00:00",
-      "updated_at": "2026-08-25T12:13:20.481424+00:00",
+      "updated_at": "2026-08-25T12:28:07.836863+00:00",
       "run_conclusion": "failure",
-      "run_completed_at": "2026-08-25T12:12:27Z",
+      "run_completed_at": "2026-08-25T12:28:02Z",
       "chapter_order": [
         1,
         2,
