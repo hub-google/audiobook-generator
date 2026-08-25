@@ -74,15 +74,20 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         manifest_step = next(step for step in upload_steps if "manifest-worker" in step["with"]["name"])
         self.assertIn("manifest-worker-", manifest_step["with"]["path"])
 
-    def test_deleted_locked_run_allows_verified_history_fallback(self):
+    def test_history_restore_runs_before_cache(self):
         step = next(
             item for item in self.jobs["process_chapters"]["steps"]
-            if item.get("name") == "Reject a failed download when the locked artifact exists"
+            if item.get("name") == "Restore same-book historical Run artifacts newest-to-oldest"
         )
         command = step["run"]
-        self.assertIn('grep -q "HTTP 404"', command)
-        self.assertIn("historical Run and Cache fallback are allowed", command)
-        self.assertIn("Unable to inspect locked Run", command)
+        self.assertIn("--stage restore_history", command)
+        steps = self.jobs["process_chapters"]["steps"]
+        history_index = steps.index(step)
+        cache_index = next(
+            index for index, item in enumerate(steps)
+            if item.get("name") == "Restore Cache only when artifact is absent or incomplete"
+        )
+        self.assertLess(history_index, cache_index)
 
     def test_youtube_job_waits_for_plan_and_every_merge_worker(self):
         steps = self.jobs["upload_to_youtube"]["steps"]

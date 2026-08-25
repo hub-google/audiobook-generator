@@ -322,67 +322,19 @@ jobs:
         with:
           name: shared-config
 
-      - name: Download fingerprint-locked source configuration
-        id: source_config_download
-        if: inputs.resume_source_run_id != ''
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: shared-config
-          path: previous-run-config
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.resume_source_run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download previous Run worker artifact first
-        id: worker_artifact_download
-        if: inputs.resume_source_run_id != ''
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: video-worker-${{ matrix.worker_id }}
-          path: previous-worker-artifact
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.resume_source_run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Reject a failed download when the locked artifact exists
-        if: inputs.resume_source_run_id != '' && steps.worker_artifact_download.outcome != 'success'
+      - name: Restore same-book historical Run artifacts newest-to-oldest
+        id: history_restore
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SOURCE_RUN_ID: ${{ inputs.resume_source_run_id }}
-          ARTIFACT_NAME: video-worker-${{ matrix.worker_id }}
-        run: |
-          api_error="$(mktemp)"
-          if ! exists=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
-            --jq ".artifacts[] | select(.expired == false and .name == \"$ARTIFACT_NAME\") | .id" \
-            2>"$api_error"); then
-            if grep -q "HTTP 404" "$api_error"; then
-              echo "Locked Run $SOURCE_RUN_ID no longer exists; historical Run and Cache fallback are allowed."
-              exit 0
-            fi
-            echo "Unable to inspect locked Run $SOURCE_RUN_ID:" >&2
-            sed 's/^/  /' "$api_error" >&2
-            exit 1
-          fi
-          if [ -n "$exists" ]; then
-            echo "Locked artifact $ARTIFACT_NAME exists in Run $SOURCE_RUN_ID but download failed." >&2
-            exit 1
-          fi
-          echo "Locked artifact $ARTIFACT_NAME does not exist in Run $SOURCE_RUN_ID; Cache fallback is allowed."
-
-      - name: Validate and restore previous Run artifact
-        id: artifact_restore
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QUEUE_STATE_BRANCH: automation-state
         run: |
           python src/worker_pipeline.py \
-            --stage restore_artifact \
-            --worker-id ${{ matrix.worker_id }} \
-            --artifact-dir previous-worker-artifact \
-            --source-config previous-run-config/config.yaml \
-            --source-run-id "${{ inputs.resume_source_run_id }}"
+            --stage restore_history \
+            --worker-id ${{ matrix.worker_id }}
 
       - name: Restore Cache only when artifact is absent or incomplete
-        if: steps.artifact_restore.outputs.complete != 'true'
+        if: steps.history_restore.outputs.complete != 'true'
         uses: actions/cache/restore@v4
         with:
           path: Workspace/
@@ -403,6 +355,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HISTORY_ARTIFACTS_SCANNED: "true"
           QUEUE_TASK_ID: ${{ github.event.inputs.queue_task_id }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}

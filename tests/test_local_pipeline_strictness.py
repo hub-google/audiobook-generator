@@ -102,25 +102,38 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
         checkpoint.incomplete_chapters.side_effect = [[1, 2], [1, 2], []]
         checkpoint.reconcile.return_value = None
 
-        # Simulate Run 999 failing/deleted (False), Run 888 succeeding (True)
-        download_task.side_effect = [False, False, True, True]
+        config = dict(self.config, book_profile_id="book-fp")
+
+        def download(run_id, _repo, artifact_name, destination):
+            if str(run_id) == "999":
+                return False
+            os.makedirs(destination, exist_ok=True)
+            if artifact_name == "shared-config":
+                import yaml
+                with open(os.path.join(destination, "config.yaml"), "w", encoding="utf-8") as handle:
+                    yaml.safe_dump({"book_profile_id": "book-fp"}, handle)
+                return True
+            return artifact_name == "video-worker-0"
+
+        download_task.side_effect = download
 
         with patch("src.cloud_queue.GitHubQueueStore") as mock_store_cls:
             mock_store = Mock()
             mock_store.load.return_value = ({
-                "tasks": [{
+                "queue": [{
                     "task_id": "task-123",
                     "book_title": "book",
+                    "book_profile_id": "book-fp",
                     "run_history": [
-                        {"run_id": 888, "conclusion": "failure"},
-                        {"run_id": 999, "conclusion": "failure"},
+                        {"run_id": 888, "ended_at": "2026-08-01T00:00:00Z"},
+                        {"run_id": 999, "ended_at": "2026-08-02T00:00:00Z"},
                     ]
                 }]
             }, "sha-1")
             mock_store_cls.return_value = mock_store
 
             with patch.dict(os.environ, {"GH_TOKEN": "token", "QUEUE_TASK_ID": "task-123", "GITHUB_RUN_ID": "1000"}):
-                worker_pipeline.inherit_historical_artifacts(self.config, checkpoint, 0, [1, 2])
+                worker_pipeline.inherit_historical_artifacts(config, checkpoint, 0, [1, 2])
 
         # Checked runs: first tried 999, then 888
         self.assertTrue(download_task.called)
@@ -152,7 +165,7 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
         config = dict(self.config, queue_task_id="task-123", book_profile_id="book-fp")
         with patch("src.cloud_queue.GitHubQueueStore") as mock_store_cls:
             mock_store_cls.return_value.load.return_value = ({
-                "tasks": [{
+                "queue": [{
                     "task_id": "task-123", "book_title": "book",
                     "book_profile_id": "book-fp",
                     "run_history": [{"run_id": 888}, {"run_id": 999}],
@@ -170,6 +183,47 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
         self.assertIn(("888", "video-worker-0"), calls)
         copy_files.assert_called_once()
         checkpoint.reconcile.assert_called_once()
+
+    def test_history_candidates_use_only_exact_profile_and_global_newest_order(self):
+        queue = {
+            "queue": [
+                {"book_title": "same title", "book_profile_id": "wanted", "run_history": [
+                    {"run_id": 1, "ended_at": "2026-08-01T00:00:00Z"},
+                    {"run_id": 3, "ended_at": "2026-08-03T00:00:00Z"},
+                ]},
+                {"book_title": "same title", "book_profile_id": "wrong", "run_history": [
+                    {"run_id": 99, "ended_at": "2026-08-09T00:00:00Z"},
+                ]},
+            ],
+            "completed": [{"book_profile_id": "wanted", "run_history": [
+                {"run_id": 2, "ended_at": "2026-08-02T00:00:00Z"},
+            ]}],
+        }
+        self.assertEqual(worker_pipeline.historical_run_candidates(queue, "wanted"), [3, 2, 1])
+
+    @patch("src.youtube_api_uploader.download_artifact_task", return_value=False)
+    def test_history_exhausts_every_same_profile_run_before_regeneration(self, download_task):
+        checkpoint = Mock()
+        checkpoint.workspace_dir = "/tmp/workspace"
+        checkpoint.incomplete_chapters.return_value = [1, 2]
+        config = dict(self.config, book_profile_id="book-fp")
+        history = [
+            {"run_id": run_id, "ended_at": f"2026-08-{run_id:02d}T00:00:00Z"}
+            for run_id in range(1, 10)
+        ]
+        with patch("src.cloud_queue.GitHubQueueStore") as store_type:
+            store_type.return_value.load.return_value = ({
+                "queue": [{"book_profile_id": "book-fp", "run_history": history}],
+                "completed": [],
+            }, "sha")
+            with patch.dict(os.environ, {"GH_TOKEN": "token", "GITHUB_RUN_ID": "10"}):
+                worker_pipeline.inherit_historical_artifacts(config, checkpoint, 0, [1, 2])
+
+        shared_config_runs = [
+            int(call.args[0]) for call in download_task.call_args_list
+            if call.args[2] == "shared-config"
+        ]
+        self.assertEqual(shared_config_runs, [9, 8, 7, 6, 5, 4, 3, 2, 1])
 
     @patch("src.worker_pipeline._copy_artifact_files_to_workspace")
     @patch("src.worker_pipeline.PipelineCheckpoint")
@@ -242,13 +296,11 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
     def test_workflow_enforces_artifact_before_conditional_cache(self):
         from pathlib import Path
         workflow = (Path(__file__).parents[1] / ".github" / "workflows" / "audiobook.yml").read_text(encoding="utf-8")
-        artifact = workflow.index("Download previous Run worker artifact first")
-        validation = workflow.index("Validate and restore previous Run artifact")
+        history = workflow.index("Restore same-book historical Run artifacts newest-to-oldest")
         cache = workflow.index("Restore Cache only when artifact is absent or incomplete")
-        self.assertLess(artifact, validation)
-        self.assertLess(validation, cache)
+        self.assertLess(history, cache)
         cache_block = workflow[cache:workflow.index("- name: Log Cache Location", cache)]
-        self.assertIn("if: steps.artifact_restore.outputs.complete != 'true'", cache_block)
+        self.assertIn("if: steps.history_restore.outputs.complete != 'true'", cache_block)
         self.assertIn(
             "${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-",
             cache_block,

@@ -318,20 +318,6 @@ def run_resumable_chapter(config, checkpoint, chapter_url, chapter_num, worker_i
                     checkpoint.mark_failed(chapter_num, stage, error)
             raise
 
-
-
-def _find_gh():
-    gh_candidates = [
-        r"C:\Program Files\GitHub CLI\gh.exe",
-        shutil.which("gh"),
-        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "GitHub CLI", "gh.exe"),
-    ]
-    for p in gh_candidates:
-        if p and os.path.exists(p):
-            return p
-    return "gh"
-
-
 def _copy_artifact_files_to_workspace(src_dir, workspace_dir, book_title):
     """Safely map and copy chapter artifacts into the canonical Workspace structure."""
     subfolder_map = {
@@ -381,6 +367,32 @@ def _copy_artifact_files_to_workspace(src_dir, workspace_dir, book_title):
                     shutil.copy2(src_path, dest_path)
 
 
+def historical_run_candidates(queue, book_profile_id, current_run_id=""):
+    """Return newest-to-oldest Run IDs recorded for exactly one book profile."""
+    profile_id = str(book_profile_id or "")
+    if not profile_id:
+        return []
+    candidates = []
+    sequence = 0
+    for task in list(queue.get("queue") or []) + list(queue.get("completed") or []):
+        if str(task.get("book_profile_id") or "") != profile_id:
+            continue
+        for item in task.get("run_history") or []:
+            run_id = item.get("run_id")
+            if not str(run_id or "").isdigit() or str(run_id) == str(current_run_id):
+                continue
+            sequence += 1
+            candidates.append((str(item.get("ended_at") or ""), sequence, int(run_id)))
+    newest_by_run = {}
+    for ended_at, order, run_id in candidates:
+        newest_by_run[run_id] = max(newest_by_run.get(run_id, ("", -1)), (ended_at, order))
+    return [
+        run_id for run_id, _ in sorted(
+            newest_by_run.items(), key=lambda item: (item[1][0], item[1][1]), reverse=True
+        )
+    ]
+
+
 def inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices):
     """Scan and download completed chapter artifacts from previous runs of the same novel."""
     incomplete = set(checkpoint.incomplete_chapters())
@@ -388,19 +400,19 @@ def inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices):
         logging.info("[Inherit] Worker %s 所有章節已由本機快取命中，無需拉取歷史 Artifacts。", worker_id)
         return
 
-    book_title = config.get("book_title", "")
     book_profile_id = str(config.get("book_profile_id") or "")
-    task_id = config.get("queue_task_id") or os.environ.get("QUEUE_TASK_ID", "")
+    if not book_profile_id:
+        logging.warning("[Inherit] 缺少 book_profile_id；禁止用書名或 task ID 猜測歷史 Run。")
+        return
+    book_title = config.get("book_title", "")
     current_run_id = os.environ.get("GITHUB_RUN_ID", "")
     repo = os.environ.get("GITHUB_REPOSITORY", "hub-google/audiobook-generator")
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
 
     logging.info("🔍 [Inherit] 正在為 Worker %s 搜尋同本小說（%s）的歷史 Run Artifacts...", worker_id, book_title)
 
-    # 1. 取得歷史 Run ID 列表 (倒序，從最新到最舊)
     candidate_runs = []
-
-    # 嘗試從 automation-state 的 audiobook-queue.json 讀取 run_history
+    # 唯一候選來源是 audiobook-queue.json 中相同 book_profile_id 的 run_history。
     try:
         from .cloud_queue import GitHubQueueStore
     except ImportError:
@@ -413,64 +425,20 @@ def inherit_historical_artifacts(config, checkpoint, worker_id, exact_indices):
         try:
             store = GitHubQueueStore(repo, token, branch=os.environ.get("QUEUE_STATE_BRANCH", "automation-state"))
             queue, _ = store.load()
-            pending = queue.get("queue", queue.get("tasks", []))
-            for t in pending + queue.get("completed", []):
-                same_book = (
-                    (task_id and t.get("task_id") == task_id)
-                    or (book_title and t.get("book_title") == book_title)
-                )
-                same_profile = not book_profile_id or str(t.get("book_profile_id") or "") == book_profile_id
-                if same_book and same_profile:
-                    history = t.get("run_history") or []
-                    for item in reversed(history):
-                        rid = item.get("run_id")
-                        if rid and str(rid) != str(current_run_id) and rid not in candidate_runs:
-                            candidate_runs.append(rid)
+            candidate_runs = historical_run_candidates(queue, book_profile_id, current_run_id)
         except Exception as queue_err:
             logging.warning("[Inherit] 讀取雲端隊列歷史失敗: %s", queue_err)
 
-    # 補充：如果從隊列沒拿到足夠的候選，或者手動執行沒有 task_id，用 gh api 查詢該 workflow 的歷史 runs
-    gh_bin = _find_gh()
-    if gh_bin or token:
-        try:
-            cmd = [
-                gh_bin, "api",
-                "--paginate",
-                f"repos/{repo}/actions/workflows/audiobook.yml/runs?per_page=100",
-                "--jq", ".workflow_runs[] | {id: .id, title: (.display_title // .name)}"
-            ]
-            res = subprocess.run(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                encoding="utf-8", errors="replace",
-            )
-            if res.returncode == 0 and res.stdout.strip():
-                for line in res.stdout.strip().split("\n"):
-                    if not line.strip():
-                        continue
-                    item = json.loads(line)
-                    rid = item.get("id")
-                    rtitle = item.get("title") or ""
-                    # 匹配 task_id 或 book_title
-                    match = False
-                    if task_id and task_id in rtitle:
-                        match = True
-                    elif book_title and book_title in rtitle:
-                        match = True
-                    if match and rid and str(rid) != str(current_run_id) and rid not in candidate_runs:
-                        candidate_runs.append(rid)
-        except Exception as api_err:
-            logging.warning("[Inherit] API 查詢歷史 Runs 失敗: %s", api_err)
-
     if not candidate_runs:
-        logging.info("[Inherit] 未找到同本小說的歷史 Run，將依序檢查本地 Cache 或執行全新運算。")
+        logging.info("[Inherit] queue 中沒有相同 book_profile_id 的歷史 Run；允許後續 Cache／重新製作。")
         return
 
     logging.info("📋 [Inherit] 找到 %d 個歷史 Run 候選：%s", len(candidate_runs), candidate_runs)
 
     # 2. 依序倒序遍歷所有歷史 Run
     target_artifacts = [
-        f"mp4-worker-{worker_id}",
         f"video-worker-{worker_id}",
+        f"mp4-worker-{worker_id}",
     ]
 
     try:
@@ -559,6 +527,7 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
     # ── 跨 Run 歷史 Artifacts 優先繼承 ───────────────────────────
     if (
         os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+        and os.environ.get("HISTORY_ARTIFACTS_SCANNED", "").lower() != "true"
         and (config.get("queue_task_id") or os.environ.get("QUEUE_TASK_ID"))
         and (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))
     ):
@@ -668,7 +637,7 @@ def restore_locked_artifact(config, worker_id, exact_indices, artifact_dir,
 def main():
     parser = argparse.ArgumentParser(description="Audiobook Matrix Worker Pipeline")
     parser.add_argument("--stage",            required=True,
-                        choices=["crawl", "clean", "tts", "image_gen", "video_gen", "validate", "pipeline", "restore_artifact"],
+                        choices=["crawl", "clean", "tts", "image_gen", "video_gen", "validate", "pipeline", "restore_artifact", "restore_history"],
                         help="Pipeline stage to execute")
     parser.add_argument("--worker-id",        type=int, required=True,
                         help="Worker index (0-based)")
@@ -709,7 +678,24 @@ def main():
     stage = args.stage
     tts_failed_chapters = set()
 
-    if stage == "restore_artifact":
+    if stage == "restore_history":
+        book_title = config["book_title"]
+        workspace_dir = os.path.abspath(os.path.join(
+            SRC_DIR, "..", config["paths"]["workspace_base"], book_title
+        ))
+        checkpoint = PipelineCheckpoint(
+            workspace_dir, book_title, args.worker_id, exact_indices,
+            cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
+        )
+        inherit_historical_artifacts(config, checkpoint, args.worker_id, exact_indices)
+        checkpoint.reconcile()
+        complete = not checkpoint.incomplete_chapters()
+        output_file = os.environ.get("GITHUB_OUTPUT")
+        if output_file:
+            with open(output_file, "a", encoding="utf-8") as handle:
+                handle.write(f"complete={'true' if complete else 'false'}\n")
+
+    elif stage == "restore_artifact":
         complete = restore_locked_artifact(
             config, args.worker_id, exact_indices, args.artifact_dir,
             args.source_config, args.source_run_id,

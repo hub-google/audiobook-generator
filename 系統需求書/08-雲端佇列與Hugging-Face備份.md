@@ -11,6 +11,8 @@
 - `queue`：只保存尚未嚴格成功完成的任務。每筆任務至少包含 `task_id`、`position`、book title、catalog URL、選章設定、固定 UUID 對應的 `chapter_title_overrides`、status、run ID/attempt、HF/YouTube progress、reason、retry_at 與 timestamps。
 - `completed`：只保存已通過 strict success gate 的完成紀錄，保留 task/run、章節、進度及完成時間，但不得包含 `position`，也不得參與調度。
 
+`queue` 與 `completed` 的每筆書籍任務都必須保留穩定 `book_profile_id` 與歷次執行的 `run_history`。同一本書可跨多個 task 保存紀錄；artifact 恢復時以 `book_profile_id` 合併全部歷史，而不是只看目前 task。`run_history` 是候選 Run 的權威索引，書名與 Actions 顯示名稱只供人閱讀。
+
 同一個 `task_id` 不得同時存在於 `queue` 與 `completed`。schema v1 的單一 `tasks` 陣列在讀取時必須依 `status == completed` 分流，移除完成項目的順位，將未完成項目重新連續編號，並在下一次狀態寫入時保存為 schema v2。不得繼續將兩類任務保存在同一個底層陣列後僅由 GUI 篩選。
 
 ```json
@@ -76,6 +78,8 @@ GUI 定時同步、切換頁籤、選取任務或重複取得相同 Run 狀態�
 ## 4. 配額與續作
 
 YouTube `quotaExceeded`、`uploadLimitExceeded`、429、字幕／播放清單暫時錯誤必須保存原因與安全 `retry_at`。已完成的 Video ID、字幕、playlist、publish 與 HF Part 不得重作。`waiting_retry` 始終占住目前小說；到期續作第 N Part，完成剩餘 Part 和全書驗證後才釋放下一部。
+
+媒體產製 Run 失敗後的下一次執行，必須從同 `book_profile_id` 的 `run_history` 最新一筆開始逐筆往前檢查。Run 404、Run 尚未產生 worker artifact、artifact 過期／缺失或只含部分有效章節都不得終止回溯；有效部分應累積合併，直到 Worker 完整或歷史耗盡。只有歷史耗盡後仍缺少的內容才可由 Cache 或重新製作補齊。
 
 ## 5. HF 目錄契約
 
