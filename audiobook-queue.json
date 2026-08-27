@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 719,
-  "updated_at": "2026-08-27T09:58:35.480328+00:00",
+  "revision": 720,
+  "updated_at": "2026-08-27T09:58:38.246824+00:00",
   "queue": [
     {
       "task_id": "book-20260824-8dbac83d",
@@ -1534,7 +1534,7 @@
         1514,
         1515
       ],
-      "status": "queued",
+      "status": "dispatching",
       "run_id": null,
       "run_attempt": 0,
       "execution_generation": 1,
@@ -1551,7 +1551,38 @@
         "total": 0
       },
       "created_at": "2026-08-24T01:02:29.893317+00:00",
-      "updated_at": "2026-08-26T14:26:33.446902+00:00"
+      "updated_at": "2026-08-27T09:58:38.246815+00:00",
+      "book_profile_id": "3cdd876b035be4ae",
+      "profile_snapshot": {
+        "book_profile_id": "3cdd876b035be4ae",
+        "profile_revision": 3,
+        "cleaner_remove_patterns": [
+          "《之王旗飛揚》完。"
+        ],
+        "duplicate_detection": {
+          "use_normalized_number": false,
+          "use_chapter_name": true,
+          "use_number_and_name": false
+        },
+        "chapter_title_overrides": {},
+        "manual_cover": {
+          "source": "manual_upload",
+          "provider": "github",
+          "repo": "hub-google/audiobook-generator",
+          "branch": "automation-state",
+          "remote_path": "manual-covers/3cdd876b035be4ae/master_cover.jpg",
+          "blob_sha": "e9f0430d17f9294c7639d51da0ca357aa37d2cfb",
+          "width": 1280,
+          "height": 720,
+          "bytes": 694714,
+          "sha256": "fa755ae2aa698bc94ab10f2ef59cdf6da781e60796b62ecba6a0b3263b6432e8",
+          "quality": 98
+        },
+        "chapter_normalized_number_overrides": {},
+        "cleaner_fingerprint": "ce7ee525737b86d6dbdf553368e726cb783d5a53f5aaed5dbbd327a8263f1794"
+      },
+      "artifact_source_run_id": null,
+      "dispatched_at": "2026-08-27T09:58:38.242951+00:00"
     }
   ],
   "completed": [
