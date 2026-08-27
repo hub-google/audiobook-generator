@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 716,
-  "updated_at": "2026-08-27T05:50:42.519466+00:00",
+  "revision": 717,
+  "updated_at": "2026-08-27T05:50:45.484411+00:00",
   "queue": [
     {
       "task_id": "book-20260824-09546326",
@@ -1692,7 +1692,7 @@
         1671,
         1672
       ],
-      "status": "queued",
+      "status": "dispatching",
       "run_id": null,
       "run_attempt": 0,
       "execution_generation": 1,
@@ -1709,7 +1709,41 @@
         "total": 0
       },
       "created_at": "2026-08-24T01:02:27.726840+00:00",
-      "updated_at": "2026-08-26T14:26:33.442776+00:00"
+      "updated_at": "2026-08-27T05:50:45.484396+00:00",
+      "book_profile_id": "0cc8286ee35f2cde",
+      "profile_snapshot": {
+        "book_profile_id": "0cc8286ee35f2cde",
+        "profile_revision": 4,
+        "cleaner_remove_patterns": [
+          "接下來，我又要寫一次感言了嗎？發愁，我居然要寫兩次完本感言。5月1日再聚。"
+        ],
+        "duplicate_detection": {
+          "use_normalized_number": true,
+          "use_chapter_name": true,
+          "use_number_and_name": false
+        },
+        "chapter_title_overrides": {
+          "1672": "那個人",
+          "1671": "大結局"
+        },
+        "manual_cover": {
+          "source": "manual_upload",
+          "provider": "github",
+          "repo": "hub-google/audiobook-generator",
+          "branch": "automation-state",
+          "remote_path": "manual-covers/0cc8286ee35f2cde/master_cover.jpg",
+          "blob_sha": "8cb423f32f401883286e33a4e2761ac78419185d",
+          "width": 1280,
+          "height": 720,
+          "bytes": 598426,
+          "sha256": "aebb91dea0574c9bf6f7940d0f88e46bd7c454c3a06897352c6d6e80e7c03f1d",
+          "quality": 98
+        },
+        "chapter_normalized_number_overrides": {},
+        "cleaner_fingerprint": "9b65a8c3890f082882ea68cea7a4fcb35eb809d948efa236173fd57a2a983d72"
+      },
+      "artifact_source_run_id": null,
+      "dispatched_at": "2026-08-27T05:50:45.477199+00:00"
     },
     {
       "task_id": "book-20260824-8dbac83d",
