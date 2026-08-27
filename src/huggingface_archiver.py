@@ -43,6 +43,11 @@ def media_info(path):
 
 
 class HuggingFaceArchiver:
+    REQUIRED_YOUTUBE_FIELDS = {
+        "title", "description", "youtube_video_id", "youtube_playlist_id",
+        "playlist_position", "privacy", "caption_language",
+    }
+
     def __init__(self, repo_id, token, state_file, project="有聲小說", private=False):
         if not repo_id:
             raise ValueError("HF_ARCHIVE_REPO is required")
@@ -174,9 +179,15 @@ class HuggingFaceArchiver:
             "chapters": [int(value) for value in chapters],
             "source_missing_chapters": [int(value) for value in (source_missing_chapters or [])],
             "source_run_id": str(run_id or ""), "queue_task_id": str(task_id or ""),
-            "files": fingerprint, "archived_at": _now(), "status": "complete",
+            "files": fingerprint, "archived_at": _now(),
+            "status": "uploaded_pending_youtube_metadata",
         }
-        record = {"status": "complete", "root": part_root, "files": fingerprint, "manifest": manifest}
+        record = {
+            "status": "uploaded_pending_youtube_metadata",
+            "root": part_root,
+            "files": fingerprint,
+            "manifest": manifest,
+        }
         book = self.state["books"].setdefault(book_title, {"parts": {}, "root": root})
         book["parts"][str(int(part_num))] = record
         book["master_cover_path"] = str(master_cover_path)
@@ -207,20 +218,47 @@ class HuggingFaceArchiver:
 
     def completed_parts(self, book_title):
         book = self.state.get("books", {}).get(book_title, {})
-        return {int(number) for number, item in book.get("parts", {}).items() if item.get("status") == "complete"}
+        return {
+            int(number)
+            for number, item in book.get("parts", {}).items()
+            if self._is_complete_part(item)
+        }
+
+    @classmethod
+    def _is_complete_part(cls, item):
+        youtube = item.get("youtube") or {}
+        return (
+            item.get("status") == "complete"
+            and cls.REQUIRED_YOUTUBE_FIELDS.issubset(youtube)
+            and bool(youtube.get("youtube_video_id"))
+            and bool(youtube.get("youtube_playlist_id"))
+        )
 
     def verify_book(self, book_title, expected_parts):
         book = self.state.get("books", {}).get(book_title, {})
         parts = book.get("parts", {})
-        missing = [number for number in range(1, int(expected_parts) + 1) if parts.get(str(number), {}).get("status") != "complete"]
+        missing = [
+            number for number in range(1, int(expected_parts) + 1)
+            if not self._is_complete_part(parts.get(str(number), {}))
+        ]
+        missing_youtube = [
+            number for number in range(1, int(expected_parts) + 1)
+            if parts.get(str(number), {}).get("status") == "complete"
+            and not self._is_complete_part(parts[str(number)])
+        ]
         remote = set(self.api.list_repo_files(self.repo_id, repo_type="dataset"))
         required = set()
         for item in parts.values():
-            if item.get("status") == "complete":
+            if self._is_complete_part(item):
                 required.update({item["files"]["video"]["path"], item["files"]["subtitle"]["path"], f"{item['root']}/merge_manifest.json", f"{item['root']}/media_info.json"})
         absent = sorted(required - remote)
         if missing or absent:
-            raise RuntimeError(f"HF archive verification failed; incomplete Parts={missing}, missing files={absent[:10]}")
+            raise RuntimeError(
+                "HF archive verification failed; "
+                f"incomplete Parts={missing}, "
+                f"Parts missing valid YouTube metadata={missing_youtube}, "
+                f"missing files={absent[:10]}"
+            )
         part_records = [parts[key] for key in sorted(parts, key=lambda value: int(value))]
         index = {"project": self.project, "book_title": book_title, "parts": [{"part_number": item["manifest"]["part_number"], "start_chapter": item["manifest"]["start_chapter"], "end_chapter": item["manifest"]["end_chapter"], "video": item["files"]["video"], "subtitle": item["files"]["subtitle"], "status": item["status"]} for item in part_records], "updated_at": _now()}
         book_manifest = {"project": self.project, "book_title": book_title, "master_cover": f"{book.get('root')}/master_cover.jpg", "part_count": len(part_records), "completed_parts": len(part_records), "archive_status": "complete", "updated_at": _now()}
