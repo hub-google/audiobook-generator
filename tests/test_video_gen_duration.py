@@ -12,7 +12,7 @@ from src.video_gen import SUBTITLE_FORCE_STYLE, generate_chapter_video
 
 class VideoGenerationDurationTests(unittest.TestCase):
     def test_subtitle_style_changes_appearance_without_moving_position(self):
-        self.assertIn("FontName=Noto Sans CJK TC", SUBTITLE_FORCE_STYLE)
+        self.assertIn("FontName=Noto Sans CJK SC", SUBTITLE_FORCE_STYLE)
         self.assertIn("Bold=1", SUBTITLE_FORCE_STYLE)
         self.assertIn("PrimaryColour=&H0000E8FF", SUBTITLE_FORCE_STYLE)
         self.assertIn("Outline=3", SUBTITLE_FORCE_STYLE)

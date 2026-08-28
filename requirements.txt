@@ -11,3 +11,4 @@ google-auth-httplib2>=0.1.1
 google-auth-oauthlib>=1.1.0
 huggingface_hub>=1.6.0
 tkinterdnd2>=0.4.3
+opencc-python-reimplemented>=0.1.7

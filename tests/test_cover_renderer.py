@@ -66,6 +66,47 @@ class CoverRendererTests(unittest.TestCase):
                 )
             self.assertEqual(set(drawn_text), {"大主宰"})
 
+    def test_simplified_title_converts_to_traditional_and_renders_cleanly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = os.path.join(directory, "cover_shengxu.jpg")
+            drawn_text = []
+            from PIL import ImageDraw
+            original_text = ImageDraw.ImageDraw.text
+
+            def record_text(draw, xy, text, *args, **kwargs):
+                drawn_text.append(text)
+                return original_text(draw, xy, text, *args, **kwargs)
+
+            with patch.object(ImageDraw.ImageDraw, "text", record_text):
+                render_viral_cover(
+                    Image.new("RGB", (1280, 720), (70, 42, 18)),
+                    "圣墟", 1, 100, True, output, 1,
+                )
+            self.assertEqual(set(drawn_text), {"聖墟", "已完結"})
+            self.assertTrue(os.path.isfile(output))
+            self.assertGreater(os.path.getsize(output), 10_000)
+
+    def test_missing_glyph_falls_back_entire_cover_to_mashanzheng(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = os.path.join(directory, "cover_fallback.jpg")
+            drawn_fonts = []
+            from PIL import ImageDraw
+            original_text = ImageDraw.ImageDraw.text
+
+            def record_text(draw, xy, text, font=None, *args, **kwargs):
+                if font:
+                    drawn_fonts.append((text, getattr(font, "path", str(font))))
+                return original_text(draw, xy, text, font=font, *args, **kwargs)
+
+            with patch.object(ImageDraw.ImageDraw, "text", record_text):
+                render_viral_cover(
+                    Image.new("RGB", (1280, 720), (70, 42, 18)),
+                    "甭鬧了", 1, 100, True, output, 1,
+                )
+            self.assertTrue(drawn_fonts)
+            for text, font_path in drawn_fonts:
+                self.assertTrue(str(font_path).endswith("MaShanZheng.ttf"))
+
 
 if __name__ == "__main__":
     unittest.main()

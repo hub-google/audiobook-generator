@@ -15,10 +15,10 @@ FONT_PATHS = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-    r"C:\Windows\Fonts\msjhbd.ttc",
-    r"C:\Windows\Fonts\msjh.ttc",
     r"C:\Windows\Fonts\msyhbd.ttc",
     r"C:\Windows\Fonts\msyh.ttc",
+    r"C:\Windows\Fonts\msjhbd.ttc",
+    r"C:\Windows\Fonts\msjh.ttc",
 ]
 
 

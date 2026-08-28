@@ -78,6 +78,43 @@ def _fit_title(draw, title, font_path, max_width=1130):
     raise RuntimeError(f"書名過長，無法放入兩行封面標題：{title}")
 
 
+def to_traditional(text):
+    if not text:
+        return ""
+    try:
+        import opencc
+        return opencc.OpenCC("s2tw").convert(str(text))
+    except Exception:
+        return str(text)
+
+
+def to_simplified(text):
+    if not text:
+        return ""
+    try:
+        import opencc
+        return opencc.OpenCC("t2s").convert(str(text))
+    except Exception:
+        return str(text)
+
+
+def font_has_glyphs(font_path, text):
+    if not Path(font_path).is_file():
+        return False
+    try:
+        from fontTools.ttLib import TTFont
+        font = TTFont(str(font_path))
+        cmap = font.getBestCmap()
+        if not cmap:
+            return False
+        for char in text:
+            if ord(char) not in cmap:
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def _draw_layer(draw, xy, text, font, fill, stroke_width=0, stroke_fill=None):
     draw.text(xy, text, font=font, fill=fill, stroke_width=stroke_width, stroke_fill=stroke_fill)
 
@@ -90,8 +127,23 @@ def render_viral_cover(bg_img, book_title, start_chap, end_chap, is_completed=Tr
     image = bg_img.convert("RGB").resize((width, height), Image.Resampling.LANCZOS).convert("RGBA")
 
     clean_title = book_title.replace("《", "").replace("》", "").strip()
+    trad_title = to_traditional(clean_title)
+
+    status_text = "已完結"
+    selected_title = trad_title
+    selected_font = configured_font
+
+    check_text = trad_title + (status_text if is_completed else "")
+    if not font_has_glyphs(configured_font, check_text):
+        # 只要首選字型缺字，整張封面全套統一改用 MaShanZheng.ttf
+        selected_font = PROJECT_ROOT / "fonts" / "MaShanZheng.ttf"
+        if not font_has_glyphs(selected_font, selected_title):
+            selected_title = to_simplified(clean_title)
+        if is_completed:
+            status_text = "已完结" if not font_has_glyphs(selected_font, "已完結") else "已完結"
+
     draw = ImageDraw.Draw(image)
-    title_font, lines = _fit_title(draw, clean_title, configured_font)
+    title_font, lines = _fit_title(draw, selected_title, selected_font)
     line_step = int(title_font.size * .86)
     block_height = line_step * len(lines)
     # Match the approved reference: the title sits in the lower half, with a
@@ -122,8 +174,7 @@ def render_viral_cover(bg_img, book_title, start_chap, end_chap, is_completed=Tr
         _draw_layer(draw, (x, y), line, title_font, face, 5, inner)
 
     if is_completed:
-        status_text = "已完結"
-        status_font = _font(configured_font, max(68, title_font.size - 70))
+        status_font = _font(selected_font, max(68, title_font.size - 70))
         status_box = draw.textbbox((0, 0), status_text, font=status_font, stroke_width=10)
         status_width = status_box[2] - status_box[0]
         status_x = width - status_width - 30

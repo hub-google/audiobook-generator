@@ -40,7 +40,7 @@ FONT_PATHS = [
 ]
 
 SUBTITLE_FORCE_STYLE = (
-    "FontName=Noto Sans CJK TC,FontSize=18,Bold=1,"
+    "FontName=Noto Sans CJK SC,FontSize=18,Bold=1,"
     "PrimaryColour=&H0000E8FF,OutlineColour=&H00000000,"
     "BackColour=&H80000000,BorderStyle=1,Outline=3,Shadow=1,"
     "Alignment=2,MarginV=45,MarginL=80,MarginR=80,WrapStyle=0"
