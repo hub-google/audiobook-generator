@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 738,
-  "updated_at": "2026-08-30T02:31:05.629384+00:00",
+  "revision": 739,
+  "updated_at": "2026-08-30T02:34:19.386625+00:00",
   "queue": [
     {
       "task_id": "book-20260830-677484cd",
@@ -10321,9 +10321,16 @@
       "end_chapter": 1837,
       "excluded_chapters": [],
       "renumber_selected": true,
-      "duplicate_chapter_count": 55,
+      "duplicate_chapter_count": 53,
       "chapter_title_overrides": {},
-      "chapter_normalized_number_overrides": {},
+      "chapter_normalized_number_overrides": {
+        "436": "436",
+        "749": "749",
+        "751": "751",
+        "771": "771",
+        "815": "815",
+        "816": "816"
+      },
       "chapter_order": [
         1,
         2,
@@ -10528,6 +10535,7 @@
         201,
         202,
         203,
+        303,
         204,
         205,
         206,
@@ -10627,7 +10635,6 @@
         300,
         301,
         302,
-        303,
         304,
         305,
         306,
@@ -11666,6 +11673,7 @@
         1339,
         1340,
         1341,
+        1741,
         1342,
         1343,
         1344,
@@ -12065,7 +12073,6 @@
         1738,
         1739,
         1740,
-        1741,
         1742,
         1743,
         1744,
@@ -12180,7 +12187,7 @@
         "total": 0
       },
       "created_at": "2026-08-30T01:44:06.353793+00:00",
-      "updated_at": "2026-08-30T01:44:06.353793+00:00"
+      "updated_at": "2026-08-30T02:34:19.386625+00:00"
     },
     {
       "task_id": "book-20260830-047102de",
