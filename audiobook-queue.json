@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 733,
-  "updated_at": "2026-08-30T02:18:19.444634+00:00",
+  "revision": 734,
+  "updated_at": "2026-08-30T02:18:29.357432+00:00",
   "queue": [
     {
       "task_id": "book-20260830-677484cd",
@@ -3591,7 +3591,7 @@
         3193,
         3503
       ],
-      "status": "queued",
+      "status": "dispatching",
       "run_id": null,
       "run_attempt": 0,
       "execution_generation": 1,
@@ -3608,7 +3608,36 @@
         "total": 0
       },
       "created_at": "2026-08-30T01:43:06.558333+00:00",
-      "updated_at": "2026-08-30T02:08:52.416097+00:00"
+      "updated_at": "2026-08-30T02:18:29.357420+00:00",
+      "book_profile_id": "23d27791201a903e",
+      "profile_snapshot": {
+        "book_profile_id": "23d27791201a903e",
+        "profile_revision": 4,
+        "cleaner_remove_patterns": [],
+        "duplicate_detection": {
+          "use_normalized_number": false,
+          "use_chapter_name": false,
+          "use_number_and_name": true
+        },
+        "chapter_title_overrides": {},
+        "manual_cover": {
+          "source": "manual_upload",
+          "provider": "github",
+          "repo": "hub-google/audiobook-generator",
+          "branch": "automation-state",
+          "remote_path": "manual-covers/23d27791201a903e/master_cover.jpg",
+          "blob_sha": "1577d4135ecc5563f1eff4f52b4ac57c50107c5b",
+          "width": 1280,
+          "height": 720,
+          "bytes": 590497,
+          "sha256": "28947acee52d10973b04e4f002521957460627caf80db03e8694b9ed59f44f48",
+          "quality": 98
+        },
+        "chapter_normalized_number_overrides": {},
+        "cleaner_fingerprint": "e079dce7f0a2a20a926a9de15f18ed70ea50cc6315f34888179cf1bac0975c00"
+      },
+      "artifact_source_run_id": null,
+      "dispatched_at": "2026-08-30T02:18:29.350586+00:00"
     },
     {
       "task_id": "book-20260830-a2893c70",
