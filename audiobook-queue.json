@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 723,
-  "updated_at": "2026-08-30T01:43:12.372418+00:00",
+  "revision": 724,
+  "updated_at": "2026-08-30T01:43:37.373286+00:00",
   "queue": [
     {
       "task_id": "book-20260830-18dc159c",
@@ -2042,7 +2042,7 @@
         2024,
         2025
       ],
-      "status": "queued",
+      "status": "dispatching",
       "run_id": null,
       "run_attempt": 0,
       "execution_generation": 1,
@@ -2059,7 +2059,24 @@
         "total": 0
       },
       "created_at": "2026-08-30T01:43:04.009169+00:00",
-      "updated_at": "2026-08-30T01:43:04.009169+00:00"
+      "updated_at": "2026-08-30T01:43:37.373263+00:00",
+      "book_profile_id": "f7c720fcb5b04c37",
+      "profile_snapshot": {
+        "book_profile_id": "f7c720fcb5b04c37",
+        "profile_revision": 0,
+        "cleaner_remove_patterns": [],
+        "duplicate_detection": {
+          "use_normalized_number": true,
+          "use_chapter_name": true,
+          "use_number_and_name": false
+        },
+        "chapter_title_overrides": {},
+        "manual_cover": {},
+        "chapter_normalized_number_overrides": {},
+        "cleaner_fingerprint": "e079dce7f0a2a20a926a9de15f18ed70ea50cc6315f34888179cf1bac0975c00"
+      },
+      "artifact_source_run_id": null,
+      "dispatched_at": "2026-08-30T01:43:37.365976+00:00"
     },
     {
       "task_id": "book-20260830-677484cd",
