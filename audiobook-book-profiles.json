@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 44,
-  "updated_at": "2026-08-30T02:21:11.219365+00:00",
+  "revision": 45,
+  "updated_at": "2026-08-30T02:21:16.963034+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -355,15 +355,15 @@
         "完結了？\n\n同時，金魚也會在自己的微信公眾號上更新番外，沒有加公眾號的童鞋也可以添加一下，打開微信，搜索公眾號小jinyu233添加即可。\n\n關于“完本感言”和新書計劃，會在所有番外篇寫完之后，公布給大家看。\n\n另外，今天縱橫網站出了一個“年終盤點”活動，需要書友投票選出“年度最佳作者”和“年度最佳作品”，金魚已不奢求“最佳作者”了，但求兄弟姐妹們能夠投票給符皇，爭取一下“年度最佳作品”。\n\n每個縱橫賬號每天可以免費投五票，在縱橫小說app上投票的話，是免費投七張，建議大家用app投票給符皇。\n\n投票的頁面就在符皇書籍頁面，點開就能看到。\n\n先拜謝大家了。\n\n最后，兄弟姐妹們，金魚著實不舍得大家一路相隨并肩作戰的感覺，你們呢？\n\n"
       ],
       "duplicate_detection": {
-        "use_normalized_number": false,
-        "use_chapter_name": false,
-        "use_number_and_name": true
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {
         "2196": "2195.5"
       },
-      "profile_revision": 2,
+      "profile_revision": 3,
       "manual_cover": {
         "source": "manual_upload",
         "provider": "github",
@@ -377,7 +377,7 @@
         "sha256": "f8cb069ba5440cc9fc7f111bcaaeff95a52e86c482d9b615b779f128fb2b6df0",
         "quality": 98
       },
-      "updated_at": "2026-08-30T02:21:11.219365+00:00"
+      "updated_at": "2026-08-30T02:21:16.963034+00:00"
     },
     "cb2718d5fff49854": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/37798",
