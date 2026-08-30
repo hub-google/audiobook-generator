@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 38,
-  "updated_at": "2026-08-30T02:05:37.510794+00:00",
+  "revision": 39,
+  "updated_at": "2026-08-30T02:07:58.453563+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -326,13 +326,13 @@
       "book_title": "造化之王",
       "cleaner_remove_patterns": [],
       "duplicate_detection": {
-        "use_normalized_number": false,
-        "use_chapter_name": true,
+        "use_normalized_number": true,
+        "use_chapter_name": false,
         "use_number_and_name": false
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 2,
+      "profile_revision": 3,
       "manual_cover": {
         "source": "manual_upload",
         "provider": "github",
@@ -346,7 +346,7 @@
         "sha256": "28947acee52d10973b04e4f002521957460627caf80db03e8694b9ed59f44f48",
         "quality": 98
       },
-      "updated_at": "2026-08-30T02:05:37.510794+00:00"
+      "updated_at": "2026-08-30T02:07:58.453563+00:00"
     }
   }
 }
