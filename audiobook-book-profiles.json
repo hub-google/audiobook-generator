@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 50,
-  "updated_at": "2026-08-30T02:27:00.512705+00:00",
+  "revision": 51,
+  "updated_at": "2026-08-30T02:27:08.462185+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -464,6 +464,33 @@
         "quality": 98
       },
       "updated_at": "2026-08-30T02:27:00.512705+00:00"
+    },
+    "42753ccaef935f7e": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/47041",
+      "book_title": "萬相之王",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "manual_cover": {
+        "source": "manual_upload",
+        "provider": "github",
+        "repo": "hub-google/audiobook-generator",
+        "branch": "automation-state",
+        "remote_path": "manual-covers/42753ccaef935f7e/master_cover.jpg",
+        "blob_sha": "41c37461ff71b72d60dfd41c824084ac65d79048",
+        "width": 1280,
+        "height": 720,
+        "bytes": 759196,
+        "sha256": "1b6892eacba1fb4111a13880d9012f6502ebfef3c41ea776c50dcc7bab170d07",
+        "quality": 98
+      },
+      "updated_at": "2026-08-30T02:27:08.462185+00:00"
     }
   }
 }
