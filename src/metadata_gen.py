@@ -586,12 +586,18 @@ def review_cover_information(book_title, pure_plot, research, draft, max_attempt
     raise RuntimeError("Gemini 二次品質審核失敗；已停止且未產生 Prompt：" + " | ".join(errors))
 
 
-def build_cover_information(book_title, catalog_url=None):
+def build_cover_information(book_title, catalog_url=None, progress_callback=None):
+    notify = progress_callback or (lambda _stage: None)
+    notify("取得小說資料")
     pure_plot, source = fetch_book_summary_details(book_title, catalog_url=catalog_url)
+    notify("整理考據來源")
     research = collect_cover_research(book_title, pure_plot, source)
+    notify("Gemini 分析中")
     draft = generate_gemini_cover_information(book_title, pure_plot, research=research)
+    notify("Gemini 二次審核中")
     result = review_cover_information(book_title, pure_plot, research, draft)
     result.update({"book_title": book_title, "synopsis": pure_plot, "source": source})
+    notify("完成")
     return result
 
 

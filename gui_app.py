@@ -160,11 +160,6 @@ class AudiobookGUIApp:
         self.btn_filter = ttk.Button(range_frame, text="篩選章節", command=self._open_chapter_filter_dialog, state=tk.DISABLED)
         self.btn_filter.pack(side=tk.LEFT, padx=(0, 15))
 
-        self.btn_manual_cover = ttk.Button(
-            range_frame, text="🖼 手動上傳封面", command=self.open_manual_cover_dialog, state=tk.DISABLED,
-        )
-        self.btn_manual_cover.pack(side=tk.LEFT)
-
         self.chapter_selection_var = tk.StringVar(value="尚未解析章節")
         ttk.Label(section1, textvariable=self.chapter_selection_var).pack(anchor=tk.W, pady=(3, 5))
 
@@ -260,6 +255,11 @@ class AudiobookGUIApp:
 
         review_buttons = ttk.Frame(section)
         review_buttons.pack(fill=tk.X, padx=5, pady=(0, 5))
+        self.btn_batch_cover_info = ttk.Button(
+            review_buttons, text="✨ 一鍵產生選取小說封面資訊＋HF Prompt",
+            command=self.open_batch_cover_information, state=tk.DISABLED,
+        )
+        self.btn_batch_cover_info.pack(side=tk.LEFT, padx=2)
         self.btn_sample_text = ttk.Button(
             review_buttons, text="🔍 抽查第一／中間／最後章 Raw 與 Clean",
             command=self.open_text_sample, state=tk.DISABLED,
@@ -563,6 +563,311 @@ class AudiobookGUIApp:
             if task.get("task_id") in selected_ids
         ]
 
+    @staticmethod
+    def _valid_cover_information(data):
+        return (
+            isinstance(data, dict) and data.get("status") == "ok"
+            and len(data.get("story_facts") or []) >= 5
+            and bool(data.get("analysis")) and bool(data.get("prompt"))
+        )
+
+    @staticmethod
+    def _format_cover_analysis(data):
+        analysis = data.get("analysis") or {}
+        research = data.get("research") or {}
+        mode_text = {
+            "web_evidence": "聯網資料",
+            "hybrid_web_and_model_knowledge": "聯網資料＋Gemini 內建知識（已二次審核）",
+            "internal_knowledge_fallback": "Gemini 內建知識備援（已二次審核）",
+        }.get(research.get("mode"), "未知資料模式")
+        sources = "\n".join(
+            f"• [{item.get('id')}] {item.get('title')}｜{item.get('url')}"
+            for item in research.get("sources") or []
+        )
+        facts = "\n".join(
+            f"• {item.get('fact')}（{', '.join(item.get('source_ids') or [])}）"
+            for item in data.get("story_facts") or []
+        )
+        sections = [
+            f"【資料模式】\n{mode_text}", f"【資料來源】\n{sources}", f"【Gemini 故事事實】\n{facts}",
+        ]
+        sections.extend(f"【{key}】\n{value}" for key, value in analysis.items())
+        return "\n\n".join(sections)
+
+    def _load_or_generate_cover_information(self, book_title, catalog_url, use_cache=True, progress_callback=None):
+        """Load cached cover information or generate it for the batch GUI."""
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        info_file = cache_path(project_root, book_profile_id(catalog_url)).parent / "cover_information.json"
+        if use_cache and info_file.is_file():
+            try:
+                cached = json.loads(info_file.read_text(encoding="utf-8"))
+                if self._valid_cover_information(cached):
+                    return cached, True
+            except (OSError, ValueError):
+                pass
+        data = build_cover_information(book_title, catalog_url=catalog_url, progress_callback=progress_callback)
+        info_file.parent.mkdir(parents=True, exist_ok=True)
+        info_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        return data, False
+
+    def _upload_manual_cover(self, book_title, catalog_url, source_path):
+        """Normalize and sync a manual cover selected from the batch dialog."""
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        profile_id = book_profile_id(catalog_url)
+        local_cover = cache_path(project_root, profile_id)
+        details = normalize_manual_cover(source_path, local_cover)
+        store, repo, github_token = self._profile_store()
+        cloud = upload_github_cover(local_cover, profile_id, repo, github_token)
+        record = {"source": "manual_upload", **cloud, **details}
+        store.mutate(
+            lambda data: update_book_profile(data, catalog_url, book_title, manual_cover=record),
+            f"Update manual cover for {book_title}",
+        )
+        if self.url_entry.get().strip() == catalog_url:
+            self.current_book_profile["manual_cover"] = record
+        return local_cover, profile_id, repo, details, cloud
+
+    @staticmethod
+    def _register_file_drop(widgets, callback):
+        """Register TkDND file drops and report whether registration succeeded."""
+        try:
+            from tkinterdnd2 import DND_FILES
+        except ImportError:
+            return False
+        registered = False
+        for widget in widgets:
+            if not hasattr(widget, "drop_target_register"):
+                continue
+            try:
+                widget.drop_target_register(DND_FILES)
+                widget.dnd_bind("<<Drop>>", callback)
+                registered = True
+            except (AttributeError, tk.TclError):
+                continue
+        return registered
+
+    def open_batch_cover_information(self):
+        """Run the existing cover-information pipeline concurrently for selected queue rows."""
+        tasks = self._selected_tasks()
+        if not tasks:
+            messagebox.showinfo("批次封面資訊", "請先在上方佇列選取一本或多本小說。")
+            return
+
+        top = tk.Toplevel(self.root)
+        top.title(f"批次封面資訊＋手動封面｜{len(tasks)} 本")
+        top.geometry("1000x720")
+        top.minsize(760, 520)
+        top.transient(self.root)
+
+        status_var = tk.StringVar(value=f"準備處理 {len(tasks)} 本小說…")
+        ttk.Label(top, textvariable=status_var).pack(fill=tk.X, padx=10, pady=(10, 5))
+        progress = ttk.Progressbar(top, maximum=len(tasks), mode="determinate")
+        progress.pack(fill=tk.X, padx=10, pady=(0, 8))
+
+        body = ttk.Panedwindow(top, orient=tk.HORIZONTAL)
+        body.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 8))
+        list_frame, output_frame = ttk.Frame(body), ttk.Frame(body)
+        body.add(list_frame, weight=1)
+        body.add(output_frame, weight=3)
+
+        result_tree = ttk.Treeview(list_frame, columns=("book", "status"), show="headings", selectmode="browse")
+        result_tree.heading("book", text="小說")
+        result_tree.heading("status", text="結果")
+        result_tree.column("book", width=150, anchor=tk.W)
+        result_tree.column("status", width=90, anchor=tk.CENTER)
+        result_tree.pack(fill=tk.BOTH, expand=True)
+        for task in tasks:
+            result_tree.insert("", tk.END, iid=task["task_id"], values=(task.get("book_title") or "待解析", "準備啟動"))
+
+        output_tabs = ttk.Notebook(output_frame)
+        output_tabs.pack(fill=tk.BOTH, expand=True)
+        analysis_text = scrolledtext.ScrolledText(output_tabs, wrap=tk.WORD)
+        prompt_text = scrolledtext.ScrolledText(output_tabs, wrap=tk.WORD, font=("Consolas", 10))
+        upload_page = ttk.Frame(output_tabs, padding=10)
+        output_tabs.add(analysis_text, text="小說架構／視覺分析")
+        output_tabs.add(prompt_text, text="HF 生圖 Prompt")
+        output_tabs.add(upload_page, text="上傳封面圖片")
+        results = {}
+        task_map = {task["task_id"]: task for task in tasks}
+
+        upload_status = tk.StringVar(value="選取左側小說後，可選擇或拖曳 JPG／PNG／WEBP。")
+        upload_hint = ttk.Label(upload_page, textvariable=upload_status, wraplength=680)
+        upload_hint.pack(anchor=tk.W, pady=(0, 8))
+        preview = ttk.Label(upload_page, anchor=tk.CENTER, text="將圖片拖曳到這裡")
+        preview.pack(fill=tk.BOTH, expand=True, pady=8)
+
+        def show_result(_event=None):
+            selected = result_tree.selection()
+            if not selected:
+                return
+            data = results.get(selected[0]) or {}
+            analysis_text.delete("1.0", tk.END)
+            prompt_text.delete("1.0", tk.END)
+            analysis_text.insert("1.0", self._format_cover_analysis(data) if data.get("analysis") else data.get("error") or "尚未產生")
+            prompt_text.insert("1.0", data.get("prompt") or data.get("error") or "尚未產生")
+            task = task_map[selected[0]]
+            try:
+                local_cover = cache_path(os.path.dirname(os.path.abspath(__file__)), book_profile_id(task.get("catalog_url") or ""))
+                if local_cover.is_file():
+                    with Image.open(local_cover) as image:
+                        shown = image.copy(); shown.thumbnail((640, 360))
+                    preview.image = ImageTk.PhotoImage(shown)
+                    preview.config(image=preview.image, text="")
+                    upload_status.set(f"已讀取《{task.get('book_title')}》手動封面｜{local_cover.stat().st_size/1024:.0f} KB")
+                else:
+                    preview.config(image="", text="將圖片拖曳到這裡")
+                    preview.image = None
+                    upload_status.set(f"《{task.get('book_title')}》尚未上傳手動封面。")
+            except (OSError, ValueError):
+                preview.config(image="", text="將圖片拖曳到這裡")
+
+        result_tree.bind("<<TreeviewSelect>>", show_result)
+        first_id = tasks[0]["task_id"]
+        result_tree.selection_set(first_id)
+        show_result()
+
+        actions = ttk.Frame(top)
+        actions.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        def copy_current():
+            if output_tabs.index("current") == 2:
+                return
+            widget = analysis_text if output_tabs.index("current") == 0 else prompt_text
+            value = widget.get("1.0", tk.END).strip()
+            if value:
+                top.clipboard_clear()
+                top.clipboard_append(value)
+                status_var.set("已複製目前頁面。")
+
+        def copy_all():
+            blocks = []
+            for task in tasks:
+                data = results.get(task["task_id"]) or {}
+                if data.get("analysis") and data.get("prompt"):
+                    title = task.get("book_title") or "待解析"
+                    blocks.append(f"《{title}》\n\n【小說架構／視覺分析】\n{self._format_cover_analysis(data)}\n\n【HF 生圖 Prompt】\n{data['prompt']}")
+            if blocks:
+                top.clipboard_clear()
+                top.clipboard_append("\n\n" + ("\n\n" + "=" * 60 + "\n\n").join(blocks))
+                status_var.set(f"已複製 {len(blocks)} 本小說的全部結果。")
+
+        ttk.Button(actions, text="複製目前頁面", command=copy_current).pack(side=tk.LEFT)
+        copy_all_button = ttk.Button(actions, text="複製全部結果", command=copy_all, state=tk.DISABLED)
+        copy_all_button.pack(side=tk.LEFT, padx=8)
+        ttk.Button(actions, text="關閉", command=top.destroy).pack(side=tk.RIGHT)
+
+        def selected_upload_task():
+            selected = result_tree.selection()
+            return task_map.get(selected[0]) if selected else None
+
+        def process_upload(path):
+            task = selected_upload_task()
+            if not task:
+                return
+            title, catalog_url = task.get("book_title") or "待解析", (task.get("catalog_url") or "").strip()
+            upload_button.config(state=tk.DISABLED)
+            upload_status.set(f"正在為《{title}》檢查、裁切、壓縮並同步封面…")
+            def upload_worker():
+                try:
+                    local_cover, profile_id, repo, details, cloud = self._upload_manual_cover(title, catalog_url, path)
+                    def done():
+                        upload_button.config(state=tk.NORMAL)
+                        if selected_upload_task() is task:
+                            with Image.open(local_cover) as image:
+                                shown = image.copy(); shown.thumbnail((640, 360))
+                            preview.image = ImageTk.PhotoImage(shown)
+                            preview.config(image=preview.image, text="")
+                            upload_status.set(
+                                f"✓ 上傳成功｜1280×720 JPEG｜{details['bytes']/1024:.0f} KB｜"
+                                f"指紋 {profile_id}｜GitHub: {repo}@{cloud['branch']}/{cloud['remote_path']}"
+                            )
+                        self.log(f"✓ 《{title}》手動封面已同步；正式流程將跳過 Gemini 與 HF 生圖。")
+                    post(done)
+                except Exception as error:
+                    post(lambda detail=str(error): (
+                        upload_button.config(state=tk.NORMAL), upload_status.set("上傳失敗"),
+                        messagebox.showerror("手動封面", detail, parent=top),
+                    ))
+            threading.Thread(target=upload_worker, daemon=True).start()
+
+        def choose_upload():
+            path = filedialog.askopenfilename(parent=top, filetypes=[
+                ("圖片", "*.jpg *.jpeg *.png *.webp"), ("所有檔案", "*.*"),
+            ])
+            if path:
+                process_upload(path)
+
+        upload_button = ttk.Button(upload_page, text="選擇圖片檔案", command=choose_upload)
+        upload_button.pack(pady=5)
+
+        def accept_drop(event):
+            paths = top.tk.splitlist(event.data)
+            if paths:
+                process_upload(paths[0])
+            return "break"
+
+        if self._register_file_drop((upload_page, upload_hint, preview, upload_button), accept_drop):
+            upload_status.set("選取左側小說後，可選擇或拖曳 JPG／PNG／WEBP；將標準化為 1280×720 JPEG。")
+        else:
+            upload_status.set("目前環境未載入拖放元件，請先使用「選擇圖片檔案」。")
+
+        def post(callback):
+            def safe_callback():
+                if top.winfo_exists():
+                    callback()
+            self.root.after(0, safe_callback)
+
+        def worker():
+            completed_count = 0
+            success_count = 0
+            lock = threading.Lock()
+
+            def run_one(task):
+                task_id = task["task_id"]
+                title = task.get("book_title") or "待解析"
+                catalog_url = (task.get("catalog_url") or "").strip()
+                try:
+                    if not catalog_url:
+                        raise ValueError("佇列任務缺少目錄網址")
+                    def stage(value):
+                        post(lambda tid=task_id, text=value: result_tree.set(tid, "status", text))
+                    data, cache_hit = self._load_or_generate_cover_information(
+                        title, catalog_url, progress_callback=stage,
+                    )
+                    results[task_id] = data
+                    label = "已讀快取" if cache_hit else "完成"
+                    post(lambda tid=task_id, value=label: (result_tree.set(tid, "status", value), show_result()))
+                    return True
+                except Exception as error:
+                    results[task_id] = {"error": f"產生失敗：{error}"}
+                    post(lambda tid=task_id: (result_tree.set(tid, "status", "失敗"), show_result()))
+                    return False
+
+            post(lambda: (
+                [result_tree.set(task["task_id"], "status", "啟動中") for task in tasks],
+                status_var.set(f"已同時啟動 {len(tasks)} 本｜完成 0/{len(tasks)}"),
+            ))
+            with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+                future_map = {executor.submit(run_one, task): task for task in tasks}
+                for future in as_completed(future_map):
+                    succeeded = future.result()
+                    with lock:
+                        completed_count += 1
+                        success_count += int(succeeded)
+                        done, ok = completed_count, success_count
+                    post(lambda value=done, good=ok: (
+                        progress.configure(value=value),
+                        status_var.set(
+                            f"完成 {value}/{len(tasks)}｜執行中 {len(tasks)-value}｜成功 {good}｜失敗 {value-good}"
+                        ),
+                    ))
+            post(lambda: (
+                status_var.set(f"批次完成：成功 {success_count} 本，失敗 {len(tasks) - success_count} 本。"),
+                copy_all_button.config(state=tk.NORMAL if success_count else tk.DISABLED),
+            ))
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _on_queue_select(self, _event=None):
         tasks = self._selected_tasks()
         if not tasks:
@@ -608,6 +913,8 @@ class AudiobookGUIApp:
             state=tk.NORMAL if has_cancellable_run else tk.DISABLED,
             text="正在取消…" if statuses == {"canceling"} else "取消本次 Run",
         )
+        if hasattr(self, "btn_batch_cover_info"):
+            self.btn_batch_cover_info.config(state=tk.NORMAL if tasks else tk.DISABLED)
         self.btn_sample_text.config(state=tk.NORMAL if len(tasks) == 1 else tk.DISABLED)
 
     @staticmethod
@@ -1742,28 +2049,14 @@ class AudiobookGUIApp:
         info_tabs.add(prompt_text, text="HF 生圖 Prompt")
 
         def fill_information(data):
-            analysis = data.get("analysis") or {}
             analysis_text.delete("1.0", tk.END)
-            research = data.get("research") or {}
-            mode_text = {
-                "web_evidence": "聯網資料",
-                "hybrid_web_and_model_knowledge": "聯網資料＋Gemini 內建知識（已二次審核）",
-                "internal_knowledge_fallback": "Gemini 內建知識備援（已二次審核）",
-            }.get(research.get("mode"), "未知資料模式")
-            sources = "\n".join(f"• [{item.get('id')}] {item.get('title')}｜{item.get('url')}" for item in research.get("sources") or [])
-            facts = "\n".join(f"• {value.get('fact')}（{', '.join(value.get('source_ids') or [])}）" for value in data.get("story_facts") or [])
-            sections = [f"【資料模式】\n{mode_text}", f"【資料來源】\n{sources}", f"【Gemini 故事事實】\n{facts}"]
-            sections.extend(f"【{key}】\n{value}" for key, value in analysis.items())
-            analysis_text.insert("1.0", "\n\n".join(sections))
+            analysis_text.insert("1.0", self._format_cover_analysis(data))
             prompt_text.delete("1.0", tk.END)
             prompt_text.insert("1.0", data.get("prompt", ""))
             status.set("已讀取封面資訊；複製與切換頁面不會呼叫 Gemini。")
 
         def valid_cached_information(data):
-            return (
-                data.get("status") == "ok" and len(data.get("story_facts") or []) >= 5
-                and bool(data.get("analysis")) and bool(data.get("prompt"))
-            )
+            return self._valid_cover_information(data)
 
         if info_file.is_file():
             try:
@@ -1785,9 +2078,7 @@ class AudiobookGUIApp:
             status.set("正在取得簡介並呼叫 Gemini…")
             def worker():
                 try:
-                    data = build_cover_information(book_title, catalog_url=catalog_url)
-                    info_file.parent.mkdir(parents=True, exist_ok=True)
-                    info_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+                    data, _ = self._load_or_generate_cover_information(book_title, catalog_url, use_cache=False)
                     self.root.after(0, lambda: (fill_information(data), generate_button.config(state=tk.NORMAL)))
                 except Exception as error:
                     self.root.after(0, lambda detail=str(error): (
@@ -1824,23 +2115,17 @@ class AudiobookGUIApp:
             upload_status.set("正在檢查、裁切、壓縮並同步封面…")
             def worker():
                 try:
-                    details = normalize_manual_cover(path, local_cover)
-                    store, repo, github_token = self._profile_store()
-                    cloud = upload_github_cover(local_cover, profile_id, repo, github_token)
-                    record = {"source": "manual_upload", **cloud, **details}
-                    store.mutate(
-                        lambda data: update_book_profile(data, catalog_url, book_title, manual_cover=record),
-                        f"Update manual cover for {book_title}",
+                    synced_cover, synced_profile_id, repo, details, cloud = self._upload_manual_cover(
+                        book_title, catalog_url, path,
                     )
-                    self.current_book_profile["manual_cover"] = record
                     def done():
-                        with Image.open(local_cover) as image:
+                        with Image.open(synced_cover) as image:
                             shown = image.copy(); shown.thumbnail((720, 405))
                         preview.image = ImageTk.PhotoImage(shown)
                         preview.config(image=preview.image)
                         upload_status.set(
                             f"✓ 上傳成功｜1280×720 JPEG｜{details['bytes']/1024:.0f} KB｜"
-                            f"指紋 {profile_id}｜GitHub: {repo}@{cloud['branch']}/{cloud['remote_path']}"
+                            f"指紋 {synced_profile_id}｜GitHub: {repo}@{cloud['branch']}/{cloud['remote_path']}"
                         )
                         self.log(f"✓ 《{book_title}》手動封面已同步；正式流程將跳過 Gemini 與 HF 生圖。")
                     self.root.after(0, done)
@@ -1862,13 +2147,8 @@ class AudiobookGUIApp:
         # Tk 的拖放事件不会从子元件冒泡。预览区覆盖了页面的大部分面积，
         # 因此每一个可见的上传元件都必须各自注册为放置目标。
         drop_widgets = (upload_page, upload_hint, preview, choose_file_button)
-        if hasattr(upload_page, "drop_target_register"):
-            for widget in drop_widgets:
-                try:
-                    widget.drop_target_register("DND_Files")
-                    widget.dnd_bind("<<Drop>>", accept_drop)
-                except (AttributeError, tk.TclError):
-                    continue
+        if not self._register_file_drop(drop_widgets, accept_drop):
+            upload_status.set("目前環境未載入拖放元件，請使用「選擇圖片檔案」。")
         if local_cover.is_file():
             try:
                 with Image.open(local_cover) as image:
@@ -1951,7 +2231,6 @@ class AudiobookGUIApp:
             self.entry_end.insert(0, str(total))
             
             self.btn_filter.config(state=tk.NORMAL)
-            self.btn_manual_cover.config(state=tk.NORMAL)
             self.excluded_chapters.clear()
             self.renumber_selected_chapters = True
             self.chapter_order = list(range(1, total + 1))
