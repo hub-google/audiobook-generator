@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 42,
-  "updated_at": "2026-08-30T02:15:07.905322+00:00",
+  "revision": 43,
+  "updated_at": "2026-08-30T02:15:18.572436+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -401,6 +401,33 @@
         "quality": 98
       },
       "updated_at": "2026-08-30T02:15:07.905322+00:00"
+    },
+    "0357aa6b2a1dfc2e": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/24632",
+      "book_title": "全職高手",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "manual_cover": {
+        "source": "manual_upload",
+        "provider": "github",
+        "repo": "hub-google/audiobook-generator",
+        "branch": "automation-state",
+        "remote_path": "manual-covers/0357aa6b2a1dfc2e/master_cover.jpg",
+        "blob_sha": "c59f8a5581dd9b80ccf6ff7e00c9fbcdf24d33c5",
+        "width": 1280,
+        "height": 720,
+        "bytes": 568971,
+        "sha256": "988cf45a9b87c8ee0715efe63f3009e0161758a5331369b4fcd5329cb6b4fbda",
+        "quality": 98
+      },
+      "updated_at": "2026-08-30T02:15:18.572436+00:00"
     }
   }
 }
