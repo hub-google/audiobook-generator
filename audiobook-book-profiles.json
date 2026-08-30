@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 55,
-  "updated_at": "2026-08-30T02:33:31.248972+00:00",
+  "revision": 56,
+  "updated_at": "2026-08-30T02:34:15.884438+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -478,7 +478,10 @@
     "42753ccaef935f7e": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/47041",
       "book_title": "萬相之王",
-      "cleaner_remove_patterns": [],
+      "cleaner_remove_patterns": [
+        " （新書開張了，感謝大家的支持，不管新讀者還是老讀者，希望萬相之王能夠在未來再次陪伴大家。\n\n 哈哈，這次寫新書，寫李洛的時候有種老父親般的既視感，可能是因為自己也當爹了吧？\n\n 嗯，希望新書，大家能夠喜歡，這是我最大的榮幸。）\n\n",
+        "(本章完)"
+      ],
       "duplicate_detection": {
         "use_normalized_number": false,
         "use_chapter_name": true,
@@ -493,7 +496,7 @@
         "815": "815",
         "816": "816"
       },
-      "profile_revision": 3,
+      "profile_revision": 4,
       "manual_cover": {
         "source": "manual_upload",
         "provider": "github",
@@ -507,7 +510,7 @@
         "sha256": "1b6892eacba1fb4111a13880d9012f6502ebfef3c41ea776c50dcc7bab170d07",
         "quality": 98
       },
-      "updated_at": "2026-08-30T02:33:31.248972+00:00"
+      "updated_at": "2026-08-30T02:34:15.884438+00:00"
     }
   }
 }
