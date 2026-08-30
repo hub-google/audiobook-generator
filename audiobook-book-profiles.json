@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 49,
-  "updated_at": "2026-08-30T02:26:18.665541+00:00",
+  "revision": 50,
+  "updated_at": "2026-08-30T02:27:00.512705+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -437,6 +437,33 @@
         "quality": 98
       },
       "updated_at": "2026-08-30T02:15:18.572436+00:00"
+    },
+    "1725255d268f1de9": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/49904",
+      "book_title": "制皮百年，我成了魔門巨頭",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "manual_cover": {
+        "source": "manual_upload",
+        "provider": "github",
+        "repo": "hub-google/audiobook-generator",
+        "branch": "automation-state",
+        "remote_path": "manual-covers/1725255d268f1de9/master_cover.jpg",
+        "blob_sha": "2b66a424506343370c950e9372a5dcf8166d080e",
+        "width": 1280,
+        "height": 720,
+        "bytes": 529997,
+        "sha256": "005a689d1c6822b9c3db9b62c1c859b64cffd304dd105c02f2cdcd87a384465c",
+        "quality": 98
+      },
+      "updated_at": "2026-08-30T02:27:00.512705+00:00"
     }
   }
 }
