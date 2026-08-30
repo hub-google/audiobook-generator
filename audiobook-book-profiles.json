@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 36,
-  "updated_at": "2026-08-24T07:54:38.830458+00:00",
+  "revision": 37,
+  "updated_at": "2026-08-30T02:01:17.743817+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -320,6 +320,33 @@
         "sha256": "fa755ae2aa698bc94ab10f2ef59cdf6da781e60796b62ecba6a0b3263b6432e8",
         "quality": 98
       }
+    },
+    "23d27791201a903e": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/35120",
+      "book_title": "造化之王",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "manual_cover": {
+        "source": "manual_upload",
+        "provider": "github",
+        "repo": "hub-google/audiobook-generator",
+        "branch": "automation-state",
+        "remote_path": "manual-covers/23d27791201a903e/master_cover.jpg",
+        "blob_sha": "1577d4135ecc5563f1eff4f52b4ac57c50107c5b",
+        "width": 1280,
+        "height": 720,
+        "bytes": 590497,
+        "sha256": "28947acee52d10973b04e4f002521957460627caf80db03e8694b9ed59f44f48",
+        "quality": 98
+      },
+      "updated_at": "2026-08-30T02:01:17.743817+00:00"
     }
   }
 }
