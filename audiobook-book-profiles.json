@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 52,
-  "updated_at": "2026-08-30T02:30:33.486920+00:00",
+  "revision": 53,
+  "updated_at": "2026-08-30T02:30:38.860608+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -423,8 +423,8 @@
       ],
       "duplicate_detection": {
         "use_normalized_number": false,
-        "use_chapter_name": false,
-        "use_number_and_name": true
+        "use_chapter_name": true,
+        "use_number_and_name": false
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {
@@ -432,7 +432,7 @@
         "270": "270",
         "635": "635"
       },
-      "profile_revision": 2,
+      "profile_revision": 3,
       "manual_cover": {
         "source": "manual_upload",
         "provider": "github",
@@ -446,7 +446,7 @@
         "sha256": "988cf45a9b87c8ee0715efe63f3009e0161758a5331369b4fcd5329cb6b4fbda",
         "quality": 98
       },
-      "updated_at": "2026-08-30T02:30:33.486920+00:00"
+      "updated_at": "2026-08-30T02:30:38.860608+00:00"
     },
     "1725255d268f1de9": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/49904",
