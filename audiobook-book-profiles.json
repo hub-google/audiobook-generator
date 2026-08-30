@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 41,
-  "updated_at": "2026-08-30T02:15:03.846592+00:00",
+  "revision": 42,
+  "updated_at": "2026-08-30T02:15:07.905322+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -374,6 +374,33 @@
         "quality": 98
       },
       "updated_at": "2026-08-30T02:15:03.846592+00:00"
+    },
+    "cb2718d5fff49854": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/37798",
+      "book_title": "都市之少年仙尊",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "manual_cover": {
+        "source": "manual_upload",
+        "provider": "github",
+        "repo": "hub-google/audiobook-generator",
+        "branch": "automation-state",
+        "remote_path": "manual-covers/cb2718d5fff49854/master_cover.jpg",
+        "blob_sha": "549e15fd6c156531ea5a38b35064e28f005f8f23",
+        "width": 1280,
+        "height": 720,
+        "bytes": 543193,
+        "sha256": "65eb8da1a7ae6efce885a3d91780f6f14e023fff7401a4bfc2d67569a2ba19e0",
+        "quality": 98
+      },
+      "updated_at": "2026-08-30T02:15:07.905322+00:00"
     }
   }
 }
