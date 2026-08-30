@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 56,
-  "updated_at": "2026-08-30T02:34:15.884438+00:00",
+  "revision": 57,
+  "updated_at": "2026-08-30T02:36:15.209065+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -451,7 +451,9 @@
     "1725255d268f1de9": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/49904",
       "book_title": "制皮百年，我成了魔門巨頭",
-      "cleaner_remove_patterns": [],
+      "cleaner_remove_patterns": [
+        "第283章282.三界合一，講道封帝（1.3萬字大結局）"
+      ],
       "duplicate_detection": {
         "use_normalized_number": true,
         "use_chapter_name": true,
@@ -459,7 +461,7 @@
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 1,
+      "profile_revision": 2,
       "manual_cover": {
         "source": "manual_upload",
         "provider": "github",
@@ -473,7 +475,7 @@
         "sha256": "005a689d1c6822b9c3db9b62c1c859b64cffd304dd105c02f2cdcd87a384465c",
         "quality": 98
       },
-      "updated_at": "2026-08-30T02:27:00.512705+00:00"
+      "updated_at": "2026-08-30T02:36:15.209065+00:00"
     },
     "42753ccaef935f7e": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/47041",
