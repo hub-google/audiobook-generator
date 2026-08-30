@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 40,
-  "updated_at": "2026-08-30T02:08:23.320590+00:00",
+  "revision": 41,
+  "updated_at": "2026-08-30T02:15:03.846592+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -347,6 +347,33 @@
         "quality": 98
       },
       "updated_at": "2026-08-30T02:08:23.320590+00:00"
+    },
+    "e863b750db833203": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/34049",
+      "book_title": "神箓",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "manual_cover": {
+        "source": "manual_upload",
+        "provider": "github",
+        "repo": "hub-google/audiobook-generator",
+        "branch": "automation-state",
+        "remote_path": "manual-covers/e863b750db833203/master_cover.jpg",
+        "blob_sha": "126369633091b0baf4727d636b5d2b5f044f15e8",
+        "width": 1280,
+        "height": 720,
+        "bytes": 650358,
+        "sha256": "f8cb069ba5440cc9fc7f111bcaaeff95a52e86c482d9b615b779f128fb2b6df0",
+        "quality": 98
+      },
+      "updated_at": "2026-08-30T02:15:03.846592+00:00"
     }
   }
 }
