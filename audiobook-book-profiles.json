@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 51,
-  "updated_at": "2026-08-30T02:27:08.462185+00:00",
+  "revision": 52,
+  "updated_at": "2026-08-30T02:30:33.486920+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -414,15 +414,25 @@
     "0357aa6b2a1dfc2e": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/24632",
       "book_title": "全職高手",
-      "cleaner_remove_patterns": [],
+      "cleaner_remove_patterns": [
+        "請：m.ddxstxt8",
+        "m.ddxstxt8",
+        "天亮了，更新，睡覺！",
+        "9W0W7W8.8C3A4I6h5o7n8g6w7e9n8x0u2e30.9c7o9m8",
+        "消暑降溫秘技\n\n又是一周結束了\n\n接下來是本月的最后四天。9W0W7W8.8C3A4I6h5o7n8g6w7e9n8x0u2e30.9c7o9m8\n\n最后四天，也不知道大家還藏了多少票，就盡力往咱這里丟點吧\n\n因為，咱這里在過節啊\n\n什么，你說你不知道？\n\n不可能啊最近圣誕節啊搞圣誕活動呢沒看到嗎？\n\n雖然我知道咱們的世界是炎炎夏日。\n\n但是，這樣的夏日里，大家難道不期待冬天般的寒冷嗎？\n\n看書里就是的\n\n哦還有推薦票。\n\n\n"
+      ],
       "duplicate_detection": {
-        "use_normalized_number": true,
-        "use_chapter_name": true,
-        "use_number_and_name": false
+        "use_normalized_number": false,
+        "use_chapter_name": false,
+        "use_number_and_name": true
       },
       "chapter_title_overrides": {},
-      "chapter_normalized_number_overrides": {},
-      "profile_revision": 1,
+      "chapter_normalized_number_overrides": {
+        "1355": "1355",
+        "270": "270",
+        "635": "635"
+      },
+      "profile_revision": 2,
       "manual_cover": {
         "source": "manual_upload",
         "provider": "github",
@@ -436,7 +446,7 @@
         "sha256": "988cf45a9b87c8ee0715efe63f3009e0161758a5331369b4fcd5329cb6b4fbda",
         "quality": 98
       },
-      "updated_at": "2026-08-30T02:15:18.572436+00:00"
+      "updated_at": "2026-08-30T02:30:33.486920+00:00"
     },
     "1725255d268f1de9": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/49904",
