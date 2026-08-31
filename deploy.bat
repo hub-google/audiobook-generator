@@ -28,24 +28,28 @@ set "DEPLOY_BRANCH=master"
 set "DEPLOY_MESSAGE=%~1"
 if not defined DEPLOY_MESSAGE set "DEPLOY_MESSAGE=Deploy all workspace changes"
 
-echo [1/4] Staging every added, modified, and deleted file...
+echo [1/5] Staging every added, modified, and deleted file...
 git add -A
 if errorlevel 1 goto :failed
 
 git diff --cached --quiet
 if errorlevel 1 (
-    echo [2/4] Creating commit on %DEPLOY_BRANCH%...
+    echo [2/5] Creating commit on %DEPLOY_BRANCH%...
     git commit -m "%DEPLOY_MESSAGE%"
     if errorlevel 1 goto :failed
 ) else (
-    echo [2/4] No uncommitted changes; no new commit is needed.
+    echo [2/5] No uncommitted changes; no new commit is needed.
 )
 
-echo [3/4] Pushing %DEPLOY_BRANCH% to origin...
+echo [3/5] Syncing latest changes from origin/%DEPLOY_BRANCH%...
+git pull --rebase origin "%DEPLOY_BRANCH%"
+if errorlevel 1 goto :failed
+
+echo [4/5] Pushing %DEPLOY_BRANCH% to origin...
 git push -u origin "%DEPLOY_BRANCH%"
 if errorlevel 1 goto :failed
 
-echo [4/4] Verifying clean deployment state...
+echo [5/5] Verifying clean deployment state...
 for /f "delims=" %%S in ('git status --porcelain') do (
     echo [ERROR] Workspace is still dirty after deployment:
     git status --short

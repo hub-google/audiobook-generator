@@ -1,16 +1,15 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
+setlocal
 cd /d "%~dp0\.."
-python -m pip install -r requirements.txt
-if errorlevel 1 (
+
+set "GUI_PYTHON=%CD%\.venv\Scripts\pythonw.exe"
+if not exist "%GUI_PYTHON%" (
   echo.
-  echo [ERROR] 套件安裝失敗
+  echo [ERROR] 找不到專案虛擬環境：.venv
   pause
   exit /b 1
 )
-python tools\youtube_backfill_gui.py
-if errorlevel 1 (
-  echo.
-  echo [ERROR] 工具執行失敗，請查看上方訊息
-)
-pause
+
+start "" "%GUI_PYTHON%" "%CD%\tools\youtube_backfill_gui.py"
+exit /b 0
