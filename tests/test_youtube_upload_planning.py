@@ -594,6 +594,37 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         self.assertEqual(calls["rotate"], 30)
         self.assertEqual(raised.exception.reason, "quotaExceeded")
 
+    @patch("src.youtube_api_uploader.set_video_thumbnail")
+    @patch("src.youtube_api_uploader.MediaFileUpload")
+    def test_video_insert_quota_marks_only_upload_quota(self, media, thumbnail):
+        calls = []
+        failed = type("Request", (), {
+            "next_chunk": lambda self, **kwargs: (_ for _ in ()).throw(Exception("quotaExceeded"))
+        })()
+        succeeded = type("Request", (), {
+            "next_chunk": lambda self, **kwargs: (None, {"id": "video-1"})
+        })()
+
+        class Pool:
+            def __init__(self):
+                self.request = failed
+
+            def videos(self):
+                request = self.request
+                return type("Videos", (), {"insert": lambda self, **kwargs: request})()
+
+            def rotate_on_quota(self, error, *, upload=False):
+                calls.append(upload)
+                self.request = succeeded
+                return True
+
+        with tempfile.NamedTemporaryFile() as video:
+            self.assertEqual(
+                upload_video_file(Pool(), video.name, "Part 1", "description"),
+                "video-1",
+            )
+        self.assertEqual(calls, [True])
+
     @patch("src.youtube_api_uploader.time.sleep")
     def test_playlist_metadata_retries_youtube_409_service_unavailable(self, sleep):
         unavailable = HttpError(

@@ -303,6 +303,8 @@ class YouTubeServicePool:
         self.accounts = []
         self.active_index = 0
         self.rotation_round = 1
+        self.api_rotation_round = 1
+        self.channel_id = None
         self.discover_accounts()
 
     def discover_accounts(self):
@@ -338,6 +340,7 @@ class YouTubeServicePool:
                     "service": None,
                     "creds": None,
                     "channel_id": None,
+                    "api_exhausted": False,
                     "exhausted": False
                 })
 
@@ -463,7 +466,7 @@ class YouTubeServicePool:
         return service, creds
 
     def require_same_channel(self):
-        """Verify usable credentials share one channel, skipping quota-exhausted slots."""
+        """Verify usable credentials share one channel without consuming upload slots."""
         if not self.accounts:
             return None
 
@@ -480,10 +483,9 @@ class YouTubeServicePool:
             except Exception as error:
                 paused = classify_daily_limit(error)
                 if paused:
-                    acc["exhausted"] = True
                     last_quota_pause = paused
                     logging.warning(
-                        "⏭️ [專案 #%s] 頻道驗證遇到 %s，標記本日配額耗盡並繼續下一個 slot。",
+                        "⏭️ [專案 #%s] 頻道驗證遇到 %s；保留其上傳配額狀態並繼續下一個 slot。",
                         acc["slot"], paused.reason,
                     )
                     continue
@@ -514,6 +516,7 @@ class YouTubeServicePool:
             )
 
         channel_id = next(iter(channel_slots))
+        self.channel_id = channel_id
         first_usable_index = next(
             index for index, account in enumerate(self.accounts)
             if account.get("channel_id") == channel_id and not account["exhausted"]
@@ -563,24 +566,36 @@ class YouTubeServicePool:
                         return srv
         return srv
 
-    def rotate_on_quota(self, error=None) -> bool:
-        """依 slot 順序輪替；完整嘗試三輪後才宣告所有專案失敗。"""
+    def rotate_on_quota(self, error=None, *, upload=False) -> bool:
+        """Rotate API calls without confusing ordinary quota with upload quota.
+
+        Only ``videos.insert`` callers pass ``upload=True``.  Quota failures from
+        channel discovery and other ordinary API calls are tracked separately and
+        therefore cannot permanently remove a slot from the upload pool.
+        """
         if not self.accounts:
             return False
 
+        exhausted_key = "exhausted" if upload else "api_exhausted"
+        round_attr = "rotation_round" if upload else "api_rotation_round"
         current = self.active_account
         if current:
-            current["exhausted"] = True
+            current[exhausted_key] = True
             logging.warning(
                 "🚨 【專案 #%s 第 %s/%s 輪失敗】 (%s)",
-                current["slot"], self.rotation_round,
+                current["slot"], getattr(self, round_attr, 1),
                 YOUTUBE_SLOT_ROTATION_ROUNDS, error or "quotaExceeded",
             )
 
         old_slot = current["slot"] if current else "N/A"
-        while self.rotation_round <= YOUTUBE_SLOT_ROTATION_ROUNDS:
+        while getattr(self, round_attr, 1) <= YOUTUBE_SLOT_ROTATION_ROUNDS:
             for idx, next_acc in enumerate(self.accounts):
-                if next_acc["exhausted"]:
+                if next_acc.get(exhausted_key, False):
+                    continue
+                # A slot whose channels.list validation was quota-limited is
+                # retained for a later retry, but never used to upload until it
+                # has positively resolved to the already verified channel.
+                if upload and self.channel_id and next_acc.get("channel_id") != self.channel_id:
                     continue
                 srv = self.get_service(idx)
                 if srv is not None:
@@ -588,31 +603,31 @@ class YouTubeServicePool:
                     logging.info(
                         "🔄 【多專案自動輪替】第 %s/%s 輪：已由專案 #%s "
                         "切換至專案 #%s 繼續發布！",
-                        self.rotation_round, YOUTUBE_SLOT_ROTATION_ROUNDS,
+                        getattr(self, round_attr, 1), YOUTUBE_SLOT_ROTATION_ROUNDS,
                         old_slot, next_acc["slot"],
                     )
                     return True
 
                 # 授權或 Service 初始化失敗也只算本輪該 slot 失敗，繼續下一個。
-                next_acc["exhausted"] = True
+                next_acc[exhausted_key] = True
                 logging.warning(
                     "⚠️ 專案 #%s 第 %s/%s 輪初始化失敗，繼續下一個 slot。",
-                    next_acc["slot"], self.rotation_round,
+                    next_acc["slot"], getattr(self, round_attr, 1),
                     YOUTUBE_SLOT_ROTATION_ROUNDS,
                 )
 
-            if self.rotation_round >= YOUTUBE_SLOT_ROTATION_ROUNDS:
+            if getattr(self, round_attr, 1) >= YOUTUBE_SLOT_ROTATION_ROUNDS:
                 break
 
-            self.rotation_round += 1
+            setattr(self, round_attr, getattr(self, round_attr, 1) + 1)
             for acc in self.accounts:
-                acc["exhausted"] = False
+                acc[exhausted_key] = False
                 # 強制重新驗證，避免沿用上一輪失效的授權狀態。
                 acc["service"] = None
                 acc["creds"] = None
             logging.warning(
                 "🔁 所有 slot 第 %s 輪均失敗，重新由 slot1 開始第 %s/%s 輪。",
-                self.rotation_round - 1, self.rotation_round,
+                getattr(self, round_attr) - 1, getattr(self, round_attr),
                 YOUTUBE_SLOT_ROTATION_ROUNDS,
             )
 
@@ -1209,7 +1224,7 @@ def upload_video_file(youtube, video_path, title, description, category_id="22",
                         sys.stdout.flush()
         except Exception as e:
             err_str = str(e)
-            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e) is True:
+            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e, upload=True) is True:
                 logging.info("🔄 配額已切換至下一專案，重新發起本次影片上傳作業...")
                 continue
 

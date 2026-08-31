@@ -68,7 +68,7 @@ class YouTubeServicePoolTests(unittest.TestCase):
         self.assertEqual(pool.active_account["slot"], 1)
         
         # Trigger quota rotation
-        rotated = pool.rotate_on_quota(Exception("403 quotaExceeded"))
+        rotated = pool.rotate_on_quota(Exception("403 quotaExceeded"), upload=True)
         self.assertTrue(rotated)
         self.assertEqual(pool.active_account["slot"], 2)
         self.assertTrue(pool.accounts[0]["exhausted"])
@@ -83,9 +83,9 @@ class YouTubeServicePoolTests(unittest.TestCase):
             side_effect=lambda account: (MagicMock(), MagicMock()),
         ):
             for _ in range(4):
-                results.append(pool.rotate_on_quota(Exception("403 quotaExceeded")))
+                results.append(pool.rotate_on_quota(Exception("403 quotaExceeded"), upload=True))
                 observed_slots.append(pool.active_account["slot"])
-            final_result = pool.rotate_on_quota(Exception("403 quotaExceeded"))
+            final_result = pool.rotate_on_quota(Exception("403 quotaExceeded"), upload=True)
 
         self.assertEqual(observed_slots, expected_slots)
         self.assertTrue(all(results))
@@ -110,7 +110,7 @@ class YouTubeServicePoolTests(unittest.TestCase):
             return None, None
 
         with patch.object(pool, "_authenticate_account", side_effect=fail_auth):
-            self.assertFalse(pool.rotate_on_quota(Exception("authorization failed")))
+            self.assertFalse(pool.rotate_on_quota(Exception("authorization failed"), upload=True))
 
         # 首次呼叫時 slot1 已是觸發切換的失敗者；後兩輪會再試 slot1。
         self.assertEqual(
@@ -150,7 +150,7 @@ class YouTubeServicePoolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "spans different channels"):
             pool.require_same_channel()
 
-    def test_pool_channel_validation_skips_exhausted_slot_and_uses_next(self):
+    def test_pool_channel_validation_quota_does_not_exhaust_upload_slot(self):
         pool = YouTubeServicePool()
         exhausted_service = MagicMock()
         exhausted_service.channels.return_value.list.return_value.execute.side_effect = Exception("quotaExceeded")
@@ -166,7 +166,7 @@ class YouTubeServicePoolTests(unittest.TestCase):
         ]
 
         self.assertEqual(pool.require_same_channel(), "channel-1")
-        self.assertTrue(pool.accounts[0]["exhausted"])
+        self.assertFalse(pool.accounts[0]["exhausted"])
         self.assertEqual(pool.active_account["slot"], 2)
 
     def test_pool_channel_validation_pauses_only_when_all_slots_exhausted(self):
@@ -184,7 +184,35 @@ class YouTubeServicePoolTests(unittest.TestCase):
         with self.assertRaises(UploadPaused) as raised:
             pool.require_same_channel()
         self.assertEqual(raised.exception.reason, "quotaExceeded")
-        self.assertTrue(all(account["exhausted"] for account in pool.accounts))
+        self.assertTrue(all(not account["exhausted"] for account in pool.accounts))
+
+    def test_ordinary_api_quota_does_not_exhaust_upload_slot(self):
+        pool = YouTubeServicePool()
+        pool.accounts = [
+            {"slot": 1, "service": MagicMock(), "creds": MagicMock(), "exhausted": False},
+            {"slot": 2, "service": MagicMock(), "creds": MagicMock(), "exhausted": False},
+        ]
+
+        self.assertTrue(pool.rotate_on_quota(Exception("403 quotaExceeded")))
+        self.assertFalse(any(account["exhausted"] for account in pool.accounts))
+        self.assertTrue(pool.accounts[0]["api_exhausted"])
+
+    def test_upload_rotation_never_uses_unverified_channel_slot(self):
+        pool = YouTubeServicePool()
+        pool.channel_id = "channel-1"
+        pool.accounts = [
+            {"slot": 1, "service": MagicMock(), "creds": MagicMock(),
+             "channel_id": "channel-1", "exhausted": False},
+            {"slot": 2, "service": MagicMock(), "creds": MagicMock(),
+             "channel_id": None, "exhausted": False},
+        ]
+
+        with patch.object(pool, "_authenticate_account", return_value=(MagicMock(), MagicMock())):
+            self.assertTrue(pool.rotate_on_quota(Exception("403 quotaExceeded"), upload=True))
+            self.assertTrue(pool.rotate_on_quota(Exception("403 quotaExceeded"), upload=True))
+            self.assertFalse(pool.rotate_on_quota(Exception("403 quotaExceeded"), upload=True))
+        self.assertEqual(pool.active_account["slot"], 1)
+        self.assertFalse(pool.accounts[1]["exhausted"])
 
     def test_get_playlist_video_index_rotates_and_recovers(self):
         from src.youtube_api_uploader import get_playlist_video_index
