@@ -3591,14 +3591,14 @@
         3193,
         3503
       ],
-      "status": "needs_attention",
+      "status": "waiting_retry",
       "run_id": 33347544678,
       "run_attempt": 1,
       "execution_generation": 1,
       "retry_requested_at": null,
       "run_history": [],
-      "retry_at": null,
-      "reason": "permanentFailure;",
+      "retry_at": "2026-08-31T07:15:00+00:00",
+      "reason": "quotaExceeded",
       "hf_progress": {
         "completed": 0,
         "total": 0
