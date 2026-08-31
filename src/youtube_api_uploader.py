@@ -121,6 +121,31 @@ def save_resume_state(path, run_id, privacy, status, reason="", retry_at=None,
                       playlist_url=None, pending_playlist=None,
                       pending_captions=None, pending_publish=None,
                       final_playlist_validation=None):
+    # A human may deliberately re-run a failed job before the saved daily
+    # quota window expires.  If that probe still reports the same API-project
+    # quota exhaustion, keep the original schedule instead of moving it.
+    if (
+        os.environ.get("MANUAL_YOUTUBE_RETRY", "").lower() == "true"
+        and status == "paused"
+        and reason == "quotaExceeded"
+        and retry_at is not None
+    ):
+        previous = load_resume_state(path)
+        previous_retry_text = (previous or {}).get("retry_at")
+        if (previous or {}).get("reason") == "quotaExceeded" and previous_retry_text:
+            try:
+                previous_retry_at = datetime.fromisoformat(
+                    previous_retry_text.replace("Z", "+00:00")
+                )
+                if datetime.now(timezone.utc) < previous_retry_at:
+                    logging.info(
+                        "🕒 手動提前測試仍為 quotaExceeded；保留原安全重試時間 %s。",
+                        previous_retry_at.isoformat(),
+                    )
+                    retry_at = previous_retry_at
+            except ValueError:
+                logging.warning("忽略無法解析的舊 retry_at：%s", previous_retry_text)
+
     data = {
         "version": 4,
         "run_id": str(run_id) if run_id else "",
@@ -1868,6 +1893,12 @@ def main():
                         "忽略舊縮圖等待時間並立即從下一個 API slot 繼續。",
                         current_pool_size,
                         saved_pool_size,
+                    )
+                elif os.environ.get("MANUAL_YOUTUBE_RETRY", "").lower() == "true":
+                    logging.warning(
+                        "⚠️ 偵測到使用者手動 Re-run；忽略尚未到期的安全重試時間 %s，"
+                        "現在將實際測試 YouTube API 憑證池。",
+                        retry_at.isoformat(),
                     )
                 else:
                     logging.info("⏳ 尚未到安全重試時間 %s；本次排程不會呼叫 YouTube。", retry_at.isoformat())

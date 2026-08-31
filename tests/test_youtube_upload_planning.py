@@ -50,6 +50,48 @@ from src.worker_pipeline import (
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
+    def test_manual_quota_probe_preserves_future_retry_time(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = str(Path(temp_dir) / "state.json")
+            original_retry = datetime.now(timezone.utc) + timedelta(hours=6)
+            save_resume_state(
+                state_path, "123", "public", "paused",
+                reason="quotaExceeded", retry_at=original_retry,
+            )
+
+            with patch.dict(os.environ, {"MANUAL_YOUTUBE_RETRY": "true"}):
+                save_resume_state(
+                    state_path, "123", "public", "paused",
+                    reason="quotaExceeded",
+                    retry_at=original_retry + timedelta(days=1),
+                )
+
+            self.assertEqual(
+                load_resume_state(state_path)["retry_at"],
+                original_retry.isoformat(),
+            )
+
+    def test_manual_quota_probe_does_not_preserve_expired_retry_time(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = str(Path(temp_dir) / "state.json")
+            expired_retry = datetime.now(timezone.utc) - timedelta(hours=1)
+            new_retry = datetime.now(timezone.utc) + timedelta(hours=23)
+            save_resume_state(
+                state_path, "123", "public", "paused",
+                reason="quotaExceeded", retry_at=expired_retry,
+            )
+
+            with patch.dict(os.environ, {"MANUAL_YOUTUBE_RETRY": "true"}):
+                save_resume_state(
+                    state_path, "123", "public", "paused",
+                    reason="quotaExceeded", retry_at=new_retry,
+                )
+
+            self.assertEqual(
+                load_resume_state(state_path)["retry_at"],
+                new_retry.isoformat(),
+            )
+
     @patch("src.metadata_gen.save_book_metadata")
     @patch("src.youtube_api_uploader.get_media_duration")
     def test_first_run_measures_prepared_parts_before_playlist(self, duration, metadata):

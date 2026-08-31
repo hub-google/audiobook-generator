@@ -735,6 +735,9 @@ jobs:
           HF_MEDIA_PREUPLOADED: "true"
           QUEUE_TASK_ID: ${{ github.event.inputs.queue_task_id }}
           BOOK_CATALOG_URL: ${{ github.event.inputs.catalog_url }}
+          # A rerun initiated in the Actions UI may probe YouTube before the
+          # saved retry_at. Automatic reruns are initiated by github-actions.
+          MANUAL_YOUTUBE_RETRY: ${{ github.run_attempt > 1 && github.triggering_actor != 'github-actions[bot]' && 'true' || 'false' }}
 
         run: |
           set +e
