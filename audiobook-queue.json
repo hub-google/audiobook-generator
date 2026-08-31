@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 744,
-  "updated_at": "2026-08-31T05:10:25.925329+00:00",
+  "revision": 745,
+  "updated_at": "2026-08-31T07:22:17.909623+00:00",
   "queue": [
     {
       "task_id": "book-20260830-677484cd",
@@ -3591,7 +3591,7 @@
         3193,
         3503
       ],
-      "status": "queued",
+      "status": "running",
       "run_id": 33347544678,
       "run_attempt": 1,
       "execution_generation": 1,
@@ -3608,7 +3608,7 @@
         "total": 0
       },
       "created_at": "2026-08-30T01:43:06.558333+00:00",
-      "updated_at": "2026-08-31T05:10:25.925293+00:00",
+      "updated_at": "2026-08-31T07:22:17.908573+00:00",
       "book_profile_id": "23d27791201a903e",
       "profile_snapshot": {
         "book_profile_id": "23d27791201a903e",
@@ -3637,7 +3637,8 @@
         "cleaner_fingerprint": "e079dce7f0a2a20a926a9de15f18ed70ea50cc6315f34888179cf1bac0975c00"
       },
       "artifact_source_run_id": null,
-      "dispatched_at": "2026-08-30T02:18:29.350586+00:00"
+      "dispatched_at": "2026-08-30T02:18:29.350586+00:00",
+      "run_conclusion": null
     },
     {
       "task_id": "book-20260830-b83f92f6",
