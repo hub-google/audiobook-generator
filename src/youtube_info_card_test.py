@@ -186,7 +186,10 @@ def probe_data_api_collection(creds: Credentials) -> requests.Response:
     return response
 
 
-def card_payload(playlist_id: str, client_version: str, delegated_session_id: str = "") -> dict[str, Any]:
+def card_payload(
+    playlist_id: str, client_version: str, delegated_session_id: str = "",
+    serialized_delegation_context: str = "",
+) -> dict[str, Any]:
     delegation_context = {
         "roleType": {"channelRoleType": "CREATOR_CHANNEL_ROLE_TYPE_OWNER"},
         "externalChannelId": OWNER_CHANNEL_ID,
@@ -202,7 +205,7 @@ def card_payload(playlist_id: str, client_version: str, delegated_session_id: st
             "user": {
                 **({"onBehalfOfUser": delegated_session_id} if delegated_session_id else {}),
                 "delegationContext": delegation_context,
-                "serializedDelegationContext": "",
+                "serializedDelegationContext": serialized_delegation_context,
             },
         },
         "delegationContext": delegation_context,
@@ -274,7 +277,7 @@ def studio_bootstrap(cookies: dict[str, str] | None = None) -> dict[str, str]:
 
 def call_studio_with_oauth(creds: Credentials, playlist_id: str) -> bool:
     config = studio_bootstrap()
-    client_version = config["client_version"] or "1.20260826.00.00"
+    client_version = os.getenv("YOUTUBE_STUDIO_CLIENT_VERSION", "").strip() or config["client_version"] or "1.20260826.00.00"
     response = requests.post(
         STUDIO_ENDPOINT,
         params={"key": config["api_key"]} if config["api_key"] else {},
@@ -332,7 +335,8 @@ def call_studio_with_session(playlist_id: str) -> bool:
 
     config = studio_bootstrap(cookies)
     api_key = config["api_key"]
-    client_version = config["client_version"] or "1.20260826.00.00"
+    client_version = os.getenv("YOUTUBE_STUDIO_CLIENT_VERSION", "").strip() or config["client_version"] or "1.20260826.00.00"
+    serialized_delegation = os.getenv("YOUTUBE_STUDIO_DELEGATION_CONTEXT", "").strip()
     if not api_key:
         emit("studio_session_config", warning="Studio page exposed no API key; trying the authenticated endpoint without one")
 
@@ -351,10 +355,11 @@ def call_studio_with_session(playlist_id: str) -> bool:
             "X-Youtube-Client-Name": "62",
             "X-Youtube-Client-Version": client_version,
             "X-Youtube-Bootstrap-Logged-In": "true",
+            **({"X-Youtube-Delegation-Context": serialized_delegation} if serialized_delegation else {}),
             "Content-Type": "application/json",
         },
         cookies=cookies,
-        json=card_payload(playlist_id, client_version, config["page_id"]),
+        json=card_payload(playlist_id, client_version, config["page_id"], serialized_delegation),
         timeout=30,
     )
     emit("studio_session_edit_video_post", response=safe_response(response))

@@ -58,6 +58,8 @@ jobs:
       YOUTUBE_CLIENT_SECRET_10: ${{ secrets.YOUTUBE_CLIENT_SECRET_10 }}
       YOUTUBE_REFRESH_TOKEN_10: ${{ secrets.YOUTUBE_REFRESH_TOKEN_10 }}
       YOUTUBE_STUDIO_COOKIES: ${{ secrets.YOUTUBE_STUDIO_COOKIES }}
+      YOUTUBE_STUDIO_DELEGATION_CONTEXT: ${{ secrets.YOUTUBE_STUDIO_DELEGATION_CONTEXT }}
+      YOUTUBE_STUDIO_CLIENT_VERSION: "1.20260826.03.00"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
