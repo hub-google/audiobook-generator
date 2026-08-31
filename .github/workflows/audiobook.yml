@@ -737,7 +737,7 @@ jobs:
           BOOK_CATALOG_URL: ${{ github.event.inputs.catalog_url }}
           # A rerun initiated in the Actions UI may probe YouTube before the
           # saved retry_at. Automatic reruns are initiated by github-actions.
-          MANUAL_YOUTUBE_RETRY: ${{ github.run_attempt > 1 && github.triggering_actor != 'github-actions[bot]' && 'true' || 'false' }}
+          MANUAL_YOUTUBE_RETRY: ${{ github.triggering_actor != 'github-actions[bot]' && (github.run_attempt > 1 || inputs.resume_source_run_id != '') && 'true' || 'false' }}
 
         run: |
           set +e

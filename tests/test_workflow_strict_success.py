@@ -10,6 +10,12 @@ PREPARE_PARTS_PATH = Path(__file__).parents[1] / "src" / "prepare_parts.py"
 
 
 class WorkflowStrictSuccessTests(unittest.TestCase):
+    def test_manual_rerun_or_manual_resume_can_probe_youtube_early(self):
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("github.run_attempt > 1", workflow_text)
+        self.assertIn("inputs.resume_source_run_id != ''", workflow_text)
+        self.assertIn("github.triggering_actor != 'github-actions[bot]'", workflow_text)
+
     @classmethod
     def setUpClass(cls):
         cls.text = WORKFLOW_PATH.read_text(encoding="utf-8")
