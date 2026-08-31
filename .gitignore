@@ -50,6 +50,10 @@ scratch/
 *.markdown
 !章節選擇與重複判斷需求書.md
 
+# YouTube backfill local-only data
+tools/youtube_backfill_state.json
+tools/youtube_backfill_chrome_profile/
+
 # IDE & OS System Files
 .vscode/
 .idea/
