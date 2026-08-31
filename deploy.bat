@@ -62,3 +62,5 @@ exit /b 0
 :failed
 echo [ERROR] Deployment stopped. Review the Git error above.
 exit /b 1
+
+pause
