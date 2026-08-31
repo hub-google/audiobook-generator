@@ -195,7 +195,7 @@ def card_payload(playlist_id: str, client_version: str) -> dict[str, Any]:
     }
 
 
-def studio_bootstrap(cookies: dict[str, str] | None = None) -> tuple[str, str]:
+def studio_bootstrap(cookies: dict[str, str] | None = None) -> dict[str, str]:
     """Extract Studio's current API key/client version, using login cookies when available."""
     try:
         response = requests.get(
@@ -204,29 +204,36 @@ def studio_bootstrap(cookies: dict[str, str] | None = None) -> tuple[str, str]:
             timeout=30,
         )
         text = response.text
-        key_match = re.search(r'"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"', text)
-        version_match = re.search(r'"INNERTUBE_CLIENT_VERSION"\s*:\s*"([^"]+)"', text)
-        api_key = key_match.group(1) if key_match else ""
-        version = version_match.group(1) if version_match else ""
+        def config_value(name: str) -> str:
+            match = re.search(rf'"{re.escape(name)}"\s*:\s*(?:"([^"]*)"|(\d+))', text)
+            return (match.group(1) or match.group(2)) if match else ""
+
+        config = {
+            "api_key": config_value("INNERTUBE_API_KEY"),
+            "client_version": config_value("INNERTUBE_CLIENT_VERSION"),
+            "auth_user": config_value("SESSION_INDEX"),
+            "page_id": config_value("DELEGATED_SESSION_ID"),
+        }
         emit(
             "studio_bootstrap",
             authenticated=bool(cookies),
             status=response.status_code,
-            api_key_found=bool(api_key),
-            client_version=version,
+            api_key_found=bool(config["api_key"]),
+            client_version=config["client_version"],
+            delegated_session=bool(config["page_id"]),
         )
-        return api_key, version
+        return config
     except Exception as exc:
         emit("studio_bootstrap_failed", error=type(exc).__name__, detail=str(exc)[:500])
-        return "", ""
+        return {"api_key": "", "client_version": "", "auth_user": "", "page_id": ""}
 
 
 def call_studio_with_oauth(creds: Credentials, playlist_id: str) -> bool:
-    api_key, version = studio_bootstrap()
-    client_version = version or "1.20260826.00.00"
+    config = studio_bootstrap()
+    client_version = config["client_version"] or "1.20260826.00.00"
     response = requests.post(
         STUDIO_ENDPOINT,
-        params={"key": api_key} if api_key else {},
+        params={"key": config["api_key"]} if config["api_key"] else {},
         headers={
             "Authorization": f"Bearer {creds.token}",
             "Origin": STUDIO_ORIGIN,
@@ -249,6 +256,9 @@ def studio_cookie_map(raw: str) -> dict[str, str]:
 
 
 def call_studio_with_session(playlist_id: str) -> bool:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", playlist_id):
+        emit("studio_session_unavailable", reason="playlist ID is empty or invalid")
+        return False
     raw_cookies = os.getenv("YOUTUBE_STUDIO_COOKIES", "").strip()
     if not raw_cookies:
         emit("studio_session_unavailable", reason="missing GitHub Actions secret YOUTUBE_STUDIO_COOKIES")
@@ -260,11 +270,12 @@ def call_studio_with_session(playlist_id: str) -> bool:
         emit("studio_session_unavailable", reason="Studio cookies contain no SAPISID or __Secure-3PAPISID")
         return False
 
-    configured_key = os.getenv("YOUTUBE_STUDIO_API_KEY", "").strip()
-    configured_version = os.getenv("YOUTUBE_STUDIO_CLIENT_VERSION", "").strip()
-    detected_key, detected_version = studio_bootstrap(cookies)
-    api_key = configured_key or detected_key
-    client_version = configured_version or detected_version or "1.20260826.00.00"
+    config = studio_bootstrap(cookies)
+    api_key = config["api_key"]
+    client_version = config["client_version"] or "1.20260826.00.00"
+    if not api_key:
+        emit("studio_session_unavailable", reason="authenticated Studio page did not expose an API key")
+        return False
 
     timestamp = str(int(time.time()))
     digest = hashlib.sha1(f"{timestamp} {sapisid} {STUDIO_ORIGIN}".encode()).hexdigest()
@@ -276,7 +287,8 @@ def call_studio_with_session(playlist_id: str) -> bool:
             "Origin": STUDIO_ORIGIN,
             "Referer": f"{STUDIO_ORIGIN}/video/{VIDEO_ID}/edit",
             "X-Origin": STUDIO_ORIGIN,
-            "X-Goog-AuthUser": os.getenv("YOUTUBE_STUDIO_AUTHUSER", "0"),
+            "X-Goog-AuthUser": config["auth_user"] or "0",
+            **({"X-Goog-PageId": config["page_id"]} if config["page_id"] else {}),
             "Content-Type": "application/json",
         },
         cookies=cookies,
