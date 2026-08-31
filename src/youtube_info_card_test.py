@@ -133,13 +133,16 @@ def discover_playlist(creds: Credentials, video: dict[str, Any]) -> str:
     raise RuntimeError("could not find an owned playlist containing the target video")
 
 
-def probe_data_api(creds: Credentials, playlist_id: str) -> bool:
+def probe_data_api_collection(creds: Credentials) -> requests.Response:
     headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
     params = {"part": "snippet", "videoId": VIDEO_ID}
     get_response = requests.get(f"{DATA_API}/infocards", params=params, headers=headers, timeout=30)
     emit("data_api_infocards_get", response=safe_response(get_response))
-    if not get_response.ok:
-        return False
+    return get_response
+
+
+def write_data_api_card(creds: Credentials, playlist_id: str) -> bool:
+    headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
 
     # Only mutate after the collection proves that it exists for this account.
     body = {
@@ -220,9 +223,21 @@ def main() -> int:
     emit("oauth_slots_refreshed", count=len(slots), slots=[slot for slot, _ in slots])
     if not slots:
         raise RuntimeError("no usable YouTube OAuth credential slots")
+    # Probe the requested endpoint before any normal Data API lookup.  This
+    # preserves the endpoint's real response even when the project's daily
+    # Data API quota has already been consumed by the production uploader.
+    collection_response = probe_data_api_collection(slots[0][1])
+    if not collection_response.ok:
+        emit("fallback", route="youtube_studio_internal_api")
+        playlist_id = os.getenv("YOUTUBE_INFO_CARD_PLAYLIST_ID", "").strip()
+        if call_studio(playlist_id):
+            emit("result", success=True, route="studio_internal_api")
+            return 0
+        emit("result", success=False, reason="Data API infocards endpoint unavailable and Studio session unavailable or failed")
+        return 1
     slot, creds, video = owner_for_video(slots)
     playlist_id = discover_playlist(creds, video)
-    if probe_data_api(creds, playlist_id):
+    if write_data_api_card(creds, playlist_id):
         emit("result", success=True, route="data_api", owner_slot=slot)
         return 0
     emit("fallback", route="youtube_studio_internal_api")
