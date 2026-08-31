@@ -170,12 +170,12 @@ def probe_data_api_collection(creds: Credentials) -> requests.Response:
     return response
 
 
-def card_payload(playlist_id: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+def card_payload(playlist_id: str, client_version: str) -> dict[str, Any]:
     return {
-        "context": context or {
+        "context": {
             "client": {
                 "clientName": "WEB_CREATOR",
-                "clientVersion": os.getenv("YOUTUBE_STUDIO_CLIENT_VERSION", "1.20260826.00.00"),
+                "clientVersion": client_version,
                 "hl": "zh-TW",
             }
         },
@@ -195,10 +195,14 @@ def card_payload(playlist_id: str, context: dict[str, Any] | None = None) -> dic
     }
 
 
-def studio_bootstrap() -> tuple[str, str]:
-    """Best-effort extraction of Studio's public web API key/client version."""
+def studio_bootstrap(cookies: dict[str, str] | None = None) -> tuple[str, str]:
+    """Extract Studio's current API key/client version, using login cookies when available."""
     try:
-        response = requests.get(STUDIO_ORIGIN, timeout=30)
+        response = requests.get(
+            f"{STUDIO_ORIGIN}/video/{VIDEO_ID}/edit",
+            cookies=cookies or {},
+            timeout=30,
+        )
         text = response.text
         key_match = re.search(r'"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"', text)
         version_match = re.search(r'"INNERTUBE_CLIENT_VERSION"\s*:\s*"([^"]+)"', text)
@@ -206,6 +210,7 @@ def studio_bootstrap() -> tuple[str, str]:
         version = version_match.group(1) if version_match else ""
         emit(
             "studio_bootstrap",
+            authenticated=bool(cookies),
             status=response.status_code,
             api_key_found=bool(api_key),
             client_version=version,
@@ -218,13 +223,7 @@ def studio_bootstrap() -> tuple[str, str]:
 
 def call_studio_with_oauth(creds: Credentials, playlist_id: str) -> bool:
     api_key, version = studio_bootstrap()
-    context = {
-        "client": {
-            "clientName": "WEB_CREATOR",
-            "clientVersion": version or os.getenv("YOUTUBE_STUDIO_CLIENT_VERSION", "1.20260826.00.00"),
-            "hl": "zh-TW",
-        }
-    }
+    client_version = version or "1.20260826.00.00"
     response = requests.post(
         STUDIO_ENDPOINT,
         params={"key": api_key} if api_key else {},
@@ -235,7 +234,7 @@ def call_studio_with_oauth(creds: Credentials, playlist_id: str) -> bool:
             "X-Origin": STUDIO_ORIGIN,
             "Content-Type": "application/json",
         },
-        json=card_payload(playlist_id, context),
+        json=card_payload(playlist_id, client_version),
         timeout=30,
     )
     emit("studio_oauth_edit_video_post", response=safe_response(response))
@@ -254,28 +253,21 @@ def call_studio_with_session(playlist_id: str) -> bool:
     if not raw_cookies:
         emit("studio_session_unavailable", reason="missing GitHub Actions secret YOUTUBE_STUDIO_COOKIES")
         return False
+
     cookies = studio_cookie_map(raw_cookies)
     sapisid = cookies.get("SAPISID") or cookies.get("__Secure-3PAPISID")
     if not sapisid:
         emit("studio_session_unavailable", reason="Studio cookies contain no SAPISID or __Secure-3PAPISID")
         return False
 
-    api_key = os.getenv("YOUTUBE_STUDIO_API_KEY", "").strip()
+    configured_key = os.getenv("YOUTUBE_STUDIO_API_KEY", "").strip()
     configured_version = os.getenv("YOUTUBE_STUDIO_CLIENT_VERSION", "").strip()
-    if not api_key or not configured_version:
-        detected_key, detected_version = studio_bootstrap()
-        api_key = api_key or detected_key
-        configured_version = configured_version or detected_version
+    detected_key, detected_version = studio_bootstrap(cookies)
+    api_key = configured_key or detected_key
+    client_version = configured_version or detected_version or "1.20260826.00.00"
 
     timestamp = str(int(time.time()))
     digest = hashlib.sha1(f"{timestamp} {sapisid} {STUDIO_ORIGIN}".encode()).hexdigest()
-    context = {
-        "client": {
-            "clientName": "WEB_CREATOR",
-            "clientVersion": configured_version or "1.20260826.00.00",
-            "hl": "zh-TW",
-        }
-    }
     response = requests.post(
         STUDIO_ENDPOINT,
         params={"key": api_key} if api_key else {},
@@ -288,7 +280,7 @@ def call_studio_with_session(playlist_id: str) -> bool:
             "Content-Type": "application/json",
         },
         cookies=cookies,
-        json=card_payload(playlist_id, context),
+        json=card_payload(playlist_id, client_version),
         timeout=30,
     )
     emit("studio_session_edit_video_post", response=safe_response(response))
@@ -303,7 +295,6 @@ def main() -> int:
         raise RuntimeError("no usable YouTube OAuth credential slots")
 
     probe_data_api_collection(slots[0][1])
-
     slot, creds, video = owner_for_video(slots)
     playlist_id = discover_playlist(creds, video)
 
