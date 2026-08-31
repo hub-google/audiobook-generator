@@ -7,6 +7,11 @@ on:
         description: "Optional playlist ID; otherwise discover the owned playlist containing the video"
         required: false
         type: string
+  push:
+    branches: [master]
+    paths:
+      - "src/youtube_info_card_test.py"
+      - ".github/workflows/test-youtube-infocard.yml"
 
 permissions:
   contents: read
