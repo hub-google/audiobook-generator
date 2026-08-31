@@ -243,11 +243,13 @@ def studio_bootstrap(cookies: dict[str, str] | None = None) -> dict[str, str]:
             match = re.search(rf'"{re.escape(name)}"\s*:\s*(?:"([^"]*)"|(\d+))', text)
             return (match.group(1) or match.group(2)) if match else ""
 
+        datasync_id = config_value("DATASYNC_ID")
+        delegated_from_sync = datasync_id.split("||", 1)[0] if "||" in datasync_id else ""
         config = empty | {
             "api_key": config_value("INNERTUBE_API_KEY"),
             "client_version": config_value("INNERTUBE_CLIENT_VERSION") or config_value("INNERTUBE_CONTEXT_CLIENT_VERSION"),
             "auth_user": config_value("SESSION_INDEX"),
-            "page_id": config_value("DELEGATED_SESSION_ID"),
+            "page_id": config_value("DELEGATED_SESSION_ID") or delegated_from_sync,
             "identity_token": config_value("ID_TOKEN"),
             "visitor_data": config_value("VISITOR_DATA") or config_value("visitorData"),
         }
@@ -258,6 +260,7 @@ def studio_bootstrap(cookies: dict[str, str] | None = None) -> dict[str, str]:
             api_key_found=bool(config["api_key"]),
             client_version=config["client_version"],
             delegated_session=bool(config["page_id"]),
+            datasync_found=bool(datasync_id),
             identity_token_found=bool(config["identity_token"]),
         )
         return config
