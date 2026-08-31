@@ -43,11 +43,11 @@ TRANSIENT_REASONS = {
 
 
 def failed_artifact_source_candidates(queue, profile_id, current_task_id="", current_task=None):
-    """Return newest-to-oldest failed Run IDs for exactly one stable book profile.
+    """Return reusable failed/cancelled Run IDs for one stable book profile.
 
-    Cancellation, interruption, missing runs, successful runs, and active runs are
-    not production checkpoints.  The dispatcher performs the live GitHub and
-    artifact checks before locking one candidate for the next execution.
+    A cancelled Run may still contain valid per-worker checkpoints uploaded by
+    ``if: always()`` cleanup steps.  The dispatcher performs live Run and
+    artifact checks before locking any recorded candidate.
     """
     candidates = []
     sequence = 0
@@ -58,14 +58,15 @@ def failed_artifact_source_candidates(queue, profile_id, current_task_id="", cur
         if str(task.get("book_profile_id") or "") != str(profile_id or ""):
             continue
         history = list(task.get("run_history") or [])
-        if task.get("task_id") != current_task_id and task.get("run_id") and task.get("run_conclusion") == "failure":
+        if (task.get("task_id") != current_task_id and task.get("run_id")
+                and task.get("run_conclusion") in {"failure", "cancelled"}):
             history.append({
                 "run_id": task.get("run_id"),
-                "conclusion": "failure",
+                "conclusion": task.get("run_conclusion"),
                 "ended_at": task.get("run_completed_at") or task.get("updated_at") or "",
             })
         for item in history:
-            if item.get("conclusion") != "failure":
+            if item.get("conclusion") not in {"failure", "cancelled"}:
                 continue
             run_id = item.get("run_id")
             if not str(run_id or "").isdigit():
@@ -151,14 +152,15 @@ class Dispatcher:
         }
 
     def select_artifact_source_run_id(self, queue, profile_id, current_task_id="", current_task=None):
-        """Lock the newest live, completed, failed Run with reusable worker artifacts."""
+        """Lock the newest completed failed/cancelled Run with worker artifacts."""
         for run_id in failed_artifact_source_candidates(
             queue, profile_id, current_task_id, current_task=current_task,
         ):
             run = self.run_by_id(run_id)
             if not run:
                 continue
-            if run.get("status") != "completed" or run.get("conclusion") != "failure":
+            if (run.get("status") != "completed"
+                    or run.get("conclusion") not in {"failure", "cancelled"}):
                 continue
             names = self.run_artifact_names(run_id)
             if "shared-config" not in names:

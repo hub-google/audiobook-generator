@@ -27,9 +27,9 @@ class CloudQueueTests(unittest.TestCase):
                 {"run_id": 200, "conclusion": "failure", "ended_at": "2026-08-21T00:00:00Z"},
             ]}],
         }
-        self.assertEqual(artifact_source_run_id(queue, "book-fp", "current"), 300)
+        self.assertEqual(artifact_source_run_id(queue, "book-fp", "current"), 400)
 
-    def test_failed_source_candidates_exclude_cancelled_success_missing_and_active(self):
+    def test_checkpoint_source_candidates_include_cancelled_but_exclude_other_states(self):
         queue = {"queue": [{
             "task_id": "current", "book_profile_id": "book-fp", "run_history": [
                 {"run_id": 10, "conclusion": "failure", "ended_at": "2026-08-20T00:00:00Z"},
@@ -39,7 +39,25 @@ class CloudQueueTests(unittest.TestCase):
                 {"run_id": 50, "conclusion": None, "ended_at": "2026-08-24T00:00:00Z"},
             ],
         }], "completed": []}
-        self.assertEqual(failed_artifact_source_candidates(queue, "book-fp", "current"), [10])
+        self.assertEqual(failed_artifact_source_candidates(queue, "book-fp", "current"), [30, 10])
+
+    def test_dispatcher_accepts_cancelled_run_when_worker_artifacts_exist(self):
+        queue = {"queue": [{
+            "task_id": "current", "book_profile_id": "book-fp", "run_history": [
+                {"run_id": 300, "conclusion": "cancelled", "ended_at": "2026-08-22T00:00:00Z"},
+            ],
+        }], "completed": []}
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.run_by_id = Mock(return_value={
+            "id": 300, "status": "completed", "conclusion": "cancelled",
+        })
+        dispatcher.run_artifact_names = Mock(return_value={
+            "shared-config", "video-worker-0", "video-worker-1",
+        })
+
+        self.assertEqual(
+            dispatcher.select_artifact_source_run_id(queue, "book-fp", "current"), 300,
+        )
 
     def test_dispatcher_skips_deleted_or_unusable_failed_runs_and_locks_one_source(self):
         queue = {"queue": [{
