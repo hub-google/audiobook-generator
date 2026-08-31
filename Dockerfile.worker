@@ -29,6 +29,7 @@ RUN apt-get update \
 COPY requirements.txt /tmp/audiobook-requirements.txt
 RUN python -m pip install --upgrade pip \
     && python -m pip install -r /tmp/audiobook-requirements.txt \
+    && python -c "from opencc import OpenCC; assert OpenCC('t2s').convert('漢字') == '汉字'" \
     && rm /tmp/audiobook-requirements.txt \
     && ffmpeg -version | head -n 1 \
     && fc-match :lang=zh \
