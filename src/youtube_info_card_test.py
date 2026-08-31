@@ -306,6 +306,15 @@ def main() -> int:
         raise RuntimeError("no usable YouTube OAuth credential slots")
 
     probe_data_api_collection(slots[0][1])
+    forced_playlist = os.getenv("YOUTUBE_INFO_CARD_PLAYLIST_ID", "").strip()
+    if forced_playlist:
+        emit("playlist_selected", source="environment", playlist_id=forced_playlist)
+        if call_studio_with_session(forced_playlist):
+            emit("result", success=True, route="studio_internal_api_session")
+            return 0
+        emit("result", success=False, reason="Studio browser-session request failed")
+        return 1
+
     slot, creds, video = owner_for_video(slots)
     playlist_id = discover_playlist(creds, video)
 
