@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 760,
-  "updated_at": "2026-08-31T08:18:38.380030+00:00",
+  "revision": 761,
+  "updated_at": "2026-08-31T08:25:12.674768+00:00",
   "queue": [
     {
       "task_id": "book-20260830-b83f92f6",
@@ -7688,7 +7688,7 @@
         2201,
         2202
       ],
-      "status": "queued",
+      "status": "paused",
       "run_id": null,
       "run_attempt": 0,
       "execution_generation": 1,
@@ -7705,7 +7705,7 @@
         "total": 0
       },
       "created_at": "2026-08-30T01:43:08.103980+00:00",
-      "updated_at": "2026-08-30T02:23:55.372791+00:00"
+      "updated_at": "2026-08-31T08:25:12.674768+00:00"
     },
     {
       "task_id": "book-20260830-d351738f",
