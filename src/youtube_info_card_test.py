@@ -226,7 +226,7 @@ def studio_bootstrap(cookies: dict[str, str] | None = None) -> dict[str, str]:
     """Extract Studio's current API key/client version, using login cookies when available."""
     empty = {
         "api_key": "", "client_version": "", "auth_user": "", "page_id": "",
-        "identity_token": "", "visitor_data": "",
+        "identity_token": "", "visitor_data": "", "user_session_id": "",
     }
     try:
         session = requests.Session()
@@ -244,7 +244,9 @@ def studio_bootstrap(cookies: dict[str, str] | None = None) -> dict[str, str]:
             return (match.group(1) or match.group(2)) if match else ""
 
         datasync_id = config_value("DATASYNC_ID")
-        delegated_from_sync = datasync_id.split("||", 1)[0] if "||" in datasync_id else ""
+        sync_first, separator, sync_second = datasync_id.partition("||")
+        delegated_from_sync = sync_first if separator and sync_second else ""
+        user_from_sync = sync_second if separator and sync_second else sync_first
         config = empty | {
             "api_key": config_value("INNERTUBE_API_KEY"),
             "client_version": config_value("INNERTUBE_CLIENT_VERSION") or config_value("INNERTUBE_CONTEXT_CLIENT_VERSION"),
@@ -252,6 +254,7 @@ def studio_bootstrap(cookies: dict[str, str] | None = None) -> dict[str, str]:
             "page_id": config_value("DELEGATED_SESSION_ID") or delegated_from_sync,
             "identity_token": config_value("ID_TOKEN"),
             "visitor_data": config_value("VISITOR_DATA") or config_value("visitorData"),
+            "user_session_id": config_value("USER_SESSION_ID") or user_from_sync,
         }
         emit(
             "studio_bootstrap",
@@ -296,6 +299,22 @@ def studio_cookie_map(raw: str) -> dict[str, str]:
     }
 
 
+def sid_authorization(cookies: dict[str, str], user_session_id: str) -> str:
+    timestamp = str(int(time.time()))
+    prefix = f"{user_session_id} " if user_session_id else ""
+    suffix = "_u" if user_session_id else ""
+    values = []
+    for scheme, name in (
+        ("SAPISIDHASH", "SAPISID"),
+        ("SAPISID1PHASH", "__Secure-1PAPISID"),
+        ("SAPISID3PHASH", "__Secure-3PAPISID"),
+    ):
+        if sid := cookies.get(name):
+            digest = hashlib.sha1(f"{prefix}{timestamp} {sid} {STUDIO_ORIGIN}".encode()).hexdigest()
+            values.append(f"{scheme} {timestamp}_{digest}{suffix}")
+    return " ".join(values)
+
+
 def call_studio_with_session(playlist_id: str) -> bool:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", playlist_id):
         emit("studio_session_unavailable", reason="playlist ID is empty or invalid")
@@ -317,13 +336,11 @@ def call_studio_with_session(playlist_id: str) -> bool:
     if not api_key:
         emit("studio_session_config", warning="Studio page exposed no API key; trying the authenticated endpoint without one")
 
-    timestamp = str(int(time.time()))
-    digest = hashlib.sha1(f"{timestamp} {sapisid} {STUDIO_ORIGIN}".encode()).hexdigest()
     response = requests.post(
         STUDIO_ENDPOINT,
         params={"key": api_key} if api_key else {},
         headers={
-            "Authorization": f"SAPISIDHASH {timestamp}_{digest}",
+            "Authorization": sid_authorization(cookies, config["user_session_id"]),
             "Origin": STUDIO_ORIGIN,
             "Referer": f"{STUDIO_ORIGIN}/video/{VIDEO_ID}/edit",
             "X-Origin": STUDIO_ORIGIN,
