@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 775,
-  "updated_at": "2026-08-31T10:19:57.433881+00:00",
+  "revision": 779,
+  "updated_at": "2026-08-31T10:24:53.828158+00:00",
   "queue": [
     {
       "task_id": "book-20260830-677484cd",
@@ -7701,7 +7701,7 @@
         2201,
         2202
       ],
-      "status": "paused",
+      "status": "queued",
       "run_id": null,
       "run_attempt": 0,
       "execution_generation": 1,
@@ -7718,7 +7718,7 @@
         "total": 0
       },
       "created_at": "2026-08-30T01:43:08.103980+00:00",
-      "updated_at": "2026-08-31T08:25:12.674768+00:00"
+      "updated_at": "2026-08-31T10:24:53.771578+00:00"
     },
     {
       "task_id": "book-20260830-d351738f",
@@ -10368,7 +10368,7 @@
         2120,
         2597
       ],
-      "status": "paused",
+      "status": "queued",
       "run_id": null,
       "run_attempt": 0,
       "execution_generation": 1,
@@ -10385,7 +10385,7 @@
         "total": 0
       },
       "created_at": "2026-08-30T01:43:09.424779+00:00",
-      "updated_at": "2026-08-31T08:25:17.152956+00:00"
+      "updated_at": "2026-08-31T10:24:53.791860+00:00"
     },
     {
       "task_id": "book-20260830-c0bc9790",
@@ -12245,7 +12245,7 @@
         1836,
         1837
       ],
-      "status": "paused",
+      "status": "queued",
       "run_id": null,
       "run_attempt": 0,
       "execution_generation": 1,
@@ -12262,7 +12262,7 @@
         "total": 0
       },
       "created_at": "2026-08-30T01:44:06.353793+00:00",
-      "updated_at": "2026-08-31T08:25:17.168730+00:00"
+      "updated_at": "2026-08-31T10:24:53.811676+00:00"
     },
     {
       "task_id": "book-20260830-047102de",
@@ -12560,7 +12560,7 @@
         281,
         282
       ],
-      "status": "paused",
+      "status": "queued",
       "run_id": null,
       "run_attempt": 0,
       "execution_generation": 1,
@@ -12577,7 +12577,7 @@
         "total": 0
       },
       "created_at": "2026-08-30T01:44:07.675090+00:00",
-      "updated_at": "2026-08-31T08:25:17.194830+00:00"
+      "updated_at": "2026-08-31T10:24:53.828158+00:00"
     }
   ],
   "completed": [
