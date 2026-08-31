@@ -1,0 +1,68 @@
+name: Test YouTube info card (isolated)
+
+on:
+  workflow_dispatch:
+    inputs:
+      playlist_id:
+        description: "Optional playlist ID; otherwise discover the owned playlist containing the video"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: isolated-youtube-infocard-test
+  cancel-in-progress: false
+
+jobs:
+  test-infocard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      YOUTUBE_INFO_CARD_VIDEO_ID: 6vQeNPBUXEQ
+      YOUTUBE_INFO_CARD_PLAYLIST_ID: ${{ inputs.playlist_id }}
+      YOUTUBE_CLIENT_ID_1: ${{ secrets.YOUTUBE_CLIENT_ID_1 }}
+      YOUTUBE_CLIENT_SECRET_1: ${{ secrets.YOUTUBE_CLIENT_SECRET_1 }}
+      YOUTUBE_REFRESH_TOKEN_1: ${{ secrets.YOUTUBE_REFRESH_TOKEN_1 }}
+      YOUTUBE_CLIENT_ID_2: ${{ secrets.YOUTUBE_CLIENT_ID_2 }}
+      YOUTUBE_CLIENT_SECRET_2: ${{ secrets.YOUTUBE_CLIENT_SECRET_2 }}
+      YOUTUBE_REFRESH_TOKEN_2: ${{ secrets.YOUTUBE_REFRESH_TOKEN_2 }}
+      YOUTUBE_CLIENT_ID_3: ${{ secrets.YOUTUBE_CLIENT_ID_3 }}
+      YOUTUBE_CLIENT_SECRET_3: ${{ secrets.YOUTUBE_CLIENT_SECRET_3 }}
+      YOUTUBE_REFRESH_TOKEN_3: ${{ secrets.YOUTUBE_REFRESH_TOKEN_3 }}
+      YOUTUBE_CLIENT_ID_4: ${{ secrets.YOUTUBE_CLIENT_ID_4 }}
+      YOUTUBE_CLIENT_SECRET_4: ${{ secrets.YOUTUBE_CLIENT_SECRET_4 }}
+      YOUTUBE_REFRESH_TOKEN_4: ${{ secrets.YOUTUBE_REFRESH_TOKEN_4 }}
+      YOUTUBE_CLIENT_ID_5: ${{ secrets.YOUTUBE_CLIENT_ID_5 }}
+      YOUTUBE_CLIENT_SECRET_5: ${{ secrets.YOUTUBE_CLIENT_SECRET_5 }}
+      YOUTUBE_REFRESH_TOKEN_5: ${{ secrets.YOUTUBE_REFRESH_TOKEN_5 }}
+      YOUTUBE_CLIENT_ID_6: ${{ secrets.YOUTUBE_CLIENT_ID_6 }}
+      YOUTUBE_CLIENT_SECRET_6: ${{ secrets.YOUTUBE_CLIENT_SECRET_6 }}
+      YOUTUBE_REFRESH_TOKEN_6: ${{ secrets.YOUTUBE_REFRESH_TOKEN_6 }}
+      YOUTUBE_CLIENT_ID_7: ${{ secrets.YOUTUBE_CLIENT_ID_7 }}
+      YOUTUBE_CLIENT_SECRET_7: ${{ secrets.YOUTUBE_CLIENT_SECRET_7 }}
+      YOUTUBE_REFRESH_TOKEN_7: ${{ secrets.YOUTUBE_REFRESH_TOKEN_7 }}
+      YOUTUBE_CLIENT_ID_8: ${{ secrets.YOUTUBE_CLIENT_ID_8 }}
+      YOUTUBE_CLIENT_SECRET_8: ${{ secrets.YOUTUBE_CLIENT_SECRET_8 }}
+      YOUTUBE_REFRESH_TOKEN_8: ${{ secrets.YOUTUBE_REFRESH_TOKEN_8 }}
+      YOUTUBE_CLIENT_ID_9: ${{ secrets.YOUTUBE_CLIENT_ID_9 }}
+      YOUTUBE_CLIENT_SECRET_9: ${{ secrets.YOUTUBE_CLIENT_SECRET_9 }}
+      YOUTUBE_REFRESH_TOKEN_9: ${{ secrets.YOUTUBE_REFRESH_TOKEN_9 }}
+      YOUTUBE_CLIENT_ID_10: ${{ secrets.YOUTUBE_CLIENT_ID_10 }}
+      YOUTUBE_CLIENT_SECRET_10: ${{ secrets.YOUTUBE_CLIENT_SECRET_10 }}
+      YOUTUBE_REFRESH_TOKEN_10: ${{ secrets.YOUTUBE_REFRESH_TOKEN_10 }}
+      YOUTUBE_STUDIO_COOKIES: ${{ secrets.YOUTUBE_STUDIO_COOKIES }}
+      YOUTUBE_STUDIO_API_KEY: ${{ secrets.YOUTUBE_STUDIO_API_KEY }}
+      YOUTUBE_STUDIO_CLIENT_VERSION: ${{ secrets.YOUTUBE_STUDIO_CLIENT_VERSION }}
+      YOUTUBE_STUDIO_AUTHUSER: ${{ secrets.YOUTUBE_STUDIO_AUTHUSER }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install only test dependencies
+        run: pip install requests google-auth
+      - name: Probe and write one info card
+        run: python src/youtube_info_card_test.py
