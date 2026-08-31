@@ -274,8 +274,7 @@ def call_studio_with_session(playlist_id: str) -> bool:
     api_key = config["api_key"]
     client_version = config["client_version"] or "1.20260826.00.00"
     if not api_key:
-        emit("studio_session_unavailable", reason="authenticated Studio page did not expose an API key")
-        return False
+        emit("studio_session_config", warning="Studio page exposed no API key; trying the authenticated endpoint without one")
 
     timestamp = str(int(time.time()))
     digest = hashlib.sha1(f"{timestamp} {sapisid} {STUDIO_ORIGIN}".encode()).hexdigest()
