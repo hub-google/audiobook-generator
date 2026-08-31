@@ -47,6 +47,21 @@ def safe_response(response: requests.Response) -> dict[str, Any]:
     }
 
 
+def studio_edit_succeeded(response: requests.Response) -> bool:
+    if not response.ok:
+        return False
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    context = payload.get("responseContext", {})
+    extension = context.get("webResponseContextExtensionData", {})
+    if extension.get("challenge") or payload.get("error"):
+        emit("studio_edit_rejected", reason="authentication challenge or API error in HTTP 200 response")
+        return False
+    return True
+
+
 def oauth_slots() -> list[tuple[int, Credentials]]:
     result = []
     for slot in range(1, 11):
@@ -197,35 +212,43 @@ def card_payload(playlist_id: str, client_version: str) -> dict[str, Any]:
 
 def studio_bootstrap(cookies: dict[str, str] | None = None) -> dict[str, str]:
     """Extract Studio's current API key/client version, using login cookies when available."""
+    empty = {
+        "api_key": "", "client_version": "", "auth_user": "", "page_id": "",
+        "identity_token": "", "visitor_data": "",
+    }
     try:
-        response = requests.get(
-            f"{STUDIO_ORIGIN}/video/{VIDEO_ID}/edit",
-            cookies=cookies or {},
-            timeout=30,
-        )
-        text = response.text
+        session = requests.Session()
+        session.cookies.update(cookies or {})
+        responses = [session.get(f"{STUDIO_ORIGIN}/video/{VIDEO_ID}/edit", timeout=30)]
+        if cookies:
+            responses.append(session.get(f"https://www.youtube.com/watch?v={VIDEO_ID}", timeout=30))
+        text = "\n".join(response.text for response in responses)
+
         def config_value(name: str) -> str:
             match = re.search(rf'"{re.escape(name)}"\s*:\s*(?:"([^"]*)"|(\d+))', text)
             return (match.group(1) or match.group(2)) if match else ""
 
-        config = {
+        config = empty | {
             "api_key": config_value("INNERTUBE_API_KEY"),
-            "client_version": config_value("INNERTUBE_CLIENT_VERSION"),
+            "client_version": config_value("INNERTUBE_CLIENT_VERSION") or config_value("INNERTUBE_CONTEXT_CLIENT_VERSION"),
             "auth_user": config_value("SESSION_INDEX"),
             "page_id": config_value("DELEGATED_SESSION_ID"),
+            "identity_token": config_value("ID_TOKEN"),
+            "visitor_data": config_value("VISITOR_DATA") or config_value("visitorData"),
         }
         emit(
             "studio_bootstrap",
             authenticated=bool(cookies),
-            status=response.status_code,
+            status=responses[0].status_code,
             api_key_found=bool(config["api_key"]),
             client_version=config["client_version"],
             delegated_session=bool(config["page_id"]),
+            identity_token_found=bool(config["identity_token"]),
         )
         return config
     except Exception as exc:
         emit("studio_bootstrap_failed", error=type(exc).__name__, detail=str(exc)[:500])
-        return {"api_key": "", "client_version": "", "auth_user": "", "page_id": ""}
+        return empty
 
 
 def call_studio_with_oauth(creds: Credentials, playlist_id: str) -> bool:
@@ -245,7 +268,7 @@ def call_studio_with_oauth(creds: Credentials, playlist_id: str) -> bool:
         timeout=30,
     )
     emit("studio_oauth_edit_video_post", response=safe_response(response))
-    return response.ok
+    return studio_edit_succeeded(response)
 
 
 def studio_cookie_map(raw: str) -> dict[str, str]:
@@ -288,6 +311,11 @@ def call_studio_with_session(playlist_id: str) -> bool:
             "X-Origin": STUDIO_ORIGIN,
             "X-Goog-AuthUser": config["auth_user"] or "0",
             **({"X-Goog-PageId": config["page_id"]} if config["page_id"] else {}),
+            **({"X-Youtube-Identity-Token": config["identity_token"]} if config["identity_token"] else {}),
+            **({"X-Goog-Visitor-Id": config["visitor_data"]} if config["visitor_data"] else {}),
+            "X-Youtube-Client-Name": "62",
+            "X-Youtube-Client-Version": client_version,
+            "X-Youtube-Bootstrap-Logged-In": "true",
             "Content-Type": "application/json",
         },
         cookies=cookies,
@@ -295,7 +323,7 @@ def call_studio_with_session(playlist_id: str) -> bool:
         timeout=30,
     )
     emit("studio_session_edit_video_post", response=safe_response(response))
-    return response.ok
+    return studio_edit_succeeded(response)
 
 
 def main() -> int:
