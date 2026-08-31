@@ -337,6 +337,12 @@ def call_studio_with_session(playlist_id: str) -> bool:
     api_key = config["api_key"]
     client_version = os.getenv("YOUTUBE_STUDIO_CLIENT_VERSION", "").strip() or config["client_version"] or "1.20260826.00.00"
     serialized_delegation = os.getenv("YOUTUBE_STUDIO_DELEGATION_CONTEXT", "").strip()
+    request_time_ms = str(int(time.time() * 1000))
+    ad_signals = (
+        f"dt={request_time_ms}&flash=0&frm&u_tz=480&u_his=2&u_h=720&u_w=1280&"
+        "u_ah=672&u_aw=1280&u_cd=24&bc=31&bih=551&biw=382&"
+        "brdim=0%2C0%2C0%2C0%2C1280%2C0%2C1280%2C672%2C382%2C551&vis=1&wgl=true&ca_type=image"
+    )
     if not api_key:
         emit("studio_session_config", warning="Studio page exposed no API key; trying the authenticated endpoint without one")
 
@@ -356,6 +362,12 @@ def call_studio_with_session(playlist_id: str) -> bool:
             "X-Youtube-Client-Version": client_version,
             "X-Youtube-Bootstrap-Logged-In": "true",
             **({"X-Youtube-Delegation-Context": serialized_delegation} if serialized_delegation else {}),
+            "X-Goog-Request-Time": request_time_ms,
+            "X-Youtube-Ad-Signals": ad_signals,
+            "X-Youtube-Page-CL": "971371204",
+            "X-Youtube-Page-Label": "youtube.studio.web_20260826_03_RC00",
+            "X-Youtube-Time-Zone": "Asia/Taipei",
+            "X-Youtube-Utc-Offset": "480",
             "Content-Type": "application/json",
         },
         cookies=cookies,
