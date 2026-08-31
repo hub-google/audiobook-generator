@@ -387,6 +387,15 @@ class StudioPrivateClient:
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             ),
         }
+        if origin == STUDIO_ORIGIN:
+            headers["X-YouTube-Client-Name"] = "62"
+            headers["X-YouTube-Client-Version"] = self.config.get("client_version", "1.20260829.00.00")
+            if self.config.get("delegation_serialized"):
+                headers["X-YouTube-Delegation-Context"] = self.config["delegation_serialized"]
+        else:
+            headers["X-YouTube-Client-Name"] = "1"
+            headers["X-YouTube-Client-Version"] = self.config.get("web_client_version", "2.20260828.01.00")
+
         if auth_header:
             headers["Authorization"] = auth_header
         if self.config.get("page_id"):
