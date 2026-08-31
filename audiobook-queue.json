@@ -2222,14 +2222,14 @@
         2201,
         2202
       ],
-      "status": "canceling",
+      "status": "running",
       "run_id": 33394774489,
       "run_attempt": 1,
       "execution_generation": 1,
       "retry_requested_at": null,
       "run_history": [],
       "retry_at": null,
-      "reason": "user_cancelled",
+      "reason": null,
       "hf_progress": {
         "completed": 0,
         "total": 0
@@ -2273,7 +2273,8 @@
         "cleaner_fingerprint": "b248382414c6997d5f9f42a42700baaf0181927087e659fee6001ba36485ed25"
       },
       "artifact_source_run_id": null,
-      "dispatched_at": "2026-08-31T13:02:06.361618+00:00"
+      "dispatched_at": "2026-08-31T13:02:06.361618+00:00",
+      "run_conclusion": null
     },
     {
       "task_id": "book-20260830-d351738f",
