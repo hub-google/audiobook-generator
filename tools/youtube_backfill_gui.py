@@ -287,6 +287,15 @@ class StudioPrivateClient:
         if detected_channel:
             self.channel_id = detected_channel
 
+        datasync_id = (
+            ytcfg_data.get("DATASYNC_ID")
+            or self._config_value(studio_text, "DATASYNC_ID")
+            or self._config_value(combined_text, "DATASYNC_ID")
+        )
+        sync_first, separator, sync_second = datasync_id.partition("||")
+        delegated_from_sync = sync_first if separator and sync_second else ""
+        user_from_sync = sync_second if separator and sync_second else sync_first
+
         self.config = {
             "api_key": (
                 ytcfg_data.get("INNERTUBE_API_KEY")
@@ -314,6 +323,7 @@ class StudioPrivateClient:
             "page_id": (
                 ytcfg_data.get("DELEGATED_SESSION_ID")
                 or self._config_value(studio_text, "DELEGATED_SESSION_ID")
+                or delegated_from_sync
                 or self._config_value(combined_text, "DELEGATED_SESSION_ID")
                 or ""
             ),
@@ -333,6 +343,7 @@ class StudioPrivateClient:
             "user_session_id": str(
                 ytcfg_data.get("USER_SESSION_ID")
                 or self._config_value(studio_text, "USER_SESSION_ID")
+                or user_from_sync
                 or ""
             ),
             "delegation_serialized": (
@@ -343,21 +354,22 @@ class StudioPrivateClient:
         }
 
     def _authorization(self, origin: str = STUDIO_ORIGIN) -> str:
-        sid = (
-            self.cookies.get("SAPISID")
-            or self.cookies.get("__Secure-3PAPISID")
-            or self.cookies.get("__Secure-1PAPISID")
-        )
-        if not sid:
-            return ""
         timestamp = str(int(time.time()))
         user_session_id = self.config.get("user_session_id", "")
         prefix = f"{user_session_id} " if user_session_id else ""
         suffix = "_u" if user_session_id else ""
-        digest = hashlib.sha1(
-            f"{prefix}{timestamp} {sid} {origin}".encode("utf-8")
-        ).hexdigest()
-        return f"SAPISIDHASH {timestamp}_{digest}{suffix}"
+        values = []
+        for scheme, name in (
+            ("SAPISIDHASH", "SAPISID"),
+            ("SAPISID1PHASH", "__Secure-1PAPISID"),
+            ("SAPISID3PHASH", "__Secure-3PAPISID"),
+        ):
+            if sid := self.cookies.get(name):
+                digest = hashlib.sha1(
+                    f"{prefix}{timestamp} {sid} {origin}".encode("utf-8")
+                ).hexdigest()
+                values.append(f"{scheme} {timestamp}_{digest}{suffix}")
+        return " ".join(values)
 
     def _headers(
         self, origin: str = STUDIO_ORIGIN, referer: str | None = None
