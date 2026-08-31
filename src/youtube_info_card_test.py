@@ -20,6 +20,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
 VIDEO_ID = os.getenv("YOUTUBE_INFO_CARD_VIDEO_ID", "6vQeNPBUXEQ")
+OWNER_CHANNEL_ID = os.getenv("YOUTUBE_INFO_CARD_CHANNEL_ID", "UCIUtGUZ24fMsfzZtydQTsPg")
 DATA_API = "https://www.googleapis.com/youtube/v3"
 STUDIO_ORIGIN = "https://studio.youtube.com"
 STUDIO_ENDPOINT = f"{STUDIO_ORIGIN}/youtubei/v1/video_editor/edit_video"
@@ -185,15 +186,26 @@ def probe_data_api_collection(creds: Credentials) -> requests.Response:
     return response
 
 
-def card_payload(playlist_id: str, client_version: str) -> dict[str, Any]:
+def card_payload(playlist_id: str, client_version: str, delegated_session_id: str = "") -> dict[str, Any]:
+    delegation_context = {
+        "roleType": {"channelRoleType": "CREATOR_CHANNEL_ROLE_TYPE_OWNER"},
+        "externalChannelId": OWNER_CHANNEL_ID,
+    }
     return {
         "context": {
             "client": {
-                "clientName": "WEB_CREATOR",
+                "clientName": 62,
                 "clientVersion": client_version,
                 "hl": "zh-TW",
-            }
+            },
+            "request": {"returnLogEntry": True, "internalExperimentFlags": []},
+            "user": {
+                **({"onBehalfOfUser": delegated_session_id} if delegated_session_id else {}),
+                "delegationContext": delegation_context,
+                "serializedDelegationContext": "",
+            },
         },
+        "delegationContext": delegation_context,
         "externalVideoId": VIDEO_ID,
         "infoCardEdit": {
             "infoCards": [
@@ -319,7 +331,7 @@ def call_studio_with_session(playlist_id: str) -> bool:
             "Content-Type": "application/json",
         },
         cookies=cookies,
-        json=card_payload(playlist_id, client_version),
+        json=card_payload(playlist_id, client_version, config["page_id"]),
         timeout=30,
     )
     emit("studio_session_edit_video_post", response=safe_response(response))
