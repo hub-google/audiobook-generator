@@ -953,7 +953,7 @@ class AudiobookGUIApp:
     def _build_text_sample(raw_title, raw_body, book_title, remove_patterns=None):
         raw_text = raw_title + "\n\n" + raw_body
         cleaned = clean_text_content(raw_body, raw_title, book_title, remove_patterns=remove_patterns)
-        return raw_text, chunk_text(cleaned, max_length=18)
+        return raw_text, chunk_text(cleaned)
 
     def _open_cleaner_patterns_dialog(self, task, parent, on_applied):
         dialog = tk.Toplevel(parent)

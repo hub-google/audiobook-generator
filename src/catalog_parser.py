@@ -549,8 +549,8 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
         },
         "tts": {
             "engine": "edge-tts",
-            "edge_voice": "zh-CN-YunxiNeural",
-            "edge_rate": "+50%"
+            "edge_voice": "zh-CN-YunjianNeural",
+            "edge_rate": "+25%"
         },
         "paths": {
             "workspace_base": "Workspace"

@@ -167,7 +167,7 @@ def profile_snapshot(profile_id, profile):
         ),
     }
     canonical = json.dumps(snapshot["cleaner_remove_patterns"], ensure_ascii=False, separators=(",", ":"))
-    snapshot["cleaner_fingerprint"] = hashlib.sha256(("cleaner-v3-literal|" + canonical).encode("utf-8")).hexdigest()
+    snapshot["cleaner_fingerprint"] = hashlib.sha256(("cleaner-v4-prosody|" + canonical).encode("utf-8")).hexdigest()
     return snapshot
 
 

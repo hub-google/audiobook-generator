@@ -29,8 +29,8 @@ selected_indices:
 chapters_per_worker: 10
 tts:
   engine: edge-tts
-  edge_voice: zh-CN-YunxiNeural
-  edge_rate: '+50%'
+  edge_voice: zh-CN-YunjianNeural
+  edge_rate: '+25%'
 paths:
   workspace_base: Workspace
 gdrive_folder_id: ''

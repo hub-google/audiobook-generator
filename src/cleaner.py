@@ -83,84 +83,57 @@ def clean_text_content(text, title, book_title, remove_patterns=None):
     text = re.sub(r'\n[ \t]*\n+', '\n', text)
     return text.strip()
 
-def split_overlong_clause(text, hard_max=18):
-    """
-    若單一子句無標點符號但長度超過 hard_max (18字)，
-    依據語法停頓詞 (但是, 然而, 的時候, 之時) 或中央黃金分割點切分，
-    硬性保證輸出的每個子句絕不超過 18 個字。
-    """
-    text = text.strip()
-    if len(text) <= hard_max:
-        return [text]
-        
-    # 語法/情節自然停頓關鍵詞
-    grammar_pauses = ["但是", "然而", "因為", "所以", "雖然", "結果", "隨後", "接著", "然後", "並且", "只見", "只聽", "忽見", "轉眼", "同時", "傳來", "传来", "的時候", "之時", "之後", "之處"]
-    
-    for kw in grammar_pauses:
-        idx = text.find(kw)
-        if 5 <= idx <= hard_max:
-            part1 = text[:idx + len(kw)].strip()
-            part2 = text[idx + len(kw):].strip()
-            if part1 and part2:
-                return split_overlong_clause(part1, hard_max) + split_overlong_clause(part2, hard_max)
-            
-    # 若無語法停頓詞，從中央切分
-    mid = len(text) // 2
-    part1 = text[:mid].strip()
-    part2 = text[mid:].strip()
-    return split_overlong_clause(part1, hard_max) + split_overlong_clause(part2, hard_max)
+_CLAUSE_RE = re.compile(r".*?(?:……|\.\.\.|[，,；;：:。！？!?…]+)[”’」』）》）)]*|.+$", re.S)
+_COMMA_END_RE = re.compile(r"[，,][”’」』）》）)]*$")
+_SEMANTIC_TURN_RE = re.compile(r"卻|但|然而|不過|只是|所以|因此")
 
-def chunk_text(text, max_length=18):
-    """將過長的段落依據標點符號與智慧自然斷句截斷，硬性確保每段 8~18 字，100% 保證單行字幕"""
-    paragraphs = text.split('\n')
-    chunks = []
-    
-    # 依句點、驚嘆號、問號、逗點、頓號、分號切分
-    split_pattern = r'([。！？\.\!\?，,、；;])'
-    
-    for p in paragraphs:
-        p = p.strip()
-        if not p:
+
+def _split_semantic_turn(clause):
+    """Split a long clause only at a late semantic turn, never at a midpoint."""
+    if len(clause) < 20:
+        return [clause]
+    for match in _SEMANTIC_TURN_RE.finditer(clause):
+        index = match.start()
+        if index >= 10 and len(clause) - index >= 5:
+            return [clause[:index].rstrip("，,") + "，", clause[index:].lstrip()]
+    return [clause]
+
+
+def chunk_text(text, max_length=None):
+    """Create punctuation/meaning-aware TTS segments without fixed-width cuts.
+
+    ``max_length`` remains accepted for callers from older GUI code but is no
+    longer used. Blank lines preserve source paragraph boundaries for graded
+    audio pauses. Subtitle wrapping is handled later by subtitle_gen.py.
+    """
+    output_paragraphs = []
+    for paragraph in (line.strip() for line in text.splitlines()):
+        if not paragraph:
             continue
-            
-        parts = re.split(split_pattern, p)
-        current_chunk = ""
-        for i in range(0, len(parts), 2):
-            sentence = parts[i]
-            punct = parts[i+1] if i+1 < len(parts) else ""
-            
-            if not sentence and not punct:
+        raw_clauses = []
+        for match in _CLAUSE_RE.finditer(paragraph):
+            raw_clauses.extend(_split_semantic_turn(match.group(0).strip()))
+
+        chunks = []
+        pending = ""
+        for clause in raw_clauses:
+            if not clause:
                 continue
-                
-            combined = sentence + punct
-            
-            # 若單一標點區間本身就超過 max_length，調用 split_overlong_clause 強制二次拆分
-            if len(combined) > max_length:
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                    current_chunk = ""
-                sub_chunks = split_overlong_clause(combined, hard_max=max_length)
-                chunks.extend(sub_chunks)
-            else:
-                if len(current_chunk) + len(combined) > max_length and current_chunk:
-                    chunks.append(current_chunk.strip())
-                    current_chunk = combined
-                else:
-                    current_chunk += combined
-                    
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-                
-    # 排除無意義純標點孤行 (需含有中文字元、英數字，非純標點符號)
-    valid_chunks = []
-    for c in chunks:
-        c_clean = c.strip()
-        if not c_clean:
-            continue
-        if re.search(r'[\u4e00-\u9fa5a-zA-Z0-9]', c_clean):
-            valid_chunks.append(c_clean)
-            
-    return "\n".join(valid_chunks)
+            pending += clause
+            visible_len = len(re.sub(r"[^0-9A-Za-z\u3400-\u9fff]", "", pending))
+            if _COMMA_END_RE.search(pending) and visible_len <= 6:
+                continue
+            if re.search(r"[\u3400-\u9fffa-zA-Z0-9]", pending):
+                chunks.append(pending.strip())
+            pending = ""
+        if pending:
+            if chunks:
+                chunks[-1] += pending
+            elif re.search(r"[\u3400-\u9fffa-zA-Z0-9]", pending):
+                chunks.append(pending.strip())
+        if chunks:
+            output_paragraphs.append("\n".join(chunks))
+    return "\n\n".join(output_paragraphs)
 
 def parse_chapter_num(filename):
     m = re.search(r'chapter_(\d+)', filename)
@@ -214,7 +187,7 @@ def run_cleaner(target_indices=None):
             raw_content, title, book_title,
             remove_patterns=cleaner_config.get("remove_patterns") or [],
         )
-        chunked_text = chunk_text(cleaned_text, max_length=18)
+        chunked_text = chunk_text(cleaned_text)
         
         clean_tmp = clean_path + ".tmp"
         with open(clean_tmp, "w", encoding="utf-8") as f:

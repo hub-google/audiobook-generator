@@ -70,9 +70,24 @@ class CleanerProfileTests(unittest.TestCase):
         cleaned = clean_text_content(text, title, "大主宰")
         self.assertIn("他讀到第一千五百五十一章才停下。", cleaned)
 
-    def test_long_clause_prefers_pause_after_chuanlai(self):
+    def test_long_clause_is_never_cut_at_a_fixed_character_width(self):
         chunked = chunk_text("從他身上不時傳來輕重不一的陣陣打呼聲。", max_length=18)
-        self.assertEqual(chunked, "從他身上不時傳來\n輕重不一的陣陣打呼聲。")
+        self.assertEqual(chunked, "從他身上不時傳來輕重不一的陣陣打呼聲。")
+
+    def test_long_turn_clause_splits_at_semantic_boundary(self):
+        text = (
+            "銀白的煙灰已經結成了長長一串，"
+            "但在葉秋揮舞著鼠標敲打著鍵盤展開操作的過程中卻沒有被震落分毫。"
+        )
+        self.assertEqual(
+            chunk_text(text),
+            "銀白的煙灰已經結成了長長一串，\n"
+            "但在葉秋揮舞著鼠標敲打著鍵盤展開操作的過程中，\n"
+            "卻沒有被震落分毫。",
+        )
+
+    def test_source_paragraphs_are_preserved_as_blank_lines(self):
+        self.assertEqual(chunk_text("第一句。第二句。\n下一段。"), "第一句。\n第二句。\n\n下一段。")
 
 
 if __name__ == "__main__":

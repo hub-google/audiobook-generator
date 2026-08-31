@@ -59,11 +59,11 @@ class BookProfileTests(unittest.TestCase):
         third = profile_snapshot("id", profile)
         self.assertNotEqual(first["cleaner_fingerprint"], third["cleaner_fingerprint"])
 
-    def test_snapshot_uses_literal_cleaner_fingerprint_version(self):
+    def test_snapshot_uses_prosody_cleaner_fingerprint_version(self):
         profile = {"profile_revision": 1, "cleaner_remove_patterns": [".*"]}
         snapshot = profile_snapshot("id", profile)
         canonical = json.dumps([".*"], ensure_ascii=False, separators=(",", ":"))
-        expected = hashlib.sha256(("cleaner-v3-literal|" + canonical).encode("utf-8")).hexdigest()
+        expected = hashlib.sha256(("cleaner-v4-prosody|" + canonical).encode("utf-8")).hexdigest()
         self.assertEqual(snapshot["cleaner_fingerprint"], expected)
 
 

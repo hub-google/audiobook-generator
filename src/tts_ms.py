@@ -5,6 +5,9 @@ import subprocess
 import asyncio
 import edge_tts
 import shutil
+from opencc import OpenCC
+from pydub import AudioSegment
+from pydub.silence import detect_leading_silence
 
 # Spyder/IPython 的 kernel 已有執行中的 event loop，
 # 需要 nest_asyncio 才能在其中再次呼叫 asyncio.run()
@@ -32,6 +35,72 @@ def get_ffmpeg_path():
 
 
 import re
+
+
+_T2S = OpenCC("t2s")
+_TTS_PROSODY_REPLACEMENTS = (
+    ("鼠標敲打著鍵盤", "鼠標，敲打著鍵盤"),
+)
+_TERMINAL_RE = re.compile(r"(?:……|\.\.\.|[。！？!?…])[”’」』）》）)]*$")
+_COMMA_RE = re.compile(r"[，,][”’」』）》）)]*$")
+_SEMICOLON_RE = re.compile(r"[；;：:][”’」』）》）)]*$")
+
+
+def speech_text_for_voice(display_text, voice):
+    """Return TTS-only text; Cleaner/subtitle text remains Traditional."""
+    speech_text = str(display_text or "")
+    for source, replacement in _TTS_PROSODY_REPLACEMENTS:
+        speech_text = speech_text.replace(source, replacement)
+    if str(voice or "").startswith("zh-CN-"):
+        speech_text = _T2S.convert(speech_text)
+    return speech_text
+
+
+def _pause_after(text, paragraph_end=False):
+    if paragraph_end:
+        return 600
+    if _TERMINAL_RE.search(text):
+        return 340
+    if _SEMICOLON_RE.search(text):
+        return 210
+    if _COMMA_RE.search(text):
+        return 130
+    return 45
+
+
+def _segment_lines_with_paragraphs(lines):
+    """Return non-empty lines and whether a blank-line paragraph follows."""
+    result = []
+    for index, raw in enumerate(lines):
+        text = raw.strip()
+        if not text:
+            continue
+        next_nonempty = None
+        for following in range(index + 1, len(lines)):
+            if lines[following].strip():
+                next_nonempty = following
+                break
+        paragraph_end = next_nonempty is None or any(
+            not lines[pos].strip() for pos in range(index + 1, next_nonempty)
+        )
+        result.append((text, paragraph_end))
+    return result
+
+
+def _trim_and_add_pause(wav_path, text, paragraph_end=False):
+    """Normalize Edge-TTS boundary silence and append a graded pause."""
+    audio = AudioSegment.from_wav(wav_path)
+    threshold = -45.0
+    leading = detect_leading_silence(audio, silence_threshold=threshold, chunk_size=5)
+    trailing = detect_leading_silence(audio.reverse(), silence_threshold=threshold, chunk_size=5)
+    trim_left = max(0, leading - 35)
+    trim_right = max(0, trailing - 60)
+    end = max(trim_left + 1, len(audio) - trim_right)
+    trimmed = audio[trim_left:end]
+    normalized = trimmed + AudioSegment.silent(
+        duration=_pause_after(text, paragraph_end), frame_rate=trimmed.frame_rate,
+    )
+    normalized.export(wav_path, format="wav")
 
 
 def sanitize_text(text):
@@ -68,7 +137,7 @@ async def _generate_one_segment(semaphore, text, mp3_path, wav_path, part_label,
     使用 Semaphore 限制最大並行數，失敗時最多重試 max_retries 次。
     若全部失敗（如觸發微軟敏感詞過濾），自動改用 1.5s 靜音 WAV 墊檔容錯。
     """
-    clean_t = sanitize_text(text)
+    clean_t = sanitize_text(speech_text_for_voice(text, voice))
     if not clean_t:
         create_silent_wav(wav_path, ffmpeg_path, duration=1.0)
         return True
@@ -115,18 +184,16 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, 
     """
     semaphore = asyncio.Semaphore(max_concurrency)
 
-    # 整理每個段落的中繼資訊
+    # 整理每個段落的中繼資訊，保留 Cleaner 的空白行作為段落邊界。
     task_metas = []
-    for part_idx, line in enumerate(lines):
-        text = line.strip()
-        if not text:
-            continue
+    segment_lines = _segment_lines_with_paragraphs(lines)
+    for part_idx, (text, paragraph_end) in enumerate(segment_lines):
         wav_name = f"{book_title}_chapter_{chap_num}_tmp_part_{part_idx+1:03d}.wav"
         mp3_name = f"{book_title}_chapter_{chap_num}_tmp_part_{part_idx+1:03d}.mp3"
         wav_path = os.path.join(audio_dir, wav_name)
         mp3_path = os.path.join(audio_dir, mp3_name)
-        part_label = f"[Ch{chap_num} 段落 {part_idx+1}/{len([l for l in lines if l.strip()])}]"
-        task_metas.append((text, mp3_path, wav_path, part_label))
+        part_label = f"[Ch{chap_num} 段落 {part_idx+1}/{len(segment_lines)}]"
+        task_metas.append((text, paragraph_end, mp3_path, wav_path, part_label))
 
     if not task_metas:
         logging.warning(f"[TTS_MS] 第 {chap_num} 章沒有有效文字段落")
@@ -135,7 +202,7 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, 
     # 建立並行任務（已有 WAV 的直接跳過 TTS）
     coros = []
     skip_flags = []
-    for text, mp3_path, wav_path, part_label in task_metas:
+    for text, paragraph_end, mp3_path, wav_path, part_label in task_metas:
         if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
             logging.info(f"[TTS_MS] Resuming existing part: {os.path.basename(wav_path)}")
             coros.append(None)  # placeholder，表示不需要 TTS
@@ -157,7 +224,7 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, 
         await asyncio.gather(*[c for _, c in pending_coros])
 
     # 將本輪成功的 MP3 轉為 WAV，並保留已成功的段落 WAV 快取
-    for i, (text, mp3_path, wav_path, part_label) in enumerate(task_metas):
+    for i, (text, paragraph_end, mp3_path, wav_path, part_label) in enumerate(task_metas):
         if not skip_flags[i] and os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 100:
             try:
                 await asyncio.to_thread(
@@ -166,6 +233,9 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, 
                     check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
                 if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
+                    await asyncio.to_thread(
+                        _trim_and_add_pause, wav_path, text, paragraph_end,
+                    )
                     os.remove(mp3_path)
             except Exception as e:
                 logging.error(f"[TTS_MS] ✗ {part_label} MP3→WAV 轉換失敗: {e}")
@@ -175,7 +245,7 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, 
     valid_lines = []
     missing_count = 0
 
-    for text, mp3_path, wav_path, part_label in task_metas:
+    for text, paragraph_end, mp3_path, wav_path, part_label in task_metas:
         if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
             generated_parts.append(wav_path)
             valid_lines.append(text)
@@ -215,9 +285,9 @@ def run_tts_ms(target_indices=None):
 
     # 取得語音設定
     tts_cfg = config.get('tts', {})
-    voice = tts_cfg.get('edge_voice', tts_cfg.get('voice', 'zh-CN-YunxiNeural'))
+    voice = tts_cfg.get('edge_voice', tts_cfg.get('voice', 'zh-CN-YunjianNeural'))
     # Legacy configs have no edge_rate and must keep their original speed.
-    # New GUI runs receive +50% from catalog_parser.py.
+    # New GUI runs receive +25% from catalog_parser.py.
     rate = tts_cfg.get('edge_rate', '+0%')
     max_concurrency = int(tts_cfg.get('tts_concurrency', 5))
     max_retries = int(tts_cfg.get('tts_max_retries', 3))
