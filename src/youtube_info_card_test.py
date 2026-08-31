@@ -1,10 +1,9 @@
 """Isolated, auditable YouTube info-card experiment.
 
-This is deliberately not imported by the production uploader.  It first probes
-the discontinued/undocumented Data API ``infocards`` collection with the OAuth
-credentials already used by this repository.  If that route is unavailable it
-can fall back to YouTube Studio's own ``video_editor/edit_video`` endpoint when
-a Studio browser session is supplied separately.
+This file is not imported by the production uploader. It probes, in order:
+1. the historical Data API infocards collection;
+2. YouTube Studio edit_video using the repository's existing OAuth token;
+3. YouTube Studio edit_video using a browser session from Actions secrets.
 """
 
 from __future__ import annotations
@@ -13,14 +12,12 @@ import hashlib
 import json
 import os
 import re
-import sys
 import time
 from typing import Any
 
 import requests
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-
 
 VIDEO_ID = os.getenv("YOUTUBE_INFO_CARD_VIDEO_ID", "6vQeNPBUXEQ")
 DATA_API = "https://www.googleapis.com/youtube/v3"
@@ -37,9 +34,12 @@ def emit(stage: str, **values: Any) -> None:
 
 
 def safe_response(response: requests.Response) -> dict[str, Any]:
-    """Return enough of a response to diagnose it without leaking credentials."""
     text = response.text[:6000]
-    text = re.sub(r'(?i)(access_token|refresh_token|sapisid|sid|authorization)["\s:=]+[^"\s,}]+', r"\1=<redacted>", text)
+    text = re.sub(
+        r'(?i)(access_token|refresh_token|sapisid|sid|authorization)["\s:=]+[^"\s,}]+',
+        r"\1=<redacted>",
+        text,
+    )
     return {
         "status": response.status_code,
         "content_type": response.headers.get("content-type", ""),
@@ -66,33 +66,46 @@ def oauth_slots() -> list[tuple[int, Credentials]]:
         try:
             creds.refresh(Request())
             result.append((slot, creds))
-        except Exception as exc:  # the exception contains no secret values
+        except Exception as exc:
             emit("oauth_refresh_failed", slot=slot, error=type(exc).__name__, detail=str(exc)[:500])
     return result
 
 
 def api_get(creds: Credentials, resource: str, **params: str) -> requests.Response:
     return requests.get(
-        f"{DATA_API}/{resource}", params=params,
-        headers={"Authorization": f"Bearer {creds.token}"}, timeout=30,
+        f"{DATA_API}/{resource}",
+        params=params,
+        headers={"Authorization": f"Bearer {creds.token}"},
+        timeout=30,
     )
 
 
 def owner_for_video(slots: list[tuple[int, Credentials]]) -> tuple[int, Credentials, dict[str, Any]]:
+    video = None
+    owner_channel_id = None
+    for _, creds in slots:
+        response = api_get(creds, "videos", part="snippet", id=VIDEO_ID)
+        if response.ok and response.json().get("items"):
+            video = response.json()["items"][0]
+            owner_channel_id = video.get("snippet", {}).get("channelId")
+            break
+    if not video or not owner_channel_id:
+        raise RuntimeError(f"could not read target video {VIDEO_ID}")
+
     for slot, creds in slots:
         channel_response = api_get(creds, "channels", part="id", mine="true")
         if not channel_response.ok:
             emit("channel_lookup_failed", slot=slot, response=safe_response(channel_response))
             continue
         channel_ids = {item["id"] for item in channel_response.json().get("items", [])}
-        video_response = api_get(creds, "videos", part="snippet", id=VIDEO_ID)
-        if not video_response.ok:
-            emit("video_lookup_failed", slot=slot, response=safe_response(video_response))
-            continue
-        items = video_response.json().get("items", [])
-        if items and items[0].get("snippet", {}).get("channelId") in channel_ids:
-            emit("video_owner_found", slot=slot, channel_id=items[0]["snippet"]["channelId"], title=items[0]["snippet"].get("title"))
-            return slot, creds, items[0]
+        if owner_channel_id in channel_ids:
+            emit(
+                "video_owner_found",
+                slot=slot,
+                channel_id=owner_channel_id,
+                title=video.get("snippet", {}).get("title"),
+            )
+            return slot, creds, video
     raise RuntimeError(f"none of the configured OAuth accounts owns video {VIDEO_ID}")
 
 
@@ -101,6 +114,7 @@ def discover_playlist(creds: Credentials, video: dict[str, Any]) -> str:
     if forced:
         emit("playlist_selected", source="environment", playlist_id=forced)
         return forced
+
     description = video.get("snippet", {}).get("description", "")
     match = re.search(r"(?:[?&]list=|youtube\.com/playlist\?list=)([A-Za-z0-9_-]+)", description)
     if match:
@@ -116,13 +130,25 @@ def discover_playlist(creds: Credentials, video: dict[str, Any]) -> str:
             item_page = ""
             while True:
                 items_response = api_get(
-                    creds, "playlistItems", part="snippet", playlistId=playlist["id"],
-                    maxResults="50", pageToken=item_page,
+                    creds,
+                    "playlistItems",
+                    part="snippet",
+                    playlistId=playlist["id"],
+                    maxResults="50",
+                    pageToken=item_page,
                 )
                 items_response.raise_for_status()
                 item_payload = items_response.json()
-                if any(item.get("snippet", {}).get("resourceId", {}).get("videoId") == VIDEO_ID for item in item_payload.get("items", [])):
-                    emit("playlist_selected", source="owned_playlist_scan", playlist_id=playlist["id"], title=playlist.get("snippet", {}).get("title"))
+                if any(
+                    item.get("snippet", {}).get("resourceId", {}).get("videoId") == VIDEO_ID
+                    for item in item_payload.get("items", [])
+                ):
+                    emit(
+                        "playlist_selected",
+                        source="owned_playlist_scan",
+                        playlist_id=playlist["id"],
+                        title=playlist.get("snippet", {}).get("title"),
+                    )
                     return playlist["id"]
                 item_page = item_payload.get("nextPageToken", "")
                 if not item_page:
@@ -134,73 +160,125 @@ def discover_playlist(creds: Credentials, video: dict[str, Any]) -> str:
 
 
 def probe_data_api_collection(creds: Credentials) -> requests.Response:
-    headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
-    params = {"part": "snippet", "videoId": VIDEO_ID}
-    get_response = requests.get(f"{DATA_API}/infocards", params=params, headers=headers, timeout=30)
-    emit("data_api_infocards_get", response=safe_response(get_response))
-    return get_response
+    response = requests.get(
+        f"{DATA_API}/infocards",
+        params={"part": "snippet", "videoId": VIDEO_ID},
+        headers={"Authorization": f"Bearer {creds.token}"},
+        timeout=30,
+    )
+    emit("data_api_infocards_get", response=safe_response(response))
+    return response
 
 
-def write_data_api_card(creds: Credentials, playlist_id: str) -> bool:
-    headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
+def card_payload(playlist_id: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        "context": context or {
+            "client": {
+                "clientName": "WEB_CREATOR",
+                "clientVersion": os.getenv("YOUTUBE_STUDIO_CLIENT_VERSION", "1.20260826.00.00"),
+                "hl": "zh-TW",
+            }
+        },
+        "externalVideoId": VIDEO_ID,
+        "infoCardEdit": {
+            "infoCards": [
+                {
+                    "videoId": VIDEO_ID,
+                    "teaserStartMs": 10000,
+                    "playlistInfoCard": {"fullPlaylistId": playlist_id},
+                    "infoCardEntityId": str(int(time.time() * 1000)),
+                    "customMessage": "第一次看這部小說？",
+                    "teaserText": "從第一集開始觀看",
+                }
+            ]
+        },
+    }
 
-    # Only mutate after the collection proves that it exists for this account.
-    body = {
-        "snippet": {
-            "videoId": VIDEO_ID,
-            "teaserStartMs": 10000,
-            "playlistInfoCard": {"fullPlaylistId": playlist_id},
-            "customMessage": "第一次看這部小說？",
-            "teaserText": "從第一集開始觀看",
+
+def studio_bootstrap() -> tuple[str, str]:
+    """Best-effort extraction of Studio's public web API key/client version."""
+    try:
+        response = requests.get(STUDIO_ORIGIN, timeout=30)
+        text = response.text
+        key_match = re.search(r'"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"', text)
+        version_match = re.search(r'"INNERTUBE_CLIENT_VERSION"\s*:\s*"([^"]+)"', text)
+        api_key = key_match.group(1) if key_match else ""
+        version = version_match.group(1) if version_match else ""
+        emit(
+            "studio_bootstrap",
+            status=response.status_code,
+            api_key_found=bool(api_key),
+            client_version=version,
+        )
+        return api_key, version
+    except Exception as exc:
+        emit("studio_bootstrap_failed", error=type(exc).__name__, detail=str(exc)[:500])
+        return "", ""
+
+
+def call_studio_with_oauth(creds: Credentials, playlist_id: str) -> bool:
+    api_key, version = studio_bootstrap()
+    context = {
+        "client": {
+            "clientName": "WEB_CREATOR",
+            "clientVersion": version or os.getenv("YOUTUBE_STUDIO_CLIENT_VERSION", "1.20260826.00.00"),
+            "hl": "zh-TW",
         }
     }
-    post_response = requests.post(
-        f"{DATA_API}/infocards", params={"part": "snippet"}, headers=headers,
-        json=body, timeout=30,
+    response = requests.post(
+        STUDIO_ENDPOINT,
+        params={"key": api_key} if api_key else {},
+        headers={
+            "Authorization": f"Bearer {creds.token}",
+            "Origin": STUDIO_ORIGIN,
+            "Referer": f"{STUDIO_ORIGIN}/video/{VIDEO_ID}/edit",
+            "X-Origin": STUDIO_ORIGIN,
+            "Content-Type": "application/json",
+        },
+        json=card_payload(playlist_id, context),
+        timeout=30,
     )
-    emit("data_api_infocards_post", response=safe_response(post_response))
-    return post_response.ok
+    emit("studio_oauth_edit_video_post", response=safe_response(response))
+    return response.ok
 
 
 def studio_cookie_map(raw: str) -> dict[str, str]:
-    return {key.strip(): value.strip() for key, value in (part.split("=", 1) for part in raw.split(";") if "=" in part)}
+    return {
+        key.strip(): value.strip()
+        for key, value in (part.split("=", 1) for part in raw.split(";") if "=" in part)
+    }
 
 
-def call_studio(playlist_id: str) -> bool:
+def call_studio_with_session(playlist_id: str) -> bool:
     raw_cookies = os.getenv("YOUTUBE_STUDIO_COOKIES", "").strip()
     if not raw_cookies:
-        emit("studio_unavailable", reason="missing GitHub Actions secret YOUTUBE_STUDIO_COOKIES")
+        emit("studio_session_unavailable", reason="missing GitHub Actions secret YOUTUBE_STUDIO_COOKIES")
         return False
     cookies = studio_cookie_map(raw_cookies)
     sapisid = cookies.get("SAPISID") or cookies.get("__Secure-3PAPISID")
     if not sapisid:
-        emit("studio_unavailable", reason="YOUTUBE_STUDIO_COOKIES has no SAPISID or __Secure-3PAPISID")
+        emit("studio_session_unavailable", reason="Studio cookies contain no SAPISID or __Secure-3PAPISID")
         return False
+
+    api_key = os.getenv("YOUTUBE_STUDIO_API_KEY", "").strip()
+    configured_version = os.getenv("YOUTUBE_STUDIO_CLIENT_VERSION", "").strip()
+    if not api_key or not configured_version:
+        detected_key, detected_version = studio_bootstrap()
+        api_key = api_key or detected_key
+        configured_version = configured_version or detected_version
 
     timestamp = str(int(time.time()))
     digest = hashlib.sha1(f"{timestamp} {sapisid} {STUDIO_ORIGIN}".encode()).hexdigest()
     context = {
         "client": {
             "clientName": "WEB_CREATOR",
-            "clientVersion": os.getenv("YOUTUBE_STUDIO_CLIENT_VERSION", "1.20260826.00.00"),
+            "clientVersion": configured_version or "1.20260826.00.00",
             "hl": "zh-TW",
         }
     }
-    payload = {
-        "context": context,
-        "externalVideoId": VIDEO_ID,
-        "infoCardEdit": {"infoCards": [{
-            "videoId": VIDEO_ID,
-            "teaserStartMs": 10000,
-            "playlistInfoCard": {"fullPlaylistId": playlist_id},
-            "infoCardEntityId": str(int(time.time() * 1000)),
-            "customMessage": "第一次看這部小說？",
-            "teaserText": "從第一集開始觀看",
-        }]},
-    }
     response = requests.post(
         STUDIO_ENDPOINT,
-        params={"key": os.getenv("YOUTUBE_STUDIO_API_KEY", "")},
+        params={"key": api_key} if api_key else {},
         headers={
             "Authorization": f"SAPISIDHASH {timestamp}_{digest}",
             "Origin": STUDIO_ORIGIN,
@@ -210,10 +288,10 @@ def call_studio(playlist_id: str) -> bool:
             "Content-Type": "application/json",
         },
         cookies=cookies,
-        json=payload,
+        json=card_payload(playlist_id, context),
         timeout=30,
     )
-    emit("studio_edit_video_post", response=safe_response(response))
+    emit("studio_session_edit_video_post", response=safe_response(response))
     return response.ok
 
 
@@ -223,28 +301,26 @@ def main() -> int:
     emit("oauth_slots_refreshed", count=len(slots), slots=[slot for slot, _ in slots])
     if not slots:
         raise RuntimeError("no usable YouTube OAuth credential slots")
-    # Probe the requested endpoint before any normal Data API lookup.  This
-    # preserves the endpoint's real response even when the project's daily
-    # Data API quota has already been consumed by the production uploader.
-    collection_response = probe_data_api_collection(slots[0][1])
-    if not collection_response.ok:
-        emit("fallback", route="youtube_studio_internal_api")
-        playlist_id = os.getenv("YOUTUBE_INFO_CARD_PLAYLIST_ID", "").strip()
-        if call_studio(playlist_id):
-            emit("result", success=True, route="studio_internal_api")
-            return 0
-        emit("result", success=False, reason="Data API infocards endpoint unavailable and Studio session unavailable or failed")
-        return 1
+
+    probe_data_api_collection(slots[0][1])
+
     slot, creds, video = owner_for_video(slots)
     playlist_id = discover_playlist(creds, video)
-    if write_data_api_card(creds, playlist_id):
-        emit("result", success=True, route="data_api", owner_slot=slot)
+
+    if call_studio_with_oauth(creds, playlist_id):
+        emit("result", success=True, route="studio_internal_api_oauth", owner_slot=slot)
         return 0
-    emit("fallback", route="youtube_studio_internal_api")
-    if call_studio(playlist_id):
-        emit("result", success=True, route="studio_internal_api", owner_slot=slot)
+
+    emit("fallback", route="youtube_studio_session")
+    if call_studio_with_session(playlist_id):
+        emit("result", success=True, route="studio_internal_api_session", owner_slot=slot)
         return 0
-    emit("result", success=False, reason="both info-card routes failed or were unavailable")
+
+    emit(
+        "result",
+        success=False,
+        reason="Studio OAuth was rejected and Studio browser-session secret is unavailable or failed",
+    )
     return 1
 
 
