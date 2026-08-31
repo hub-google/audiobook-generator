@@ -79,12 +79,31 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         upload_steps = [step for step in steps if step.get("uses") == "actions/upload-artifact@v4"]
         self.assertEqual(len(upload_steps), 3)
         self.assertTrue(all(step["with"]["if-no-files-found"] == "error" for step in upload_steps))
-        self.assertTrue(all(step.get("if") == "always()" for step in upload_steps))
+        full_step = next(step for step in upload_steps if "video-worker" in step["with"]["name"])
+        self.assertEqual(full_step.get("if"), "always()")
         mp4_step = next(step for step in upload_steps if "mp4-worker" in step["with"]["name"])
+        self.assertEqual(mp4_step.get("if"), "success()")
         self.assertIn("Workspace/*/SourceStatus/", mp4_step["with"]["path"])
         self.assertIn("Workspace/*/Manifests/", mp4_step["with"]["path"])
         manifest_step = next(step for step in upload_steps if "manifest-worker" in step["with"]["name"])
+        self.assertEqual(manifest_step.get("if"), "success()")
         self.assertIn("manifest-worker-", manifest_step["with"]["path"])
+
+    def test_worker_does_not_retry_deterministic_pipeline_failures(self):
+        step = next(
+            item for item in self.jobs["process_chapters"]["steps"]
+            if item.get("name") == "Run Per-Chapter End-to-End Pipeline (Real-Time Saving)"
+        )
+        self.assertIn("python src/worker_pipeline.py", step["run"])
+        self.assertNotIn("for attempt in 1 2 3", step["run"])
+
+    def test_worker_summary_does_not_export_or_validate_incomplete_manifest(self):
+        step = next(
+            item for item in self.jobs["process_chapters"]["steps"]
+            if item.get("name") == "Worker Job Summary"
+        )
+        self.assertNotIn("export_manifest", step["run"])
+        self.assertNotIn("validate_manifest", step["run"])
 
     def test_only_locked_failed_run_is_restored_before_cache(self):
         step = next(

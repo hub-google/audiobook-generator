@@ -33,6 +33,24 @@ class SubtitleGenerationTests(unittest.TestCase):
                 content = handle.read()
             self.assertIn("2\n00:00:02,000 --> 00:00:03,000", content)
 
+    def test_punctuation_only_wrapped_line_does_not_split_a_cue(self):
+        with tempfile.TemporaryDirectory() as directory:
+            wav_path = os.path.join(directory, "part.wav")
+            self._write_wav(wav_path)
+            output = os.path.join(directory, "chapter.srt")
+
+            # The long punctuation run is recursively wrapped onto lines that
+            # become empty after punctuation cleanup.  Empty lines must not be
+            # retained inside the surrounding cue.
+            text = "這是一段會被折行的字幕" + "！" * 30 + "後面仍然有正常文字"
+            generate_chapter_srt([wav_path], [text], output)
+
+            result = validate_srt(output, audio_duration=1.0)
+            self.assertEqual(result["cue_count"], 1)
+            with open(output, encoding="utf-8") as handle:
+                blocks = handle.read().strip().split("\n\n")
+            self.assertEqual(len(blocks), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

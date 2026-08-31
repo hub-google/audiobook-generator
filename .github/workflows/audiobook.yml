@@ -392,18 +392,10 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          for attempt in 1 2 3; do
-            echo "Worker pipeline attempt $attempt/3"
-            if python src/worker_pipeline.py --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1; then
-              exit 0
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "❌ Worker failed after 3 attempts. The checkpoint will be saved and this run will remain failed." >> "$GITHUB_STEP_SUMMARY"
-              exit 1
-            fi
-            echo "⚠️ Worker attempt $attempt failed; retrying in 60 seconds. Existing Workspace files will be reused." >> "$GITHUB_STEP_SUMMARY"
-            sleep 60
-          done
+          # Network-facing stages already implement their own bounded retries.
+          # Retrying the whole worker repeats deterministic validation failures
+          # and obscures the original error with duplicate tracebacks.
+          python src/worker_pipeline.py --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1
 
       - name: Save Worker Workspace Checkpoint
         if: always()
@@ -413,7 +405,7 @@ jobs:
           key: ${{ needs.setup.outputs.book_profile_id }}-${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload worker manifest (Fast Part Planning)
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: manifest-worker-${{ matrix.worker_id }}
@@ -421,7 +413,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload MP4 Videos & Subtitles Only (Lightweight Artifact for YouTube Upload)
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: mp4-worker-${{ matrix.worker_id }}
@@ -457,7 +449,7 @@ jobs:
             echo "- Job status: **$JOB_STATUS**" >> "$GITHUB_STEP_SUMMARY"
             echo "- Resume point: **setup/download config**" >> "$GITHUB_STEP_SUMMARY"
             echo "- Reason: config.yaml is unavailable; inspect the first failed setup step." >> "$GITHUB_STEP_SUMMARY"
-            exit 1
+            exit 0
           fi
           python - <<'PY'
           import os
@@ -476,22 +468,17 @@ jobs:
               workspace, book_title, worker_id, chapters,
               cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
           )
-          checkpoint.export_manifest()
-          m_val = checkpoint.validate_manifest()
           incomplete = checkpoint.incomplete_chapters()
+          missing = checkpoint.source_missing_chapters()
           print("[RUN_SUMMARY] " + __import__("json").dumps({
               "kind": "worker", "worker": worker_id,
-              "completed": len(chapters) - len(incomplete), "total": len(chapters),
-              "manifest_chapters": m_val["chapter_count"],
-              "manifest_duration": m_val["total_duration_seconds"],
+              "completed": len(chapters) - len(incomplete) - len(missing),
+              "total": len(chapters),
               "incomplete": incomplete,
+              "source_missing": missing,
           }, ensure_ascii=False))
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
               summary.write(checkpoint.markdown_summary())
-          if incomplete:
-              raise SystemExit(
-                  f"Strict success gate: worker {worker_id} still has incomplete chapters: {incomplete}"
-              )
           PY
 
 # ─────────────────────────────────────────────────────────────

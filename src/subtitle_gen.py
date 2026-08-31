@@ -74,7 +74,10 @@ def strip_subtitle_punctuation(text):
         line = re.sub(r'[，,。；;、！!？?\s]+$', '', line)
         # 移除開頭的獨立標點
         line = re.sub(r'^[，,。；;、\s]+', '', line)
-        cleaned_lines.append(line)
+        # A blank line inside an SRT cue is a cue separator.  Punctuation-only
+        # wrapped lines therefore must be removed, not written as empty lines.
+        if line:
+            cleaned_lines.append(line)
     return "\n".join(cleaned_lines)
 
 def generate_chapter_srt(part_wav_paths, lines, srt_output_path):
