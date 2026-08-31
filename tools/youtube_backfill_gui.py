@@ -910,6 +910,207 @@ class StudioPrivateClient:
         return False
 
 
+class StudioCardBrowser:
+    """Use visible Chrome with persistent profile so Google BotGuard attestation passes."""
+
+    def __init__(self, raw_cookie: str, verifier: StudioPrivateClient) -> None:
+        if not CHROME_BINARY.is_file():
+            raise RuntimeError(f"找不到 Chrome：{CHROME_BINARY}")
+        self.verifier = verifier
+        options = ChromeOptions()
+        options.binary_location = str(CHROME_BINARY)
+        CHROME_PROFILE.mkdir(parents=True, exist_ok=True)
+        options.add_argument(f"--user-data-dir={CHROME_PROFILE.resolve()}")
+        options.add_argument("--disable-notifications")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        self.driver = webdriver.Chrome(options=options)
+        self.wait = WebDriverWait(self.driver, 60)
+        self.driver.get("https://studio.youtube.com/")
+        time.sleep(2)
+        if "accounts.google.com" in (self.driver.current_url or ""):
+            # Inject cookies if needed
+            for name, value in StudioPrivateClient._parse_cookie(
+                StudioPrivateClient._normalize_cookie(raw_cookie)
+            ).items():
+                if not name or name.startswith("*"):
+                    continue
+                try:
+                    self.driver.add_cookie({
+                        "name": name,
+                        "value": value,
+                        "domain": ".youtube.com",
+                        "path": "/",
+                        "secure": True,
+                    })
+                except Exception:
+                    continue
+            self.driver.get("https://studio.youtube.com/")
+            time.sleep(2)
+
+        if "accounts.google.com" in (self.driver.current_url or ""):
+            # Wait for user to finish login in the opened window
+            try:
+                self.wait.until(lambda d: "studio.youtube.com" in (d.current_url or ""))
+            except Exception:
+                pass
+
+    def close(self) -> None:
+        try:
+            self.driver.quit()
+        except Exception:
+            pass
+
+    def _execute_in_page_edit(self, edit_payload: dict[str, Any]) -> tuple[bool, str]:
+        """Execute edit_video inside the authenticated Studio DOM."""
+        script = """
+        const callback = arguments[arguments.length - 1];
+        const payload = arguments[0];
+        try {
+            const apiKey = (window.ytcfg && window.ytcfg.get('INNERTUBE_API_KEY')) || '';
+            const clientVersion = (window.ytcfg && (window.ytcfg.get('INNERTUBE_CLIENT_VERSION') || window.ytcfg.get('INNERTUBE_CONTEXT_CLIENT_VERSION'))) || '1.20260829.00.00';
+            const delegatedSessionId = (window.ytcfg && window.ytcfg.get('DELEGATED_SESSION_ID')) || '';
+
+            if (payload.context && payload.context.client) {
+                payload.context.client.clientVersion = clientVersion;
+            }
+            if (delegatedSessionId && payload.context && payload.context.user) {
+                payload.context.user.onBehalfOfUser = delegatedSessionId;
+            }
+
+            fetch('/youtubei/v1/video_editor/edit_video?alt=json&key=' + encodeURIComponent(apiKey), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-YouTube-Client-Name': '62',
+                    'X-YouTube-Client-Version': clientVersion,
+                },
+                body: JSON.stringify(payload),
+                credentials: 'include'
+            })
+            .then(async (r) => {
+                const text = await r.text();
+                let json = null;
+                try { json = JSON.parse(text); } catch (e) {}
+                callback({ status: r.status, ok: r.ok, text: text, json: json });
+            })
+            .catch((err) => {
+                callback({ status: 0, ok: false, error: err.toString() });
+            });
+        } catch (e) {
+            callback({ status: 0, ok: false, error: e.toString() });
+        }
+        """
+        result = self.driver.execute_async_script(script, edit_payload)
+        if isinstance(result, dict):
+            if result.get("ok"):
+                body = result.get("json") or {}
+                ext = body.get("responseContext", {}).get("webResponseContextExtensionData", {})
+                if ext.get("challenge"):
+                    return False, "Studio 要求驗證 Challenge"
+                if body.get("error"):
+                    return False, f"API error: {body['error']}"
+                return True, "OK"
+            return False, result.get("error") or f"HTTP {result.get('status')}: {result.get('text', '')[:200]}"
+        return False, "無回傳結果"
+
+    def update_video_annotations(
+        self,
+        video_id: str,
+        first_video_id: str,
+        playlist_id: str,
+        playlist_title: str,
+        do_card: bool = True,
+        do_endscreen: bool = True,
+        is_first_episode: bool = False,
+    ) -> None:
+        now_ms = int(time.time() * 1000)
+        cards = []
+        if do_card:
+            if not is_first_episode and first_video_id:
+                # Card 1: First Episode Link @ 0:03 (3000ms)
+                cards.append({
+                    "videoId": video_id,
+                    "teaserStartMs": CARD_FIRST_EP_START_MS,
+                    "videoInfoCard": {
+                        "videoId": first_video_id,
+                    },
+                    "infoCardEntityId": str(now_ms),
+                    "customMessage": "第一次收聽？建議從第1集開始",
+                    "teaserText": "👉 點此從【第 1 集】開始聽",
+                })
+                # Card 2: Playlist Link @ 0:14 (14000ms)
+                cards.append({
+                    "videoId": video_id,
+                    "teaserStartMs": CARD_PLAYLIST_START_MS,
+                    "playlistInfoCard": {
+                        "fullPlaylistId": playlist_id,
+                    },
+                    "infoCardEntityId": str(now_ms + 1),
+                    "customMessage": f"{playlist_title} 完整播放清單"[:60],
+                    "teaserText": "📚 本部小說【完整播放清單】",
+                })
+            else:
+                # Episode 1 itself: Playlist Link @ 0:03 (3000ms)
+                cards.append({
+                    "videoId": video_id,
+                    "teaserStartMs": CARD_FIRST_EP_START_MS,
+                    "playlistInfoCard": {
+                        "fullPlaylistId": playlist_id,
+                    },
+                    "infoCardEntityId": str(now_ms),
+                    "customMessage": f"{playlist_title} 完整播放清單"[:60],
+                    "teaserText": "📚 本部小說【完整播放清單】",
+                })
+
+        channel_id = self.verifier.channel_id or CHANNEL_ID
+        delegation_context = {
+            "roleType": {"channelRoleType": "CREATOR_CHANNEL_ROLE_TYPE_OWNER"},
+            "externalChannelId": channel_id,
+        } if channel_id else {}
+
+        context = {
+            "client": {
+                "clientName": 62,
+                "clientVersion": self.verifier.config.get("client_version") or "1.20260829.00.00",
+                "hl": "zh-TW",
+                "gl": "TW",
+            },
+            "request": {"returnLogEntry": True, "internalExperimentFlags": []},
+            "user": {
+                "delegationContext": delegation_context,
+            },
+        }
+
+        payload: dict[str, Any] = {
+            "context": context,
+            "externalVideoId": video_id,
+        }
+        if delegation_context:
+            payload["delegationContext"] = delegation_context
+        if do_card:
+            payload["infoCardEdit"] = {"infoCards": cards}
+        if do_endscreen:
+            payload["endscreenEdit"] = {
+                "endscreen": {
+                    "elements": [
+                        {
+                            "type": "PLAYLIST",
+                            "playlistId": playlist_id,
+                            "left": 0.58,
+                            "top": 0.15,
+                            "width": 0.40,
+                            "aspectRatio": 1.7777777777777777,
+                        }
+                    ]
+                }
+            }
+
+        ok, msg = self._execute_in_page_edit(payload)
+        if not ok:
+            raise RuntimeError(f"Studio 寫入失敗（{video_id}）：{msg}")
+
+
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -1076,9 +1277,14 @@ class App(tk.Tk):
         include_first = self.include_first.get()
 
         def work() -> None:
+            card_browser: StudioCardBrowser | None = None
             try:
                 studio = StudioPrivateClient(raw_cookie, channel_id=channel_id)
                 self.studio_client = studio
+                if do_card or do_endscreen:
+                    self.event_queue.put(("log", "正在啟動 Chrome 資訊卡／片尾編輯器…"))
+                    card_browser = StudioCardBrowser(raw_cookie, studio)
+
                 for video in videos:
                     if self.stop_event.is_set():
                         break
@@ -1102,7 +1308,7 @@ class App(tk.Tk):
                     need_endscreen = do_endscreen and not (skip_done and endscreen_done)
 
                     if need_card or need_endscreen:
-                        studio.update_video_annotations(
+                        card_browser.update_video_annotations(
                             video.video_id,
                             first.video_id,
                             playlist.playlist_id,
@@ -1161,6 +1367,9 @@ class App(tk.Tk):
             except Exception as exc:
                 self.event_queue.put(("error", str(exc)))
                 self.event_queue.put(("done", "批次處理中止。"))
+            finally:
+                if card_browser:
+                    card_browser.close()
 
         self._run_thread(work)
 
