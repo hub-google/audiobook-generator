@@ -752,88 +752,107 @@ class StudioPrivateClient:
         })
 
 
-    def set_navigation_card(
+    def update_video_annotations(
         self,
         video_id: str,
         first_video_id: str,
         playlist_id: str,
+        playlist_title: str,
+        do_card: bool = True,
+        do_endscreen: bool = True,
         is_first_episode: bool = False,
     ) -> None:
         cards = []
         now_ms = int(time.time() * 1000)
-        if not is_first_episode and first_video_id:
-            # Card 1: Episode 1 link @ 0:03 (3000ms)
-            cards.append({
-                "videoId": video_id,
-                "teaserStartMs": CARD_FIRST_EP_START_MS,
-                "videoInfoCard": {
-                    "fullVideoId": first_video_id,
-                },
-                "infoCardEntityId": str(now_ms),
-                "customMessage": "第一次收聽？建議從第1集開始",
-                "teaserText": "👉 點此從【第 1 集】開始聽",
-            })
-            # Card 2: Playlist link @ 0:14 (14000ms)
-            cards.append({
-                "videoId": video_id,
-                "teaserStartMs": CARD_PLAYLIST_START_MS,
-                "playlistInfoCard": {
-                    "fullPlaylistId": playlist_id,
-                },
-                "infoCardEntityId": str(now_ms + 1),
-                "customMessage": "完整播放清單",
-                "teaserText": "📚 本部小說【完整播放清單】",
-            })
-        else:
-            # Episode 1 itself: Playlist link @ 0:03 (3000ms)
-            cards.append({
-                "videoId": video_id,
-                "teaserStartMs": CARD_FIRST_EP_START_MS,
-                "playlistInfoCard": {
-                    "fullPlaylistId": playlist_id,
-                },
-                "infoCardEntityId": str(now_ms),
-                "customMessage": "完整播放清單",
-                "teaserText": "📚 本部小說【完整播放清單】",
-            })
+        if do_card:
+            if not is_first_episode and first_video_id:
+                # Card 1: First Episode Link @ 0:03 (3000ms)
+                cards.append({
+                    "videoId": video_id,
+                    "teaserStartMs": CARD_FIRST_EP_START_MS,
+                    "videoInfoCard": {
+                        "videoId": first_video_id,
+                    },
+                    "infoCardEntityId": str(now_ms),
+                    "customMessage": "第一次收聽？建議從第1集開始",
+                    "teaserText": "👉 點此從【第 1 集】開始聽",
+                })
+                # Card 2: Playlist Link @ 0:14 (14000ms)
+                cards.append({
+                    "videoId": video_id,
+                    "teaserStartMs": CARD_PLAYLIST_START_MS,
+                    "playlistInfoCard": {
+                        "fullPlaylistId": playlist_id,
+                    },
+                    "infoCardEntityId": str(now_ms + 1),
+                    "customMessage": f"{playlist_title} 完整播放清單"[:60],
+                    "teaserText": "📚 本部小說【完整播放清單】",
+                })
+            else:
+                # Episode 1 itself: Playlist Link @ 0:03 (3000ms)
+                cards.append({
+                    "videoId": video_id,
+                    "teaserStartMs": CARD_FIRST_EP_START_MS,
+                    "playlistInfoCard": {
+                        "fullPlaylistId": playlist_id,
+                    },
+                    "infoCardEntityId": str(now_ms),
+                    "customMessage": f"{playlist_title} 完整播放清單"[:60],
+                    "teaserText": "📚 本部小說【完整播放清單】",
+                })
 
         delegation_context = {
             "roleType": {"channelRoleType": "CREATOR_CHANNEL_ROLE_TYPE_OWNER"},
             "externalChannelId": self.channel_id,
         } if self.channel_id else {}
-        payload = {
+
+        payload: dict[str, Any] = {
             "context": self._context(),
             "externalVideoId": video_id,
-            "infoCardEdit": {"infoCards": cards},
         }
         if delegation_context:
             payload["delegationContext"] = delegation_context
+        if do_card:
+            payload["infoCardEdit"] = {"infoCards": cards}
+        if do_endscreen:
+            payload["endscreenEdit"] = {
+                "endscreen": {
+                    "elements": [
+                        {
+                            "type": "PLAYLIST",
+                            "playlistId": playlist_id,
+                            "left": 0.58,
+                            "top": 0.15,
+                            "width": 0.40,
+                            "aspectRatio": 1.7777777777777777,
+                        }
+                    ]
+                }
+            }
 
         response = self.session.post(
             STUDIO_EDIT_ENDPOINT,
-            params={"alt": "json", "key": self.config["api_key"]},
+            params={"alt": "json", "key": self.config.get("api_key", "")},
             headers=self._headers(STUDIO_ORIGIN, f"{STUDIO_ORIGIN}/video/{video_id}/edit"),
             json=payload,
             timeout=30,
         )
         if not response.ok:
             raise RuntimeError(
-                f"Studio info card HTTP {response.status_code}: {response.text[:500]}"
+                f"Studio 寫入失敗 (HTTP {response.status_code}): {response.text[:300]}"
             )
         try:
             body = response.json()
         except ValueError as exc:
-            raise RuntimeError("Studio info card 回傳不是 JSON。") from exc
+            raise RuntimeError("Studio 回傳不是 JSON。") from exc
         if body.get("error"):
-            raise RuntimeError(f"Studio info card API error: {body['error']}")
+            raise RuntimeError(f"Studio API error: {body['error']}")
         extension = body.get("responseContext", {}).get(
             "webResponseContextExtensionData", {}
         )
         if extension.get("challenge"):
             raise RuntimeError(
-                "Studio 拒絕儲存資訊卡並要求額外驗證；"
-                "HTTP 200 不代表已儲存。請重新從已登入的 YouTube Studio "
-                "複製最新 Cookie 後再試。"
+                "Studio 拒絕儲存並要求驗證 Challenge（Cookie 可能已過期，請重新複製 Cookie）。"
             )
 
     def verify_video_elements(
@@ -868,215 +887,6 @@ class StudioPrivateClient:
                 pass
             time.sleep(1)
         return False
-
-
-class StudioCardBrowser:
-    """Use Studio's real editor and session so Google can issue its required attestation."""
-
-    def __init__(self, raw_cookie: str, verifier: StudioPrivateClient) -> None:
-        if not CHROME_BINARY.is_file():
-            raise RuntimeError(f"找不到 Chrome：{CHROME_BINARY}")
-        self.verifier = verifier
-        options = ChromeOptions()
-        options.binary_location = str(CHROME_BINARY)
-        options.add_argument("--window-size=1600,1000")
-        options.add_argument("--disable-notifications")
-        options.add_argument("--headless=new")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument(
-            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/120.0.0.0"
-        )
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        self.driver = webdriver.Chrome(options=options)
-        self.wait = WebDriverWait(self.driver, 20)
-        self.driver.get("https://www.youtube.com/")
-        time.sleep(1)
-        for name, value in StudioPrivateClient._parse_cookie(
-            StudioPrivateClient._normalize_cookie(raw_cookie)
-        ).items():
-            if not name or name.startswith("*"):
-                continue
-            try:
-                self.driver.add_cookie({
-                    "name": name,
-                    "value": value,
-                    "domain": ".youtube.com",
-                    "path": "/",
-                    "secure": name.startswith("__Secure-") or name in ["SAPISID", "SSID", "HSID", "SID"],
-                })
-            except Exception:
-                continue
-        # Navigate to Studio home once to initialize session & ytcfg
-        self.driver.get(f"{STUDIO_ORIGIN}/")
-        try:
-            self.wait.until(lambda d: d.execute_script(
-                "return typeof window.ytcfg !== 'undefined' && Boolean(window.ytcfg.get('INNERTUBE_API_KEY'));"
-            ))
-        except Exception:
-            time.sleep(2)
-
-    def close(self) -> None:
-        try:
-            self.driver.quit()
-        except Exception:
-            pass
-
-    def _js_click(self, element: Any) -> None:
-        self.driver.execute_script("arguments[0].click();", element)
-
-    def _execute_in_page_edit(self, edit_payload: dict[str, Any], headers: dict[str, str]) -> tuple[bool, str]:
-        """Execute edit_video inside Studio Chrome session using authenticated fetch without page reload."""
-        script = """
-        const callback = arguments[arguments.length - 1];
-        const payload = arguments[0];
-        const headers = arguments[1];
-        try {
-            const apiKey = (window.ytcfg && window.ytcfg.get('INNERTUBE_API_KEY')) || '';
-            const clientVersion = (window.ytcfg && (window.ytcfg.get('INNERTUBE_CLIENT_VERSION') || window.ytcfg.get('INNERTUBE_CONTEXT_CLIENT_VERSION'))) || '1.20260829.00.00';
-            const delegatedSessionId = (window.ytcfg && window.ytcfg.get('DELEGATED_SESSION_ID')) || '';
-
-            if (payload.context && payload.context.client) {
-                payload.context.client.clientVersion = clientVersion;
-            }
-            if (delegatedSessionId && payload.context && payload.context.user) {
-                payload.context.user.onBehalfOfUser = delegatedSessionId;
-            }
-
-            fetch('/youtubei/v1/video_editor/edit_video?alt=json&key=' + encodeURIComponent(apiKey), {
-                method: 'POST',
-                headers: headers,
-                body: JSON.stringify(payload),
-                credentials: 'include'
-            })
-            .then(async (r) => {
-                const text = await r.text();
-                let json = null;
-                try { json = JSON.parse(text); } catch (e) {}
-                callback({ status: r.status, ok: r.ok, text: text, json: json });
-            })
-            .catch((err) => {
-                callback({ status: 0, ok: false, error: err.toString() });
-            });
-        } catch (e) {
-            callback({ status: 0, ok: false, error: e.toString() });
-        }
-        """
-        result = self.driver.execute_async_script(script, edit_payload, headers)
-        if isinstance(result, dict):
-            if result.get("ok"):
-                body = result.get("json") or {}
-                ext = body.get("responseContext", {}).get("webResponseContextExtensionData", {})
-                if ext.get("challenge"):
-                    return False, "Studio 要求驗證 Challenge（Cookie 可能已過期）"
-                if body.get("error"):
-                    return False, f"API error: {body['error']}"
-                return True, "OK"
-            return False, result.get("error") or f"HTTP {result.get('status')}: {result.get('text', '')[:200]}"
-        return False, "無回傳結果"
-
-    def update_video_annotations(
-        self,
-        video_id: str,
-        first_video_id: str,
-        playlist_id: str,
-        playlist_title: str,
-        do_card: bool = True,
-        do_endscreen: bool = True,
-        is_first_episode: bool = False,
-    ) -> None:
-        now_ms = int(time.time() * 1000)
-        cards = []
-        if do_card:
-            if not is_first_episode and first_video_id:
-                # Card 1: First Episode Link @ 0:03
-                cards.append({
-                    "videoId": video_id,
-                    "teaserStartMs": CARD_FIRST_EP_START_MS,
-                    "videoInfoCard": {
-                        "fullVideoId": first_video_id,
-                    },
-                    "infoCardEntityId": str(now_ms),
-                    "customMessage": "第一次收聽？建議從第1集開始",
-                    "teaserText": "👉 點此從【第 1 集】開始聽",
-                })
-                # Card 2: Playlist Link @ 0:14
-                cards.append({
-                    "videoId": video_id,
-                    "teaserStartMs": CARD_PLAYLIST_START_MS,
-                    "playlistInfoCard": {
-                        "fullPlaylistId": playlist_id,
-                    },
-                    "infoCardEntityId": str(now_ms + 1),
-                    "customMessage": f"{playlist_title} 完整播放清單"[:60],
-                    "teaserText": "📚 本部小說【完整播放清單】",
-                })
-            else:
-                # Episode 1: Playlist Link @ 0:03
-                cards.append({
-                    "videoId": video_id,
-                    "teaserStartMs": CARD_FIRST_EP_START_MS,
-                    "playlistInfoCard": {
-                        "fullPlaylistId": playlist_id,
-                    },
-                    "infoCardEntityId": str(now_ms),
-                    "customMessage": f"{playlist_title} 完整播放清單"[:60],
-                    "teaserText": "📚 本部小說【完整播放清單】",
-                })
-
-        channel_id = self.verifier.channel_id or CHANNEL_ID
-        delegation_context = {
-            "roleType": {"channelRoleType": "CREATOR_CHANNEL_ROLE_TYPE_OWNER"},
-            "externalChannelId": channel_id,
-        } if channel_id else {}
-
-        context = {
-            "client": {
-                "clientName": 62,
-                "clientVersion": self.verifier.config.get("client_version") or "1.20260829.00.00",
-                "hl": "zh-TW",
-                "gl": "TW",
-            },
-            "request": {"returnLogEntry": True, "internalExperimentFlags": []},
-            "user": {
-                "delegationContext": delegation_context,
-            },
-        }
-
-        payload: dict[str, Any] = {
-            "context": context,
-            "externalVideoId": video_id,
-        }
-        if delegation_context:
-            payload["delegationContext"] = delegation_context
-        if do_card:
-            payload["infoCardEdit"] = {"infoCards": cards}
-        if do_endscreen:
-            payload["endscreenEdit"] = {
-                "endscreen": {
-                    "elements": [
-                        {
-                            "type": "PLAYLIST",
-                            "playlistId": playlist_id,
-                            "left": 0.58,
-                            "top": 0.15,
-                            "width": 0.40,
-                            "aspectRatio": 1.7777777777777777,
-                        }
-                    ]
-                }
-            }
-
-        headers = self.verifier._headers(STUDIO_ORIGIN, f"{STUDIO_ORIGIN}/video/{video_id}/edit")
-
-        ok, msg = self._execute_in_page_edit(payload, headers)
-        if not ok:
-            # Try once with raw HTTP fallback via verifier
-            try:
-                self.verifier._studio_post("video_editor/edit_video", payload)
-                ok = True
-            except Exception as exc:
-                raise RuntimeError(f"Studio 寫入失敗（{video_id}）：{msg} | {exc}") from exc
 
 
 class App(tk.Tk):
@@ -1245,13 +1055,9 @@ class App(tk.Tk):
         include_first = self.include_first.get()
 
         def work() -> None:
-            card_browser: StudioCardBrowser | None = None
             try:
-                studio = StudioPrivateClient(raw_cookie)
+                studio = StudioPrivateClient(raw_cookie, channel_id=channel_id)
                 self.studio_client = studio
-                if do_card or do_endscreen:
-                    self.event_queue.put(("log", "正在啟動 Chrome 資訊卡／片尾編輯器…"))
-                    card_browser = StudioCardBrowser(raw_cookie, studio)
                 for video in videos:
                     if self.stop_event.is_set():
                         break
@@ -1275,7 +1081,7 @@ class App(tk.Tk):
                     need_endscreen = do_endscreen and not (skip_done and endscreen_done)
 
                     if need_card or need_endscreen:
-                        card_browser.update_video_annotations(
+                        studio.update_video_annotations(
                             video.video_id,
                             first.video_id,
                             playlist.playlist_id,
@@ -1334,9 +1140,6 @@ class App(tk.Tk):
             except Exception as exc:
                 self.event_queue.put(("error", str(exc)))
                 self.event_queue.put(("done", "批次處理中止。"))
-            finally:
-                if card_browser:
-                    card_browser.close()
 
         self._run_thread(work)
 
