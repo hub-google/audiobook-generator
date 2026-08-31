@@ -7,6 +7,7 @@ import yaml
 WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "audiobook.yml"
 DISPATCHER_WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "queue-dispatcher.yml"
 PREPARE_PARTS_PATH = Path(__file__).parents[1] / "src" / "prepare_parts.py"
+UPLOADER_PATH = Path(__file__).parents[1] / "src" / "youtube_api_uploader.py"
 
 
 class WorkflowStrictSuccessTests(unittest.TestCase):
@@ -15,6 +16,11 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("github.run_attempt > 1", workflow_text)
         self.assertIn("inputs.resume_source_run_id != ''", workflow_text)
         self.assertIn("github.triggering_actor != 'github-actions[bot]'", workflow_text)
+
+    def test_playlist_metadata_quota_is_classified_as_retryable(self):
+        uploader_text = UPLOADER_PATH.read_text(encoding="utf-8")
+        self.assertIn("PAUSED during playlist metadata update", uploader_text)
+        self.assertIn("PAUSED during final playlist metadata update", uploader_text)
 
     @classmethod
     def setUpClass(cls):

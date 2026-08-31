@@ -1914,14 +1914,6 @@ def main():
             logging.error("Strict success gate: no source run or local input was found")
             return 1
 
-    if args.run_id:
-        save_resume_state(args.state_file, args.run_id, args.privacy, "running",
-                          completed_titles=completed_titles, part_plan=part_plan,
-                          pending_thumbnails=pending_thumbnails,
-                          pending_playlist=pending_playlist,
-                          pending_captions=pending_captions,
-                          pending_publish=pending_publish)
-
     try:
         youtube = get_authenticated_service()
     except UploadPaused as paused:
@@ -2033,7 +2025,35 @@ def main():
         logging.error("無法取得或建立 YouTube 播放清單，停止上傳。")
         return 1
     # Also migrate a playlist created by an older run before any upload work.
-    update_playlist_metadata(youtube, playlist_id, playlist_name, playlist_desc)
+    try:
+        update_playlist_metadata(youtube, playlist_id, playlist_name, playlist_desc)
+    except UploadPaused as paused:
+        publication.mark_global("playlist", "paused", error=paused.reason)
+        save_resume_state(
+            args.state_file, args.run_id, args.privacy, "paused",
+            reason=paused.reason, retry_at=paused.retry_at,
+            completed_titles=completed_titles, part_plan=part_plan,
+            pending_thumbnails=pending_thumbnails,
+            pending_playlist=pending_playlist,
+            pending_captions=pending_captions,
+            pending_publish=pending_publish,
+            playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+        )
+        logging.error(
+            "[API_UPLOAD_STATUS] PAUSED during playlist metadata update | "
+            "retry_at=%s | source_run=%s | reason=%s",
+            paused.retry_at.isoformat(), args.run_id, paused.reason,
+        )
+        return EXIT_RETRY_LATER
+    save_resume_state(
+        args.state_file, args.run_id, args.privacy, "running",
+        completed_titles=completed_titles, part_plan=part_plan,
+        pending_thumbnails=pending_thumbnails,
+        pending_playlist=pending_playlist,
+        pending_captions=pending_captions,
+        pending_publish=pending_publish,
+        playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+    )
     publication.mark_global("playlist", "completed", playlist_id=playlist_id)
     try:
         # A playlist returned by playlists.insert is necessarily empty. Avoid
@@ -3409,9 +3429,29 @@ def main():
     final_playlist_title = completed_playlist_title(
         book_title, measured_duration_seconds,
     )
-    update_playlist_metadata(
-        youtube, playlist_id, final_playlist_title, playlist_desc,
-    )
+    try:
+        update_playlist_metadata(
+            youtube, playlist_id, final_playlist_title, playlist_desc,
+        )
+    except UploadPaused as paused:
+        publication.mark_global("playlist", "paused", error=paused.reason)
+        save_resume_state(
+            args.state_file, args.run_id, args.privacy, "paused",
+            reason=paused.reason, retry_at=paused.retry_at,
+            completed_titles=completed_titles, part_plan=part_plan,
+            pending_thumbnails=pending_thumbnails,
+            pending_playlist=pending_playlist,
+            pending_captions=pending_captions,
+            pending_publish=pending_publish,
+            playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+            final_playlist_validation=final_playlist_validation,
+        )
+        logging.error(
+            "[API_UPLOAD_STATUS] PAUSED during final playlist metadata update | "
+            "retry_at=%s | source_run=%s | reason=%s",
+            paused.retry_at.isoformat(), args.run_id, paused.reason,
+        )
+        return EXIT_RETRY_LATER
     final_playlist_validation["title"] = final_playlist_title
     final_playlist_validation["total_duration_seconds"] = measured_duration_seconds
 
