@@ -231,7 +231,10 @@ def studio_bootstrap(cookies: dict[str, str] | None = None) -> dict[str, str]:
     try:
         session = requests.Session()
         session.cookies.update(cookies or {})
-        responses = [session.get(f"{STUDIO_ORIGIN}/video/{VIDEO_ID}/edit", timeout=30)]
+        responses = []
+        if cookies:
+            responses.append(session.get(f"{STUDIO_ORIGIN}/channel/{OWNER_CHANNEL_ID}", timeout=30))
+        responses.append(session.get(f"{STUDIO_ORIGIN}/video/{VIDEO_ID}/edit", timeout=30))
         if cookies:
             responses.append(session.get(f"https://www.youtube.com/watch?v={VIDEO_ID}", timeout=30))
         text = "\n".join(response.text for response in responses)
@@ -251,7 +254,7 @@ def studio_bootstrap(cookies: dict[str, str] | None = None) -> dict[str, str]:
         emit(
             "studio_bootstrap",
             authenticated=bool(cookies),
-            status=responses[0].status_code,
+            status=responses[-1].status_code,
             api_key_found=bool(config["api_key"]),
             client_version=config["client_version"],
             delegated_session=bool(config["page_id"]),
