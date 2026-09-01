@@ -596,7 +596,7 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
 
     @patch("src.youtube_api_uploader.set_video_thumbnail")
     @patch("src.youtube_api_uploader.MediaFileUpload")
-    def test_video_insert_quota_marks_only_upload_quota(self, media, thumbnail):
+    def test_video_insert_quota_uses_upload_rotation_for_lazy_slot_activation(self, media, thumbnail):
         calls = []
         failed = type("Request", (), {
             "next_chunk": lambda self, **kwargs: (_ for _ in ()).throw(Exception("quotaExceeded"))

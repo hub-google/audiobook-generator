@@ -305,6 +305,7 @@ class YouTubeServicePool:
         self.rotation_round = 1
         self.api_rotation_round = 1
         self.channel_id = None
+        self._activation_pause = None
         self.discover_accounts()
 
     def discover_accounts(self):
@@ -341,7 +342,8 @@ class YouTubeServicePool:
                     "creds": None,
                     "channel_id": None,
                     "api_exhausted": False,
-                    "exhausted": False
+                    "exhausted": False,
+                    "unavailable": False,
                 })
 
         logging.info("🔑 [YouTube-Pool] 偵測到 %s 組 YouTube API 專案金鑰/憑證設定。", len(self.accounts))
@@ -465,71 +467,84 @@ class YouTubeServicePool:
         service = build("youtube", "v3", credentials=creds)
         return service, creds
 
+    def _verify_account_channel(self, index):
+        """Authenticate and verify one slot when it is first activated."""
+        self._activation_pause = None
+        acc = self.accounts[index]
+        if acc.get("unavailable"):
+            return False
+
+        service = self.get_service(index)
+        if service is None:
+            acc["unavailable"] = True
+            logging.warning(
+                "⏭️ [專案 #%s] OAuth/Service 初始化失敗，標記為不可用並跳過。",
+                acc["slot"],
+            )
+            return False
+
+        # A slot that was positively verified earlier does not need another
+        # channels.list call when a later rotation round refreshes its service.
+        if acc.get("channel_id") and acc["channel_id"] == self.channel_id:
+            return True
+
+        try:
+            items = service.channels().list(part="id", mine=True).execute().get("items") or []
+        except Exception as error:
+            paused = classify_daily_limit(error)
+            if paused:
+                self._activation_pause = paused
+                logging.warning(
+                    "⏭️ [專案 #%s] 首次啟用的頻道驗證遇到配額限制，跳過此 slot。",
+                    acc["slot"],
+                )
+                return False
+            acc["unavailable"] = True
+            logging.warning(
+                "⏭️ [專案 #%s] 無法驗證 YouTube 頻道，標記為不可用並跳過: %s",
+                acc["slot"], error,
+            )
+            return False
+
+        if len(items) != 1 or not items[0].get("id"):
+            acc["unavailable"] = True
+            logging.warning(
+                "⏭️ [專案 #%s] 未解析到唯一 YouTube 頻道，標記為不可用並跳過。",
+                acc["slot"],
+            )
+            return False
+
+        channel_id = str(items[0]["id"])
+        if self.channel_id is not None and channel_id != self.channel_id:
+            acc["unavailable"] = True
+            logging.error(
+                "⏭️ [專案 #%s] 登入頻道 %s，與目前頻道 %s 不同；"
+                "標記為不可用並跳過。",
+                acc["slot"], channel_id, self.channel_id,
+            )
+            return False
+
+        acc["channel_id"] = channel_id
+        if self.channel_id is None:
+            self.channel_id = channel_id
+        return True
+
     def require_same_channel(self):
-        """Verify usable credentials share one channel without consuming upload slots."""
+        """Initialize and verify only the active slot; backups stay lazy."""
         if not self.accounts:
             return None
-
-        channel_slots = {}
-        last_quota_pause = None
-        for index, acc in enumerate(self.accounts):
-            service = self.get_service(index)
-            if service is None:
-                raise RuntimeError(
-                    f"YouTube credential slot {acc['slot']} could not be authenticated"
-                )
-            try:
-                items = service.channels().list(part="id", mine=True).execute().get("items") or []
-            except Exception as error:
-                paused = classify_daily_limit(error)
-                if paused:
-                    last_quota_pause = paused
-                    logging.warning(
-                        "⏭️ [專案 #%s] 頻道驗證遇到 %s；保留其上傳配額狀態並繼續下一個 slot。",
-                        acc["slot"], paused.reason,
-                    )
-                    continue
-                raise RuntimeError(
-                    f"Could not verify YouTube channel for credential slot {acc['slot']}: {error}"
-                ) from error
-            if len(items) != 1 or not items[0].get("id"):
-                raise RuntimeError(
-                    f"YouTube credential slot {acc['slot']} does not resolve to exactly one channel"
-                )
-            channel_id = str(items[0]["id"])
-            acc["channel_id"] = channel_id
-            channel_slots.setdefault(channel_id, []).append(acc["slot"])
-
-        if not channel_slots:
-            if last_quota_pause:
-                raise last_quota_pause from last_quota_pause.original_error
-            raise RuntimeError("No YouTube credential slot could be verified")
-
-        if len(channel_slots) != 1:
-            details = "; ".join(
-                f"{channel_id}: slots {','.join(map(str, slots))}"
-                for channel_id, slots in sorted(channel_slots.items())
-            )
+        acc = self.active_account
+        if not self._verify_account_channel(self.active_index):
+            if self._activation_pause:
+                raise self._activation_pause from self._activation_pause.original_error
             raise RuntimeError(
-                "YouTube credential pool spans different channels; quota rotation would lose "
-                f"access to uploaded videos ({details}). Re-authorize every slot for the same channel."
+                f"YouTube credential slot {acc['slot']} could not be initialized and verified"
             )
-
-        channel_id = next(iter(channel_slots))
-        self.channel_id = channel_id
-        first_usable_index = next(
-            index for index, account in enumerate(self.accounts)
-            if account.get("channel_id") == channel_id and not account["exhausted"]
-        )
-        self.active_index = first_usable_index
         logging.info(
-            "✅ [YouTube-Pool] %s 組憑證通過同頻道驗證、%s 組配額耗盡；"
-            "將由專案 #%s 繼續發布至頻道 %s。",
-            len(channel_slots[channel_id]),
-            sum(1 for account in self.accounts if account["exhausted"]),
-            self.accounts[first_usable_index]["slot"], channel_id,
+            "✅ [YouTube-Pool] 專案 #%s 已通過頻道驗證；其餘 %s 組備援憑證將在配額輪替時才驗證。",
+            acc["slot"], max(0, len(self.accounts) - 1),
         )
-        return channel_id
+        return self.channel_id
 
     def get_service(self, slot_idx=None):
         if not self.accounts:
@@ -555,16 +570,7 @@ class YouTubeServicePool:
 
     @property
     def active_service(self):
-        srv = self.get_service(self.active_index)
-        if srv is None:
-            # Try next unexhausted account if current failed to initialize
-            for idx in range(len(self.accounts)):
-                if not self.accounts[idx]["exhausted"]:
-                    self.active_index = idx
-                    srv = self.get_service(idx)
-                    if srv is not None:
-                        return srv
-        return srv
+        return self.get_service(self.active_index)
 
     def rotate_on_quota(self, error=None, *, upload=False) -> bool:
         """Rotate API calls without confusing ordinary quota with upload quota.
@@ -590,15 +596,11 @@ class YouTubeServicePool:
         old_slot = current["slot"] if current else "N/A"
         while getattr(self, round_attr, 1) <= YOUTUBE_SLOT_ROTATION_ROUNDS:
             for idx, next_acc in enumerate(self.accounts):
-                if next_acc.get(exhausted_key, False):
+                if next_acc.get(exhausted_key, False) or next_acc.get("unavailable", False):
                     continue
-                # A slot whose channels.list validation was quota-limited is
-                # retained for a later retry, but never used to upload until it
-                # has positively resolved to the already verified channel.
-                if upload and self.channel_id and next_acc.get("channel_id") != self.channel_id:
-                    continue
-                srv = self.get_service(idx)
-                if srv is not None:
+                # Backup credentials are authenticated and checked against the
+                # active channel only when quota rotation actually reaches them.
+                if self._verify_account_channel(idx):
                     self.active_index = idx
                     logging.info(
                         "🔄 【多專案自動輪替】第 %s/%s 輪：已由專案 #%s "
@@ -622,9 +624,11 @@ class YouTubeServicePool:
             setattr(self, round_attr, getattr(self, round_attr, 1) + 1)
             for acc in self.accounts:
                 acc[exhausted_key] = False
-                # 強制重新驗證，避免沿用上一輪失效的授權狀態。
-                acc["service"] = None
-                acc["creds"] = None
+                if not acc.get("unavailable", False):
+                    # Force a fresh auth attempt for retryable quota failures;
+                    # permanently broken OAuth slots remain skipped.
+                    acc["service"] = None
+                    acc["creds"] = None
             logging.warning(
                 "🔁 所有 slot 第 %s 輪均失敗，重新由 slot1 開始第 %s/%s 輪。",
                 getattr(self, round_attr) - 1, getattr(self, round_attr),

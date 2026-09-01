@@ -59,9 +59,10 @@ class YouTubeServicePoolTests(unittest.TestCase):
         pool = YouTubeServicePool()
         # Mock 2 accounts in the pool
         pool.accounts = [
-            {"slot": 1, "cs_path": None, "tok_path": None, "client_id": "c1", "client_secret": "s1", "refresh_token": "r1", "service": MagicMock(), "creds": MagicMock(), "exhausted": False},
-            {"slot": 2, "cs_path": None, "tok_path": None, "client_id": "c2", "client_secret": "s2", "refresh_token": "r2", "service": MagicMock(), "creds": MagicMock(), "exhausted": False},
+            {"slot": 1, "cs_path": None, "tok_path": None, "client_id": "c1", "client_secret": "s1", "refresh_token": "r1", "service": MagicMock(), "creds": MagicMock(), "channel_id": "channel-1", "exhausted": False},
+            {"slot": 2, "cs_path": None, "tok_path": None, "client_id": "c2", "client_secret": "s2", "refresh_token": "r2", "service": MagicMock(), "creds": MagicMock(), "channel_id": "channel-1", "exhausted": False},
         ]
+        pool.channel_id = "channel-1"
         pool.active_index = 0
         
         # Current active account is Slot 1
@@ -93,7 +94,7 @@ class YouTubeServicePoolTests(unittest.TestCase):
         self.assertEqual(pool.rotation_round, 3)
         self.assertTrue(all(account["exhausted"] for account in pool.accounts))
 
-    def test_rotation_retries_failed_authentication_for_three_full_rounds(self):
+    def test_rotation_does_not_retry_permanently_failed_authentication(self):
         pool = YouTubeServicePool()
         pool.accounts = [
             {"slot": slot, "cs_path": None, "tok_path": None,
@@ -112,13 +113,11 @@ class YouTubeServicePoolTests(unittest.TestCase):
         with patch.object(pool, "_authenticate_account", side_effect=fail_auth):
             self.assertFalse(pool.rotate_on_quota(Exception("authorization failed"), upload=True))
 
-        # 首次呼叫時 slot1 已是觸發切換的失敗者；後兩輪會再試 slot1。
-        self.assertEqual(
-            attempted_slots,
-            list(range(2, 11)) + list(range(1, 11)) + list(range(1, 11)),
-        )
+        # Broken/disabled OAuth credentials are permanent for this process and
+        # must not be retried in every round.
+        self.assertEqual(attempted_slots, list(range(2, 11)) + [1])
 
-    def test_pool_accepts_projects_authorized_for_same_channel(self):
+    def test_startup_initializes_only_active_slot(self):
         pool = YouTubeServicePool()
         services = [MagicMock(), MagicMock()]
         for service in services:
@@ -132,9 +131,11 @@ class YouTubeServicePoolTests(unittest.TestCase):
         ]
 
         self.assertEqual(pool.require_same_channel(), "channel-1")
-        self.assertEqual([account["channel_id"] for account in pool.accounts], ["channel-1", "channel-1"])
+        self.assertEqual([account["channel_id"] for account in pool.accounts], ["channel-1", None])
+        services[0].channels.assert_called_once()
+        services[1].channels.assert_not_called()
 
-    def test_pool_rejects_projects_authorized_for_different_channels(self):
+    def test_rotation_rejects_backup_authorized_for_different_channel(self):
         pool = YouTubeServicePool()
         services = [MagicMock(), MagicMock()]
         for service, channel_id in zip(services, ["channel-1", "channel-2"]):
@@ -147,10 +148,19 @@ class YouTubeServicePoolTests(unittest.TestCase):
             for slot, service in enumerate(services, 1)
         ]
 
-        with self.assertRaisesRegex(RuntimeError, "spans different channels"):
-            pool.require_same_channel()
+        self.assertEqual(pool.require_same_channel(), "channel-1")
+        with patch.object(
+            pool, "_authenticate_account",
+            side_effect=lambda account: (services[account["slot"] - 1], MagicMock()),
+        ):
+            # Existing three-round retry policy may return to the active slot,
+            # but it must never activate the mismatched backup.
+            self.assertTrue(pool.rotate_on_quota(Exception("quotaExceeded"), upload=True))
+        self.assertTrue(pool.accounts[1]["unavailable"])
+        self.assertEqual(pool.active_account["slot"], 1)
 
-    def test_pool_channel_validation_quota_does_not_exhaust_upload_slot(self):
+    def test_startup_quota_does_not_probe_backup_slot(self):
+        from src.youtube_api_uploader import UploadPaused
         pool = YouTubeServicePool()
         exhausted_service = MagicMock()
         exhausted_service.channels.return_value.list.return_value.execute.side_effect = Exception("quotaExceeded")
@@ -165,39 +175,51 @@ class YouTubeServicePoolTests(unittest.TestCase):
              "exhausted": False},
         ]
 
-        self.assertEqual(pool.require_same_channel(), "channel-1")
-        self.assertFalse(pool.accounts[0]["exhausted"])
-        self.assertEqual(pool.active_account["slot"], 2)
-
-    def test_pool_channel_validation_pauses_only_when_all_slots_exhausted(self):
-        from src.youtube_api_uploader import UploadPaused
-        pool = YouTubeServicePool()
-        services = [MagicMock(), MagicMock()]
-        for service in services:
-            service.channels.return_value.list.return_value.execute.side_effect = Exception("quotaExceeded")
-        pool.accounts = [
-            {"slot": slot, "service": service, "creds": MagicMock(), "channel_id": None,
-             "exhausted": False}
-            for slot, service in enumerate(services, 1)
-        ]
-
         with self.assertRaises(UploadPaused) as raised:
             pool.require_same_channel()
         self.assertEqual(raised.exception.reason, "quotaExceeded")
-        self.assertTrue(all(not account["exhausted"] for account in pool.accounts))
+        self.assertFalse(pool.accounts[0]["exhausted"])
+        usable_service.channels.assert_not_called()
+        self.assertEqual(pool.active_account["slot"], 1)
+
+    def test_disabled_backup_is_marked_unavailable_and_skipped(self):
+        pool = YouTubeServicePool()
+        active = MagicMock()
+        active.channels.return_value.list.return_value.execute.return_value = {
+            "items": [{"id": "channel-1"}]
+        }
+        pool.accounts = [
+            {"slot": 1, "service": active, "creds": MagicMock(), "channel_id": None,
+             "exhausted": False},
+            {"slot": 2, "service": None, "creds": None, "channel_id": None,
+             "exhausted": False},
+            {"slot": 3, "service": MagicMock(), "creds": MagicMock(), "channel_id": None,
+             "exhausted": False},
+        ]
+        pool.accounts[2]["service"].channels.return_value.list.return_value.execute.return_value = {
+            "items": [{"id": "channel-1"}]
+        }
+
+        pool.require_same_channel()
+        with patch.object(pool, "_authenticate_account", return_value=(None, None)) as authenticate:
+            self.assertTrue(pool.rotate_on_quota(Exception("quotaExceeded"), upload=True))
+        authenticate.assert_called_once_with(pool.accounts[1])
+        self.assertTrue(pool.accounts[1]["unavailable"])
+        self.assertEqual(pool.active_account["slot"], 3)
 
     def test_ordinary_api_quota_does_not_exhaust_upload_slot(self):
         pool = YouTubeServicePool()
         pool.accounts = [
-            {"slot": 1, "service": MagicMock(), "creds": MagicMock(), "exhausted": False},
-            {"slot": 2, "service": MagicMock(), "creds": MagicMock(), "exhausted": False},
+            {"slot": 1, "service": MagicMock(), "creds": MagicMock(), "channel_id": "channel-1", "exhausted": False},
+            {"slot": 2, "service": MagicMock(), "creds": MagicMock(), "channel_id": "channel-1", "exhausted": False},
         ]
+        pool.channel_id = "channel-1"
 
         self.assertTrue(pool.rotate_on_quota(Exception("403 quotaExceeded")))
         self.assertFalse(any(account["exhausted"] for account in pool.accounts))
         self.assertTrue(pool.accounts[0]["api_exhausted"])
 
-    def test_upload_rotation_never_uses_unverified_channel_slot(self):
+    def test_upload_rotation_lazy_verifies_channel_slot(self):
         pool = YouTubeServicePool()
         pool.channel_id = "channel-1"
         pool.accounts = [
@@ -207,12 +229,12 @@ class YouTubeServicePoolTests(unittest.TestCase):
              "channel_id": None, "exhausted": False},
         ]
 
-        with patch.object(pool, "_authenticate_account", return_value=(MagicMock(), MagicMock())):
-            self.assertTrue(pool.rotate_on_quota(Exception("403 quotaExceeded"), upload=True))
-            self.assertTrue(pool.rotate_on_quota(Exception("403 quotaExceeded"), upload=True))
-            self.assertFalse(pool.rotate_on_quota(Exception("403 quotaExceeded"), upload=True))
-        self.assertEqual(pool.active_account["slot"], 1)
-        self.assertFalse(pool.accounts[1]["exhausted"])
+        pool.accounts[1]["service"].channels.return_value.list.return_value.execute.return_value = {
+            "items": [{"id": "channel-1"}]
+        }
+        self.assertTrue(pool.rotate_on_quota(Exception("403 quotaExceeded"), upload=True))
+        self.assertEqual(pool.active_account["slot"], 2)
+        self.assertEqual(pool.accounts[1]["channel_id"], "channel-1")
 
     def test_get_playlist_video_index_rotates_and_recovers(self):
         from src.youtube_api_uploader import get_playlist_video_index
@@ -224,9 +246,10 @@ class YouTubeServicePoolTests(unittest.TestCase):
             "items": [{"snippet": {"title": "Part 1", "resourceId": {"videoId": "v1"}}}]
         }
         pool.accounts = [
-            {"slot": 1, "cs_path": None, "tok_path": None, "client_id": "c1", "client_secret": "s1", "refresh_token": "r1", "service": s1, "creds": MagicMock(), "exhausted": False},
-            {"slot": 2, "cs_path": None, "tok_path": None, "client_id": "c2", "client_secret": "s2", "refresh_token": "r2", "service": s2, "creds": MagicMock(), "exhausted": False},
+            {"slot": 1, "cs_path": None, "tok_path": None, "client_id": "c1", "client_secret": "s1", "refresh_token": "r1", "service": s1, "creds": MagicMock(), "channel_id": "channel-1", "exhausted": False},
+            {"slot": 2, "cs_path": None, "tok_path": None, "client_id": "c2", "client_secret": "s2", "refresh_token": "r2", "service": s2, "creds": MagicMock(), "channel_id": "channel-1", "exhausted": False},
         ]
+        pool.channel_id = "channel-1"
         pool.active_index = 0
         index = get_playlist_video_index(pool, "playlist-1")
         self.assertEqual(index, {"Part 1": "v1"})
@@ -253,9 +276,10 @@ class YouTubeServicePoolTests(unittest.TestCase):
         s2 = MagicMock()
         s2.playlistItems.return_value.insert.return_value.execute.return_value = {"id": "item-1"}
         pool.accounts = [
-            {"slot": 1, "cs_path": None, "tok_path": None, "client_id": "c1", "client_secret": "s1", "refresh_token": "r1", "service": s1, "creds": MagicMock(), "exhausted": False},
-            {"slot": 2, "cs_path": None, "tok_path": None, "client_id": "c2", "client_secret": "s2", "refresh_token": "r2", "service": s2, "creds": MagicMock(), "exhausted": False},
+            {"slot": 1, "cs_path": None, "tok_path": None, "client_id": "c1", "client_secret": "s1", "refresh_token": "r1", "service": s1, "creds": MagicMock(), "channel_id": "channel-1", "exhausted": False},
+            {"slot": 2, "cs_path": None, "tok_path": None, "client_id": "c2", "client_secret": "s2", "refresh_token": "r2", "service": s2, "creds": MagicMock(), "channel_id": "channel-1", "exhausted": False},
         ]
+        pool.channel_id = "channel-1"
         pool.active_index = 0
         success = add_video_to_playlist(pool, "playlist-1", "video-1", position=0)
         self.assertTrue(success)
