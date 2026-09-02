@@ -53,6 +53,8 @@ scratch/
 # YouTube backfill local-only data
 tools/youtube_backfill_state.json
 tools/youtube_backfill_chrome_profile/
+tools/youtube_backfill_live_profile*/
+tools/botguard_runtime/node_modules/
 
 # IDE & OS System Files
 .vscode/

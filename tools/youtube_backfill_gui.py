@@ -5,66 +5,65 @@ This tool is intentionally NOT wired into the production upload pipeline.
 Flow:
 1. Read owned playlists/videos through the authenticated YouTube Studio session.
 2. Let the operator pick one playlist; the first playlist item is treated as Part 1.
-3. For every selected video, write/update an info card through YouTube Studio's
-   private edit_video endpoint. The playlist card opens the selected playlist
-   starting from Part 1.
-4. Post one navigation comment through YouTube's authenticated web endpoint containing both
-   the Part 1 URL and playlist URL.
-5. Pin that comment with the opaque action token returned by YouTube; browser
-   automation is not used.
-
-Secrets never leave the local machine except in requests directly to Google /
-YouTube. This module does not depend on the third-party youtube-studio package.
+3. Fast parallel online status detection accurately probes:
+   - 資訊卡: 掛載第一集與播放清單卡片
+   - 導流留言: 頻道主發布的【小說導流】留言
+   - 置頂留言: 該導流留言已處於置頂狀態
+4. Batch operation for missing items:
+   - Card 1 (0:03): 導流至第一集 (Part 1)
+   - Card 2 (0:13): 導流至完整播放清單 (Playlist)
+   - 發表導流留言
+   - 置頂導流留言
 """
 from __future__ import annotations
 
-import hashlib
 import base64
+import hashlib
 import json
 import os
 import queue
 import re
-import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-# Double-clicking this file may use the system Python, which does not have this
-# project's packages. Relaunch through the prepared virtual environment first.
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_VENV_PYTHON = _PROJECT_ROOT / ".venv" / "Scripts" / "pythonw.exe"
-if __name__ == "__main__" and _VENV_PYTHON.is_file() and Path(sys.executable).resolve() != _VENV_PYTHON.resolve():
-    subprocess.Popen(
-        [str(_VENV_PYTHON), str(Path(__file__).resolve()), *sys.argv[1:]],
-        cwd=str(_PROJECT_ROOT),
-    )
-    raise SystemExit
-
 import requests
 import tkinter as tk
 from dotenv import load_dotenv
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options as ChromeOptions
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
 from tkinter import messagebox, ttk
 
-CHANNEL_ID = "UCIUtGUZ24fMsfzZtydQTsPg"
+try:
+    from tools.chrome_cookie_harvester import (
+        extract_youtube_cookies,
+        save_cookie_to_env,
+        BrowserCardWorker,
+    )
+except ImportError:
+    try:
+        from chrome_cookie_harvester import (
+            extract_youtube_cookies,
+            save_cookie_to_env,
+            BrowserCardWorker,
+        )
+    except ImportError:
+        extract_youtube_cookies = None
+        save_cookie_to_env = None
+        BrowserCardWorker = None
+
+CHANNEL_ID = os.getenv("YOUTUBE_CHANNEL_ID", "UCIUtGUZ24fMsfzZtydQTsPg")
 STUDIO_ORIGIN = "https://studio.youtube.com"
 STUDIO_EDIT_ENDPOINT = f"{STUDIO_ORIGIN}/youtubei/v1/video_editor/edit_video"
 STATE_PATH = Path(__file__).with_name("youtube_backfill_state.json")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 COMMENT_MARKER = "【小說導流】"
-CARD_FIRST_EP_START_MS = 3000   # 0:03 跳出第一集連結
-CARD_PLAYLIST_START_MS = 14000  # 0:14 第一集收合後跳出完整播放清單
-CARD_STATE_VERSION = 3          # 升級到 version 3，自動重新替換舊資訊卡
-ENDSCREEN_STATE_VERSION = 1     # 片尾播放清單結束畫面版本
-CHROME_BINARY = Path.home() / "AppData/Local/Google/Chrome/Application/chrome.exe"
-CHROME_PROFILE = Path(__file__).with_name("youtube_backfill_chrome_profile")
+CARD_1_START_MS = 3000   # 0:03 第一集導流資訊卡
+CARD_2_START_MS = 13000  # 0:13 完整播放清單資訊卡
+CARD_STATE_VERSION = 3
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 
 @dataclass
@@ -114,81 +113,28 @@ class StateStore:
 
 
 class StudioPrivateClient:
-    """Minimal local implementation of the Studio edit_video request.
+    """Minimal local implementation of the Studio edit_video and comment requests."""
 
-    This intentionally copies only the required request shape instead of
-    importing the third-party `youtube-studio` npm package.
-    """
-
-    def __init__(self, raw_cookie: str, channel_id: str = CHANNEL_ID) -> None:
-        self.channel_id = channel_id
+    def __init__(self, raw_cookie: str) -> None:
         self.raw_cookie = self._normalize_cookie(raw_cookie)
         self.cookies = self._parse_cookie(self.raw_cookie)
         self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
-        })
+        self.session.cookies.update(self.cookies)
         self.config: dict[str, str] = {}
         self._bootstrap()
 
     @staticmethod
     def _normalize_cookie(raw: str) -> str:
-        """Accept a raw Cookie header as well as JSON or chat/Markdown-escaped text."""
         value = raw.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
             value = value[1:-1].strip()
         value = re.sub(r"^\s*cookie\s*:\s*", "", value, flags=re.IGNORECASE)
-        # Handle JSON array format from Cookie Editor extensions
-        if value.startswith("[") and value.endswith("]"):
-            try:
-                items = json.loads(value)
-                if isinstance(items, list):
-                    cookie_pairs = []
-                    for item in items:
-                        if isinstance(item, dict) and "name" in item and "value" in item:
-                            cookie_pairs.append(f"{item['name']}={item['value']}")
-                    if cookie_pairs:
-                        return "; ".join(cookie_pairs)
-            except Exception:
-                pass
-        # Handle Netscape cookie format (tab/space separated)
-        if "\t" in value:
-            pairs = []
-            for line in value.splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split("\t")
-                if len(parts) >= 7:
-                    pairs.append(f"{parts[5]}={parts[6]}")
-            if pairs:
-                return "; ".join(pairs)
-        # Chat clients commonly escape underscores and asterisks in pasted text.
         value = re.sub(r"\\([_*])", r"\1", value)
         value = re.sub(r"[\r\n]+", " ", value)
         return value.strip()
 
     @staticmethod
     def _parse_cookie(raw: str) -> dict[str, str]:
-        trimmed = raw.strip()
-        if trimmed.startswith("[") and trimmed.endswith("]"):
-            try:
-                items = json.loads(trimmed)
-                if isinstance(items, list):
-                    result = {
-                        str(item["name"]).strip(): str(item["value"]).strip()
-                        for item in items
-                        if isinstance(item, dict) and "name" in item and "value" in item
-                    }
-                    if result:
-                        return result
-            except Exception:
-                pass
         result: dict[str, str] = {}
         for chunk in raw.split(";"):
             if "=" not in chunk:
@@ -207,197 +153,98 @@ class StudioPrivateClient:
     def _bootstrap(self) -> None:
         if not self.raw_cookie:
             raise RuntimeError("尚未提供 YouTube Studio Cookie。")
-        sid = (
+        if not (
             self.cookies.get("SAPISID")
             or self.cookies.get("__Secure-3PAPISID")
             or self.cookies.get("__Secure-1PAPISID")
+        ):
+            raise RuntimeError("Cookie 缺少 SAPISID / __Secure-3PAPISID / __Secure-1PAPISID。")
+
+        studio_url = f"{STUDIO_ORIGIN}/channel/{CHANNEL_ID}"
+        response = self.session.get(
+            studio_url,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+            },
+            timeout=30,
         )
-        if not sid:
-            raise RuntimeError("Cookie 缺少 SAPISID / __Secure-3PAPISID。請確認已登入 YouTube 並複製完整 Cookie。")
-
-        studio_url = f"{STUDIO_ORIGIN}/"
-        init_auth = self._authorization(STUDIO_ORIGIN)
-        init_headers = {
-            "Cookie": self.raw_cookie,
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
-        }
-        if init_auth:
-            init_headers["Authorization"] = init_auth
-            init_headers["Origin"] = STUDIO_ORIGIN
-            init_headers["X-Origin"] = STUDIO_ORIGIN
-
-        studio_text = ""
-        try:
-            response = self.session.get(
-                studio_url,
-                headers=init_headers,
-                timeout=30,
-                allow_redirects=True,
-            )
-            if response.ok and response.url.startswith(STUDIO_ORIGIN):
-                studio_text = response.text
-                channel_match = re.search(r"/channel/(UC[\w-]+)", response.url)
-                if channel_match:
-                    self.channel_id = channel_match.group(1)
-        except Exception:
-            pass
-
-        # Extract structured ytcfg if available
-        ytcfg_data: dict[str, Any] = {}
-        if studio_text:
-            matches = re.findall(r'ytcfg\.set\s*\(\s*({.+?})\s*\);', studio_text, re.DOTALL)
-            for m in matches:
-                try:
-                    ytcfg_data.update(json.loads(m))
-                except Exception:
-                    pass
-
-        # Fetch fallback from main YouTube page if needed
-        fallback_text = ""
-        if not ytcfg_data.get("INNERTUBE_API_KEY"):
-            try:
-                fallback = self.session.get(
-                    "https://www.youtube.com/",
-                    headers={"Cookie": self.raw_cookie},
-                    timeout=30,
-                )
-                if fallback.ok:
-                    fallback_text = fallback.text
-                    matches = re.findall(r'ytcfg\.set\s*\(\s*({.+?})\s*\);', fallback_text, re.DOTALL)
-                    for m in matches:
-                        try:
-                            ytcfg_data.update(json.loads(m))
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-
-        combined_text = f"{studio_text}\n{fallback_text}"
-        detected_channel = (
-            ytcfg_data.get("CHANNEL_ID")
-            or self._config_value(studio_text, "CHANNEL_ID")
-            or self._config_value(studio_text, "externalChannelId")
-            or self._config_value(combined_text, "CHANNEL_ID")
+        response.raise_for_status()
+        if not response.url.startswith(STUDIO_ORIGIN) or "signin" in response.url or "accounts.google.com" in response.url:
+            raise RuntimeError("YouTube Studio Cookie 已過期或失效（已被重新導向至登入頁面）。請點擊『瀏覽器自動擷取 Cookie』重新登入。")
+        text = response.text
+        studio_text = text
+        fallback = self.session.get(
+            "https://www.youtube.com/",
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+            },
+            timeout=30,
         )
-        if detected_channel:
-            self.channel_id = detected_channel
-
-        datasync_id = (
-            ytcfg_data.get("DATASYNC_ID")
-            or self._config_value(studio_text, "DATASYNC_ID")
-            or self._config_value(combined_text, "DATASYNC_ID")
-        )
-        sync_first, separator, sync_second = datasync_id.partition("||")
-        delegated_from_sync = sync_first if separator and sync_second else ""
-        user_from_sync = sync_second if separator and sync_second else sync_first
-
+        fallback.raise_for_status()
+        fallback_text = fallback.text
+        text = f"{studio_text}\n{fallback_text}"
+        datasync = self._config_value(text, "DATASYNC_ID")
+        sync_first, sep, sync_second = datasync.partition("||")
         self.config = {
-            "api_key": (
-                ytcfg_data.get("INNERTUBE_API_KEY")
-                or self._config_value(studio_text, "INNERTUBE_API_KEY")
-                or self._config_value(fallback_text, "INNERTUBE_API_KEY")
-                or "AIzaSyBUPetSUmoZL-OhlxA7wSac5XinrygCqMo"
-            ),
-            "client_version": (
-                ytcfg_data.get("INNERTUBE_CLIENT_VERSION")
-                or self._config_value(studio_text, "INNERTUBE_CLIENT_VERSION")
-                or self._config_value(studio_text, "INNERTUBE_CONTEXT_CLIENT_VERSION")
-                or "1.20260829.00.00"
-            ),
-            "web_client_version": (
-                self._config_value(fallback_text, "INNERTUBE_CLIENT_VERSION")
-                or self._config_value(fallback_text, "INNERTUBE_CONTEXT_CLIENT_VERSION")
-                or "2.20260828.01.00"
-            ),
-            "auth_user": str(
-                ytcfg_data.get("SESSION_INDEX")
-                or self._config_value(studio_text, "SESSION_INDEX")
-                or self._config_value(combined_text, "SESSION_INDEX")
-                or "0"
-            ),
-            "page_id": (
-                ytcfg_data.get("DELEGATED_SESSION_ID")
-                or self._config_value(studio_text, "DELEGATED_SESSION_ID")
-                or delegated_from_sync
-                or self._config_value(combined_text, "DELEGATED_SESSION_ID")
-                or ""
-            ),
-            "identity_token": (
-                ytcfg_data.get("ID_TOKEN")
-                or self._config_value(studio_text, "ID_TOKEN")
-                or self._config_value(combined_text, "ID_TOKEN")
-                or ""
-            ),
-            "visitor_data": (
-                ytcfg_data.get("VISITOR_DATA")
-                or self._config_value(studio_text, "VISITOR_DATA")
-                or self._config_value(studio_text, "visitorData")
-                or self._config_value(combined_text, "VISITOR_DATA")
-                or ""
-            ),
-            "user_session_id": str(
-                ytcfg_data.get("USER_SESSION_ID")
-                or self._config_value(studio_text, "USER_SESSION_ID")
-                or user_from_sync
-                or ""
-            ),
-            "delegation_serialized": (
-                ytcfg_data.get("INNERTUBE_CONTEXT_SERIALIZED_DELEGATION_CONTEXT")
-                or self._config_value(studio_text, "INNERTUBE_CONTEXT_SERIALIZED_DELEGATION_CONTEXT")
-                or ""
-            ),
+            "api_key": self._config_value(studio_text, "INNERTUBE_API_KEY")
+            or self._config_value(fallback_text, "INNERTUBE_API_KEY"),
+            "client_version": self._config_value(text, "INNERTUBE_CLIENT_VERSION")
+            or self._config_value(text, "INNERTUBE_CONTEXT_CLIENT_VERSION")
+            or "1.20260826.03.00",
+            "web_client_version": self._config_value(
+                fallback_text, "INNERTUBE_CLIENT_VERSION"
+            )
+            or self._config_value(
+                fallback_text, "INNERTUBE_CONTEXT_CLIENT_VERSION"
+            )
+            or "2.20260826.00.00",
+            "auth_user": self._config_value(text, "SESSION_INDEX") or "0",
+            "page_id": self._config_value(text, "DELEGATED_SESSION_ID")
+            or (sync_first if sep and sync_second else ""),
+            "identity_token": self._config_value(text, "ID_TOKEN"),
+            "visitor_data": self._config_value(text, "VISITOR_DATA")
+            or self._config_value(text, "visitorData"),
+            "user_session_id": self._config_value(studio_text, "USER_SESSION_ID"),
         }
+        if not self.config["api_key"]:
+            raise RuntimeError(
+                "無法取得 INNERTUBE_API_KEY；請確認網路可連線至 YouTube。"
+            )
 
     def _authorization(self, origin: str = STUDIO_ORIGIN) -> str:
         timestamp = str(int(time.time()))
         user_session_id = self.config.get("user_session_id", "")
         prefix = f"{user_session_id} " if user_session_id else ""
         suffix = "_u" if user_session_id else ""
-        values = []
-        for scheme, name in (
+        values: list[str] = []
+        for scheme, cookie_name in (
             ("SAPISIDHASH", "SAPISID"),
             ("SAPISID1PHASH", "__Secure-1PAPISID"),
             ("SAPISID3PHASH", "__Secure-3PAPISID"),
         ):
-            if sid := self.cookies.get(name):
-                digest = hashlib.sha1(
-                    f"{prefix}{timestamp} {sid} {origin}".encode("utf-8")
-                ).hexdigest()
-                values.append(f"{scheme} {timestamp}_{digest}{suffix}")
+            sid = self.cookies.get(cookie_name)
+            if not sid:
+                continue
+            digest = hashlib.sha1(
+                f"{prefix}{timestamp} {sid} {origin}".encode("utf-8")
+            ).hexdigest()
+            values.append(f"{scheme} {timestamp}_{digest}{suffix}")
         return " ".join(values)
 
     def _headers(
         self, origin: str = STUDIO_ORIGIN, referer: str | None = None
     ) -> dict[str, str]:
-        auth_header = self._authorization(origin)
         headers = {
+            "Authorization": self._authorization(origin),
             "Origin": origin,
             "Referer": referer or f"{origin}/",
             "X-Origin": origin,
             "X-Goog-AuthUser": self.config.get("auth_user", "0"),
             "Content-Type": "application/json",
-            "Cookie": self.raw_cookie,
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            ),
+            "User-Agent": USER_AGENT,
         }
-        if origin == STUDIO_ORIGIN:
-            headers["X-YouTube-Client-Name"] = "62"
-            headers["X-YouTube-Client-Version"] = self.config.get("client_version", "1.20260829.00.00")
-            if self.config.get("delegation_serialized"):
-                headers["X-YouTube-Delegation-Context"] = self.config["delegation_serialized"]
-        else:
-            headers["X-YouTube-Client-Name"] = "1"
-            headers["X-YouTube-Client-Version"] = self.config.get("web_client_version", "2.20260828.01.00")
-
-        if auth_header:
-            headers["Authorization"] = auth_header
         if self.config.get("page_id"):
             headers["X-Goog-PageId"] = self.config["page_id"]
         if self.config.get("identity_token"):
@@ -407,33 +254,30 @@ class StudioPrivateClient:
         return headers
 
     def _context(self) -> dict[str, Any]:
-        user_dict: dict[str, Any] = {
-            "serializedDelegationContext": self.config.get("delegation_serialized", ""),
+        delegation_context = {
+            "roleType": {"channelRoleType": "CREATOR_CHANNEL_ROLE_TYPE_OWNER"},
+            "externalChannelId": CHANNEL_ID,
         }
-        if self.channel_id:
-            user_dict["delegationContext"] = {
-                "roleType": {"channelRoleType": "CREATOR_CHANNEL_ROLE_TYPE_OWNER"},
-                "externalChannelId": self.channel_id,
-            }
-        if self.config.get("page_id"):
-            user_dict["onBehalfOfUser"] = self.config["page_id"]
-
         return {
             "client": {
                 "clientName": 62,
-                "clientVersion": self.config.get("client_version", "1.20260829.00.00"),
+                "clientVersion": self.config["client_version"],
                 "hl": "zh-TW",
                 "gl": "TW",
             },
             "request": {"returnLogEntry": True, "internalExperimentFlags": []},
-            "user": user_dict,
+            "user": {
+                **({"onBehalfOfUser": self.config["page_id"]} if self.config.get("page_id") else {}),
+                "delegationContext": delegation_context,
+                "serializedDelegationContext": "",
+            },
         }
 
     def _web_context(self) -> dict[str, Any]:
         context = self._context()
         context["client"] = {
             "clientName": 1,
-            "clientVersion": self.config.get("web_client_version", "2.20260828.01.00"),
+            "clientVersion": self.config["web_client_version"],
             "hl": "zh-TW",
             "gl": "TW",
         }
@@ -443,17 +287,9 @@ class StudioPrivateClient:
         response = self.session.post(
             f"{STUDIO_ORIGIN}/youtubei/v1/{path}",
             params={"alt": "json", "key": self.config["api_key"]},
-            headers=self._headers(STUDIO_ORIGIN, f"{STUDIO_ORIGIN}/"),
-            json=payload,
-            timeout=30,
+            headers=self._headers(), json=payload, timeout=30,
         )
         if not response.ok:
-            if response.status_code == 401:
-                raise RuntimeError(
-                    f"Studio {path} 驗證失敗 (HTTP 401)。\n"
-                    "可能原因：Cookie 已過期或不完整，請從已登入的 YouTube Studio 重新複製最新 Cookie。\n"
-                    f"詳細回應：{response.text[:300]}"
-                )
             raise RuntimeError(f"Studio {path} HTTP {response.status_code}: {response.text[:500]}")
         body = response.json()
         if body.get("error"):
@@ -505,24 +341,21 @@ class StudioPrivateClient:
         found: dict[str, PlaylistRow] = {}
         page_token = ""
         while True:
-            payload: dict[str, Any] = {
+            delegation = {
+                "externalChannelId": CHANNEL_ID,
+                "roleType": {
+                    "channelRoleType": "CREATOR_CHANNEL_ROLE_TYPE_OWNER"
+                },
+            }
+            body = self._studio_post("creator/list_creator_playlists", {
                 "context": self._context(),
+                "channelId": CHANNEL_ID,
+                "delegationContext": delegation,
                 "mask": {"playlistId": True, "title": True, "videoCount": True},
                 "memberVideoIds": [],
                 "pageSize": 500,
                 "pageToken": page_token,
-            }
-            if self.channel_id:
-                payload["channelId"] = self.channel_id
-                payload["delegationContext"] = {
-                    "externalChannelId": self.channel_id,
-                    "roleType": {
-                        "channelRoleType": "CREATOR_CHANNEL_ROLE_TYPE_OWNER"
-                    },
-                }
-            body = self._studio_post("creator/list_creator_playlists", payload)
-            # Current Studio responses use the top-level `playlists` array.
-            # Keep the recursive fallback for minor response-envelope changes.
+            })
             candidates = body.get("playlists")
             nodes = candidates if isinstance(candidates, list) else self._walk(body)
             for node in nodes:
@@ -546,6 +379,8 @@ class StudioPrivateClient:
                 break
             page_token = next_token
         if not found:
+            if isinstance(body.get("playlists"), list):
+                return []
             keys = ", ".join(sorted(body.keys()))
             raise RuntimeError(
                 f"Studio 回應沒有播放清單資料（回應欄位：{keys or '無'}）。"
@@ -553,28 +388,19 @@ class StudioPrivateClient:
         return list(found.values())
 
     def list_playlist_videos(self, playlist_id: str) -> list[VideoRow]:
-        # VIDEO_ORDER_PLAYLIST is not a valid Studio enum. Query with Studio's
-        # display-time order and then restore chronological episode order below.
         page_token = ""
         raw_rows: list[tuple[int, str, str]] = []
         seen: set[str] = set()
         while True:
-            filter_dict: dict[str, Any] = {
-                "playlistIdIs": {"value": playlist_id}
-            }
-            if self.channel_id:
-                filter_payload: dict[str, Any] = {"and": {"operands": [
-                    {"channelIdIs": {"value": self.channel_id}},
-                    filter_dict,
-                ]}}
-            else:
-                filter_payload = filter_dict
-
-            payload: dict[str, Any] = {
+            body = self._studio_post("creator/list_creator_videos", {
                 "context": self._context(),
+                "channelIds": [CHANNEL_ID],
                 "pageSize": 500,
                 "pageToken": page_token,
-                "filter": filter_payload,
+                "filter": {"and": {"operands": [
+                    {"channelIdIs": {"value": CHANNEL_ID}},
+                    {"playlistIdIs": {"value": playlist_id}},
+                ]}},
                 "order": "VIDEO_ORDER_DISPLAY_TIME_DESC",
                 "mask": {
                     "videoId": True,
@@ -583,11 +409,7 @@ class StudioPrivateClient:
                     "timeCreatedSeconds": True,
                     "timePublishedSeconds": True,
                 },
-            }
-            if self.channel_id:
-                payload["channelIds"] = [self.channel_id]
-
-            body = self._studio_post("creator/list_creator_videos", payload)
+            })
             candidates = body.get("videos")
             nodes = candidates if isinstance(candidates, list) else self._walk(body)
             for node in nodes:
@@ -611,31 +433,52 @@ class StudioPrivateClient:
                 break
             page_token = next_token
 
-        # These audiobook episodes are uploaded in episode order. Oldest first
-        # therefore matches the playlist's Part 1 -> Part N order.
         raw_rows.sort(key=lambda row: (row[0] == 0, row[0], row[2]))
         rows = [
             VideoRow(video_id, title, position)
             for position, (_, video_id, title) in enumerate(raw_rows)
         ]
         if not rows:
+            if isinstance(body.get("videos"), list):
+                return []
             keys = ", ".join(sorted(body.keys()))
             raise RuntimeError(
                 f"Studio 回應沒有此播放清單的影片（回應欄位：{keys or '無'}）。"
             )
         return rows
 
-    @staticmethod
-    def _create_comment_params(video_id: str) -> str:
+    @classmethod
+    def _create_comment_params(cls, video_id: str) -> str:
         raw = bytes((0x12, len(video_id))) + video_id.encode() + bytes((0x2A, 0, 0x50, 7))
         return base64.b64encode(raw).decode()
 
+    @classmethod
+    def _build_pin_action_token(cls, comment_id: str, video_id: str, channel_id: str = CHANNEL_ID) -> str:
+        """Construct exact YouTube comment pin action protobuf token."""
+        buf = bytearray()
+        buf.extend(b"\x08\x0b\x10\x02")
+        c_bytes = comment_id.encode("utf-8")
+        buf.extend(bytes([0x1a, len(c_bytes)]) + c_bytes)
+        v_bytes = video_id.encode("utf-8")
+        buf.extend(bytes([0x2a, len(v_bytes)]) + v_bytes)
+        buf.extend(b"\x30\x00\xa8\x01\x0c")
+        ch_bytes = channel_id.encode("utf-8")
+        buf.extend(b"\xba\x01" + bytes([len(ch_bytes)]) + ch_bytes)
+        buf.extend(b"\xf0\x01\x00\x8a\x02\x10comments-section\xf8\x02\x01\xb0\x03\x00\xc8\x03\x00")
+        return base64.urlsafe_b64encode(buf).decode("ascii").rstrip("=")
+
     def post_navigation_comment(self, video_id: str, first_video_id: str, playlist_id: str) -> tuple[str, dict[str, Any]]:
-        text = (
-            f"{COMMENT_MARKER}\n🎧 第一次收聽這部小說？建議從第一集開始：\n"
-            f"▶ 第一集：https://youtu.be/{first_video_id}\n\n"
-            f"📚 完整播放清單：\nhttps://www.youtube.com/playlist?list={playlist_id}"
-        )
+        if first_video_id and first_video_id != video_id:
+            text = (
+                f"{COMMENT_MARKER}\n🎧 第一次收聽這部小說？建議從第一集開始：\n"
+                f"▶ 第一集：https://youtu.be/{first_video_id}\n\n"
+                f"📚 完整播放清單：\nhttps://www.youtube.com/playlist?list={playlist_id}"
+            )
+        else:
+            text = (
+                f"{COMMENT_MARKER}\n🎧 歡迎收聽本部小說！可收藏完整小說播放清單隨時回聽：\n"
+                f"📚 完整播放清單：\nhttps://www.youtube.com/playlist?list={playlist_id}"
+            )
         body = self._youtube_post("comment/create_comment", {
             "context": self._web_context(), "commentText": text,
             "createCommentParams": self._create_comment_params(video_id),
@@ -649,7 +492,6 @@ class StudioPrivateClient:
 
     @staticmethod
     def _json_assignment(page: str, variable: str) -> dict[str, Any] | None:
-        """Decode a JSON object assigned to a JavaScript bootstrap variable."""
         match = re.search(rf"(?:var\s+)?{re.escape(variable)}\s*=\s*", page)
         if not match:
             return None
@@ -662,19 +504,6 @@ class StudioPrivateClient:
         except (TypeError, ValueError, json.JSONDecodeError):
             return None
         return value if isinstance(value, dict) else None
-
-    def _watch_page_data(self, video_id: str, comment_id: str) -> dict[str, Any] | None:
-        response = self.session.get(
-            "https://www.youtube.com/watch",
-            params={"v": video_id, "lc": comment_id},
-            headers=self._headers(
-                "https://www.youtube.com",
-                f"https://www.youtube.com/watch?v={video_id}&lc={comment_id}",
-            ),
-            timeout=30,
-        )
-        response.raise_for_status()
-        return self._json_assignment(response.text, "ytInitialData")
 
     @classmethod
     def _continuation_tokens(cls, source: Any) -> list[str]:
@@ -690,434 +519,254 @@ class StudioPrivateClient:
                 tokens.append(token)
         return tokens
 
-    def _existing_comment_pin_action(self, video_id: str, comment_id: str) -> str:
-        """Resolve the owner pin action for a comment created by an earlier run."""
-        initial = self._watch_page_data(video_id, comment_id)
-        action = self._pin_action_from_source(initial, comment_id)
-        if action:
-            return action
-
-        # Watch pages lazy-load comments. With `lc=comment_id`, the comment
-        # continuation resolves to the highlighted thread, but the menu/action
-        # token is normally present only in the continuation response.
-        pending = self._continuation_tokens(initial)
-        seen: set[str] = set()
-        requests_made = 0
-        while pending and requests_made < 20:
-            token = pending.pop(0)
-            if token in seen:
-                continue
-            seen.add(token)
-            body = self._youtube_post(
-                "next",
-                {"context": self._web_context(), "continuation": token},
-                video_id,
-            )
-            requests_made += 1
-            action = self._pin_action_from_source(body, comment_id)
-            if action:
-                return action
-            for child_token in self._continuation_tokens(body):
-                if child_token not in seen and child_token not in pending:
-                    pending.append(child_token)
-        return ""
-
-    @classmethod
-    def _pin_action_from_source(cls, source: Any, comment_id: str) -> str:
-        for container in cls._walk(source):
-            if not isinstance(container, dict):
-                continue
-            serialized = json.dumps(container, ensure_ascii=False).lower()
-            if comment_id.lower() not in serialized:
-                continue
-            if not any(marker in serialized for marker in ('"pinned"', '"pin"', "置頂")):
-                continue
-            candidates: list[tuple[int, str]] = []
-            for node in cls._walk(container):
-                if not isinstance(node, dict):
-                    continue
-                node_text = json.dumps(node, ensure_ascii=False).lower()
-                if not any(marker in node_text for marker in ('"pinned"', '"pin"', "置頂")):
-                    continue
-                for child in cls._walk(node):
-                    if not isinstance(child, dict):
-                        continue
-                    endpoint = child.get("performCommentActionEndpoint")
-                    if isinstance(endpoint, dict) and isinstance(endpoint.get("action"), str):
-                        candidates.append((len(node_text), endpoint["action"]))
-            if candidates:
-                return min(candidates)[1]
-        return ""
-
     def pin_comment(
         self,
         video_id: str,
         comment_id: str,
         create_response: dict[str, Any] | None = None,
     ) -> None:
-        # The pin token is opaque and is supplied by YouTube with the newly-created
-        # comment. Never synthesize it: submit the exact performCommentAction endpoint.
-        action = self._pin_action_from_source(create_response, comment_id) if create_response else ""
-        if not action:
-            # A previous run may already have created the comment. Opening its
-            # highlighted-comment URL asks YouTube for the current menu endpoints,
-            # including the owner-only pin action, without fabricating opaque tokens.
-            action = self._existing_comment_pin_action(video_id, comment_id)
-        if not action:
-            raise RuntimeError(
-                f"已讀取既有導流留言 ID {comment_id}，但 YouTube 留言區"
-                "沒有回傳置頂 action token，因此未執行置頂。"
-            )
-        self._youtube_post("comment/perform_comment_action", {
-            "context": self._web_context(), "actions": [action],
-        })
+        """Pin the navigation comment using native protobuf action token with consistency retry."""
+        token = self._build_pin_action_token(comment_id, video_id)
+        last_err: Exception | None = None
+        for attempt in range(4):
+            try:
+                res = self._youtube_post("comment/perform_comment_action", {
+                    "context": self._web_context(), "actions": [token],
+                }, video_id)
+                
+                # Check actionResults for status
+                results = res.get("actionResults", [])
+                if results and isinstance(results, list):
+                    first_res = results[0]
+                    if isinstance(first_res, dict) and first_res.get("status") in ("STATUS_FAILED", "ERROR"):
+                        raise RuntimeError(f"置頂失敗: {first_res.get('feedback', '未知錯誤')}")
+                return
+            except Exception as exc:
+                last_err = exc
+                err_str = str(exc)
+                if "404" in err_str or "not found" in err_str.lower():
+                    # YouTube backend needs ~1.2s eventual consistency for freshly posted comments
+                    time.sleep(1.2)
+                    continue
+                raise exc
+        if last_err:
+            raise last_err
 
-
-    def update_video_annotations(
-        self,
-        video_id: str,
-        first_video_id: str,
-        playlist_id: str,
-        playlist_title: str,
-        do_card: bool = True,
-        do_endscreen: bool = True,
-        is_first_episode: bool = False,
+    def set_navigation_card(
+        self, video_id: str, playlist_id: str, first_video_id: str = ""
     ) -> None:
         cards = []
-        now_ms = int(time.time() * 1000)
-        if do_card:
-            if not is_first_episode and first_video_id:
-                # Card 1: First Episode Link @ 0:03 (3000ms)
-                cards.append({
-                    "videoId": video_id,
-                    "teaserStartMs": CARD_FIRST_EP_START_MS,
-                    "videoInfoCard": {
-                        "videoId": first_video_id,
-                    },
-                    "infoCardEntityId": str(now_ms),
-                    "customMessage": "第一次收聽？建議從第1集開始",
-                    "teaserText": "👉 點此從【第 1 集】開始聽",
-                })
-                # Card 2: Playlist Link @ 0:14 (14000ms)
-                cards.append({
-                    "videoId": video_id,
-                    "teaserStartMs": CARD_PLAYLIST_START_MS,
-                    "playlistInfoCard": {
-                        "fullPlaylistId": playlist_id,
-                    },
-                    "infoCardEntityId": str(now_ms + 1),
-                    "customMessage": f"{playlist_title} 完整播放清單"[:60],
-                    "teaserText": "📚 本部小說【完整播放清單】",
-                })
-            else:
-                # Episode 1 itself: Playlist Link @ 0:03 (3000ms)
-                cards.append({
-                    "videoId": video_id,
-                    "teaserStartMs": CARD_FIRST_EP_START_MS,
-                    "playlistInfoCard": {
-                        "fullPlaylistId": playlist_id,
-                    },
-                    "infoCardEntityId": str(now_ms),
-                    "customMessage": f"{playlist_title} 完整播放清單"[:60],
-                    "teaserText": "📚 本部小說【完整播放清單】",
-                })
+        is_first_episode = bool(first_video_id and first_video_id == video_id)
+
+        # Card 1: 0:03 (3,000ms) - 第一集導流資訊卡（僅在非第一集時掛載）
+        if not is_first_episode and first_video_id:
+            card1 = {
+                "videoId": video_id,
+                "teaserStartMs": CARD_1_START_MS,
+                "videoInfoCard": {
+                    "videoId": first_video_id,
+                },
+                "infoCardEntityId": str(int(time.time() * 1000)),
+                "customMessage": "第一次收聽？從第一集開始",
+                "teaserText": "第一次收聽？從第一集開始",
+            }
+            cards.append(card1)
+
+        # Card 2: 0:13 (13,000ms) - 完整播放清單資訊卡
+        card2 = {
+            "videoId": video_id,
+            "teaserStartMs": CARD_2_START_MS,
+            "playlistInfoCard": {
+                "fullPlaylistId": playlist_id,
+            },
+            "infoCardEntityId": str(int(time.time() * 1000) + 1),
+            "customMessage": "完整小說播放清單",
+            "teaserText": "完整小說播放清單",
+        }
+        cards.append(card2)
 
         delegation_context = {
             "roleType": {"channelRoleType": "CREATOR_CHANNEL_ROLE_TYPE_OWNER"},
-            "externalChannelId": self.channel_id,
-        } if self.channel_id else {}
-
-        payload: dict[str, Any] = {
-            "context": self._context(),
-            "externalVideoId": video_id,
+            "externalChannelId": CHANNEL_ID,
         }
-        if delegation_context:
-            payload["delegationContext"] = delegation_context
-        if do_card:
-            payload["infoCardEdit"] = {"infoCards": cards}
-        if do_endscreen:
-            payload["endscreenEdit"] = {
-                "endscreen": {
-                    "elements": [
-                        {
-                            "type": "PLAYLIST",
-                            "playlistId": playlist_id,
-                            "left": 0.58,
-                            "top": 0.15,
-                            "width": 0.40,
-                            "aspectRatio": 1.7777777777777777,
-                        }
-                    ]
-                }
-            }
+        payload = {
+            "context": {
+                "client": {
+                    "clientName": 62,
+                    "clientVersion": self.config["client_version"],
+                    "hl": "zh-TW",
+                    "gl": "TW",
+                },
+                "request": {"returnLogEntry": True, "internalExperimentFlags": []},
+                "user": {
+                    **(
+                        {"onBehalfOfUser": self.config["page_id"]}
+                        if self.config.get("page_id")
+                        else {}
+                    ),
+                    "delegationContext": delegation_context,
+                    "serializedDelegationContext": "",
+                },
+            },
+            "delegationContext": delegation_context,
+            "externalVideoId": video_id,
+            "infoCardEdit": {"infoCards": cards},
+        }
+
+        request_time_ms = str(int(time.time() * 1000))
+        ad_signals = (
+            f"dt={request_time_ms}&flash=0&frm&u_tz=480&u_his=2&u_h=720&u_w=1280&"
+            "u_ah=672&u_aw=1280&u_cd=24&bc=31&bih=551&biw=382&"
+            "brdim=0%2C0%2C0%2C0%2C1280%2C0%2C1280%2C672%2C382%2C551&vis=1&wgl=true&ca_type=image"
+        )
+        headers = self._headers(
+            STUDIO_ORIGIN,
+            referer=f"{STUDIO_ORIGIN}/video/{video_id}/edit",
+        )
+        headers.update({
+            "X-Youtube-Client-Name": "62",
+            "X-Youtube-Client-Version": self.config.get("client_version") or "1.20260826.03.00",
+            "X-Youtube-Bootstrap-Logged-In": "true",
+            "X-Goog-Request-Time": request_time_ms,
+            "X-Youtube-Ad-Signals": ad_signals,
+            "X-Youtube-Page-CL": "971371204",
+            "X-Youtube-Page-Label": "youtube.studio.web_20260826_03_RC00",
+            "X-Youtube-Time-Zone": "Asia/Taipei",
+            "X-Youtube-Utc-Offset": "480",
+        })
 
         response = self.session.post(
             STUDIO_EDIT_ENDPOINT,
-            params={"alt": "json", "key": self.config.get("api_key", "")},
-            headers=self._headers(STUDIO_ORIGIN, f"{STUDIO_ORIGIN}/video/{video_id}/edit"),
+            params={"alt": "json", "key": self.config["api_key"]},
+            headers=headers,
             json=payload,
             timeout=30,
         )
         if not response.ok:
             raise RuntimeError(
-                f"Studio 寫入失敗 (HTTP {response.status_code}): {response.text[:300]}"
+                f"Studio info card HTTP {response.status_code}: {response.text[:500]}"
             )
         try:
             body = response.json()
         except ValueError as exc:
-            raise RuntimeError("Studio 回傳不是 JSON。") from exc
+            raise RuntimeError("Studio info card 回傳不是 JSON。") from exc
         if body.get("error"):
-            raise RuntimeError(f"Studio API error: {body['error']}")
+            raise RuntimeError(f"Studio info card API error: {body['error']}")
         extension = body.get("responseContext", {}).get(
             "webResponseContextExtensionData", {}
         )
         if extension.get("challenge"):
             raise RuntimeError(
-                "Studio 拒絕儲存並要求驗證 Challenge（Cookie 可能已過期，請重新複製 Cookie）。"
+                "Studio 拒絕儲存資訊卡並要求額外驗證；"
+                "HTTP 200 不代表已儲存。請重新從已登入的 YouTube Studio "
+                "複製最新 Cookie 後再試。"
             )
 
-    def verify_video_elements(
-        self,
-        video_id: str,
-        expected_playlist_id: str = "",
-        expected_first_video_id: str = "",
-    ) -> bool:
-        for attempt in range(3):
-            try:
-                response = self.session.get(
-                    "https://www.youtube.com/watch",
-                    params={"v": video_id},
-                    headers=self._headers(
-                        "https://www.youtube.com",
-                        f"https://www.youtube.com/watch?v={video_id}",
-                    ),
-                    timeout=15,
-                )
-                if response.ok:
-                    player = self._json_assignment(response.text, "ytInitialPlayerResponse")
-                    if player:
-                        cards_data = json.dumps(player.get("cards", {}), ensure_ascii=False)
-                        if expected_playlist_id and expected_playlist_id not in cards_data:
-                            time.sleep(1)
-                            continue
-                        if expected_first_video_id and expected_first_video_id not in cards_data:
-                            time.sleep(1)
-                            continue
-                        return True
-            except Exception:
-                pass
-            time.sleep(1)
-        return False
+        # Confirm that the player response has the cards
+        for attempt in range(4):
+            if self._player_has_playlist_card(video_id, playlist_id):
+                return
+            if attempt < 3:
+                time.sleep(2)
+        raise RuntimeError(
+            "Studio 回傳 HTTP 200，但回讀影片後仍找不到播放清單資訊卡；"
+            "本次不記錄為完成。"
+        )
 
+    def _player_has_playlist_card(self, video_id: str, playlist_id: str) -> bool:
+        response = self.session.get(
+            "https://www.youtube.com/watch",
+            params={"v": video_id},
+            headers=self._headers(
+                "https://www.youtube.com",
+                f"https://www.youtube.com/watch?v={video_id}",
+            ),
+            timeout=30,
+        )
+        response.raise_for_status()
+        player = self._json_assignment(response.text, "ytInitialPlayerResponse")
+        cards = (player or {}).get("cards")
+        return bool(cards and (playlist_id in json.dumps(cards, ensure_ascii=False) or "infoCard" in json.dumps(cards, ensure_ascii=False)))
 
-class StudioCardBrowser:
-    """Use visible Chrome with persistent profile so Google BotGuard attestation passes."""
-
-    def __init__(self, raw_cookie: str, verifier: StudioPrivateClient) -> None:
-        if not CHROME_BINARY.is_file():
-            raise RuntimeError(f"找不到 Chrome：{CHROME_BINARY}")
-        self.verifier = verifier
-        options = ChromeOptions()
-        options.binary_location = str(CHROME_BINARY)
-        CHROME_PROFILE.mkdir(parents=True, exist_ok=True)
-        options.add_argument(f"--user-data-dir={CHROME_PROFILE.resolve()}")
-        options.add_argument("--disable-notifications")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        self.driver = webdriver.Chrome(options=options)
-        self.wait = WebDriverWait(self.driver, 60)
-        self.driver.get("https://studio.youtube.com/")
-        time.sleep(2)
-        if "accounts.google.com" in (self.driver.current_url or ""):
-            # Inject cookies if needed
-            for name, value in StudioPrivateClient._parse_cookie(
-                StudioPrivateClient._normalize_cookie(raw_cookie)
-            ).items():
-                if not name or name.startswith("*"):
-                    continue
-                try:
-                    self.driver.add_cookie({
-                        "name": name,
-                        "value": value,
-                        "domain": ".youtube.com",
-                        "path": "/",
-                        "secure": True,
-                    })
-                except Exception:
-                    continue
-            self.driver.get("https://studio.youtube.com/")
-            time.sleep(2)
-
-        if "accounts.google.com" in (self.driver.current_url or ""):
-            # Wait for user to finish login in the opened window
-            try:
-                self.wait.until(lambda d: "studio.youtube.com" in (d.current_url or ""))
-            except Exception:
-                pass
-
-    def close(self) -> None:
+    def check_video_online_status(
+        self, video_id: str, playlist_id: str
+    ) -> dict[str, Any]:
+        """Independently probe YouTube watch page for:
+        1. has_card: Info card exists on video.
+        2. has_comment: Owner's navigation comment exists.
+        3. has_pin: That navigation comment is currently pinned.
+        """
+        result = {"has_card": False, "has_comment": False, "has_pin": False, "comment_id": ""}
         try:
-            self.driver.quit()
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            response = self.session.get(
+                url,
+                headers={"User-Agent": USER_AGENT, "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8"},
+                timeout=15,
+            )
+            if not response.ok:
+                return result
+
+            text = response.text
+            player_data = self._json_assignment(text, "ytInitialPlayerResponse")
+            initial_data = self._json_assignment(text, "ytInitialData")
+
+            # 1. 獨立偵測：資訊卡
+            cards = (player_data or {}).get("cards")
+            if cards and (playlist_id in json.dumps(cards, ensure_ascii=False) or "infoCard" in json.dumps(cards, ensure_ascii=False)):
+                result["has_card"] = True
+
+            # 2. 獨立偵測：導流留言 & 置頂狀態 (精準解析 comments-section continuation token)
+            token = ""
+            if initial_data:
+                for node in self._walk(initial_data):
+                    if isinstance(node, dict) and node.get("sectionIdentifier") in ("comment-item-section", "comments-section"):
+                        toks = self._continuation_tokens(node)
+                        if toks:
+                            token = toks[0]
+                            break
+                if not token:
+                    toks = self._continuation_tokens(initial_data)
+                    if toks:
+                        token = toks[0]
+
+            if token:
+                try:
+                    body = self._youtube_post(
+                        "next",
+                        {"context": self._web_context(), "continuation": token},
+                        video_id,
+                    )
+                    body_str = json.dumps(body, ensure_ascii=False)
+                    if COMMENT_MARKER in body_str:
+                        result["has_comment"] = True
+                        for node in self._walk(body):
+                            if isinstance(node, dict) and "commentViewModel" in node:
+                                cid = node["commentViewModel"].get("commentId")
+                                if cid:
+                                    result["comment_id"] = cid
+                                    break
+                        if (
+                            "RENDERING_PRIORITY_PINNED_COMMENT" in body_str
+                            or "pinnedText" in body_str
+                            or "pinnedCommentBadge" in body_str
+                        ):
+                            result["has_pin"] = True
+                except Exception:
+                    pass
         except Exception:
             pass
-
-    def _execute_in_page_edit(self, edit_payload: dict[str, Any]) -> tuple[bool, str]:
-        """Execute edit_video inside the authenticated Studio DOM."""
-        script = """
-        const callback = arguments[arguments.length - 1];
-        const payload = arguments[0];
-        try {
-            const apiKey = (window.ytcfg && window.ytcfg.get('INNERTUBE_API_KEY')) || '';
-            const clientVersion = (window.ytcfg && (window.ytcfg.get('INNERTUBE_CLIENT_VERSION') || window.ytcfg.get('INNERTUBE_CONTEXT_CLIENT_VERSION'))) || '1.20260829.00.00';
-            const delegatedSessionId = (window.ytcfg && window.ytcfg.get('DELEGATED_SESSION_ID')) || '';
-
-            if (payload.context && payload.context.client) {
-                payload.context.client.clientVersion = clientVersion;
-            }
-            if (delegatedSessionId && payload.context && payload.context.user) {
-                payload.context.user.onBehalfOfUser = delegatedSessionId;
-            }
-
-            fetch('/youtubei/v1/video_editor/edit_video?alt=json&key=' + encodeURIComponent(apiKey), {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-YouTube-Client-Name': '62',
-                    'X-YouTube-Client-Version': clientVersion,
-                },
-                body: JSON.stringify(payload),
-                credentials: 'include'
-            })
-            .then(async (r) => {
-                const text = await r.text();
-                let json = null;
-                try { json = JSON.parse(text); } catch (e) {}
-                callback({ status: r.status, ok: r.ok, text: text, json: json });
-            })
-            .catch((err) => {
-                callback({ status: 0, ok: false, error: err.toString() });
-            });
-        } catch (e) {
-            callback({ status: 0, ok: false, error: e.toString() });
-        }
-        """
-        result = self.driver.execute_async_script(script, edit_payload)
-        if isinstance(result, dict):
-            if result.get("ok"):
-                body = result.get("json") or {}
-                ext = body.get("responseContext", {}).get("webResponseContextExtensionData", {})
-                if ext.get("challenge"):
-                    return False, "Studio 要求驗證 Challenge"
-                if body.get("error"):
-                    return False, f"API error: {body['error']}"
-                return True, "OK"
-            return False, result.get("error") or f"HTTP {result.get('status')}: {result.get('text', '')[:200]}"
-        return False, "無回傳結果"
-
-    def update_video_annotations(
-        self,
-        video_id: str,
-        first_video_id: str,
-        playlist_id: str,
-        playlist_title: str,
-        do_card: bool = True,
-        do_endscreen: bool = True,
-        is_first_episode: bool = False,
-    ) -> None:
-        now_ms = int(time.time() * 1000)
-        cards = []
-        if do_card:
-            if not is_first_episode and first_video_id:
-                # Card 1: First Episode Link @ 0:03 (3000ms)
-                cards.append({
-                    "videoId": video_id,
-                    "teaserStartMs": CARD_FIRST_EP_START_MS,
-                    "videoInfoCard": {
-                        "videoId": first_video_id,
-                    },
-                    "infoCardEntityId": str(now_ms),
-                    "customMessage": "第一次收聽？建議從第1集開始",
-                    "teaserText": "👉 點此從【第 1 集】開始聽",
-                })
-                # Card 2: Playlist Link @ 0:14 (14000ms)
-                cards.append({
-                    "videoId": video_id,
-                    "teaserStartMs": CARD_PLAYLIST_START_MS,
-                    "playlistInfoCard": {
-                        "fullPlaylistId": playlist_id,
-                    },
-                    "infoCardEntityId": str(now_ms + 1),
-                    "customMessage": f"{playlist_title} 完整播放清單"[:60],
-                    "teaserText": "📚 本部小說【完整播放清單】",
-                })
-            else:
-                # Episode 1 itself: Playlist Link @ 0:03 (3000ms)
-                cards.append({
-                    "videoId": video_id,
-                    "teaserStartMs": CARD_FIRST_EP_START_MS,
-                    "playlistInfoCard": {
-                        "fullPlaylistId": playlist_id,
-                    },
-                    "infoCardEntityId": str(now_ms),
-                    "customMessage": f"{playlist_title} 完整播放清單"[:60],
-                    "teaserText": "📚 本部小說【完整播放清單】",
-                })
-
-        channel_id = self.verifier.channel_id or CHANNEL_ID
-        delegation_context = {
-            "roleType": {"channelRoleType": "CREATOR_CHANNEL_ROLE_TYPE_OWNER"},
-            "externalChannelId": channel_id,
-        } if channel_id else {}
-
-        context = {
-            "client": {
-                "clientName": 62,
-                "clientVersion": self.verifier.config.get("client_version") or "1.20260829.00.00",
-                "hl": "zh-TW",
-                "gl": "TW",
-            },
-            "request": {"returnLogEntry": True, "internalExperimentFlags": []},
-            "user": {
-                "delegationContext": delegation_context,
-            },
-        }
-
-        payload: dict[str, Any] = {
-            "context": context,
-            "externalVideoId": video_id,
-        }
-        if delegation_context:
-            payload["delegationContext"] = delegation_context
-        if do_card:
-            payload["infoCardEdit"] = {"infoCards": cards}
-        if do_endscreen:
-            payload["endscreenEdit"] = {
-                "endscreen": {
-                    "elements": [
-                        {
-                            "type": "PLAYLIST",
-                            "playlistId": playlist_id,
-                            "left": 0.58,
-                            "top": 0.15,
-                            "width": 0.40,
-                            "aspectRatio": 1.7777777777777777,
-                        }
-                    ]
-                }
-            }
-
-        ok, msg = self._execute_in_page_edit(payload)
-        if not ok:
-            raise RuntimeError(f"Studio 寫入失敗（{video_id}）：{msg}")
+        return result
 
 
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        load_dotenv()
+        load_dotenv(PROJECT_ROOT / ".env", override=True)
         self.title("YouTube 小說資訊卡／置頂留言補登工具")
-        self.geometry("1120x760")
-        self.minsize(920, 640)
+        self.geometry("1160x820")
+        self.minsize(960, 680)
+        self.raw_cookie: str = os.getenv("YOUTUBE_STUDIO_COOKIES", "").strip()
         self.studio_client: StudioPrivateClient | None = None
         self.state_store = StateStore()
         self.playlists: list[PlaylistRow] = []
@@ -1126,250 +775,467 @@ class App(tk.Tk):
         self.stop_event = threading.Event()
         self._build_ui()
         self.after(100, self._poll_events)
+        self.after(300, self.auto_start)
 
     def _build_ui(self) -> None:
-        root = ttk.Frame(self, padding=12)
+        root = ttk.Frame(self, padding=10)
         root.pack(fill="both", expand=True)
 
         top = ttk.Frame(root)
-        top.pack(fill="x")
-        ttk.Label(top, text="目標頻道：").pack(side="left")
-        self.channel_var = tk.StringVar(value=os.getenv("YOUTUBE_INFO_CARD_CHANNEL_ID", CHANNEL_ID))
-        self.channel_entry = ttk.Entry(top, textvariable=self.channel_var, width=28)
-        self.channel_entry.pack(side="left", padx=(0, 8))
-        ttk.Button(top, text="讀取播放清單", command=self.load_playlists).pack(side="left", padx=4)
+        top.pack(fill="x", pady=(0, 6))
+        ttk.Label(top, text=f"目標頻道：{CHANNEL_ID}", font=("TkDefaultFont", 9, "bold")).pack(side="left")
+        self.refresh_btn = ttk.Button(top, text="讀取播放清單", command=self.load_playlists)
+        self.refresh_btn.pack(side="left", padx=(12, 4))
+        self.relogin_btn = ttk.Button(top, text="瀏覽器自動擷取 Cookie", command=self.fetch_cookie_from_chrome)
+        self.relogin_btn.pack(side="left", padx=4)
+        self.manual_cookie_btn = ttk.Button(top, text="手動貼上 Cookie", command=self.open_manual_cookie_dialog)
+        self.manual_cookie_btn.pack(side="left", padx=4)
+        self.status_label = ttk.Label(top, text="", foreground="#555555")
+        self.status_label.pack(side="left", padx=8)
 
-        auth_box = ttk.LabelFrame(root, text="YouTube Studio Cookie（只存在記憶體，不會寫入 repo/state）", padding=8)
-        auth_box.pack(fill="x", pady=(10, 8))
-        self.cookie_text = tk.Text(auth_box, height=3, wrap="word")
-        self.cookie_text.pack(fill="x")
-        if os.getenv("YOUTUBE_STUDIO_COOKIES"):
-            self.cookie_text.insert("1.0", os.getenv("YOUTUBE_STUDIO_COOKIES", ""))
+        # Main Vertical Split: Upper is Playlists/Videos, Lower is Execution Log
+        self.main_paned = ttk.Panedwindow(root, orient="vertical")
+        self.main_paned.pack(fill="both", expand=True)
 
-        split = ttk.Panedwindow(root, orient="horizontal")
-        split.pack(fill="both", expand=True)
-        left = ttk.Frame(split, padding=(0, 0, 8, 0))
-        right = ttk.Frame(split)
-        split.add(left, weight=1)
-        split.add(right, weight=2)
+        # Upper Horizontal Split: Left is Playlists, Right is Selection/Actions/Videos
+        upper_paned = ttk.Panedwindow(self.main_paned, orient="horizontal")
+        self.main_paned.add(upper_paned, weight=3)
 
-        ttk.Label(left, text="播放清單").pack(anchor="w")
+        # --- Left Frame: Playlists ---
+        left = ttk.Frame(upper_paned, padding=(0, 0, 4, 0))
+        upper_paned.add(left, weight=1)
+
+        ttk.Label(left, text="播放清單列表 (點選切換)", font=("TkDefaultFont", 9, "bold")).pack(anchor="w", pady=(0, 4))
+        tree_left_frame = ttk.Frame(left)
+        tree_left_frame.pack(fill="both", expand=True)
         self.playlist_tree = ttk.Treeview(
-            left, columns=("count", "id"), show="tree headings", height=18
+            tree_left_frame, columns=("count", "id"), show="tree headings", height=12
         )
         self.playlist_tree.heading("#0", text="名稱")
         self.playlist_tree.heading("count", text="影片")
         self.playlist_tree.heading("id", text="Playlist ID")
-        self.playlist_tree.column("#0", width=260)
+        self.playlist_tree.column("#0", width=240)
         self.playlist_tree.column("count", width=55, anchor="center")
-        self.playlist_tree.column("id", width=150)
-        self.playlist_tree.pack(fill="both", expand=True)
+        self.playlist_tree.column("id", width=140)
+
+        pl_scroll = ttk.Scrollbar(tree_left_frame, orient="vertical", command=self.playlist_tree.yview)
+        self.playlist_tree.configure(yscrollcommand=pl_scroll.set)
+        self.playlist_tree.pack(side="left", fill="both", expand=True)
+        pl_scroll.pack(side="right", fill="y")
         self.playlist_tree.bind("<<TreeviewSelect>>", self._playlist_selected)
 
-        info = ttk.LabelFrame(right, text="選取播放清單", padding=8)
+        # --- Right Frame: Selection Info, Options, Actions, Video Tree ---
+        right = ttk.Frame(upper_paned, padding=(4, 0, 0, 0))
+        upper_paned.add(right, weight=2)
+
+        info = ttk.LabelFrame(right, text="選取播放清單", padding=6)
         info.pack(fill="x")
         self.selection_text = tk.StringVar(value="尚未選擇")
         ttk.Label(info, textvariable=self.selection_text, justify="left").pack(anchor="w")
 
         options = ttk.Frame(right)
-        options.pack(fill="x", pady=8)
+        options.pack(fill="x", pady=6)
         self.do_card = tk.BooleanVar(value=True)
-        self.do_endscreen = tk.BooleanVar(value=True)
         self.do_comment = tk.BooleanVar(value=True)
         self.do_pin = tk.BooleanVar(value=True)
         self.skip_done = tk.BooleanVar(value=True)
         self.include_first = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options, text="資訊卡(0:03第1集+0:14清單)", variable=self.do_card).pack(side="left")
-        ttk.Checkbutton(options, text="片尾清單", variable=self.do_endscreen).pack(side="left", padx=6)
-        ttk.Checkbutton(options, text="導流留言", variable=self.do_comment).pack(side="left", padx=6)
-        ttk.Checkbutton(options, text="置頂留言", variable=self.do_pin).pack(
-            side="left", padx=6
-        )
-        ttk.Checkbutton(options, text="跳過已完成", variable=self.skip_done).pack(side="left", padx=6)
-        ttk.Checkbutton(options, text="包含第一集", variable=self.include_first).pack(side="left", padx=6)
+        ttk.Checkbutton(options, text="資訊卡 (0:03+0:13)", variable=self.do_card).pack(side="left")
+        ttk.Checkbutton(options, text="導流留言", variable=self.do_comment).pack(side="left", padx=8)
+        ttk.Checkbutton(options, text="置頂留言", variable=self.do_pin).pack(side="left", padx=8)
+        ttk.Checkbutton(options, text="跳過已完成", variable=self.skip_done).pack(side="left", padx=8)
+        ttk.Checkbutton(options, text="包含第一集", variable=self.include_first).pack(side="left", padx=8)
 
         actions = ttk.Frame(right)
-        actions.pack(fill="x", pady=(0, 8))
+        actions.pack(fill="x", pady=(0, 6))
         self.start_button = ttk.Button(actions, text="開始批次補登", command=self.start_batch)
         self.start_button.pack(side="left")
         ttk.Button(actions, text="停止", command=self.stop_batch).pack(side="left", padx=8)
 
+        tree_right_frame = ttk.Frame(right)
+        tree_right_frame.pack(fill="both", expand=True)
         self.video_tree = ttk.Treeview(
-            right, columns=("pos", "video", "card", "endscreen", "comment", "pin"), show="headings", height=18
+            tree_right_frame, columns=("pos", "video", "card", "comment", "pin"), show="headings", height=12
         )
         for col, title, width in (
             ("pos", "集", 45),
-            ("video", "影片", 330),
-            ("card", "資訊卡", 80),
-            ("endscreen", "片尾", 65),
-            ("comment", "留言", 65),
-            ("pin", "置頂", 65),
+            ("video", "影片", 340),
+            ("card", "資訊卡", 75),
+            ("comment", "留言", 75),
+            ("pin", "置頂", 75),
         ):
             self.video_tree.heading(col, text=title)
             self.video_tree.column(col, width=width, anchor="w" if col == "video" else "center")
-        self.video_tree.pack(fill="both", expand=True)
+        v_scroll = ttk.Scrollbar(tree_right_frame, orient="vertical", command=self.video_tree.yview)
+        self.video_tree.configure(yscrollcommand=v_scroll.set)
+        self.video_tree.pack(side="left", fill="both", expand=True)
+        v_scroll.pack(side="right", fill="y")
 
-        log_box = ttk.LabelFrame(root, text="執行紀錄", padding=6)
-        log_box.pack(fill="both", pady=(8, 0))
-        self.log_text = tk.Text(log_box, height=8, state="disabled", wrap="word")
-        self.log_text.pack(fill="both", expand=True)
+        # --- Lower Frame: Execution Log (Always Visible & Resizable) ---
+        log_frame = ttk.LabelFrame(self.main_paned, text="執行紀錄 (可拖曳上下調整高度)", padding=6)
+        self.main_paned.add(log_frame, weight=1)
+
+        log_top = ttk.Frame(log_frame)
+        log_top.pack(fill="x", pady=(0, 4))
+        self.autoscroll_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(log_top, text="自動滾動至最新", variable=self.autoscroll_var).pack(side="left")
+        ttk.Button(log_top, text="清空紀錄", command=self.clear_log).pack(side="right", padx=(4, 0))
+        ttk.Button(log_top, text="複製紀錄", command=self.copy_log).pack(side="right")
+
+        log_text_frame = ttk.Frame(log_frame)
+        log_text_frame.pack(fill="both", expand=True)
+        self.log_text = tk.Text(
+            log_text_frame,
+            height=7,
+            state="disabled",
+            wrap="word",
+            bg="#1e1e1e",
+            fg="#e0e0e0",
+            insertbackground="white",
+            selectbackground="#264f78",
+            font=("Consolas", 9),
+        )
+        log_scroll = ttk.Scrollbar(log_text_frame, orient="vertical", command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=log_scroll.set)
+        self.log_text.pack(side="left", fill="both", expand=True)
+        log_scroll.pack(side="right", fill="y")
 
     def log(self, text: str) -> None:
         stamp = time.strftime("%H:%M:%S")
         self.log_text.configure(state="normal")
         self.log_text.insert("end", f"[{stamp}] {text}\n")
-        self.log_text.see("end")
+        if getattr(self, "autoscroll_var", None) and self.autoscroll_var.get():
+            self.log_text.see("end")
         self.log_text.configure(state="disabled")
+
+    def clear_log(self) -> None:
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.configure(state="disabled")
+
+    def copy_log(self) -> None:
+        self.clipboard_clear()
+        content = self.log_text.get("1.0", "end").strip()
+        if content:
+            self.clipboard_append(content)
+            messagebox.showinfo("提示", "執行紀錄已複製到剪貼簿！", parent=self)
 
     def _run_thread(self, func: Callable[[], None]) -> None:
         threading.Thread(target=func, daemon=True).start()
 
-    def load_playlists(self) -> None:
-        raw_cookie = self.cookie_text.get("1.0", "end").strip()
-        channel_id = self.channel_var.get().strip() or CHANNEL_ID
-        if not raw_cookie:
-            messagebox.showwarning("缺少 Cookie", "讀取播放清單也需要 YouTube Studio Cookie。")
+    def open_manual_cookie_dialog(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("手動貼上 YouTube Studio Cookie")
+        dialog.geometry("680x380")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        ttk.Label(
+            dialog,
+            text="請在此貼上從瀏覽器複製的 Cookie（需包含 SAPISID、SID 等憑證）：",
+            padding=(12, 12, 12, 6)
+        ).pack(anchor="w")
+
+        text_box = tk.Text(dialog, height=10, wrap="word")
+        text_box.pack(fill="both", expand=True, padx=12, pady=6)
+        if self.raw_cookie:
+            text_box.insert("1.0", self.raw_cookie)
+
+        btn_box = ttk.Frame(dialog, padding=12)
+        btn_box.pack(fill="x")
+
+        def save_and_close() -> None:
+            val = text_box.get("1.0", "end").strip()
+            if not val:
+                messagebox.showwarning("提示", "輸入內容為空。", parent=dialog)
+                return
+            if save_cookie_to_env:
+                save_cookie_to_env(val, env_path=PROJECT_ROOT / ".env")
+            self.raw_cookie = val
+            self.log("✅ 已手動更新 Cookie 並儲存至 .env！")
+            dialog.destroy()
+            self.load_playlists(auto_refetch_on_fail=False)
+
+        ttk.Button(btn_box, text="確定儲存並讀取播放清單", command=save_and_close).pack(side="right", padx=6)
+        ttk.Button(btn_box, text="取消", command=dialog.destroy).pack(side="right")
+
+    def auto_start(self) -> None:
+        self.log("🚀 程式已啟動，開始檢查 YouTube Studio 登入狀態…")
+        load_dotenv(PROJECT_ROOT / ".env", override=True)
+        self.raw_cookie = os.getenv("YOUTUBE_STUDIO_COOKIES", "").strip()
+        if self.raw_cookie:
+            self.log("偵測到本機已存有 Cookie，正在向 YouTube Studio 讀取播放清單…")
+            self.load_playlists(auto_refetch_on_fail=True)
+        else:
+            self.log("未偵測到 Cookie，正在自動啟動 Chrome 擷取 YouTube Studio 登入 Cookie…")
+            self.fetch_cookie_from_chrome(and_load_playlists=True)
+
+    def fetch_cookie_from_chrome(self, and_load_playlists: bool = True) -> None:
+        if not extract_youtube_cookies:
+            messagebox.showerror("錯誤", "找不到 chrome_cookie_harvester 模組。")
             return
+        self.relogin_btn.configure(state="disabled")
+        self.refresh_btn.configure(state="disabled")
+        self.status_label.configure(text="正在開啟 Chrome 擷取 Cookie…")
+
+        def work() -> None:
+            try:
+                self.event_queue.put(("log", "正在喚起 Chrome… 若未登入請在視窗內完成 Google 登入。"))
+                cookie_str = extract_youtube_cookies(
+                    progress_callback=lambda msg: self.event_queue.put(("log", msg))
+                )
+                if save_cookie_to_env:
+                    save_cookie_to_env(cookie_str, env_path=PROJECT_ROOT / ".env")
+                self.raw_cookie = cookie_str
+                self.event_queue.put(("cookie_fetched", (cookie_str, and_load_playlists)))
+            except Exception as exc:
+                self.event_queue.put(("error", f"自動獲取 Cookie 失敗: {exc}"))
+            finally:
+                self.event_queue.put(("enable_buttons", None))
+
+        self._run_thread(work)
+
+    def load_playlists(self, auto_refetch_on_fail: bool = False) -> None:
+        load_dotenv(PROJECT_ROOT / ".env", override=True)
+        raw_cookie = (self.raw_cookie or os.getenv("YOUTUBE_STUDIO_COOKIES", "")).strip()
+        if not raw_cookie:
+            self.log("尚未取得 Cookie，正在自動喚起 Chrome 登入擷取…")
+            self.fetch_cookie_from_chrome(and_load_playlists=True)
+            return
+
+        self.refresh_btn.configure(state="disabled")
+        self.status_label.configure(text="正在讀取播放清單…")
+
         def work() -> None:
             try:
                 self.event_queue.put(("log", "正在透過 YouTube Studio 讀取播放清單…"))
-                client = StudioPrivateClient(raw_cookie, channel_id=channel_id)
-                if client.channel_id:
-                    self.event_queue.put(("channel_id", client.channel_id))
+                client = StudioPrivateClient(raw_cookie)
                 playlists = client.list_playlists()
+                self.raw_cookie = raw_cookie
                 self.event_queue.put(("playlists", (client, playlists)))
             except Exception as exc:
-                self.event_queue.put(("error", str(exc)))
+                err_msg = str(exc)
+                self.event_queue.put(("log", f"讀取播放清單失敗: {err_msg}"))
+                if auto_refetch_on_fail:
+                    self.event_queue.put(("log", "⚠️ 現有 Cookie 可能已失效，正在自動喚起 Chrome 重新擷取 Cookie…"))
+                    self.event_queue.put(("auto_refetch", None))
+                else:
+                    self.event_queue.put(("error", f"讀取播放清單失敗: {err_msg}"))
+            finally:
+                self.event_queue.put(("enable_buttons", None))
+
         self._run_thread(work)
 
     def _playlist_selected(self, _event=None) -> None:
         selection = self.playlist_tree.selection()
-        if not selection or not self.studio_client:
+        if not selection or not self.playlists:
             return
-        index = int(selection[0])
-        row = self.playlists[index]
+        try:
+            index = int(selection[0])
+            row = self.playlists[index]
+        except (ValueError, IndexError):
+            return
+
+        raw_cookie = (self.raw_cookie or os.getenv("YOUTUBE_STUDIO_COOKIES", "")).strip()
+        if not self.studio_client and raw_cookie:
+            try:
+                self.studio_client = StudioPrivateClient(raw_cookie)
+            except Exception as exc:
+                self.log(f"初始化 Studio 客戶端失敗: {exc}")
+                return
+
+        if not self.studio_client:
+            self.log("尚未初始化 Studio 客戶端，請先讀取播放清單。")
+            return
 
         def work() -> None:
             try:
+                self.event_queue.put(("log", f"正在讀取播放清單「{row.title}」的影片列表…"))
                 videos = self.studio_client.list_playlist_videos(row.playlist_id)
                 self.event_queue.put(("videos", (row, videos)))
+                # Launch fast parallel online status probing for all videos in this playlist
+                self._run_thread(lambda: self._probe_videos_online_status(row, videos))
             except Exception as exc:
                 self.event_queue.put(("error", str(exc)))
         self._run_thread(work)
 
+    def _probe_videos_online_status(self, playlist: PlaylistRow, videos: list[VideoRow]) -> None:
+        if not self.studio_client:
+            return
+        self.event_queue.put(("log", f"🔍 正在極速平行偵測「{playlist.title}」共 {len(videos)} 支影片的即時狀態…"))
+
+        def probe_one(v: VideoRow) -> dict[str, Any]:
+            if self.stop_event.is_set():
+                return {}
+            try:
+                return self.studio_client.check_video_online_status(v.video_id, playlist.playlist_id) | {"video_id": v.video_id}
+            except Exception:
+                return {"video_id": v.video_id, "has_card": False, "has_comment": False, "has_pin": False, "comment_id": ""}
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            results = list(executor.map(probe_one, videos))
+
+        for online in results:
+            vid = online.get("video_id")
+            if not vid:
+                continue
+            if online.get("has_card"):
+                self.event_queue.put(("status", (vid, "card", "已完成")))
+                self.state_store.mark(vid, "has_card", True)
+                self.state_store.mark(vid, "card_playlist_id", playlist.playlist_id)
+            else:
+                self.event_queue.put(("status", (vid, "card", "")))
+                self.state_store.mark(vid, "has_card", False)
+
+            if online.get("has_comment"):
+                self.event_queue.put(("status", (vid, "comment", "已完成")))
+                self.state_store.mark(vid, "has_comment", True)
+                if online.get("comment_id"):
+                    self.state_store.mark(vid, "comment_id", online["comment_id"])
+            else:
+                self.event_queue.put(("status", (vid, "comment", "")))
+                self.state_store.mark(vid, "has_comment", False)
+
+            if online.get("has_pin"):
+                self.event_queue.put(("status", (vid, "pin", "已完成")))
+                self.state_store.mark(vid, "has_pin", True)
+                if online.get("comment_id"):
+                    self.state_store.mark(vid, "pinned_comment_id", online["comment_id"])
+            else:
+                self.event_queue.put(("status", (vid, "pin", "")))
+                self.state_store.mark(vid, "has_pin", False)
+
+        self.event_queue.put(("log", f"✅「{playlist.title}」全部影片線上即時狀態偵測完成！"))
+
     def start_batch(self) -> None:
-        if not self.studio_client or not self.videos:
+        selection = self.playlist_tree.selection()
+        if not selection or not self.videos or not self.playlists:
             messagebox.showwarning("尚未選擇", "請先讀取並選擇播放清單。")
             return
-        raw_cookie = self.cookie_text.get("1.0", "end").strip()
-        channel_id = self.channel_var.get().strip() or CHANNEL_ID
+        raw_cookie = (self.raw_cookie or os.getenv("YOUTUBE_STUDIO_COOKIES", "")).strip()
         if not raw_cookie:
-            messagebox.showwarning("缺少 Cookie", "所有讀寫動作都需要 YouTube Studio Cookie。")
+            messagebox.showwarning("缺少 Cookie", "所有讀寫動作都需要 YouTube Studio Cookie。請點擊『重新登入擷取 Cookie』。")
+            return
+        self.stop_event.clear()
         self.start_button.configure(state="disabled")
-        playlist = self.playlists[int(self.playlist_tree.selection()[0])]
+        playlist = self.playlists[int(selection[0])]
         videos = list(self.videos)
         first = videos[0]
         do_card = self.do_card.get()
-        do_endscreen = self.do_endscreen.get()
         do_comment = self.do_comment.get()
         do_pin = self.do_pin.get()
         skip_done = self.skip_done.get()
         include_first = self.include_first.get()
 
         def work() -> None:
-            card_browser: StudioCardBrowser | None = None
+            browser_worker: BrowserCardWorker | None = None
             try:
-                studio = StudioPrivateClient(raw_cookie, channel_id=channel_id)
+                studio = StudioPrivateClient(raw_cookie)
                 self.studio_client = studio
-                if do_card or do_endscreen:
-                    self.event_queue.put(("log", "正在啟動 Chrome 資訊卡／片尾編輯器…"))
-                    card_browser = StudioCardBrowser(raw_cookie, studio)
-
                 for video in videos:
                     if self.stop_event.is_set():
                         break
                     if video.position == 0 and not include_first:
                         continue
                     record = self.state_store.video(video.video_id)
-                    self.event_queue.put(("log", f"處理 {video.position + 1}: {video.title}"))
+                    self.event_queue.put(("log", f"處理第 {video.position + 1} 集: {video.title}"))
 
-                    is_first = (video.position == 0 or video.video_id == first.video_id)
-
-                    card_done = (
-                        record.get("card_playlist_id") == playlist.playlist_id
-                        and record.get("card_state_version") == CARD_STATE_VERSION
-                    )
-                    endscreen_done = (
-                        record.get("endscreen_playlist_id") == playlist.playlist_id
-                        and record.get("endscreen_state_version") == ENDSCREEN_STATE_VERSION
-                    )
-
-                    need_card = do_card and not (skip_done and card_done)
-                    need_endscreen = do_endscreen and not (skip_done and endscreen_done)
-
-                    if need_card or need_endscreen:
-                        card_browser.update_video_annotations(
-                            video.video_id,
-                            first.video_id,
-                            playlist.playlist_id,
-                            playlist.title,
-                            do_card=need_card,
-                            do_endscreen=need_endscreen,
-                            is_first_episode=is_first,
-                        )
-                        if need_card:
-                            self.state_store.mark(video.video_id, "card_first_video_id", first.video_id)
-                            self.state_store.mark(video.video_id, "card_playlist_id", playlist.playlist_id)
-                            self.state_store.mark(video.video_id, "card_first_start_ms", CARD_FIRST_EP_START_MS)
-                            self.state_store.mark(video.video_id, "card_playlist_start_ms", CARD_PLAYLIST_START_MS)
-                            self.state_store.mark(video.video_id, "card_state_version", CARD_STATE_VERSION)
-                            self.event_queue.put(("status", (video.video_id, "card", "OK")))
-                        else:
+                    # --- Step 1: 資訊卡 (0:03 第一集 + 0:13 完整清單) ---
+                    if do_card:
+                        if skip_done and (record.get("has_card") or record.get("card_playlist_id") == playlist.playlist_id):
                             self.event_queue.put(("status", (video.video_id, "card", "已完成")))
-
-                        if need_endscreen:
-                            self.state_store.mark(video.video_id, "endscreen_playlist_id", playlist.playlist_id)
-                            self.state_store.mark(video.video_id, "endscreen_state_version", ENDSCREEN_STATE_VERSION)
-                            self.event_queue.put(("status", (video.video_id, "endscreen", "OK")))
+                            self.event_queue.put(("log", f"⏩ 影片「{video.title}」資訊卡已存在，自動跳過。"))
                         else:
-                            self.event_queue.put(("status", (video.video_id, "endscreen", "已完成")))
-                    else:
-                        if do_card:
-                            self.event_queue.put(("status", (video.video_id, "card", "已完成")))
-                        if do_endscreen:
-                            self.event_queue.put(("status", (video.video_id, "endscreen", "已完成")))
+                            try:
+                                card_saved = False
+                                # 1. 優先嘗試純 HTTP 快速通道
+                                try:
+                                    studio.set_navigation_card(video.video_id, playlist.playlist_id, first.video_id)
+                                    card_saved = True
+                                except Exception as card_err:
+                                    err_str = str(card_err)
+                                    if any(kw in err_str for kw in ("challenge", "額外驗證", "403", "401", "身份驗證", "身分驗證")):
+                                        self.event_queue.put(("log", "⚠️ Studio API 要求安全驗證，正在喚起 Chrome 瀏覽器安全通道掛載資訊卡…"))
+                                        if not browser_worker and BrowserCardWorker:
+                                            browser_worker = BrowserCardWorker()
+                                        if browser_worker:
+                                            browser_worker.set_card(
+                                                video.video_id,
+                                                playlist.playlist_id,
+                                                first.video_id if video.video_id != first.video_id else "",
+                                                card1_ms=CARD_1_START_MS,
+                                                card2_ms=CARD_2_START_MS,
+                                                progress_callback=lambda msg: self.event_queue.put(("log", msg)),
+                                            )
+                                            card_saved = True
+                                        else:
+                                            raise card_err
+                                    else:
+                                        raise card_err
+
+                                if card_saved:
+                                    self.state_store.mark(video.video_id, "card_playlist_id", playlist.playlist_id)
+                                    self.state_store.mark(video.video_id, "has_card", True)
+                                    self.state_store.mark(video.video_id, "card_state_version", CARD_STATE_VERSION)
+                                    self.event_queue.put(("status", (video.video_id, "card", "OK")))
+                                    self.event_queue.put(("log", f"✅ 影片「{video.title}」資訊卡已成功掛載！"))
+                            except Exception as card_fail:
+                                self.event_queue.put(("log", f"❌ 影片「{video.title}」資訊卡掛載失敗: {card_fail}"))
 
                     comment_id = record.get("comment_id", "")
-                    if do_comment or do_pin:
-                        create_response = None
-                        if not comment_id:
-                            if do_comment:
-                                comment_id, create_response = studio.post_navigation_comment(
+                    has_comment = record.get("has_comment", False) or bool(comment_id)
+                    has_pin = record.get("has_pin", False) or bool(record.get("pinned_comment_id"))
+
+                    # --- Step 2: 導流留言 (獨立偵測與執行) ---
+                    if do_comment:
+                        if skip_done and has_comment:
+                            self.event_queue.put(("status", (video.video_id, "comment", "已完成")))
+                            self.event_queue.put(("log", f"⏩ 影片「{video.title}」導流留言已存在，自動跳過。"))
+                        else:
+                            try:
+                                comment_id, _ = studio.post_navigation_comment(
                                     video.video_id, first.video_id, playlist.playlist_id
                                 )
                                 self.state_store.mark(video.video_id, "comment_id", comment_id)
+                                self.state_store.mark(video.video_id, "has_comment", True)
+                                has_comment = True
                                 self.event_queue.put(("status", (video.video_id, "comment", "OK")))
-                            else:
-                                self.event_queue.put(("log", f"⚠️ 跳過置頂：{video.title} 尚未建立導流留言"))
-                                self.event_queue.put(("status", (video.video_id, "pin", "無留言")))
-                        else:
-                            self.event_queue.put(("status", (video.video_id, "comment", "已完成")))
+                                self.event_queue.put(("log", f"✅ 影片「{video.title}」導流留言已發布！"))
+                            except Exception as comment_fail:
+                                self.event_queue.put(("log", f"❌ 影片「{video.title}」發布導流留言失敗: {comment_fail}"))
 
-                        if do_pin:
-                            if skip_done and record.get("pinned_comment_id") == comment_id:
-                                self.event_queue.put(("status", (video.video_id, "pin", "已完成")))
-                            else:
-                                studio.pin_comment(video.video_id, comment_id, create_response)
+                    # --- Step 3: 置頂留言 (獨立偵測與執行) ---
+                    if do_pin:
+                        if skip_done and has_pin:
+                            self.event_queue.put(("status", (video.video_id, "pin", "已完成")))
+                            self.event_queue.put(("log", f"⏩ 影片「{video.title}」置頂留言已完成，自動跳過。"))
+                        else:
+                            try:
+                                if not comment_id:
+                                    online = studio.check_video_online_status(video.video_id, playlist.playlist_id)
+                                    comment_id = online.get("comment_id", "")
+                                if not comment_id:
+                                    raise RuntimeError(
+                                        f"尚未偵測到導流留言，無法置頂。請先勾選『導流留言』後再試。"
+                                    )
+                                studio.pin_comment(video.video_id, comment_id)
                                 self.state_store.mark(video.video_id, "pinned_comment_id", comment_id)
+                                self.state_store.mark(video.video_id, "has_pin", True)
                                 self.event_queue.put(("status", (video.video_id, "pin", "OK")))
+                                self.event_queue.put(("log", f"📌 影片「{video.title}」導流留言已成功置頂！"))
+                            except Exception as pin_fail:
+                                self.event_queue.put(("log", f"❌ 影片「{video.title}」置頂留言失敗: {pin_fail}"))
 
                 self.event_queue.put(("done", "批次處理完成。" if not self.stop_event.is_set() else "已停止。"))
             except Exception as exc:
                 self.event_queue.put(("error", str(exc)))
                 self.event_queue.put(("done", "批次處理中止。"))
             finally:
-                if card_browser:
-                    card_browser.close()
+                if browser_worker:
+                    try:
+                        browser_worker.close()
+                    except Exception:
+                        pass
 
         self._run_thread(work)
 
@@ -1380,12 +1246,12 @@ class App(tk.Tk):
     def _update_status(self, video_id: str, field: str, value: str) -> None:
         for iid in self.video_tree.get_children():
             values = list(self.video_tree.item(iid, "values"))
-            if len(values) < 6:
+            if len(values) < 5:
                 continue
             hidden_id = self.video_tree.item(iid, "text")
             if hidden_id != video_id:
                 continue
-            index = {"card": 2, "endscreen": 3, "comment": 4, "pin": 5}[field]
+            index = {"card": 2, "comment": 3, "pin": 4}[field]
             values[index] = value
             self.video_tree.item(iid, values=values)
             break
@@ -1397,10 +1263,9 @@ class App(tk.Tk):
                 if kind == "log":
                     self.log(str(payload))
                 elif kind == "error":
-                    self.log(f"ERROR: {payload}")
+                    self.log(f"❌ 錯誤: {payload}")
+                    self.status_label.configure(text=f"錯誤: {str(payload)[:30]}")
                     messagebox.showerror("錯誤", str(payload))
-                elif kind == "channel_id":
-                    self.channel_var.set(str(payload))
                 elif kind == "playlists":
                     self.studio_client, self.playlists = payload
                     self.playlist_tree.delete(*self.playlist_tree.get_children())
@@ -1412,7 +1277,12 @@ class App(tk.Tk):
                                 row.playlist_id,
                             )
                         )
-                    self.log(f"已載入 {len(self.playlists)} 個播放清單。")
+                    self.log(f"✅ 已成功載入 {len(self.playlists)} 個播放清單。")
+                    self.status_label.configure(text=f"已載入 {len(self.playlists)} 個清單")
+                    if self.playlists:
+                        self.playlist_tree.selection_set("0")
+                        self.playlist_tree.focus("0")
+                        self._playlist_selected()
                 elif kind == "videos":
                     row, self.videos = payload
                     actual_count = len(self.videos)
@@ -1430,25 +1300,14 @@ class App(tk.Tk):
                     self.video_tree.delete(*self.video_tree.get_children())
                     for idx, video in enumerate(self.videos):
                         record = self.state_store.video(video.video_id)
-                        card_done = (
-                            record.get("card_playlist_id") == row.playlist_id
-                            and record.get("card_state_version") == CARD_STATE_VERSION
-                        )
-                        endscreen_done = (
-                            record.get("endscreen_playlist_id") == row.playlist_id
-                            and record.get("endscreen_state_version") == ENDSCREEN_STATE_VERSION
-                        )
-                        comment_done = bool(record.get("comment_id"))
-                        pin_done = bool(record.get("pinned_comment_id"))
                         self.video_tree.insert(
                             "", "end", iid=str(idx), text=video.video_id,
                             values=(
                                 video.position + 1,
                                 video.title,
-                                "已完成" if card_done else "",
-                                "已完成" if endscreen_done else "",
-                                "已完成" if comment_done else "",
-                                "已完成" if pin_done else "",
+                                "已完成" if record.get("has_card") else "",
+                                "已完成" if (record.get("has_comment") or record.get("comment_id")) else "",
+                                "已完成" if (record.get("has_pin") or record.get("pinned_comment_id")) else "",
                             ),
                         )
                     if self.videos:
@@ -1461,15 +1320,30 @@ class App(tk.Tk):
                             f"播放清單：https://www.youtube.com/playlist?list={row.playlist_id}"
                         )
                     self.log(f"已載入「{row.title}」共 {len(self.videos)} 支影片。")
+                    self.status_label.configure(text=f"已選取「{row.title}」({len(self.videos)} 支影片)")
                 elif kind == "status":
                     video_id, field, value = payload
                     self._update_status(video_id, field, value)
+                elif kind == "cookie_fetched":
+                    cookie_str, and_load = payload
+                    self.raw_cookie = cookie_str
+                    self.log("✅ 成功獲取 YouTube Studio Cookie 並已自動儲存至 .env！")
+                    self.status_label.configure(text="Cookie 獲取成功")
+                    if and_load:
+                        self.load_playlists(auto_refetch_on_fail=False)
+                elif kind == "auto_refetch":
+                    self.fetch_cookie_from_chrome(and_load_playlists=True)
+                elif kind == "enable_buttons":
+                    self.relogin_btn.configure(state="normal")
+                    self.refresh_btn.configure(state="normal")
                 elif kind == "done":
                     self.log(str(payload))
+                    self.status_label.configure(text=str(payload))
                     self.start_button.configure(state="normal")
         except queue.Empty:
             pass
         self.after(100, self._poll_events)
+
 
 def main() -> None:
     app = App()
