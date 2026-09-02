@@ -70,6 +70,17 @@ class PipelineCheckpointTests(unittest.TestCase):
         self.assertFalse(changed.is_completed(1, "cleaner"))
         self.assertFalse(changed.is_completed(1, "tts"))
 
+    def test_freshly_completed_cleaner_with_fingerprint_is_immediately_complete(self):
+        checkpoint = PipelineCheckpoint(
+            self.workspace, self.book, 0, [1], cleaner_fingerprint="cleaner-v4"
+        )
+        self._write_output(checkpoint, 1, "crawler")
+        checkpoint.mark_completed(1, "crawler")
+        self._write_output(checkpoint, 1, "cleaner")
+        checkpoint.mark_completed(1, "cleaner")
+
+        self.assertTrue(checkpoint.is_completed(1, "cleaner"))
+
     def test_missing_file_overrides_completed_ledger_state(self):
         checkpoint = PipelineCheckpoint(self.workspace, self.book, 0, [1])
         for stage in STAGES:

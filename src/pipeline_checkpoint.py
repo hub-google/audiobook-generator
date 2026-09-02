@@ -314,7 +314,12 @@ class PipelineCheckpoint:
         if record.get("status") != "completed":
             return False
         if stage == "cleaner" and self.cleaner_fingerprint:
-            if record.get("settings_signature") != self.cleaner_fingerprint:
+            # mark_completed() stores the canonical signature of stage_settings,
+            # not the raw legacy cleaner fingerprint.  Comparing those two
+            # different representations made a freshly completed cleaner stage
+            # look incomplete until the checkpoint was loaded and reconciled
+            # again, so the same process refused to start TTS.
+            if record.get("settings_signature") != self._settings_signature(stage):
                 return False
         recorded = record.get("input_signature")
         return not recorded or recorded == self._input_signature(chapter, stage)
