@@ -16,6 +16,14 @@ class UploadPaused(RuntimeError):
         self.original_error = original_error
 
 
+class VideoNotFoundError(RuntimeError):
+    """Raised when a video ID cannot be found on YouTube (HTTP 404 videoNotFound)."""
+    def __init__(self, message="Video not found on YouTube", video_id=None, original_error=None):
+        super().__init__(message)
+        self.video_id = video_id
+        self.original_error = original_error
+
+
 def classify_daily_limit(error):
     text = str(error)
     now = datetime.now(timezone.utc)

@@ -41,7 +41,7 @@ try:
     from .source_status import confirmed_missing_from_directory
     from .huggingface_archiver import HuggingFaceArchiver
     from .youtube_upload.errors import (
-        UploadPaused, classify_daily_limit,
+        UploadPaused, VideoNotFoundError, classify_daily_limit,
         is_transient_upload_error, is_transient_youtube_api_error,
     )
     from .youtube_upload.metadata import (
@@ -61,7 +61,7 @@ except ImportError:
     from source_status import confirmed_missing_from_directory
     from huggingface_archiver import HuggingFaceArchiver
     from youtube_upload.errors import (
-        UploadPaused, classify_daily_limit,
+        UploadPaused, VideoNotFoundError, classify_daily_limit,
         is_transient_upload_error, is_transient_youtube_api_error,
     )
     from youtube_upload.metadata import (
@@ -653,6 +653,9 @@ def update_playlist_metadata(youtube, playlist_id, title, description,
 
 def add_video_to_playlist(youtube, playlist_id, video_id, position=None):
     """將影片加到指定的播放清單中 (依呼叫順序追加)"""
+    visibility_failures = 0
+    visibility_attempts = 5
+    initial_visibility_delay = 2
     while True:
         try:
             body = {
@@ -673,10 +676,25 @@ def add_video_to_playlist(youtube, playlist_id, video_id, position=None):
             logging.info(f"📋 成功將影片 [Video ID: {video_id}] 加入播放清單！")
             return response.get("id") or True
         except Exception as e:
-            err_str = str(e)
+            err_content = getattr(e, "content", b"")
+            if isinstance(err_content, bytes):
+                err_content = err_content.decode("utf-8", errors="replace")
+            err_str = f"{e} {err_content}"
             if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e) is True:
                 logging.info("🔄 配額已切換至下一專案，重新加入播放清單...")
                 continue
+            if "videoNotFound" in err_str:
+                visibility_failures += 1
+                if visibility_failures < visibility_attempts:
+                    delay = min(initial_visibility_delay * (2 ** (visibility_failures - 1)), 16)
+                    logging.warning(
+                        "影片尚未對 API 專案可見；%s 秒後重試加入播放清單 (%s/%s)。",
+                        delay, visibility_failures, visibility_attempts,
+                    )
+                    time.sleep(delay)
+                    continue
+                logging.error(f"❌ 影片 [Video ID: {video_id}] 在 YouTube 上不存在 (videoNotFound)！")
+                raise VideoNotFoundError(f"Video {video_id} not found on YouTube", video_id=video_id, original_error=e) from e
             logging.warning(f"⚠️ 將影片 [Video ID: {video_id}] 加入播放清單失敗: {e}")
             paused = classify_daily_limit(e)
             if paused:
@@ -1027,6 +1045,8 @@ def upload_caption_file(youtube, video_id, srt_path, language="zh-TW", name="繁
                     )
                     time.sleep(delay)
                     continue
+                logging.error(f"❌ 影片 [Video ID: {video_id}] 在 YouTube 上不存在 (videoNotFound)！")
+                raise VideoNotFoundError(f"Video {video_id} not found on YouTube", video_id=video_id, original_error=e) from e
             logging.error(f"❌ 上傳 CC 字幕失敗 [Video ID: {video_id}]: {e}")
             paused = classify_daily_limit(e)
             if paused:
@@ -1050,6 +1070,8 @@ def set_video_privacy(youtube, video_id, privacy_status):
             if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(error) is True:
                 logging.info("🔄 配額已切換至下一專案，重新更新影片隱私狀態...")
                 continue
+            if "videoNotFound" in err_str:
+                raise VideoNotFoundError(f"Video {video_id} not found on YouTube", video_id=video_id, original_error=error) from error
             logging.error("Failed to change video %s privacy to %s: %s", video_id, privacy_status, error)
             paused = classify_daily_limit(error)
             if paused:
@@ -1835,6 +1857,10 @@ def main():
             video_id = channel_uploads.get(title)
             if not video_id:
                 logging.error("Uploaded title is missing from the playlist and channel uploads: %s", title)
+                completed_titles.discard(title)
+                pending_part_num = part_number_for_title(part_plan, title)
+                if pending_part_num:
+                    publication.reset_upload(pending_part_num, reason="missing_from_playlist_and_channel")
                 continue
             pending_playlist[title] = video_id
             completed_titles.discard(title)
@@ -1872,6 +1898,30 @@ def main():
         srt_path = caption.get("srt_path")
         try:
             caption_uploaded = upload_caption_file(youtube, video_id, srt_path)
+        except VideoNotFoundError:
+            logging.error(
+                "❌ 待上傳字幕的影片已從 YouTube 消失 (Video ID: %s, Title: %s)。"
+                "正在清除無效斷點紀錄，將重新進行上傳...",
+                video_id, pending_title,
+            )
+            del pending_captions[pending_title]
+            pending_playlist.pop(pending_title, None)
+            pending_thumbnails.pop(pending_title, None)
+            pending_publish.pop(pending_title, None)
+            completed_titles.discard(pending_title)
+            existing_titles.discard(pending_title)
+            if pending_part_num:
+                publication.reset_upload(pending_part_num, reason=f"videoNotFound:{video_id}")
+            save_resume_state(
+                args.state_file, args.run_id, args.privacy, "running",
+                completed_titles=completed_titles, part_plan=part_plan,
+                pending_thumbnails=pending_thumbnails,
+                pending_playlist=pending_playlist,
+                pending_captions=pending_captions,
+                pending_publish=pending_publish,
+                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+            )
+            continue
         except UploadPaused as paused:
             if pending_part_num:
                 publication.fail(pending_part_num, "upload_caption", paused, paused=True, youtube_video_id=video_id)
@@ -1911,6 +1961,30 @@ def main():
         position = int(planned.get("part_num", 0)) - 1 if planned else None
         try:
             added = add_video_to_playlist(youtube, playlist_id, pending_video_id, position)
+        except VideoNotFoundError:
+            logging.error(
+                "❌ 待加入播放清單的影片已從 YouTube 消失 (Video ID: %s, Title: %s)。"
+                "正在清除無效斷點紀錄，將重新進行上傳...",
+                pending_video_id, pending_title,
+            )
+            del pending_playlist[pending_title]
+            pending_thumbnails.pop(pending_title, None)
+            pending_captions.pop(pending_title, None)
+            pending_publish.pop(pending_title, None)
+            completed_titles.discard(pending_title)
+            existing_titles.discard(pending_title)
+            if pending_part_num:
+                publication.reset_upload(pending_part_num, reason=f"videoNotFound:{pending_video_id}")
+            save_resume_state(
+                args.state_file, args.run_id, args.privacy, "running",
+                completed_titles=completed_titles, part_plan=part_plan,
+                pending_thumbnails=pending_thumbnails,
+                pending_playlist=pending_playlist,
+                pending_captions=pending_captions,
+                pending_publish=pending_publish,
+                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+            )
+            continue
         except UploadPaused as paused:
             if pending_part_num:
                 publication.fail(pending_part_num, "add_playlist", paused, paused=True, youtube_video_id=pending_video_id)
@@ -1973,6 +2047,30 @@ def main():
             }
         try:
             published = set_video_privacy(youtube, pending_video_id, args.privacy)
+        except VideoNotFoundError:
+            logging.error(
+                "❌ 待發布的影片已從 YouTube 消失 (Video ID: %s, Title: %s)。"
+                "正在清除無效斷點紀錄，將重新進行上傳...",
+                pending_video_id, pending_title,
+            )
+            del pending_publish[pending_title]
+            pending_playlist.pop(pending_title, None)
+            pending_thumbnails.pop(pending_title, None)
+            pending_captions.pop(pending_title, None)
+            completed_titles.discard(pending_title)
+            existing_titles.discard(pending_title)
+            if pending_part_num:
+                publication.reset_upload(pending_part_num, reason=f"videoNotFound:{pending_video_id}")
+            save_resume_state(
+                args.state_file, args.run_id, args.privacy, "running",
+                completed_titles=completed_titles, part_plan=part_plan,
+                pending_thumbnails=pending_thumbnails,
+                pending_playlist=pending_playlist,
+                pending_captions=pending_captions,
+                pending_publish=pending_publish,
+                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+            )
+            continue
         except UploadPaused as paused:
             if pending_part_num:
                 publication.fail(pending_part_num, "publish", paused, paused=True, youtube_video_id=pending_video_id)
@@ -2256,11 +2354,11 @@ def main():
                         pending_thumbnails=pending_thumbnails,
                     )
 
-                preexisting_video_id = existing_video_ids.get(expected_title) if expected_title in completed_titles else None
+                preexisting_video_id = existing_video_ids.get(expected_title) if (expected_title in existing_titles and expected_title in completed_titles) else None
 
                 # This includes durable checkpoint entries and exact-title
                 # progress recovered from the target playlist.
-                if expected_title in completed_titles and part_counter in hf_archiver.completed_parts(book_title):
+                if expected_title in existing_titles and expected_title in completed_titles and part_counter in hf_archiver.completed_parts(book_title):
                     logging.info(f"⏭️ 【第 {part_counter} 部】(第 {s_c}~{e_c} 章) 已存在於 YouTube 播放清單，觸發【智能斷點續傳】秒跳過！")
                     publication.complete(part_counter, "archive_hf", recovered_from_hf=True, hf_repo=hf_repo)
                     for item in sliced_items:
@@ -2721,8 +2819,8 @@ def main():
             v_cover = item["cover_path"]
             part_n = item["part_num"]
 
-            if v_title in completed_titles:
-                logging.info("⏭️ 已上傳，跳過：%s", v_title)
+            if v_title in existing_titles and v_title in completed_titles:
+                logging.info("⏭️ 已存在於播放清單，跳過：%s", v_title)
                 preexisting_video_id = existing_video_ids.get(v_title)
                 if part_n in hf_archiver.completed_parts(book_title):
                     publication.complete(part_n, "archive_hf", recovered_from_hf=True, hf_repo=hf_repo)

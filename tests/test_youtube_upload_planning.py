@@ -29,6 +29,7 @@ from src.youtube_api_uploader import (
     verify_published_part,
     select_worker_artifacts,
     UploadPaused,
+    VideoNotFoundError,
     validate_chapter_inventory,
     parse_chapter_info,
     validate_user_facing_playlist,
@@ -369,10 +370,11 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
             with open(srt_path, "w", encoding="utf-8") as handle:
                 handle.write("1\n00:00:00,000 --> 00:00:01,000\ncaption\n")
 
-            self.assertFalse(upload_caption_file(
-                youtube, "missing-video", srt_path,
-                visibility_attempts=2, initial_visibility_delay=0,
-            ))
+            with self.assertRaises(VideoNotFoundError):
+                upload_caption_file(
+                    youtube, "missing-video", srt_path,
+                    visibility_attempts=2, initial_visibility_delay=0,
+                )
 
     @patch("src.youtube_api_uploader.MediaFileUpload")
     def test_caption_daily_quota_requests_safe_pause(self, media_upload):
@@ -933,6 +935,28 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
             ]
             with self.assertRaisesRegex(RuntimeError, "out of order"):
                 validate_user_facing_playlist(items, plan)
+
+    def test_add_video_to_playlist_raises_video_not_found_on_404(self):
+        youtube = MagicMock()
+        resp = Response({"status": 404})
+        err = HttpError(resp, b'{"error": {"errors": [{"reason": "videoNotFound"}]}}')
+        youtube.playlistItems.return_value.insert.return_value.execute.side_effect = err
+
+        with patch("time.sleep"):
+            with self.assertRaises(VideoNotFoundError) as ctx:
+                add_video_to_playlist(youtube, "PL123", "deleted-vid-123")
+            self.assertEqual(ctx.exception.video_id, "deleted-vid-123")
+
+    def test_recover_completed_titles_only_adds_actual_playlist_matches(self):
+        completed = {"Part 1", "Part 21 (deleted)"}
+        existing = {"Part 1", "Part 2", "Part 3"}
+        planned = ["Part 1", "Part 2", "Part 3", "Part 21 (deleted)"]
+
+        recovered = recover_completed_titles_from_playlist(completed, existing, planned)
+        self.assertEqual(recovered, {"Part 1", "Part 2", "Part 3"})
+        self.assertIn("Part 1", completed)
+        self.assertIn("Part 2", completed)
+        self.assertIn("Part 3", completed)
 
 
 if __name__ == "__main__":

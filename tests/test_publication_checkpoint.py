@@ -38,6 +38,31 @@ class PublicationCheckpointTests(unittest.TestCase):
             self.assertEqual(part["steps"][PART_STEPS[1]]["attempts"], 1)
             self.assertIn("subtitle failed", checkpoint.markdown_summary())
 
+    def test_reset_upload_clears_upload_state_and_resumes_from_upload_video(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = PublicationCheckpoint(os.path.join(directory, "state.json"))
+            checkpoint.lock_plan(self._plan(), run_id="1", book_title="Book")
+            # Complete prior steps
+            for step in ("prepare_chapters", "generate_subtitle", "merge_video", "validate_video", "generate_metadata_cover", "archive_hf"):
+                checkpoint.complete(1, step)
+            checkpoint.record_upload_ack(1, "video123", "sha256abc")
+            checkpoint.complete(1, "upload_thumbnail")
+            checkpoint.record_playlist_ack(1, "item123", 0)
+            checkpoint.complete(1, "final_validation")
+
+            part = checkpoint.data["parts"]["1"]
+            self.assertEqual(part["overall_status"], "completed")
+
+            # Reset upload because video was deleted on YouTube
+            checkpoint.reset_upload(1, reason="videoNotFound:video123")
+            part = checkpoint.data["parts"]["1"]
+            self.assertEqual(part["upload"]["status"], "pending")
+            self.assertIsNone(part["upload"]["video_id"])
+            self.assertEqual(part["playlist"]["status"], "pending")
+            self.assertEqual(part["steps"]["upload_video"]["status"], "pending")
+            self.assertEqual(part["resume_from"], "upload_video")
+            self.assertEqual(part["overall_status"], "running")
+
 
 if __name__ == "__main__":
     unittest.main()

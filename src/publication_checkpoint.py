@@ -175,6 +175,26 @@ class PublicationCheckpoint:
         self.complete(part_num, "add_playlist", youtube_video_id=part["upload"].get("video_id"),
                       playlist_item_id=playlist_item_id, position=int(position))
 
+    def reset_upload(self, part_num, reason="video_not_found"):
+        part = self.data["parts"].get(str(int(part_num)))
+        if not part:
+            return
+        part["upload"] = {"status": "pending", "video_id": None, "completed_at": None}
+        part["thumbnail"] = {"status": "pending", "completed_at": None}
+        part["playlist"] = {"status": "pending", "playlist_item_id": None, "position": None, "completed_at": None}
+        for step in ("upload_video", "upload_thumbnail", "add_playlist", "final_validation"):
+            if step in part.get("steps", {}):
+                part["steps"][step].update({
+                    "status": "pending",
+                    "attempts": 0,
+                    "youtube_video_id": None,
+                    "playlist_item_id": None,
+                    "reset_reason": reason,
+                    "updated_at": _now(),
+                })
+        self._refresh(part_num)
+        self.save()
+
     def fail(self, part_num, step, error, paused=False, **evidence):
         self.mark(
             part_num, step, "paused" if paused else "failed",
