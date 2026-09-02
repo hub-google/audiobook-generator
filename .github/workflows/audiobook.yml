@@ -427,6 +427,7 @@ jobs:
 
       - name: Upload full worker workspace artifact (Heavyweight for Inspection)
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: video-worker-${{ matrix.worker_id }}
