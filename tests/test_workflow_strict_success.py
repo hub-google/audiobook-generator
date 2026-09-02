@@ -11,11 +11,12 @@ UPLOADER_PATH = Path(__file__).parents[1] / "src" / "youtube_api_uploader.py"
 
 
 class WorkflowStrictSuccessTests(unittest.TestCase):
-    def test_manual_rerun_or_manual_resume_can_probe_youtube_early(self):
+    def test_resume_does_not_implicitly_bypass_youtube_cooldown(self):
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertIn("github.run_attempt > 1", workflow_text)
-        self.assertIn("inputs.resume_source_run_id != ''", workflow_text)
-        self.assertIn("github.triggering_actor != 'github-actions[bot]'", workflow_text)
+        self.assertIn('MANUAL_YOUTUBE_RETRY: "false"', workflow_text)
+        self.assertNotIn("github.triggering_actor != 'github-actions[bot]'", workflow_text)
+        self.assertIn("youtube-upload-state-task-", workflow_text)
+        self.assertIn("youtube-upload-checkpoint", workflow_text)
 
     def test_playlist_metadata_quota_is_classified_as_retryable(self):
         uploader_text = UPLOADER_PATH.read_text(encoding="utf-8")

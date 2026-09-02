@@ -52,6 +52,31 @@ from src.worker_pipeline import (
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
+    def test_shorter_pause_cannot_replace_active_upload_limit(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = str(Path(temp_dir) / "state.json")
+            upload_retry = datetime.now(timezone.utc) + timedelta(hours=24)
+            thumbnail_retry = datetime.now(timezone.utc) + timedelta(hours=2)
+            save_resume_state(
+                state_path, "123", "public", "paused",
+                reason="uploadLimitExceeded", retry_at=upload_retry,
+            )
+            save_resume_state(
+                state_path, "123", "public", "paused",
+                reason="thumbnailRateLimit", retry_at=thumbnail_retry,
+            )
+            state = load_resume_state(state_path)
+            self.assertEqual(state["reason"], "uploadLimitExceeded")
+            self.assertEqual(state["retry_at"], upload_retry.isoformat())
+
+    def test_checkpoint_records_stable_queue_task_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ, {"QUEUE_TASK_ID": "book-stable-id"}
+        ):
+            state_path = str(Path(temp_dir) / "state.json")
+            save_resume_state(state_path, "123", "public", "running")
+            self.assertEqual(load_resume_state(state_path)["task_id"], "book-stable-id")
+
     def test_manual_quota_probe_preserves_future_retry_time(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = str(Path(temp_dir) / "state.json")

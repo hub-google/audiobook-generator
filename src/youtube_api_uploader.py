@@ -1674,6 +1674,7 @@ def get_latest_successful_run_id(repo):
     return None
 
 def main():
+    global _last_thumbnail_request_at
     parser = argparse.ArgumentParser(description="YouTube API Fast Uploader & Playlist Builder")
     parser.add_argument("--run-id", help="GitHub Actions Run ID containing video worker artifacts")
     parser.add_argument("--input-dir", help="Local directory containing MP4 files")
@@ -1708,6 +1709,13 @@ def main():
     hf_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hf-archive")
 
     saved_state = load_resume_state(args.state_file)
+    if saved_state and saved_state.get("updated_at"):
+        try:
+            state_updated_at = datetime.fromisoformat(saved_state["updated_at"].replace("Z", "+00:00"))
+            elapsed = max(0.0, (datetime.now(timezone.utc) - state_updated_at).total_seconds())
+            _last_thumbnail_request_at = time.monotonic() - elapsed
+        except (TypeError, ValueError):
+            logging.warning("无法解析 checkpoint updated_at；本次将使用新的缩图节流时钟。")
     completed_titles = set()
     part_plan = []
     pending_thumbnails = {}
@@ -1716,8 +1724,14 @@ def main():
     pending_publish = {}
     resume_state_matches = bool(
         saved_state
-        and str(saved_state.get("run_id") or "")
-        == str(args.run_id or saved_state.get("run_id") or "")
+        and (
+            (
+                args.task_id
+                and str(saved_state.get("task_id") or "") == str(args.task_id)
+            )
+            or str(saved_state.get("run_id") or "")
+            == str(args.run_id or saved_state.get("run_id") or "")
+        )
     )
     if resume_state_matches:
         completed_titles.update(saved_state.get("completed_titles") or [])

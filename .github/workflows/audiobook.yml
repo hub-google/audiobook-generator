@@ -641,9 +641,19 @@ jobs:
             upload_resume_state/
             Workspace/*/Cover/
             Upload_Subtitles/
-          key: youtube-upload-state-source-${{ inputs.resume_source_run_id || github.run_id }}-${{ github.run_attempt }}
+          key: youtube-upload-state-task-${{ github.event.inputs.queue_task_id || inputs.resume_source_run_id || github.run_id }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            youtube-upload-state-source-${{ inputs.resume_source_run_id || github.run_id }}-
+            youtube-upload-state-task-${{ github.event.inputs.queue_task_id || inputs.resume_source_run_id || github.run_id }}-
+
+      - name: Restore checkpoint artifact from the explicitly resumed run
+        if: inputs.resume_source_run_id != '' && hashFiles('upload_resume_state/state.json') == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_ID: ${{ inputs.resume_source_run_id }}
+        shell: bash
+        run: |
+          mkdir -p upload_resume_state
+          gh run download "$SOURCE_RUN_ID" --name youtube-upload-checkpoint --dir upload_resume_state || true
 
       - name: Download immutable Part plan
         uses: actions/download-artifact@v4
@@ -724,7 +734,10 @@ jobs:
           BOOK_CATALOG_URL: ${{ github.event.inputs.catalog_url }}
           # A rerun initiated in the Actions UI may probe YouTube before the
           # saved retry_at. Automatic reruns are initiated by github-actions.
-          MANUAL_YOUTUBE_RETRY: ${{ github.triggering_actor != 'github-actions[bot]' && (github.run_attempt > 1 || inputs.resume_source_run_id != '') && 'true' || 'false' }}
+          # Resuming a failed run must never imply permission to bypass a
+          # channel-wide cooldown. Only the dispatcher's explicit force input
+          # may do that.
+          MANUAL_YOUTUBE_RETRY: "false"
 
         run: |
           set +e
@@ -854,7 +867,15 @@ jobs:
             upload_resume_state/
             Workspace/*/Cover/
             Upload_Subtitles/
-          key: youtube-upload-state-source-${{ inputs.resume_source_run_id || github.run_id }}-${{ github.run_attempt }}
+          key: youtube-upload-state-task-${{ github.event.inputs.queue_task_id || inputs.resume_source_run_id || github.run_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Preserve YouTube upload checkpoint for the next run
+        if: always() && hashFiles('upload_resume_state/state.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-upload-checkpoint
+          path: upload_resume_state/
+          if-no-files-found: error
 
       # The merge GUI must reuse the exact title source and thumbnail that this
       # run used.  Keep them as a normal Actions artifact (not only a cache), so
