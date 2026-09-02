@@ -51,6 +51,11 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("audiobook-queue-dispatcher", self.dispatcher_text)
         self.assertIn("workflow_run:", self.dispatcher_text)
 
+    def test_manual_dispatch_does_not_implicitly_force_retry(self):
+        self.assertIn("force_retry:", self.dispatcher_text)
+        self.assertIn("inputs.force_retry", self.dispatcher_text)
+        self.assertNotIn("IS_MANUAL", self.dispatcher_text)
+
     def test_dispatcher_always_writes_a_readable_job_summary(self):
         steps = self.dispatcher_jobs["dispatch_once"]["steps"]
         summary_step = next(step for step in steps if step.get("name") == "Write dispatcher result to job summary")

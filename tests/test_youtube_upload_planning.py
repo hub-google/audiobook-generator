@@ -3,6 +3,7 @@ import json
 import ssl
 import tempfile
 import unittest
+import src.youtube_api_uploader as youtube_uploader
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -33,6 +34,7 @@ from src.youtube_api_uploader import (
     validate_chapter_inventory,
     parse_chapter_info,
     normalize_playlist_covers_to_last_part,
+    normalize_local_part_covers_to_last_part,
     validate_user_facing_playlist,
     completed_playlist_title,
     load_measured_prepared_part_plan,
@@ -566,7 +568,36 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
             with self.assertRaises(ThumbnailUploadPaused) as raised:
                 set_video_thumbnail(youtube, "video-11", cover.name, attempts=2)
         self.assertEqual(raised.exception.video_id, "video-11")
-        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(raised.exception.reason, "thumbnailRateLimit")
+        self.assertEqual(sleep.call_count, 0)
+
+    @patch("src.youtube_api_uploader.time.sleep")
+    @patch("src.youtube_api_uploader.time.monotonic", side_effect=[100.0, 110.0, 160.0])
+    @patch("src.youtube_api_uploader.MediaFileUpload")
+    def test_thumbnail_requests_are_channel_throttled(self, media, monotonic, sleep):
+        request = type("Request", (), {"execute": lambda self: {}})()
+        thumbnails = type("Thumbnails", (), {"set": lambda self, **kwargs: request})()
+        youtube = type("YouTube", (), {"thumbnails": lambda self: thumbnails})()
+        with patch.object(youtube_uploader, "_last_thumbnail_request_at", None), \
+             patch.object(youtube_uploader, "THUMBNAIL_MIN_INTERVAL_SECONDS", 60.0), \
+             tempfile.NamedTemporaryFile() as cover:
+            self.assertTrue(set_video_thumbnail(youtube, "video-1", cover.name))
+            self.assertTrue(set_video_thumbnail(youtube, "video-2", cover.name))
+        sleep.assert_called_once_with(50.0)
+
+    def test_part_covers_are_normalized_before_youtube_upload(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            first = os.path.join(temp_dir, "first.jpg")
+            last = os.path.join(temp_dir, "last.jpg")
+            Path(first).write_bytes(b"old-cover")
+            Path(last).write_bytes(b"canonical-cover")
+            selected = normalize_local_part_covers_to_last_part([
+                {"part_num": 1, "cover_path": first},
+                {"part_num": 2, "cover_path": last},
+            ])
+            self.assertEqual(selected, last)
+            self.assertEqual(Path(first).read_bytes(), b"canonical-cover")
+            self.assertEqual(Path(last).read_bytes(), b"canonical-cover")
 
     @patch("src.youtube_api_uploader.MediaFileUpload")
     def test_thumbnail_quota_walks_all_ten_slots_before_pausing(self, media):
