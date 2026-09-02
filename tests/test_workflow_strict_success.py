@@ -28,7 +28,9 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn('gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY"', command)
         self.assertIn("test -s upload_resume_state/state.json", command)
         self.assertIn("refusing to bypass its YouTube cooldown", command)
-        self.assertNotIn("|| true", command)
+        self.assertIn("searching durable checkpoints for task", command)
+        self.assertIn('state.get("task_id")', command)
+        self.assertIn("target.startswith(root)", command)
 
     def test_playlist_metadata_quota_is_classified_as_retryable(self):
         uploader_text = UPLOADER_PATH.read_text(encoding="utf-8")

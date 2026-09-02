@@ -650,12 +650,42 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          QUEUE_TASK_ID: ${{ github.event.inputs.queue_task_id }}
           SOURCE_RUN_ID: ${{ inputs.resume_source_run_id }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p upload_resume_state
-          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name youtube-upload-checkpoint --dir upload_resume_state
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name youtube-upload-checkpoint --dir upload_resume_state || true
+          if [ ! -s upload_resume_state/state.json ] && [ -n "$QUEUE_TASK_ID" ]; then
+            echo "Explicit source Run has no checkpoint; searching durable checkpoints for task $QUEUE_TASK_ID."
+            for artifact_id in $(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=youtube-upload-checkpoint&per_page=100" --jq '.artifacts[] | select(.expired == false) | .id'); do
+              candidate_dir=$(mktemp -d)
+              gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$candidate_dir/checkpoint.zip"
+              if python - "$candidate_dir/checkpoint.zip" "$QUEUE_TASK_ID" upload_resume_state <<'PY'
+          import json, os, sys, zipfile
+          archive, task_id, destination = sys.argv[1:]
+          with zipfile.ZipFile(archive) as bundle:
+              state_names = [name for name in bundle.namelist() if os.path.basename(name) == "state.json"]
+              if len(state_names) != 1:
+                  raise SystemExit(1)
+              state = json.loads(bundle.read(state_names[0]))
+              if str(state.get("task_id") or "") != task_id:
+                  raise SystemExit(1)
+              for name in bundle.namelist():
+                  target = os.path.abspath(os.path.join(destination, name))
+                  root = os.path.abspath(destination) + os.sep
+                  if target.startswith(root) and not name.endswith("/"):
+                      os.makedirs(os.path.dirname(target), exist_ok=True)
+                      with bundle.open(name) as source, open(target, "wb") as output:
+                          output.write(source.read())
+          PY
+              then
+                echo "Restored task-matched checkpoint artifact $artifact_id."
+                break
+              fi
+            done
+          fi
           test -s upload_resume_state/state.json || {
             echo "::error title=Checkpoint restore failed::Run $SOURCE_RUN_ID did not provide upload_resume_state/state.json; refusing to bypass its YouTube cooldown"
             exit 1
