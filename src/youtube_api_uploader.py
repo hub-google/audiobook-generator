@@ -6,8 +6,6 @@ import os
 import sys
 import glob
 import re
-import socket
-import ssl
 import time
 import shutil
 import argparse
@@ -17,7 +15,6 @@ import subprocess
 import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 from pathlib import Path
 
 def _find_gh() -> str:
@@ -43,7 +40,19 @@ try:
     from .artifact_validation import validate_image, validate_srt, validate_video
     from .source_status import confirmed_missing_from_directory
     from .huggingface_archiver import HuggingFaceArchiver
-    from .catalog_parser import format_output_chapter_title
+    from .youtube_upload.errors import (
+        ThumbnailUploadPaused, UploadPaused, classify_daily_limit,
+        is_transient_upload_error, is_transient_youtube_api_error,
+    )
+    from .youtube_upload.metadata import (
+        _chapter_title, build_chapter_timeline, build_video_description,
+        part_number_for_title,
+    )
+    from .youtube_upload.state import (
+        MAX_YOUTUBE_ACCOUNT_SLOTS, atomic_write_json as _atomic_write_json,
+        configured_youtube_account_slots, load_resume_state,
+        recover_completed_titles_from_playlist, save_resume_state,
+    )
 except ImportError:
     # Support running this file directly as ``python src/youtube_api_uploader.py``.
     from part_builder import parse_chapter_num, get_media_duration, merge_part_videos, duration_from_srt
@@ -51,7 +60,19 @@ except ImportError:
     from artifact_validation import validate_image, validate_srt, validate_video
     from source_status import confirmed_missing_from_directory
     from huggingface_archiver import HuggingFaceArchiver
-    from catalog_parser import format_output_chapter_title
+    from youtube_upload.errors import (
+        ThumbnailUploadPaused, UploadPaused, classify_daily_limit,
+        is_transient_upload_error, is_transient_youtube_api_error,
+    )
+    from youtube_upload.metadata import (
+        _chapter_title, build_chapter_timeline, build_video_description,
+        part_number_for_title,
+    )
+    from youtube_upload.state import (
+        MAX_YOUTUBE_ACCOUNT_SLOTS, atomic_write_json as _atomic_write_json,
+        configured_youtube_account_slots, load_resume_state,
+        recover_completed_titles_from_playlist, save_resume_state,
+    )
 
 if sys.platform == "win32":
     try:
@@ -73,228 +94,7 @@ SCOPES = [
 ]
 
 EXIT_RETRY_LATER = 75
-MAX_YOUTUBE_ACCOUNT_SLOTS = 10
 YOUTUBE_SLOT_ROTATION_ROUNDS = 3
-
-
-def configured_youtube_account_slots():
-    """Return complete environment-backed credential slots without authenticating."""
-    slots = set()
-    for slot in range(1, MAX_YOUTUBE_ACCOUNT_SLOTS + 1):
-        if all(os.environ.get(f"{name}_{slot}", "").strip() for name in (
-            "YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN",
-        )):
-            slots.add(slot)
-    return slots
-
-
-class UploadPaused(RuntimeError):
-    """A daily YouTube limit was reached; the upload can safely resume later."""
-
-    def __init__(self, reason, retry_at, original_error=None):
-        super().__init__(reason)
-        self.reason = reason
-        self.retry_at = retry_at
-        self.original_error = original_error
-
-
-class ThumbnailUploadPaused(UploadPaused):
-    """The video exists, but its custom thumbnail still needs to be applied."""
-
-    def __init__(self, video_id, retry_at, original_error=None, reason="thumbnailRateLimit"):
-        super().__init__(reason, retry_at, original_error)
-        self.video_id = video_id
-
-
-def _atomic_write_json(path, data):
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    tmp_path = path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp_path, path)
-
-
-def save_resume_state(path, run_id, privacy, status, reason="", retry_at=None,
-                      completed_titles=None, part_plan=None, pending_thumbnails=None,
-                      playlist_url=None, pending_playlist=None,
-                      pending_captions=None, pending_publish=None,
-                      final_playlist_validation=None):
-    # A human may deliberately re-run a failed job before the saved daily
-    # quota window expires.  If that probe still reports the same API-project
-    # quota exhaustion, keep the original schedule instead of moving it.
-    if (
-        os.environ.get("MANUAL_YOUTUBE_RETRY", "").lower() == "true"
-        and status == "paused"
-        and reason == "quotaExceeded"
-        and retry_at is not None
-    ):
-        previous = load_resume_state(path)
-        previous_retry_text = (previous or {}).get("retry_at")
-        if (previous or {}).get("reason") == "quotaExceeded" and previous_retry_text:
-            try:
-                previous_retry_at = datetime.fromisoformat(
-                    previous_retry_text.replace("Z", "+00:00")
-                )
-                if datetime.now(timezone.utc) < previous_retry_at:
-                    logging.info(
-                        "🕒 手動提前測試仍為 quotaExceeded；保留原安全重試時間 %s。",
-                        previous_retry_at.isoformat(),
-                    )
-                    retry_at = previous_retry_at
-            except ValueError:
-                logging.warning("忽略無法解析的舊 retry_at：%s", previous_retry_text)
-
-    data = {
-        "version": 4,
-        "run_id": str(run_id) if run_id else "",
-        "privacy": privacy,
-        "status": status,
-        "reason": reason,
-        "retry_at": retry_at.isoformat() if retry_at else None,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-        "completed_titles": sorted(completed_titles or []),
-        # Once a Part boundary is chosen it is immutable.  This is what makes a
-        # resumed run continue 1-50, 51-100 instead of repartitioning 1-70, ...
-        "part_plan": list(part_plan or []),
-        # title -> video id.  A video upload is durable even when the following
-        # thumbnails.set call is rate-limited, so resume must repair it instead
-        # of uploading the same multi-hour video a second time.
-        "pending_thumbnails": dict(pending_thumbnails or {}),
-        # title -> video id. A title is not complete until playlistItems.insert
-        # succeeds. Persisting the id prevents an uploaded orphan on resume.
-        "pending_playlist": dict(pending_playlist or {}),
-        "pending_captions": dict(pending_captions or {}),
-        "pending_publish": dict(pending_publish or {}),
-        "playlist_url": playlist_url,
-        "final_playlist_validation": dict(final_playlist_validation or {}),
-        "credential_pool_size": len(configured_youtube_account_slots()),
-    }
-    _atomic_write_json(path, data)
-    logging.info("💾 上傳斷點已儲存：%s (%s)", path, status)
-
-
-def load_resume_state(path):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return None
-
-
-def recover_completed_titles_from_playlist(completed_titles, existing_titles, planned_titles):
-    """Rebuild progress from exact planned-title matches in the target playlist."""
-    recovered = set(planned_titles) & set(existing_titles)
-    completed_titles.update(recovered)
-    return recovered
-
-
-def _chapter_title(item):
-    number = int(item["chap_num"])
-    return format_output_chapter_title(number, item.get("chapter_title") or "")
-
-
-def build_chapter_timeline(chapter_items):
-    """Build YouTube chapters without accumulating per-chapter rounding error."""
-    items = list(chapter_items or [])
-    if len(items) < 3:
-        raise ValueError("YouTube chapter timeline requires at least three chapters")
-    lines = []
-    exact_start = 0.0
-    previous_second = -1
-    for position, item in enumerate(items):
-        duration = float(item.get("dur") or 0.0)
-        if duration < 10.0:
-            raise ValueError(f"第 {item.get('chap_num')} 章長度少於 YouTube 規定的 10 秒")
-        # Round only the final cumulative boundary. Never round individual
-        # chapter durations before adding them together.
-        display_second = 0 if position == 0 else int(exact_start + 0.5)
-        if display_second <= previous_second:
-            raise ValueError("chapter timestamps are not strictly increasing")
-        if abs(display_second - exact_start) >= 1.0:
-            raise ValueError("chapter timestamp differs from its media boundary by one second or more")
-        hours, remainder = divmod(display_second, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        lines.append(f"{hours:02d}:{minutes:02d}:{seconds:02d} {_chapter_title(item)}")
-        previous_second = display_second
-        exact_start += duration
-    return "⏳ 影片章節時間軸：\n" + "\n".join(lines)
-
-
-def build_video_description(book_title, description, playlist_id, chapter_items=None):
-    """Build a publishable description, adding chapters only when YouTube accepts them.
-
-    YouTube chapter timestamps are optional metadata and require at least three
-    entries.  A short final Part is still a valid video, so it must not make the
-    entire publication fail merely because it cannot have a chapter timeline.
-    """
-    title = str(book_title or "").strip()
-    playlist = str(playlist_id or "").strip()
-    if not title:
-        raise ValueError("book title is required for the YouTube description")
-    if not playlist:
-        raise ValueError("playlist id is required for the YouTube description")
-    playlist_header = (
-        f"▶️《{title}》播放清單全集\n"
-        f"https://www.youtube.com/playlist?list={playlist}"
-    )
-    sections = [playlist_header]
-    if chapter_items is not None and len(chapter_items) >= 3:
-        sections.append(build_chapter_timeline(chapter_items))
-    return "\n\n".join(sections)
-
-
-def part_number_for_title(part_plan, title):
-    planned = next((part for part in part_plan if str(part.get("title") or "") == str(title)), None)
-    return int(planned["part_num"]) if planned else None
-
-
-def classify_daily_limit(error):
-    """Return an UploadPaused instance for the two retryable daily limits."""
-    text = str(error)
-    now = datetime.now(timezone.utc)
-    if "uploadLimitExceeded" in text:
-        # This is a rolling channel limit, not the API project's midnight quota.
-        return UploadPaused("uploadLimitExceeded", now + timedelta(hours=24, minutes=15), error)
-    if "quotaExceeded" in text or "dailyLimitExceeded" in text:
-        pacific = ZoneInfo("America/Los_Angeles")
-        local_now = now.astimezone(pacific)
-        next_midnight = (local_now + timedelta(days=1)).replace(
-            hour=0, minute=15, second=0, microsecond=0
-        )
-        return UploadPaused("quotaExceeded", next_midnight.astimezone(timezone.utc), error)
-    return None
-
-
-def is_transient_upload_error(error):
-    """Return whether a resumable upload should retry the same session."""
-    if isinstance(error, (ssl.SSLError, socket.timeout, TimeoutError, ConnectionError)):
-        return True
-    if isinstance(error, HttpError):
-        return getattr(getattr(error, "resp", None), "status", None) in {
-            429, 500, 502, 503, 504,
-        }
-    # httplib2 wraps several socket/TLS failures as OSError/IOError. This is
-    # evaluated only around next_chunk(), so retrying is safe and bounded.
-    return isinstance(error, OSError)
-
-
-def is_transient_youtube_api_error(error):
-    """Return whether a non-upload YouTube API request is safe to retry."""
-    if isinstance(error, (ssl.SSLError, socket.timeout, TimeoutError, ConnectionError, OSError)):
-        return True
-    if not isinstance(error, HttpError):
-        return False
-    status = getattr(getattr(error, "resp", None), "status", None)
-    if status in {429, 500, 502, 503, 504}:
-        return True
-    # YouTube occasionally reports a backend outage as HTTP 409 instead of
-    # 503. Do not retry ordinary conflicts; require the explicit backend reason.
-    content = getattr(error, "content", b"")
-    if isinstance(content, bytes):
-        content = content.decode("utf-8", errors="replace")
-    return status == 409 and "SERVICE_UNAVAILABLE" in f"{error} {content}".upper()
 
 class YouTubeServicePool:
     """管理多組 YouTube API 專案金鑰，支援自動探索、單一介面調用與 403 quotaExceeded 無縫輪替"""
