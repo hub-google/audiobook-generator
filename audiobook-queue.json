@@ -1752,7 +1752,7 @@
         1728,
         1729
       ],
-      "status": "running",
+      "status": "needs_attention",
       "run_id": 33622895752,
       "run_attempt": 1,
       "execution_generation": 2,
@@ -1825,7 +1825,7 @@
         }
       ],
       "retry_at": null,
-      "reason": null,
+      "reason": "permanentFailure;",
       "hf_progress": {
         "completed": 0,
         "total": 21
