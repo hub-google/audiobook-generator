@@ -14,3 +14,4 @@ tkinterdnd2>=0.4.3
 opencc-python-reimplemented>=0.1.7
 pydub>=0.25.1
 selenium>=4.25.0
+fonttools>=4.50.0

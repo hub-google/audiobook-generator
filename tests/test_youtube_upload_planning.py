@@ -26,6 +26,8 @@ from src.youtube_api_uploader import (
     recover_completed_titles_from_playlist,
     upload_video_file,
     upload_caption_file,
+    set_video_thumbnail,
+    resolve_part_cover,
     verify_published_part,
     select_worker_artifacts,
     UploadPaused,
@@ -49,10 +51,77 @@ from src.worker_pipeline import (
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
-    def test_custom_thumbnail_api_is_not_present_in_uploader(self):
-        source = Path(youtube_uploader.__file__).read_text(encoding="utf-8")
-        self.assertNotIn(".thumbnails().set(", source)
-        self.assertNotIn("def set_video_thumbnail(", source)
+    @patch("src.youtube_api_uploader.MediaFileUpload")
+    def test_set_video_thumbnail_success(self, mock_media):
+        request = type("Request", (), {"execute": lambda self: {}})()
+        thumbnails = type("Thumbnails", (), {"set": lambda self, **kwargs: request})()
+        youtube = type("YouTube", (), {"thumbnails": lambda self: thumbnails})()
+        with patch.object(youtube_uploader, "THUMBNAIL_MIN_INTERVAL_SECONDS", 0.0), \
+             patch.object(youtube_uploader, "_last_thumbnail_request_at", None), \
+             tempfile.NamedTemporaryFile() as cover:
+            result = set_video_thumbnail(youtube, "video-101", cover.name)
+            self.assertTrue(result)
+
+    def test_set_video_thumbnail_skipped_if_nonexistent(self):
+        youtube = MagicMock()
+        result = set_video_thumbnail(youtube, "video-102", "nonexistent_cover.jpg")
+        self.assertFalse(result)
+        youtube.thumbnails.assert_not_called()
+
+    @patch("src.youtube_api_uploader.MediaFileUpload")
+    def test_set_video_thumbnail_channel_rate_limit_pauses(self, mock_media):
+        request = type("Request", (), {"execute": lambda self: (_ for _ in ()).throw(Exception("429 uploadRateLimitExceeded"))})()
+        thumbnails = type("Thumbnails", (), {"set": lambda self, **kwargs: request})()
+        youtube = type("YouTube", (), {"thumbnails": lambda self: thumbnails})()
+        with patch.object(youtube_uploader, "THUMBNAIL_MIN_INTERVAL_SECONDS", 0.0), \
+             patch.object(youtube_uploader, "_last_thumbnail_request_at", None), \
+             tempfile.NamedTemporaryFile() as cover:
+            with self.assertRaises(UploadPaused) as raised:
+                set_video_thumbnail(youtube, "video-103", cover.name, attempts=2)
+        self.assertEqual(raised.exception.reason, "thumbnailRateLimit")
+
+    @patch("src.youtube_api_uploader.MediaFileUpload")
+    def test_set_video_thumbnail_quota_rotates_account(self, mock_media):
+        calls = {"execute": 0, "rotate": 0}
+
+        def execute():
+            calls["execute"] += 1
+            if calls["execute"] == 1:
+                raise Exception("403 quotaExceeded")
+            return {}
+
+        request = type("Request", (), {"execute": lambda self: execute()})()
+        thumbnails = type("Thumbnails", (), {"set": lambda self, **kwargs: request})()
+
+        class MockPool:
+            accounts = [{}, {}]
+            def thumbnails(self):
+                return thumbnails
+            def rotate_on_quota(self, error):
+                calls["rotate"] += 1
+                return True
+
+        with patch.object(youtube_uploader, "THUMBNAIL_MIN_INTERVAL_SECONDS", 0.0), \
+             patch.object(youtube_uploader, "_last_thumbnail_request_at", None), \
+             tempfile.NamedTemporaryFile() as cover:
+            result = set_video_thumbnail(MockPool(), "video-104", cover.name)
+            self.assertTrue(result)
+            self.assertEqual(calls["execute"], 2)
+            self.assertEqual(calls["rotate"], 1)
+
+    @patch("src.youtube_api_uploader.time.sleep")
+    @patch("src.youtube_api_uploader.time.monotonic", side_effect=[100.0, 105.0, 120.0])
+    @patch("src.youtube_api_uploader.MediaFileUpload")
+    def test_set_video_thumbnail_requests_are_throttled(self, mock_media, monotonic, mock_sleep):
+        request = type("Request", (), {"execute": lambda self: {}})()
+        thumbnails = type("Thumbnails", (), {"set": lambda self, **kwargs: request})()
+        youtube = type("YouTube", (), {"thumbnails": lambda self: thumbnails})()
+        with patch.object(youtube_uploader, "_last_thumbnail_request_at", None), \
+             patch.object(youtube_uploader, "THUMBNAIL_MIN_INTERVAL_SECONDS", 10.0), \
+             tempfile.NamedTemporaryFile() as cover:
+            self.assertTrue(set_video_thumbnail(youtube, "video-1", cover.name))
+            self.assertTrue(set_video_thumbnail(youtube, "video-2", cover.name))
+        mock_sleep.assert_called_once_with(5.0)
 
     def test_new_channel_restriction_replaces_stale_retry_guess(self):
         with tempfile.TemporaryDirectory() as temp_dir:

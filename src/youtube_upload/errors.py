@@ -27,6 +27,8 @@ class VideoNotFoundError(RuntimeError):
 def classify_daily_limit(error):
     text = str(error)
     now = datetime.now(timezone.utc)
+    if "uploadRateLimitExceeded" in text or "thumbnailRateLimit" in text:
+        return UploadPaused("thumbnailRateLimit", now + timedelta(hours=2), error)
     if "uploadLimitExceeded" in text:
         # YouTube documents this as a channel upload limit but does not expose
         # its reset timestamp. Probe conservatively instead of inventing a
