@@ -1752,7 +1752,7 @@
         1728,
         1729
       ],
-      "status": "running",
+      "status": "waiting_retry",
       "run_id": 33615663513,
       "run_attempt": 1,
       "execution_generation": 2,
@@ -1824,8 +1824,8 @@
           "ended_at": "2026-09-02T09:22:02Z"
         }
       ],
-      "retry_at": null,
-      "reason": null,
+      "retry_at": "2026-09-02T11:57:53.428978+00:00",
+      "reason": "thumbnailRateLimit",
       "hf_progress": {
         "completed": 0,
         "total": 21
