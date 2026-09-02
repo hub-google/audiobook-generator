@@ -649,11 +649,17 @@ jobs:
         if: inputs.resume_source_run_id != '' && hashFiles('upload_resume_state/state.json') == ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           SOURCE_RUN_ID: ${{ inputs.resume_source_run_id }}
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p upload_resume_state
-          gh run download "$SOURCE_RUN_ID" --name youtube-upload-checkpoint --dir upload_resume_state || true
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name youtube-upload-checkpoint --dir upload_resume_state
+          test -s upload_resume_state/state.json || {
+            echo "::error title=Checkpoint restore failed::Run $SOURCE_RUN_ID did not provide upload_resume_state/state.json; refusing to bypass its YouTube cooldown"
+            exit 1
+          }
 
       - name: Download immutable Part plan
         uses: actions/download-artifact@v4

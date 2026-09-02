@@ -18,6 +18,18 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("youtube-upload-state-task-", workflow_text)
         self.assertIn("youtube-upload-checkpoint", workflow_text)
 
+    def test_explicit_resume_checkpoint_restore_is_fail_closed(self):
+        steps = self.jobs["upload_to_youtube"]["steps"]
+        restore = next(
+            step for step in steps
+            if step.get("name") == "Restore checkpoint artifact from the explicitly resumed run"
+        )
+        command = restore["run"]
+        self.assertIn('gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY"', command)
+        self.assertIn("test -s upload_resume_state/state.json", command)
+        self.assertIn("refusing to bypass its YouTube cooldown", command)
+        self.assertNotIn("|| true", command)
+
     def test_playlist_metadata_quota_is_classified_as_retryable(self):
         uploader_text = UPLOADER_PATH.read_text(encoding="utf-8")
         self.assertIn("PAUSED during playlist metadata update", uploader_text)
