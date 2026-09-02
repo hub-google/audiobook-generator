@@ -40,6 +40,7 @@ from src.youtube_api_uploader import (
     update_playlist_metadata,
     build_video_description,
     build_chapter_timeline,
+    part_number_for_title,
 )
 from googleapiclient.errors import HttpError
 from httplib2 import Response
@@ -1026,6 +1027,16 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         self.assertIn("Part 1", completed)
         self.assertIn("Part 2", completed)
         self.assertIn("Part 3", completed)
+
+    def test_part_number_for_title_matches_exact_part_num(self):
+        plan = [
+            {"part_num": 1, "title": "有聲小說_測試書_第01部_第0001章-第0100章"},
+            {"part_num": 5, "title": "有聲小說_測試書_第05部_第0401章-第0500章"},
+            {"part_num": 12, "title": "有聲小說_測試書_第12部_第1101章-第1200章"},
+        ]
+        self.assertEqual(part_number_for_title(plan, "有聲小說_測試書_第05部_第0401章-第0500章"), 5)
+        self.assertEqual(part_number_for_title(plan, "有聲小說_測試書_第12部_第1101章-第1200章"), 12)
+        self.assertIsNone(part_number_for_title(plan, "不存在的標題"))
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from .ci_pipeline import run_ci_artifact_mode
 from .errors import UploadPaused
 from .final_audit import run_final_playlist_and_archive_audit
 from .local_pipeline import run_local_prepared_parts_mode
+from .metadata import part_number_for_title
 from .pending_queues import (
     drain_pending_captions,
     drain_pending_playlist,
@@ -341,7 +342,7 @@ def run_upload_pipeline(args):
             if not video_id:
                 logging.error("Uploaded title is missing from the playlist and channel uploads: %s", title)
                 completed_titles.discard(title)
-                pending_part_num = (part_plan and any(p.get("title") == title for p in part_plan))
+                pending_part_num = part_number_for_title(part_plan, title)
                 if pending_part_num:
                     publication.reset_upload(pending_part_num, reason="missing_from_playlist_and_channel")
                 continue

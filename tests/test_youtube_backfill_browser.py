@@ -1,115 +1,102 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
+import base64
+import os
+import tempfile
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
-
-MODULE_PATH = Path(__file__).resolve().parents[1] / "tools" / "youtube_backfill_gui.py"
-SPEC = importlib.util.spec_from_file_location("youtube_backfill_gui", MODULE_PATH)
-assert SPEC and SPEC.loader
-MODULE = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = MODULE
-SPEC.loader.exec_module(MODULE)
-
-
-class FakeDriver:
-    def __init__(self, studio_url: str = "https://studio.youtube.com/") -> None:
-        self.current_url = ""
-        self.studio_url = studio_url
-        self.visits: list[str] = []
-        self.cookies: list[dict[str, object]] = []
-
-    def get(self, url: str) -> None:
-        self.visits.append(url)
-        self.current_url = self.studio_url if "studio.youtube.com" in url else url
-
-    def add_cookie(self, cookie: dict[str, object]) -> None:
-        assert "youtube.com" in self.current_url
-        self.cookies.append(cookie)
-
-    def execute_script(self, _script: str) -> str:
-        return "test-api-key"
-
-    def quit(self) -> None:
-        pass
+from tools.chrome_cookie_harvester import (
+    BrowserCardWorker,
+    save_cookie_to_env,
+)
+from tools.youtube_backfill_gui import (
+    StateStore,
+    StudioPrivateClient,
+)
 
 
-class FakeWait:
-    def __init__(self, driver: FakeDriver, _timeout: int) -> None:
-        self.driver = driver
-
-    def until(self, condition):
-        if not condition(self.driver):
-            raise TimeoutError
-        return True
-
-
-def make_browser(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, driver: FakeDriver):
-    monkeypatch.setattr(MODULE, "CHROME_BINARY", MODULE_PATH)
-    monkeypatch.setattr(MODULE, "CHROME_PROFILE", tmp_path / "profile")
-    monkeypatch.setattr(MODULE.webdriver, "Chrome", lambda options: driver)
-    monkeypatch.setattr(MODULE, "WebDriverWait", FakeWait)
-    return MODULE.StudioCardBrowser("SAPISID=abc; SID=def", Mock())
+def test_normalize_and_parse_cookie():
+    raw = '  "cookie: SAPISID=secret123; SID=sid456; __Secure-3PAPISID=sec3"  '
+    normalized = StudioPrivateClient._normalize_cookie(raw)
+    assert "cookie:" not in normalized.lower()
+    parsed = StudioPrivateClient._parse_cookie(normalized)
+    assert parsed["SAPISID"] == "secret123"
+    assert parsed["SID"] == "sid456"
+    assert parsed["__Secure-3PAPISID"] == "sec3"
 
 
-def test_cookie_is_injected_on_youtube_before_opening_studio(monkeypatch, tmp_path):
-    driver = FakeDriver()
-    make_browser(monkeypatch, tmp_path, driver)
-
-    assert driver.visits == ["https://www.youtube.com/", "https://studio.youtube.com/"]
-    assert {cookie["name"] for cookie in driver.cookies} == {"SAPISID", "SID"}
-    assert all(cookie["domain"] == ".youtube.com" for cookie in driver.cookies)
-
-
-def test_login_redirect_stops_batch_instead_of_sending_api(monkeypatch, tmp_path):
-    driver = FakeDriver("https://accounts.google.com/ServiceLogin")
-
-    with pytest.raises(RuntimeError, match="尚未登入"):
-        make_browser(monkeypatch, tmp_path, driver)
-
-
-def test_edit_is_blocked_outside_studio():
-    browser = object.__new__(MODULE.StudioCardBrowser)
-    browser.driver = Mock(current_url="https://accounts.google.com/ServiceLogin")
-
-    ok, message = browser._execute_in_page_edit({})
-
-    assert not ok
-    assert "已停止送出" in message
-    browser.driver.execute_async_script.assert_not_called()
-
-
-def test_edit_sends_signed_studio_authorization_headers():
-    browser = object.__new__(MODULE.StudioCardBrowser)
-    browser.driver = Mock(current_url="https://studio.youtube.com/")
-    browser.driver.execute_async_script.return_value = {
-        "status": 200,
-        "ok": True,
-        "json": {},
+def test_authorization_header_generation():
+    client = object.__new__(StudioPrivateClient)
+    client.cookies = {
+        "SAPISID": "test_sapisid_token",
+        "__Secure-1PAPISID": "test_1papisid_token",
+        "__Secure-3PAPISID": "test_3papisid_token",
     }
-    browser.verifier = Mock()
-    browser.verifier._headers.return_value = {
-        "Authorization": "SAPISIDHASH signed-value",
-        "X-Origin": "https://studio.youtube.com",
-        "X-Goog-AuthUser": "0",
-        "Cookie": "SAPISID=secret",
-        "Origin": "https://studio.youtube.com",
-        "Referer": "https://studio.youtube.com/",
-        "User-Agent": "test",
-        "Content-Type": "application/json",
-    }
+    client.config = {"user_session_id": ""}
+    
+    with patch("tools.youtube_backfill_gui.time.time", return_value=1700000000):
+        auth_header = client._authorization("https://studio.youtube.com")
+        assert "SAPISIDHASH 1700000000_" in auth_header
+        assert "SAPISID1PHASH 1700000000_" in auth_header
+        assert "SAPISID3PHASH 1700000000_" in auth_header
 
-    ok, message = browser._execute_in_page_edit({"externalVideoId": "abc"})
 
-    assert ok
-    assert message == "OK"
-    args = browser.driver.execute_async_script.call_args.args
-    assert args[2]["Authorization"] == "SAPISIDHASH signed-value"
-    assert args[2]["X-Origin"] == "https://studio.youtube.com"
-    assert args[2]["X-Goog-AuthUser"] == "0"
-    assert "Cookie" not in args[2]
-    assert "Origin" not in args[2]
+def test_build_pin_action_token_structure():
+    token = StudioPrivateClient._build_pin_action_token("comment_123", "video_456", "channel_789")
+    decoded = base64.urlsafe_b64decode(token + "==")
+    assert b"comment_123" in decoded
+    assert b"video_456" in decoded
+    assert b"channel_789" in decoded
+    assert b"comments-section" in decoded
+
+
+def test_create_comment_params():
+    params = StudioPrivateClient._create_comment_params("video_123")
+    decoded = base64.b64decode(params)
+    assert b"video_123" in decoded
+
+
+def test_save_cookie_to_env():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        env_file = Path(temp_dir) / ".env"
+        env_file.write_text('EXISTING_VAR="value"\n', encoding="utf-8")
+        
+        save_cookie_to_env("SAPISID=abc; SID=def", env_path=env_file)
+        
+        content = env_file.read_text(encoding="utf-8")
+        assert 'YOUTUBE_STUDIO_COOKIES="SAPISID=abc; SID=def"' in content
+        assert 'EXISTING_VAR="value"' in content
+        assert os.environ.get("YOUTUBE_STUDIO_COOKIES") == "SAPISID=abc; SID=def"
+
+
+def test_state_store_load_and_mark():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        state_file = Path(temp_dir) / "state.json"
+        store = StateStore(path=state_file)
+        
+        store.mark("video_1", "has_card", True)
+        assert store.video("video_1")["has_card"] is True
+        assert state_file.exists()
+        
+        restored = StateStore(path=state_file)
+        assert restored.video("video_1")["has_card"] is True
+
+
+def test_browser_card_worker_auth_detection():
+    worker = BrowserCardWorker()
+    assert worker._has_studio_auth() is False
+    
+    mock_context = Mock()
+    mock_page = Mock()
+    mock_page.is_closed.return_value = False
+    mock_page.url = "https://studio.youtube.com/channel/UCIUtGUZ24fMsfzZtydQTsPg"
+    mock_context.pages = [mock_page]
+    mock_context.cookies.return_value = [
+        {"name": "SAPISID", "value": "sapisid_val"},
+        {"name": "SID", "value": "sid_val"},
+    ]
+    worker._context = mock_context
+    assert worker._has_studio_auth() is True
