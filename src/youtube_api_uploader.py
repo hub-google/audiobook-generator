@@ -41,7 +41,7 @@ try:
     from .source_status import confirmed_missing_from_directory
     from .huggingface_archiver import HuggingFaceArchiver
     from .youtube_upload.errors import (
-        ThumbnailUploadPaused, UploadPaused, classify_daily_limit,
+        UploadPaused, classify_daily_limit,
         is_transient_upload_error, is_transient_youtube_api_error,
     )
     from .youtube_upload.metadata import (
@@ -61,7 +61,7 @@ except ImportError:
     from source_status import confirmed_missing_from_directory
     from huggingface_archiver import HuggingFaceArchiver
     from youtube_upload.errors import (
-        ThumbnailUploadPaused, UploadPaused, classify_daily_limit,
+        UploadPaused, classify_daily_limit,
         is_transient_upload_error, is_transient_youtube_api_error,
     )
     from youtube_upload.metadata import (
@@ -95,10 +95,6 @@ SCOPES = [
 
 EXIT_RETRY_LATER = 75
 YOUTUBE_SLOT_ROTATION_ROUNDS = 3
-THUMBNAIL_MIN_INTERVAL_SECONDS = max(
-    0.0, float(os.environ.get("YOUTUBE_THUMBNAIL_MIN_INTERVAL_SECONDS", "600"))
-)
-_last_thumbnail_request_at = None
 
 class YouTubeServicePool:
     """管理多組 YouTube API 專案金鑰，支援自動探索、單一介面調用與 403 quotaExceeded 無縫輪替"""
@@ -866,71 +862,6 @@ def get_channel_upload_video_index(youtube):
     uploads_id = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
     return get_playlist_video_index(youtube, uploads_id)
 
-def set_video_thumbnail(youtube, video_id, cover_path, attempts=None):
-    """Apply a custom thumbnail or raise a resumable post-upload pause."""
-    global _last_thumbnail_request_at
-    if not cover_path or not os.path.exists(cover_path):
-        raise ThumbnailUploadPaused(
-            video_id, datetime.now(timezone.utc) + timedelta(hours=2),
-            RuntimeError(f"封面檔不存在：{cover_path}"),
-        )
-
-    last_error = None
-    # A fixed five-attempt loop silently stopped after slot 5 even when the
-    # configured pool contained ten projects.  Default calls must give every
-    # account every configured rotation round a chance.  An explicit attempts
-    # value remains available for bounded unit tests/transient retries.
-    account_count = max(1, len(getattr(youtube, "accounts", []) or []))
-    max_attempts = attempts if attempts is not None else account_count * YOUTUBE_SLOT_ROTATION_ROUNDS
-    for attempt in range(max_attempts):
-        try:
-            if _last_thumbnail_request_at is not None:
-                elapsed = time.monotonic() - _last_thumbnail_request_at
-                remaining = THUMBNAIL_MIN_INTERVAL_SECONDS - elapsed
-                if remaining > 0:
-                    logging.info(
-                        "⏳ 縮圖頻道限速保護：等待 %.1f 秒後再呼叫 thumbnails.set。",
-                        remaining,
-                    )
-                    time.sleep(remaining)
-            _last_thumbnail_request_at = time.monotonic()
-            youtube.thumbnails().set(
-                videoId=video_id,
-                media_body=MediaFileUpload(cover_path)
-            ).execute()
-            logging.info("🖼️ 成功更新影片封面縮圖！")
-            return True
-        except Exception as e:
-            last_error = e
-            err_str = str(e)
-            if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e) is True:
-                logging.info("🔄 配額已切換至下一專案，重新嘗試設定封面縮圖...")
-                continue
-            if "uploadRateLimitExceeded" in err_str or "429" in err_str:
-                # Channel-level platform restriction: rotating Cloud projects
-                # or retrying immediately only extends the restriction.
-                retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
-                logging.warning(
-                    "⚠️ 頻道縮圖速率限制；立即停止縮圖請求並冷卻至 %s。",
-                    retry_at.isoformat(),
-                )
-                raise ThumbnailUploadPaused(
-                    video_id, retry_at, e, reason="thumbnailRateLimit",
-                ) from e
-            raise ThumbnailUploadPaused(
-                video_id, datetime.now(timezone.utc) + timedelta(hours=2), e,
-            ) from e
-
-    daily_pause = classify_daily_limit(last_error) if last_error else None
-    if daily_pause:
-        raise ThumbnailUploadPaused(
-            video_id, daily_pause.retry_at, last_error, reason=daily_pause.reason,
-        )
-    raise ThumbnailUploadPaused(
-        video_id, datetime.now(timezone.utc) + timedelta(hours=2), last_error,
-    )
-
-
 def upload_video_file(youtube, video_path, title, description, category_id="22",
                       privacy_status="public", cover_path=None,
                       network_attempts=8, initial_retry_delay=2):
@@ -1195,13 +1126,6 @@ def verify_published_part(youtube, video_id, playlist_id, privacy_status, attemp
                 if not set_video_privacy(youtube, video_id, privacy_status):
                     raise RuntimeError(f"privacy mismatch: expected {privacy_status}, got {actual_privacy}")
                 raise RuntimeError("privacy repaired; waiting for YouTube read-back")
-            thumbnails = (items[0].get("snippet") or {}).get("thumbnails") or {}
-            if not thumbnails:
-                if cover_path and os.path.exists(cover_path):
-                    logging.warning("Final reconciliation repairing thumbnail: Part %s | %s | %s", part_num, video_id, cover_path)
-                    set_video_thumbnail(youtube, video_id, cover_path)
-                    raise RuntimeError("thumbnail repaired; waiting for YouTube read-back")
-                raise RuntimeError("video thumbnail cannot be read back and no local cover is available")
             while True:
                 try:
                     captions = youtube.captions().list(part="id,snippet", videoId=video_id).execute().get("items") or []
@@ -1603,7 +1527,6 @@ def get_latest_successful_run_id(repo):
     return None
 
 def main():
-    global _last_thumbnail_request_at
     parser = argparse.ArgumentParser(description="YouTube API Fast Uploader & Playlist Builder")
     parser.add_argument("--run-id", help="GitHub Actions Run ID containing video worker artifacts")
     parser.add_argument("--input-dir", help="Local directory containing MP4 files")
@@ -1638,13 +1561,6 @@ def main():
     hf_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hf-archive")
 
     saved_state = load_resume_state(args.state_file)
-    if saved_state and saved_state.get("updated_at"):
-        try:
-            state_updated_at = datetime.fromisoformat(saved_state["updated_at"].replace("Z", "+00:00"))
-            elapsed = max(0.0, (datetime.now(timezone.utc) - state_updated_at).total_seconds())
-            _last_thumbnail_request_at = time.monotonic() - elapsed
-        except (TypeError, ValueError):
-            logging.warning("无法解析 checkpoint updated_at；本次将使用新的缩图节流时钟。")
     completed_titles = set()
     part_plan = []
     pending_thumbnails = {}
@@ -1680,7 +1596,11 @@ def main():
             if datetime.now(timezone.utc) < retry_at:
                 saved_pool_size = int(saved_state.get("credential_pool_size") or 1)
                 current_pool_size = len(configured_youtube_account_slots())
-                if (
+                if saved_state.get("reason") == "thumbnailRateLimit":
+                    logging.info(
+                        "⏭️ 自訂縮圖已停用；忽略舊 thumbnailRateLimit 冷卻並繼續發布。"
+                    )
+                elif (
                     saved_state.get("reason") == "quotaExceeded"
                     and current_pool_size > saved_pool_size
                 ):
@@ -1920,43 +1840,20 @@ def main():
             completed_titles.discard(title)
             logging.warning("Repairing orphan video playlist membership: %s (%s)", title, video_id)
 
-    # Version-2 checkpoints predate pending_thumbnails.  The last completed
-    # title is conservatively repaired once, which fixes the already uploaded
-    # Part 11 whose five thumbnail attempts all received HTTP 429.
-    if saved_state and int(saved_state.get("version") or 0) < 3 and completed_titles:
-        for planned in reversed(part_plan):
-            legacy_title = str(planned.get("title") or "").strip()
-            if legacy_title in completed_titles and legacy_title in existing_video_ids:
-                pending_thumbnails.setdefault(legacy_title, existing_video_ids[legacy_title])
-                logging.info("🧭 舊版斷點遷移：將最後完成影片列入封面核對：%s", legacy_title)
-                break
-
-    # Finish durable post-upload work before creating any more videos.  This is
-    # what repairs a thumbnails.set 429 on the next scheduled run.
+    # Custom thumbnails are deliberately disabled.  Every MP4 already contains
+    # the cover as its static video track, so a second thumbnails.set write only
+    # consumes channel-level rate limit.  Migrate old checkpoints by acknowledging
+    # the obsolete step and continuing with playlist/caption/publication work.
     for pending_title, pending_video_id in list(pending_thumbnails.items()):
         pending_part_num = part_number_for_title(part_plan, pending_title)
-        try:
-            logging.info("🖼️ 續傳待補封面：%s (%s)", pending_title, pending_video_id)
-            set_video_thumbnail(youtube, pending_video_id, cover_path)
-            if pending_part_num:
-                publication.complete(pending_part_num, "upload_video", youtube_video_id=pending_video_id)
-                publication.record_thumbnail_ack(pending_part_num)
-        except ThumbnailUploadPaused as paused:
-            if pending_part_num:
-                publication.fail(pending_part_num, "upload_thumbnail", paused, paused=True, youtube_video_id=pending_video_id)
-            save_resume_state(
-                args.state_file, args.run_id, args.privacy, "paused",
-                paused.reason, paused.retry_at, completed_titles, part_plan,
-                pending_thumbnails, pending_playlist=pending_playlist,
-                pending_captions=pending_captions,
-                pending_publish=pending_publish,
+        logging.info("⏭️ 自訂縮圖已停用；清除舊待補縮圖：%s (%s)", pending_title, pending_video_id)
+        if pending_part_num:
+            publication.complete(pending_part_num, "upload_video", youtube_video_id=pending_video_id)
+            publication.complete(
+                pending_part_num, "upload_thumbnail",
+                youtube_video_id=pending_video_id, skipped=True,
+                reason="custom_thumbnail_disabled_static_cover_video",
             )
-            logging.error(
-                "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
-                len(completed_titles), len(part_plan), paused.retry_at.isoformat(),
-                args.run_id, paused.reason,
-            )
-            return EXIT_RETRY_LATER
         del pending_thumbnails[pending_title]
         save_resume_state(
             args.state_file, args.run_id, args.privacy, "running",
@@ -2496,30 +2393,6 @@ def main():
                             privacy_status="public",
                             cover_path=None
                         )
-                    except ThumbnailUploadPaused as paused:
-                        # videos.insert already succeeded.  Persist its id before
-                        # stopping so resume repairs the cover without duplicating
-                        # this multi-hour video.
-                        pending_thumbnails[p_meta["title"]] = paused.video_id
-                        pending_playlist[p_meta["title"]] = paused.video_id
-                        publication.complete(
-                            part_counter, "upload_video", youtube_video_id=paused.video_id,
-                            youtube_slot=youtube.active_account["slot"],
-                        )
-                        publication.fail(part_counter, "upload_thumbnail", paused, paused=True, youtube_video_id=paused.video_id)
-                        save_resume_state(
-                            args.state_file, args.run_id, args.privacy, "paused",
-                            paused.reason, paused.retry_at, completed_titles, part_plan,
-                            pending_thumbnails, pending_playlist=pending_playlist,
-                            pending_captions=pending_captions,
-                            pending_publish=pending_publish,
-                        )
-                        logging.error(
-                            "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
-                            len(completed_titles), len(part_plan), paused.retry_at.isoformat(),
-                            args.run_id, paused.reason,
-                        )
-                        return EXIT_RETRY_LATER
                     except UploadPaused as paused:
                         publication.fail(part_counter, "upload_video", paused, paused=True)
                         save_resume_state(args.state_file, args.run_id, args.privacy, "paused",
@@ -2537,35 +2410,16 @@ def main():
                             part_counter, v_id, _file_sha256(out_path),
                             youtube_slot=youtube.active_account["slot"],
                         )
-                        pending_thumbnails[p_meta["title"]] = v_id
                         pending_playlist[p_meta["title"]] = v_id
                         save_resume_state(args.state_file, args.run_id, "public", "running",
                                           completed_titles=completed_titles, part_plan=part_plan,
                                           pending_thumbnails=pending_thumbnails,
                                           pending_playlist=pending_playlist)
-                        try:
-                            set_video_thumbnail(youtube, v_id, p_meta["cover_file"])
-                        except ThumbnailUploadPaused as paused:
-                            publication.fail(
-                                part_counter, "upload_thumbnail", paused,
-                                paused=True, youtube_video_id=v_id,
-                            )
-                            save_resume_state(
-                                args.state_file, args.run_id, args.privacy, "paused",
-                                paused.reason, paused.retry_at, completed_titles, part_plan,
-                                pending_thumbnails, pending_playlist=pending_playlist,
-                                pending_captions=pending_captions,
-                                pending_publish=pending_publish,
-                            )
-                            logging.error(
-                                "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | "
-                                "retry_at=%s | source_run=%s | reason=%s",
-                                len(completed_titles), len(part_plan), paused.retry_at.isoformat(),
-                                args.run_id, paused.reason,
-                            )
-                            return EXIT_RETRY_LATER
-                        publication.record_thumbnail_ack(part_counter)
-                        pending_thumbnails.pop(p_meta["title"], None)
+                        publication.complete(
+                            part_counter, "upload_thumbnail",
+                            youtube_video_id=v_id, skipped=True,
+                            reason="custom_thumbnail_disabled_static_cover_video",
+                        )
                         playlist_item_id = add_video_to_playlist(
                             youtube, playlist_id, v_id, position=part_counter - 1,
                         )
@@ -2589,7 +2443,7 @@ def main():
                                           pending_thumbnails=pending_thumbnails,
                                           pending_playlist=pending_playlist,
                                           playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}")
-                        logging.info("[YouTube Quota] thumbnail: +50; playlist insert: +50; estimated general quota used: 100")
+                        logging.info("[YouTube Quota] playlist insert: +50; estimated general quota used: 50")
                         total_uploaded += 1
                         for completed_item in sliced_items:
                             if os.path.exists(completed_item["path"]):
@@ -2957,27 +2811,6 @@ def main():
                     privacy_status="public",
                     cover_path=None
                 )
-            except ThumbnailUploadPaused as paused:
-                publication.complete(
-                    part_n, "upload_video", youtube_video_id=paused.video_id,
-                    youtube_slot=youtube.active_account["slot"],
-                )
-                publication.fail(part_n, "upload_thumbnail", paused, paused=True, youtube_video_id=paused.video_id)
-                pending_thumbnails[v_title] = paused.video_id
-                pending_playlist[v_title] = paused.video_id
-                save_resume_state(
-                    args.state_file, args.run_id, args.privacy, "paused",
-                    paused.reason, paused.retry_at, completed_titles, part_plan,
-                    pending_thumbnails, pending_playlist=pending_playlist,
-                    pending_captions=pending_captions,
-                    pending_publish=pending_publish,
-                )
-                logging.error(
-                    "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
-                    len(completed_titles), len(part_plan), paused.retry_at.isoformat(),
-                    args.run_id, paused.reason,
-                )
-                return EXIT_RETRY_LATER
             except UploadPaused as paused:
                 publication.fail(part_n, "upload_video", paused, paused=True)
                 save_resume_state(args.state_file, args.run_id, args.privacy, "paused",
@@ -2996,7 +2829,6 @@ def main():
                     part_n, v_id, _file_sha256(v_path),
                     youtube_slot=youtube.active_account["slot"],
                 )
-                pending_thumbnails[v_title] = v_id
                 pending_playlist[v_title] = v_id
                 save_resume_state(
                     args.state_file, args.run_id, "public", "running",
@@ -3005,31 +2837,11 @@ def main():
                     pending_playlist=pending_playlist,
                     playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
                 )
-                try:
-                    set_video_thumbnail(youtube, v_id, v_cover)
-                except ThumbnailUploadPaused as paused:
-                    publication.fail(
-                        part_n, "upload_thumbnail", paused,
-                        paused=True, youtube_video_id=v_id,
-                    )
-                    save_resume_state(
-                        args.state_file, args.run_id, args.privacy, "paused",
-                        paused.reason, paused.retry_at, completed_titles, part_plan,
-                        pending_thumbnails, pending_playlist=pending_playlist,
-                        pending_captions=pending_captions,
-                        pending_publish=pending_publish,
-                        playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
-                    )
-                    logging.error(
-                        "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | "
-                        "retry_at=%s | source_run=%s | reason=%s",
-                        len(completed_titles), len(part_plan), paused.retry_at.isoformat(),
-                        args.run_id, paused.reason,
-                    )
-                    return EXIT_RETRY_LATER
-                publication.record_thumbnail_ack(part_n)
-                pending_thumbnails.pop(v_title, None)
-                logging.info("[YouTube Quota] thumbnail: +50")
+                publication.complete(
+                    part_n, "upload_thumbnail",
+                    youtube_video_id=v_id, skipped=True,
+                    reason="custom_thumbnail_disabled_static_cover_video",
+                )
                 playlist_item_id = add_video_to_playlist(
                     youtube, playlist_id, v_id, position=part_n - 1,
                 )
@@ -3209,8 +3021,6 @@ def main():
                     v_id, upload_slot, total_uploaded,
                 )
 
-    if pending_thumbnails:
-        raise RuntimeError(f"仍有 {len(pending_thumbnails)} 部影片等待補封面，禁止標記 complete")
     if pending_playlist:
         raise RuntimeError(f"仍有 {len(pending_playlist)} 部影片未加入播放清單，禁止標記 complete")
     if pending_captions:
@@ -3239,7 +3049,7 @@ def main():
 
         # Check every planned Part against YouTube again at the very end. A
         # restored checkpoint or an exact-title recovery is not success by
-        # itself; the public video, CC track, thumbnail and playlist entry must
+        # itself; the public video, CC track and playlist entry must
         # all still be readable.
         try:
             final_playlist_items = get_ordered_playlist_items(youtube, playlist_id)

@@ -24,12 +24,10 @@ from src.youtube_api_uploader import (
     load_resume_state,
     save_resume_state,
     recover_completed_titles_from_playlist,
-    set_video_thumbnail,
     upload_video_file,
     upload_caption_file,
     verify_published_part,
     select_worker_artifacts,
-    ThumbnailUploadPaused,
     UploadPaused,
     validate_chapter_inventory,
     parse_chapter_info,
@@ -50,6 +48,11 @@ from src.worker_pipeline import (
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
+    def test_custom_thumbnail_api_is_not_present_in_uploader(self):
+        source = Path(youtube_uploader.__file__).read_text(encoding="utf-8")
+        self.assertNotIn(".thumbnails().set(", source)
+        self.assertNotIn("def set_video_thumbnail(", source)
+
     def test_new_channel_restriction_replaces_stale_retry_guess(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = str(Path(temp_dir) / "state.json")
@@ -288,15 +291,18 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         self.assertEqual(result["youtube_video_id"], "video-1")
 
     @patch("src.youtube_api_uploader.get_playlist_video_index", return_value={"Part 1": "video-1"})
-    def test_final_readback_rejects_missing_thumbnail(self, playlist_index):
+    def test_final_readback_accepts_youtube_generated_thumbnail_state(self, playlist_index):
         youtube = MagicMock()
         youtube.videos.return_value.list.return_value.execute.return_value = {
             "items": [{"status": {"privacyStatus": "public"}, "snippet": {}}]
         }
-        with self.assertRaisesRegex(RuntimeError, "thumbnail cannot be read back"):
-            verify_published_part(
-                youtube, "video-1", "playlist-1", "public", attempts=1
-            )
+        youtube.captions.return_value.list.return_value.execute.return_value = {
+            "items": [{"snippet": {"language": "zh-TW", "status": "serving"}}]
+        }
+        result = verify_published_part(
+            youtube, "video-1", "playlist-1", "public", attempts=1
+        )
+        self.assertEqual(result["youtube_video_id"], "video-1")
 
     @patch("src.youtube_api_uploader.get_playlist_video_index", return_value={"Part 1": "video-1"})
     def test_final_readback_rejects_failed_caption_processing(self, playlist_index):
@@ -413,12 +419,11 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         self.assertEqual(recovered, {"Part 1", "Part 2"})
         self.assertEqual(completed, {"Part 1", "Part 2"})
 
-    @patch("src.youtube_api_uploader.set_video_thumbnail")
     @patch("src.youtube_api_uploader.time.sleep")
     @patch("src.youtube_api_uploader.MediaFileUpload")
     @patch("src.youtube_api_uploader.os.path.getsize", return_value=1024)
     def test_video_upload_resumes_same_request_after_ssl_disconnect(
-        self, getsize, media, sleep, thumbnail
+        self, getsize, media, sleep
     ):
         request = type("Request", (), {})()
         request.next_chunk = unittest.mock.Mock(side_effect=[
@@ -441,16 +446,12 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         self.assertEqual(request.next_chunk.call_count, 2)
         request.next_chunk.assert_called_with(num_retries=3)
         sleep.assert_called_once_with(1)
-        # videos.insert is a single-responsibility operation.  The caller
-        # durably checkpoints its ACK before invoking thumbnails.set.
-        thumbnail.assert_not_called()
 
-    @patch("src.youtube_api_uploader.set_video_thumbnail")
     @patch("src.youtube_api_uploader.time.sleep")
     @patch("src.youtube_api_uploader.MediaFileUpload")
     @patch("src.youtube_api_uploader.os.path.getsize", return_value=1024)
     def test_video_upload_network_retries_are_bounded(
-        self, getsize, media, sleep, thumbnail
+        self, getsize, media, sleep
     ):
         request = type("Request", (), {})()
         request.next_chunk = unittest.mock.Mock(
@@ -469,7 +470,6 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
                 network_attempts=3, initial_retry_delay=1,
             )
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
-        thumbnail.assert_not_called()
 
     def test_ssl_eof_is_a_transient_upload_error(self):
         self.assertTrue(is_transient_upload_error(ssl.SSLEOFError()))
@@ -581,66 +581,8 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         )
         get_index.assert_called_once_with(youtube, "uploads-1")
 
-    @patch("src.youtube_api_uploader.time.sleep")
     @patch("src.youtube_api_uploader.MediaFileUpload")
-    def test_thumbnail_rate_limit_becomes_resumable_pause(self, media, sleep):
-        request = type("Request", (), {"execute": lambda self: (_ for _ in ()).throw(Exception("429 uploadRateLimitExceeded"))})()
-        thumbnails = type("Thumbnails", (), {"set": lambda self, **kwargs: request})()
-        youtube = type("YouTube", (), {"thumbnails": lambda self: thumbnails})()
-        with tempfile.NamedTemporaryFile() as cover:
-            with self.assertRaises(ThumbnailUploadPaused) as raised:
-                set_video_thumbnail(youtube, "video-11", cover.name, attempts=2)
-        self.assertEqual(raised.exception.video_id, "video-11")
-        self.assertEqual(raised.exception.reason, "thumbnailRateLimit")
-        self.assertEqual(sleep.call_count, 0)
-
-    @patch("src.youtube_api_uploader.time.sleep")
-    @patch("src.youtube_api_uploader.time.monotonic", side_effect=[100.0, 110.0, 160.0])
-    @patch("src.youtube_api_uploader.MediaFileUpload")
-    def test_thumbnail_requests_are_channel_throttled(self, media, monotonic, sleep):
-        request = type("Request", (), {"execute": lambda self: {}})()
-        thumbnails = type("Thumbnails", (), {"set": lambda self, **kwargs: request})()
-        youtube = type("YouTube", (), {"thumbnails": lambda self: thumbnails})()
-        with patch.object(youtube_uploader, "_last_thumbnail_request_at", None), \
-             patch.object(youtube_uploader, "THUMBNAIL_MIN_INTERVAL_SECONDS", 60.0), \
-             tempfile.NamedTemporaryFile() as cover:
-            self.assertTrue(set_video_thumbnail(youtube, "video-1", cover.name))
-            self.assertTrue(set_video_thumbnail(youtube, "video-2", cover.name))
-        sleep.assert_called_once_with(50.0)
-
-    @patch("src.youtube_api_uploader.MediaFileUpload")
-    def test_thumbnail_quota_walks_all_ten_slots_before_pausing(self, media):
-        calls = {"execute": 0, "rotate": 0}
-
-        def execute():
-            calls["execute"] += 1
-            raise Exception("403 quotaExceeded")
-
-        request = type("Request", (), {"execute": lambda self: execute()})()
-        thumbnails = type("Thumbnails", (), {"set": lambda self, **kwargs: request})()
-
-        class Pool:
-            accounts = [{} for _ in range(10)]
-
-            def thumbnails(self):
-                return thumbnails
-
-            def rotate_on_quota(self, error):
-                calls["rotate"] += 1
-                return True
-
-        with patch.object(youtube_uploader, "THUMBNAIL_MIN_INTERVAL_SECONDS", 0.0), \
-             patch.object(youtube_uploader, "_last_thumbnail_request_at", None), \
-             tempfile.NamedTemporaryFile() as cover:
-            with self.assertRaises(ThumbnailUploadPaused) as raised:
-                set_video_thumbnail(Pool(), "video-16", cover.name)
-        self.assertEqual(calls["execute"], 30)
-        self.assertEqual(calls["rotate"], 30)
-        self.assertEqual(raised.exception.reason, "quotaExceeded")
-
-    @patch("src.youtube_api_uploader.set_video_thumbnail")
-    @patch("src.youtube_api_uploader.MediaFileUpload")
-    def test_video_insert_quota_uses_upload_rotation_for_lazy_slot_activation(self, media, thumbnail):
+    def test_video_insert_quota_uses_upload_rotation_for_lazy_slot_activation(self, media):
         calls = []
         failed = type("Request", (), {
             "next_chunk": lambda self, **kwargs: (_ for _ in ()).throw(Exception("quotaExceeded"))

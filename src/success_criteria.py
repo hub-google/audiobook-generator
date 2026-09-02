@@ -13,7 +13,6 @@ except ImportError:
 
 
 PENDING_FIELDS = (
-    "pending_thumbnails",
     "pending_playlist",
     "pending_captions",
     "pending_publish",

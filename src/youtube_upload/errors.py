@@ -16,12 +16,6 @@ class UploadPaused(RuntimeError):
         self.original_error = original_error
 
 
-class ThumbnailUploadPaused(UploadPaused):
-    def __init__(self, video_id, retry_at, original_error=None, reason="thumbnailRateLimit"):
-        super().__init__(reason, retry_at, original_error)
-        self.video_id = video_id
-
-
 def classify_daily_limit(error):
     text = str(error)
     now = datetime.now(timezone.utc)

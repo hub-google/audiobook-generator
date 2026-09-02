@@ -55,11 +55,11 @@ class StrictSuccessCriteriaTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "status is 'paused'"):
                 validate_upload_success(state_path, expected_run_id="123")
 
-    def test_rejects_pending_mandatory_youtube_work(self):
+    def test_ignores_legacy_pending_thumbnail_state(self):
         with tempfile.TemporaryDirectory() as directory:
             state_path = self.write_evidence(directory, pending=True)
-            with self.assertRaisesRegex(RuntimeError, "pending_thumbnails is not empty"):
-                validate_upload_success(state_path, expected_run_id="123")
+            result = validate_upload_success(state_path, expected_run_id="123")
+            self.assertEqual(result["parts"], 1)
 
     def test_rejects_wrong_source_run(self):
         with tempfile.TemporaryDirectory() as directory:
