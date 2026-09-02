@@ -1752,8 +1752,8 @@
         1728,
         1729
       ],
-      "status": "needs_attention",
-      "run_id": 33622895752,
+      "status": "waiting_retry",
+      "run_id": 33642008252,
       "run_attempt": 1,
       "execution_generation": 2,
       "retry_requested_at": "2026-08-31T10:19:57.433881+00:00",
@@ -1824,8 +1824,8 @@
           "ended_at": "2026-09-02T09:22:02Z"
         }
       ],
-      "retry_at": null,
-      "reason": "permanentFailure;",
+      "retry_at": "2026-09-02T16:38:22.977912+00:00",
+      "reason": "otherError",
       "hf_progress": {
         "completed": 0,
         "total": 21
