@@ -33,8 +33,6 @@ from src.youtube_api_uploader import (
     UploadPaused,
     validate_chapter_inventory,
     parse_chapter_info,
-    normalize_playlist_covers_to_last_part,
-    normalize_local_part_covers_to_last_part,
     validate_user_facing_playlist,
     completed_playlist_title,
     load_measured_prepared_part_plan,
@@ -52,7 +50,7 @@ from src.worker_pipeline import (
 
 
 class YouTubeUploadPlanningTests(unittest.TestCase):
-    def test_shorter_pause_cannot_replace_active_upload_limit(self):
+    def test_new_channel_restriction_replaces_stale_retry_guess(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = str(Path(temp_dir) / "state.json")
             upload_retry = datetime.now(timezone.utc) + timedelta(hours=24)
@@ -66,8 +64,8 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
                 reason="thumbnailRateLimit", retry_at=thumbnail_retry,
             )
             state = load_resume_state(state_path)
-            self.assertEqual(state["reason"], "uploadLimitExceeded")
-            self.assertEqual(state["retry_at"], upload_retry.isoformat())
+            self.assertEqual(state["reason"], "thumbnailRateLimit")
+            self.assertEqual(state["retry_at"], thumbnail_retry.isoformat())
 
     def test_checkpoint_records_stable_queue_task_id(self):
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
@@ -397,13 +395,13 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
             get_or_create_playlist(youtube, "Test playlist")
         self.assertEqual(raised.exception.reason, "quotaExceeded")
 
-    def test_channel_upload_limit_waits_24_hours_and_15_minutes(self):
+    def test_channel_upload_limit_uses_a_conservative_probe_without_claiming_a_reset_time(self):
         before = datetime.now(timezone.utc)
         paused = classify_daily_limit(Exception("uploadLimitExceeded"))
         after = datetime.now(timezone.utc)
         self.assertEqual(paused.reason, "uploadLimitExceeded")
-        self.assertGreaterEqual(paused.retry_at, before + timedelta(hours=24, minutes=15))
-        self.assertLessEqual(paused.retry_at, after + timedelta(hours=24, minutes=15))
+        self.assertGreaterEqual(paused.retry_at, before + timedelta(hours=2))
+        self.assertLessEqual(paused.retry_at, after + timedelta(hours=2))
 
     def test_recovers_only_exact_planned_titles_from_playlist(self):
         completed = {"Part 1"}
@@ -610,20 +608,6 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
             self.assertTrue(set_video_thumbnail(youtube, "video-2", cover.name))
         sleep.assert_called_once_with(50.0)
 
-    def test_part_covers_are_normalized_before_youtube_upload(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            first = os.path.join(temp_dir, "first.jpg")
-            last = os.path.join(temp_dir, "last.jpg")
-            Path(first).write_bytes(b"old-cover")
-            Path(last).write_bytes(b"canonical-cover")
-            selected = normalize_local_part_covers_to_last_part([
-                {"part_num": 1, "cover_path": first},
-                {"part_num": 2, "cover_path": last},
-            ])
-            self.assertEqual(selected, last)
-            self.assertEqual(Path(first).read_bytes(), b"canonical-cover")
-            self.assertEqual(Path(last).read_bytes(), b"canonical-cover")
-
     @patch("src.youtube_api_uploader.MediaFileUpload")
     def test_thumbnail_quota_walks_all_ten_slots_before_pausing(self, media):
         calls = {"execute": 0, "rotate": 0}
@@ -645,7 +629,9 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
                 calls["rotate"] += 1
                 return True
 
-        with tempfile.NamedTemporaryFile() as cover:
+        with patch.object(youtube_uploader, "THUMBNAIL_MIN_INTERVAL_SECONDS", 0.0), \
+             patch.object(youtube_uploader, "_last_thumbnail_request_at", None), \
+             tempfile.NamedTemporaryFile() as cover:
             with self.assertRaises(ThumbnailUploadPaused) as raised:
                 set_video_thumbnail(Pool(), "video-16", cover.name)
         self.assertEqual(calls["execute"], 30)
@@ -990,32 +976,6 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         self.assertEqual(result["youtube_video_id"], "video-17")
         upload_caption.assert_called_once_with(youtube, "video-17", os.path.abspath(srt_path))
 
-    @patch("src.youtube_api_uploader.set_video_thumbnail", return_value=True)
-    def test_cover_difference_replaces_every_video_with_last_part_cover(self, set_thumbnail):
-        with tempfile.TemporaryDirectory() as directory:
-            first = os.path.join(directory, "part-1.jpg")
-            last = os.path.join(directory, "part-2.jpg")
-            with open(first, "wb") as handle:
-                handle.write(b"old-cover")
-            with open(last, "wb") as handle:
-                handle.write(b"last-part-cover")
-            items = [
-                {"position": 0, "title": "Part 1", "video_id": "video-1"},
-                {"position": 1, "title": "Part 2", "video_id": "video-2"},
-            ]
-            parts = [
-                {"part_num": 1, "cover_path": first},
-                {"part_num": 2, "cover_path": last},
-            ]
-
-            result = normalize_playlist_covers_to_last_part(MagicMock(), items, parts)
-
-            self.assertTrue(result["cover_repair_applied"])
-            self.assertEqual(result["canonical_cover_source_part"], 2)
-            self.assertEqual(open(first, "rb").read(), open(last, "rb").read())
-            self.assertEqual(set_thumbnail.call_count, 2)
-            self.assertEqual({call.args[2] for call in set_thumbnail.call_args_list}, {last})
-
     def test_user_facing_gate_rejects_out_of_order_parts(self):
         with tempfile.TemporaryDirectory() as directory:
             cover = os.path.join(directory, "cover.jpg")
@@ -1030,7 +990,7 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
                 {"position": 1, "title": "Part 1", "video_id": "video-1"},
             ]
             with self.assertRaisesRegex(RuntimeError, "out of order"):
-                validate_user_facing_playlist(items, plan, [cover, cover])
+                validate_user_facing_playlist(items, plan)
 
 
 if __name__ == "__main__":

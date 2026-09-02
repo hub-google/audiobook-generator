@@ -88,10 +88,6 @@ def validate_upload_success(state_file, expected_run_id=None):
         errors.append("the user-facing playlist is not ordered from the first Part to the last Part")
     if viewer_gate.get("unique_video_ids") != len(plan):
         errors.append("the user-facing playlist contains missing or duplicate videos")
-    cover_sha = str(viewer_gate.get("canonical_cover_sha256") or "")
-    if len(cover_sha) != 64 or any(char not in "0123456789abcdef" for char in cover_sha.lower()):
-        errors.append("a single verified canonical-cover SHA-256 is missing")
-
     execution_path = os.path.join(os.path.dirname(os.path.abspath(state_file)), "part_execution.json")
     execution = _load_json(execution_path)
     if execution.get("plan_status") != "locked":
@@ -122,5 +118,4 @@ def validate_upload_success(state_file, expected_run_id=None):
         "run_id": str(state.get("run_id") or ""),
         "parts": len(plan),
         "playlist_url": state["playlist_url"],
-        "canonical_cover_sha256": cover_sha,
     }

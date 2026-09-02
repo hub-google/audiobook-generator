@@ -26,7 +26,6 @@ class StrictSuccessCriteriaTests(unittest.TestCase):
                 "item_count": 1,
                 "ordered_parts": [1],
                 "unique_video_ids": 1,
-                "canonical_cover_sha256": "a" * 64,
             },
         }
         execution = {

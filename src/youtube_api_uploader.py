@@ -800,66 +800,8 @@ def _file_sha256(path):
         return hashlib.sha256(handle.read()).hexdigest()
 
 
-def normalize_playlist_covers_to_last_part(youtube, playlist_items, parts_to_upload):
-    """封面不一致時，以最後一部封面覆蓋清單內每一部影片的縮圖。"""
-    ordered_parts = sorted(parts_to_upload, key=lambda item: int(item["part_num"]))
-    cover_paths = [item.get("cover_path") for item in ordered_parts]
-    for path in cover_paths:
-        if not path or not os.path.isfile(path):
-            raise RuntimeError(f"使用者播放清單驗收失敗：Part 封面不存在：{path}")
-    hashes = {_file_sha256(path) for path in cover_paths}
-    canonical_cover = cover_paths[-1]
-    repaired = len(hashes) != 1
-    if repaired:
-        logging.warning("偵測到封面不一致；以最後一部封面覆蓋播放清單內全部 %s 部影片。", len(playlist_items))
-        if len(playlist_items) != len(ordered_parts):
-            raise RuntimeError("使用者播放清單驗收失敗：項目數不符，禁止在對應不明時批次替換封面")
-        for playlist_item, part in zip(playlist_items, ordered_parts):
-            video_id = str(playlist_item.get("video_id") or "").strip()
-            if not video_id:
-                raise RuntimeError("使用者播放清單驗收失敗：存在已刪除或不可用影片，無法替換封面")
-            set_video_thumbnail(youtube, video_id, canonical_cover)
-        # 全部遠端縮圖更新成功後才同步本地檔案；若中途失敗，下一次仍能偵測差異並完整重試。
-        for part in ordered_parts:
-            target_cover = part["cover_path"]
-            if os.path.abspath(target_cover) != os.path.abspath(canonical_cover):
-                shutil.copyfile(canonical_cover, target_cover)
-        hashes = {_file_sha256(path) for path in cover_paths}
-    if len(hashes) != 1:
-        raise RuntimeError("使用者播放清單驗收失敗：批次替換後封面仍不一致")
-    return {
-        "cover_repair_applied": repaired,
-        "canonical_cover_source_part": int(ordered_parts[-1]["part_num"]),
-        "canonical_cover_sha256": next(iter(hashes)),
-        "cover_count": len(cover_paths),
-    }
-
-
-def normalize_local_part_covers_to_last_part(parts_to_upload):
-    """Make every local Part use the final Part cover before any API write.
-
-    The final playlist audit requires one canonical cover. Normalizing locally
-    prevents uploading a per-Part cover and then issuing a second
-    ``thumbnails.set`` for every video at the end of the run.
-    """
-    ordered_parts = sorted(parts_to_upload, key=lambda item: int(item["part_num"]))
-    if not ordered_parts:
-        return None
-    canonical_cover = ordered_parts[-1].get("cover_path")
-    if not canonical_cover or not os.path.isfile(canonical_cover):
-        raise RuntimeError(f"最後一部 Part 封面不存在：{canonical_cover}")
-    canonical_hash = _file_sha256(canonical_cover)
-    for part in ordered_parts:
-        target = part.get("cover_path")
-        if not target or not os.path.isfile(target):
-            raise RuntimeError(f"Part 封面不存在：{target}")
-        if _file_sha256(target) != canonical_hash:
-            shutil.copyfile(canonical_cover, target)
-    return canonical_cover
-
-
-def validate_user_facing_playlist(playlist_items, part_plan, cover_paths, cover_normalization=None):
-    """驗證使用者看到的排序，以及每一部實際上傳封面完全一致。"""
+def validate_user_facing_playlist(playlist_items, part_plan):
+    """驗證使用者看到的 Part 數量、排序與影片唯一性。"""
     ordered_plan = sorted(part_plan, key=lambda part: int(part["part_num"]))
     expected_numbers = list(range(1, len(ordered_plan) + 1))
     actual_numbers = [int(part["part_num"]) for part in ordered_plan]
@@ -895,24 +837,11 @@ def validate_user_facing_playlist(playlist_items, part_plan, cover_paths, cover_
             "user-facing playlist validation failed: deleted/unavailable or duplicate videos are present"
         )
 
-    cover_hashes = set()
-    for path in cover_paths:
-        if not path or not os.path.isfile(path):
-            raise RuntimeError(f"user-facing playlist validation failed: cover is missing: {path}")
-        cover_hashes.add(_file_sha256(path))
-    if not cover_hashes or len(cover_hashes) != 1:
-        raise RuntimeError(
-            f"user-facing playlist validation failed: Parts use {len(cover_hashes)} different master covers"
-        )
-
     return {
         "status": "passed",
         "item_count": len(playlist_items),
         "ordered_parts": expected_numbers,
         "unique_video_ids": len(set(video_ids)),
-        "canonical_cover_sha256": next(iter(cover_hashes)),
-        "cover_repair_applied": bool((cover_normalization or {}).get("cover_repair_applied")),
-        "canonical_cover_source_part": (cover_normalization or {}).get("canonical_cover_source_part"),
     }
 
 
@@ -1751,18 +1680,13 @@ def main():
             if datetime.now(timezone.utc) < retry_at:
                 saved_pool_size = int(saved_state.get("credential_pool_size") or 1)
                 current_pool_size = len(configured_youtube_account_slots())
-                legacy_thumbnail_pause = (
-                    saved_state.get("reason") == "thumbnailRateLimit"
-                    and bool(pending_thumbnails)
-                    and current_pool_size > 1
-                )
                 if (
                     saved_state.get("reason") == "quotaExceeded"
                     and current_pool_size > saved_pool_size
-                ) or legacy_thumbnail_pause:
+                ):
                     logging.info(
                         "🔄 YouTube 憑證池可用 %s 組（舊斷點記錄 %s 組）；"
-                        "忽略舊縮圖等待時間並立即從下一個 API slot 繼續。",
+                        "忽略舊 API 專案配額等待時間並立即從下一個 API slot 繼續。",
                         current_pool_size,
                         saved_pool_size,
                     )
@@ -2907,7 +2831,6 @@ def main():
         local_plan = []
         if locked_parts and {int(item["part_num"]) for item in parts_to_upload} != set(locked_parts):
             raise RuntimeError("HF prepared Parts do not exactly cover the locked Part plan")
-        normalize_local_part_covers_to_last_part(parts_to_upload)
         for item in parts_to_upload:
             local_plan.append({
                 "part_num": item["part_num"], "start_chap": item["start_chap"],
@@ -3372,14 +3295,9 @@ def main():
                     )
             publication.complete(part_num, "final_validation", **evidence)
 
-        cover_normalization = normalize_playlist_covers_to_last_part(
-            youtube, final_playlist_items, parts_to_upload,
-        )
         final_playlist_validation = validate_user_facing_playlist(
             final_playlist_items,
             part_plan,
-            [item.get("cover_path") for item in parts_to_upload],
-            cover_normalization,
         )
         hf_evidence = hf_archiver.verify_book(book_title, len(part_plan))
         for planned in part_plan:
@@ -3397,29 +3315,9 @@ def main():
 
     if final_playlist_validation is None:
         final_playlist_items = get_ordered_playlist_items(youtube, playlist_id)
-        try:
-            cover_normalization = normalize_playlist_covers_to_last_part(
-                youtube, final_playlist_items, parts_to_upload,
-            )
-        except ThumbnailUploadPaused as paused:
-            save_resume_state(
-                args.state_file, args.run_id, args.privacy, "paused",
-                paused.reason, paused.retry_at, completed_titles, part_plan,
-                pending_thumbnails, pending_playlist=pending_playlist,
-                pending_captions=pending_captions,
-                pending_publish=pending_publish,
-                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
-            )
-            logging.error(
-                "Final cover normalization paused; retry after %s",
-                paused.retry_at.isoformat(),
-            )
-            return EXIT_RETRY_LATER
         final_playlist_validation = validate_user_facing_playlist(
             final_playlist_items,
             part_plan,
-            [item.get("cover_path") for item in parts_to_upload],
-            cover_normalization,
         )
 
     measured_duration_seconds = sum(
@@ -3466,9 +3364,6 @@ def main():
         completed_parts=len(completed_titles),
         playlist_items=final_playlist_validation["item_count"],
         ordered_parts=True,
-        canonical_cover_sha256=final_playlist_validation["canonical_cover_sha256"],
-        cover_repair_applied=final_playlist_validation["cover_repair_applied"],
-        canonical_cover_source_part=final_playlist_validation["canonical_cover_source_part"],
     )
     save_resume_state(args.state_file, args.run_id, args.privacy, "complete",
                       completed_titles=completed_titles, part_plan=part_plan,

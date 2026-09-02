@@ -827,8 +827,6 @@ jobs:
               "viewer_playlist_gate": viewer_gate.get("status", "missing"),
               "viewer_playlist_items": viewer_gate.get("item_count", 0),
               "viewer_playlist_order": viewer_gate.get("ordered_parts", []),
-              "canonical_cover_sha256": viewer_gate.get("canonical_cover_sha256", ""),
-              "cover_repair_applied": viewer_gate.get("cover_repair_applied", False),
           }, ensure_ascii=False))
           
           status_icon = "⏸️"
@@ -847,8 +845,6 @@ jobs:
               f.write(f"| **使用者最終播放清單驗收** | **{viewer_gate.get('status', 'missing').upper()}** |\n")
               f.write(f"| **播放清單實際項目數** | **{viewer_gate.get('item_count', 0)}** |\n")
               f.write(f"| **Part 排序** | **{viewer_gate.get('ordered_parts', [])}** |\n")
-              f.write(f"| **唯一標準封面 SHA-256** | `{viewer_gate.get('canonical_cover_sha256', '')}` |\n")
-              f.write(f"| **封面一致化修復** | **{'已套用（以最後一部封面覆蓋全部影片）' if viewer_gate.get('cover_repair_applied') else '不需要'}** |\n")
               f.write(f"| **Current Book Hugging Face Parts** | **{hf_done} / {total}** |\n")
               if not book_title:
                   f.write("| **Hugging Face Summary Warning** | `本次 checkpoint 缺少 book_title，無法統計本書 HF Parts` |\n")

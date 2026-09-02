@@ -26,7 +26,10 @@ def classify_daily_limit(error):
     text = str(error)
     now = datetime.now(timezone.utc)
     if "uploadLimitExceeded" in text:
-        return UploadPaused("uploadLimitExceeded", now + timedelta(hours=24, minutes=15), error)
+        # YouTube documents this as a channel upload limit but does not expose
+        # its reset timestamp. Probe conservatively instead of inventing a
+        # next-day deadline.
+        return UploadPaused("uploadLimitExceeded", now + timedelta(hours=2), error)
     if "quotaExceeded" in text or "dailyLimitExceeded" in text:
         pacific = ZoneInfo("America/Los_Angeles")
         local_now = now.astimezone(pacific)
@@ -57,4 +60,3 @@ def is_transient_youtube_api_error(error):
     if isinstance(content, bytes):
         content = content.decode("utf-8", errors="replace")
     return status == 409 and "SERVICE_UNAVAILABLE" in f"{error} {content}".upper()
-

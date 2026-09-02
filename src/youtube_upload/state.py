@@ -64,23 +64,6 @@ def save_resume_state(path, run_id, privacy, status, reason="", retry_at=None,
             except ValueError:
                 logging.warning("忽略無法解析的舊 retry_at：%s", previous_retry_text)
 
-    # A shorter, later API pause must not erase an already-active channel
-    # restriction.  This is especially important when uploadLimitExceeded is
-    # followed by thumbnailRateLimit in a resumed run.
-    previous_retry_text = (previous or {}).get("retry_at")
-    if status == "paused" and retry_at is not None and previous_retry_text:
-        try:
-            previous_retry_at = datetime.fromisoformat(previous_retry_text.replace("Z", "+00:00"))
-            if datetime.now(timezone.utc) < previous_retry_at and previous_retry_at > retry_at:
-                logging.warning(
-                    "保留较晚的既有频道冷却时间 %s（新限制 %s 原定 %s）。",
-                    previous_retry_at.isoformat(), reason, retry_at.isoformat(),
-                )
-                retry_at = previous_retry_at
-                reason = (previous or {}).get("reason") or reason
-        except ValueError:
-            logging.warning("忽略无法解析的旧 retry_at：%s", previous_retry_text)
-
     data = {
         "version": 4,
         "run_id": str(run_id) if run_id else "",
