@@ -97,10 +97,15 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
     def test_worker_artifacts_cannot_be_empty(self):
         steps = self.jobs["process_chapters"]["steps"]
         upload_steps = [step for step in steps if step.get("uses") == "actions/upload-artifact@v4"]
-        self.assertEqual(len(upload_steps), 3)
+        self.assertEqual(len(upload_steps), 5)
         self.assertTrue(all(step["with"]["if-no-files-found"] == "error" for step in upload_steps))
-        full_step = next(step for step in upload_steps if "video-worker" in step["with"]["name"])
-        self.assertEqual(full_step.get("if"), "always()")
+        full_steps = [step for step in upload_steps if "video-worker" in step["with"]["name"]]
+        self.assertEqual(len(full_steps), 3)
+        self.assertEqual(full_steps[0].get("if"), "always()")
+        self.assertTrue(full_steps[0].get("continue-on-error"))
+        self.assertTrue(full_steps[1].get("continue-on-error"))
+        self.assertNotIn("continue-on-error", full_steps[2])
+        self.assertTrue(all(step["with"].get("compression-level") == 0 for step in full_steps))
         mp4_step = next(step for step in upload_steps if "mp4-worker" in step["with"]["name"])
         self.assertEqual(mp4_step.get("if"), "success()")
         self.assertIn("Workspace/*/SourceStatus/", mp4_step["with"]["path"])
