@@ -4,6 +4,10 @@ import unicodedata
 from difflib import SequenceMatcher
 import yaml
 import logging
+try:
+    from .artifact_validation import ArtifactValidationError, validate_text
+except ImportError:
+    from artifact_validation import ArtifactValidationError, validate_text
 
 try:
     from .book_profiles import validate_remove_patterns
@@ -169,9 +173,13 @@ def run_cleaner(target_indices=None):
         # 如果已有干淨 clean.txt，且未要求 force，直接跳過
         clean_filename = filename.replace("_raw.txt", "_clean.txt")
         clean_path = os.path.join(clean_text_dir, clean_filename)
-        if os.path.exists(clean_path) and os.path.getsize(clean_path) > 10:
-            logging.info(f"[Cleaner] Skipping existing: {clean_filename}")
-            continue
+        if os.path.exists(clean_path):
+            try:
+                validate_text(clean_path, clean=True)
+                logging.info(f"[Cleaner] Skipping validated: {clean_filename}")
+                continue
+            except (ArtifactValidationError, OSError, ValueError):
+                logging.warning("[Cleaner] Existing output is invalid; rebuilding: %s", clean_filename)
 
         with open(raw_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
@@ -194,6 +202,7 @@ def run_cleaner(target_indices=None):
             f.write(chunked_text)
             f.flush()
             os.fsync(f.fileno())
+        validate_text(clean_tmp, clean=True)
         os.replace(clean_tmp, clean_path)
             
         logging.info(f"[Cleaner] Cleaned, chunked and saved text to {clean_path}")

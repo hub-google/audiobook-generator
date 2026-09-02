@@ -6,6 +6,10 @@ import logging
 import requests
 from bs4 import BeautifulSoup
 import yaml
+try:
+    from .artifact_validation import ArtifactValidationError, validate_text
+except ImportError:
+    from artifact_validation import ArtifactValidationError, validate_text
 
 try:
     from .source_status import (
@@ -108,8 +112,13 @@ def run_crawler():
                 raw_filename = f"{book_title}_chapter_{i+1}_raw.txt"
                 raw_path = os.path.join(raw_text_dir, raw_filename)
                 
-                with open(raw_path, "w", encoding="utf-8") as f:
+                raw_tmp = raw_path + ".tmp"
+                with open(raw_tmp, "w", encoding="utf-8") as f:
                     f.write(title + "\n\n" + raw_text)
+                    f.flush()
+                    os.fsync(f.fileno())
+                validate_text(raw_tmp, clean=False)
+                os.replace(raw_tmp, raw_path)
                 logging.info(f"[Crawler] Saved raw text for {title} to {raw_path}")
                 
                 # Update progress
@@ -173,10 +182,14 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
 
         # progress.json is only an index. The actual output file is the source of
         # truth, otherwise a stale progress entry can permanently skip a chapter.
-        if os.path.exists(raw_path) and os.path.getsize(raw_path) > 10:
-            source_status.mark_available(global_idx)
-            logging.info(f"[Crawler Worker] Skipping already scraped chapter {global_idx}: {chap_url}")
-            continue
+        if os.path.exists(raw_path):
+            try:
+                validate_text(raw_path, clean=False)
+                source_status.mark_available(global_idx)
+                logging.info(f"[Crawler Worker] Skipping validated chapter {global_idx}: {chap_url}")
+                continue
+            except (ArtifactValidationError, OSError, ValueError):
+                logging.warning("[Crawler Worker] RawText %s is corrupt; rebuilding", global_idx)
 
         if source_status.is_confirmed_missing(global_idx):
             raise SourceMissingError(
@@ -228,6 +241,7 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
                     f.write(title + "\n\n" + raw_text)
                     f.flush()
                     os.fsync(f.fileno())
+                validate_text(raw_tmp, clean=False)
                 os.replace(raw_tmp, raw_path)
                 source_status.mark_available(global_idx)
                 logging.info(f"[Crawler Worker] Saved: {raw_filename}")

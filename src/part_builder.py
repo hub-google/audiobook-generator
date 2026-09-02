@@ -16,6 +16,11 @@ import subprocess
 import shutil
 import logging
 
+try:
+    from .artifact_validation import ArtifactRegistry, ArtifactValidationError, sha256_file, stable_signature, validate_video
+except ImportError:
+    from artifact_validation import ArtifactRegistry, ArtifactValidationError, sha256_file, stable_signature, validate_video
+
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SRC_DIR)
 
@@ -134,7 +139,21 @@ def format_timestamp(seconds):
     s = int(seconds % 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
 
-def partition_chapters(file_list, min_hours=10.0, max_hours=11.0):
+def validate_chapter_continuity(chapter_numbers, confirmed_missing=None):
+    numbers = [int(value) for value in chapter_numbers]
+    if len(numbers) != len(set(numbers)):
+        raise ArtifactValidationError("duplicate chapter MP4 detected")
+    if not numbers:
+        raise ArtifactValidationError("no chapter MP4 files")
+    confirmed = {int(value) for value in (confirmed_missing or [])}
+    gaps = set(range(min(numbers), max(numbers) + 1)) - set(numbers) - confirmed
+    if gaps:
+        raise ArtifactValidationError(f"chapter continuity gap: {sorted(gaps)}")
+    return True
+
+
+def partition_chapters(file_list, min_hours=10.0, max_hours=11.0,
+                       confirmed_missing=None, strict_continuity=True):
     """
     動態視窗分部演算邏輯：
     1. 將所有可用的章節按自然數編號正序排列 1, 2, 3...
@@ -154,6 +173,8 @@ def partition_chapters(file_list, min_hours=10.0, max_hours=11.0):
 
     # 按章節編號升序排序
     items.sort(key=lambda x: x["chap_num"])
+    if strict_continuity:
+        validate_chapter_continuity([item["chap_num"] for item in items], confirmed_missing)
 
     min_seconds = min_hours * 3600.0
     max_seconds = max_hours * 3600.0
@@ -201,15 +222,37 @@ def partition_chapters(file_list, min_hours=10.0, max_hours=11.0):
         )
     return parts
 
-def merge_part_videos(part_info, output_video_path):
+def _part_input_signature(files, settings=None, registry=None):
+    hashes = []
+    for path in files:
+        if registry:
+            validation = registry.validate(path, validate_video, validator_key="chapter-video-input-v1")
+            hashes.append(validation["sha256"])
+        else:
+            hashes.append(sha256_file(path))
+    return stable_signature({"ordered_chapter_mp4_sha256": hashes,
+                             "settings": settings or {"concat": "ffmpeg-copy-v3"}})
+
+
+def merge_part_videos(part_info, output_video_path, settings=None):
     """使用 FFmpeg concat demuxer (-c copy) 極速無損合併單一部數的所有章節 MP4 影片"""
     files = part_info["files"]
     if not files:
         return False
 
-    if os.path.exists(output_video_path) and os.path.getsize(output_video_path) > 1000:
-        logging.info("⏭️ 沿用已完成的合併影片：%s", os.path.basename(output_video_path))
-        return True
+    expected_duration = sum(float(item.get("dur") or 0) for item in part_info.get("items", [])) or float(part_info.get("duration") or 0)
+    registry = ArtifactRegistry(os.path.join(os.path.dirname(output_video_path), "artifact-registry.json"))
+    input_signature = _part_input_signature(files, settings, registry)
+    if os.path.exists(output_video_path):
+        try:
+            registry.validate(output_video_path, validate_video, validator_key="part-video-v3",
+                              input_signature=input_signature,
+                              settings_signature=stable_signature(settings or {"concat": "ffmpeg-copy-v3"}),
+                              audio_duration=expected_duration)
+            logging.info("⏭️ 沿用已完整驗證的合併影片：%s", os.path.basename(output_video_path))
+            return True
+        except (ArtifactValidationError, OSError, ValueError):
+            pass
     if os.path.exists(output_video_path):
         os.remove(output_video_path)
 
@@ -220,7 +263,12 @@ def merge_part_videos(part_info, output_video_path):
 
     if len(files) == 1:
         shutil.copy(files[0], partial_path)
+        validate_video(partial_path, expected_duration)
         os.replace(partial_path, output_video_path)
+        registry.validate(output_video_path, validate_video, validator_key="part-video-v3",
+                          input_signature=input_signature,
+                          settings_signature=stable_signature(settings or {"concat": "ffmpeg-copy-v3"}),
+                          audio_duration=expected_duration)
         return True
 
     concat_txt = os.path.join(os.path.dirname(output_video_path), f"concat_part_{part_info['part_num']}.txt")
@@ -245,18 +293,29 @@ def merge_part_videos(part_info, output_video_path):
         except Exception:
             pass
 
-    ok = res.returncode == 0 and os.path.exists(partial_path) and os.path.getsize(partial_path) > 1000
+    ok = res.returncode == 0 and os.path.exists(partial_path)
     if ok:
-        os.replace(partial_path, output_video_path)
-        size_mb = os.path.getsize(output_video_path) / (1024 * 1024)
-        logging.info(f"✅ 【第 {part_info['part_num']} 部】無損影片合併成功 -> {os.path.basename(output_video_path)} ({size_mb:.1f} MB)")
+        try:
+            validate_video(partial_path, expected_duration)
+            os.replace(partial_path, output_video_path)
+            registry.validate(output_video_path, validate_video, validator_key="part-video-v3",
+                              input_signature=input_signature,
+                              settings_signature=stable_signature(settings or {"concat": "ffmpeg-copy-v3"}),
+                              audio_duration=expected_duration)
+        except (ArtifactValidationError, OSError, ValueError) as error:
+            logging.error("Part strict validation failed: %s", error)
+            ok = False
+        if ok:
+            size_mb = os.path.getsize(output_video_path) / (1024 * 1024)
+            logging.info(f"✅ 【第 {part_info['part_num']} 部】無損影片合併成功 -> {os.path.basename(output_video_path)} ({size_mb:.1f} MB)")
     else:
         if os.path.exists(partial_path):
             os.remove(partial_path)
         logging.error(f"❌ 【第 {part_info['part_num']} 部】影片合併失敗: {res.stderr}")
     return ok
 
-def build_all_parts(book_title, workspace_dir=None, output_dir=None, min_hours=10.0, max_hours=11.0):
+def build_all_parts(book_title, workspace_dir=None, output_dir=None, min_hours=10.0,
+                    max_hours=11.0, strict_continuity=True, confirmed_missing=None):
     """
     主整合入口：讀取 Workspace/ 下的章節 MP4，自動執行 10~11 小時無縫分部封裝。
     """
@@ -272,7 +331,10 @@ def build_all_parts(book_title, workspace_dir=None, output_dir=None, min_hours=1
         logging.warning(f"[PartBuilder] 找不到章節 MP4 檔案: {video_dir}")
         return []
 
-    parts = partition_chapters(mp4_files, min_hours=min_hours, max_hours=max_hours)
+    parts = partition_chapters(
+        mp4_files, min_hours=min_hours, max_hours=max_hours,
+        confirmed_missing=confirmed_missing, strict_continuity=strict_continuity,
+    )
     parts_out_dir = os.path.join(output_dir, "Parts")
     os.makedirs(parts_out_dir, exist_ok=True)
 

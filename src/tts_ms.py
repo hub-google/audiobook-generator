@@ -5,9 +5,18 @@ import subprocess
 import asyncio
 import edge_tts
 import shutil
+import hashlib
+import json
+import unicodedata
+from datetime import datetime, timezone
 from opencc import OpenCC
 from pydub import AudioSegment
 from pydub.silence import detect_leading_silence
+try:
+    from .artifact_validation import (ArtifactValidationError, stable_signature,
+                                      validate_srt, validate_wav)
+except ImportError:
+    from artifact_validation import ArtifactValidationError, stable_signature, validate_srt, validate_wav
 
 # Spyder/IPython 的 kernel 已有執行中的 event loop，
 # 需要 nest_asyncio 才能在其中再次呼叫 asyncio.run()
@@ -107,10 +116,26 @@ def sanitize_text(text):
     if not text:
         return ""
     # 移除不可見與控制字元 (Unicode zero-width spaces, BOM, control characters)
+    text = unicodedata.normalize("NFKC", str(text))
     text = re.sub(r'[\u200b\u200c\u200d\u200e\u200f\ufeff\x00-\x1f\x7f]', '', text)
     # 將可能干擾 SSML / XML 的符號替換為全形符號
     text = text.replace('<', '＜').replace('>', '＞').replace('&', '＆')
     return text.strip()
+
+
+def segment_cache_key(text, voice, rate, settings_signature=""):
+    speech = sanitize_text(speech_text_for_voice(text, voice))
+    payload = {"speech_text": speech, "voice": voice, "rate": rate,
+               "settings_signature": settings_signature, "version": "tts-segment-v3"}
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _semantic_subsegments(text, max_chars=80):
+    pieces = [piece.strip() for piece in re.split(r"(?<=[。！？!?；;，,])", text) if piece.strip()]
+    result = []
+    for piece in pieces or [text]:
+        result.extend(piece[i:i + max_chars] for i in range(0, len(piece), max_chars))
+    return [piece for piece in result if piece]
 
 
 def create_silent_wav(wav_path, ffmpeg_path="ffmpeg", duration=1.5):
@@ -131,51 +156,81 @@ def create_silent_wav(wav_path, ffmpeg_path="ffmpeg", duration=1.5):
 
 
 async def _generate_one_segment(semaphore, text, mp3_path, wav_path, part_label, voice,
-                                rate="+0%", ffmpeg_path="ffmpeg", max_retries=3):
+                                rate="+0%", ffmpeg_path="ffmpeg", max_retries=5,
+                                normalized_retries=3, split_retries=3,
+                                silent_fallback=True, silent_duration=1.5,
+                                fallback_records=None, chapter=None, segment_index=None):
     """
     非同步生成單一段落的 Edge-TTS MP3。
     使用 Semaphore 限制最大並行數，失敗時最多重試 max_retries 次。
     若全部失敗（如觸發微軟敏感詞過濾），自動改用 1.5s 靜音 WAV 墊檔容錯。
     """
-    clean_t = sanitize_text(speech_text_for_voice(text, voice))
-    if not clean_t:
-        create_silent_wav(wav_path, ffmpeg_path, duration=1.0)
-        return True
+    original_speech = speech_text_for_voice(text, voice)
+    clean_t = sanitize_text(original_speech)
+    attempts = []
 
     async with semaphore:
-        for attempt in range(max_retries):
-            try:
-                communicate = edge_tts.Communicate(clean_t, voice, rate=rate)
-                await communicate.save(mp3_path)
-                # 確認產出的 MP3 不是空檔
-                if os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 100:
-                    logging.info(f"[TTS_MS] ✓ {part_label}")
-                    return True
-                else:
+        async def attempt_text(candidate, count, stage, target_mp3):
+            last_error = None
+            for attempt in range(max(0, int(count))):
+                try:
+                    communicate = edge_tts.Communicate(candidate, voice, rate=rate)
+                    await communicate.save(target_mp3)
+                    if os.path.exists(target_mp3) and os.path.getsize(target_mp3) > 100:
+                        attempts.append({"stage": stage, "attempt": attempt + 1, "success": True})
+                        return True, None
                     raise ValueError("MP3 output is empty or too small")
-            except Exception as e:
-                # 清除殘留的損壞 MP3
-                if os.path.exists(mp3_path):
-                    try:
-                        os.remove(mp3_path)
-                    except Exception:
-                        pass
-                logging.warning(f"[TTS_MS] {part_label} attempt {attempt+1}/{max_retries} failed: {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2.0)  # 重試前稍等，避免過度轟炸服務
+                except Exception as error:
+                    last_error = error
+                    attempts.append({"stage": stage, "attempt": attempt + 1,
+                                     "success": False, "reason": str(error)[:300]})
+                    if os.path.exists(target_mp3):
+                        try: os.remove(target_mp3)
+                        except OSError: pass
+                    if attempt + 1 < count:
+                        await asyncio.sleep(2.0)
+            return False, last_error
 
-        # ── 靜音墊檔容錯 (Silent Audio Fallback) ──
-        logging.warning(f"[TTS_MS] ⚠️ {part_label} 觸發微軟敏感詞過濾或格式錯誤，自動生成 1.5s 靜音墊檔容錯...")
-        if create_silent_wav(wav_path, ffmpeg_path, duration=1.5):
-            logging.info(f"[TTS_MS] ✓ {part_label} 靜音墊檔生成成功")
+        ok, last_error = await attempt_text(original_speech, max_retries, "original", mp3_path)
+        if not ok and clean_t:
+            ok, last_error = await attempt_text(clean_t, normalized_retries, "normalized", mp3_path)
+        if not ok and clean_t:
+            split_audio = AudioSegment.empty()
+            split_ok = True
+            for sub_index, subtext in enumerate(_semantic_subsegments(clean_t), 1):
+                sub_mp3 = f"{mp3_path}.split-{sub_index}.mp3"
+                sub_ok, last_error = await attempt_text(subtext, split_retries, "split", sub_mp3)
+                if not sub_ok:
+                    split_ok = False
+                    break
+                split_audio += AudioSegment.from_file(sub_mp3, format="mp3")
+                os.remove(sub_mp3)
+            if split_ok and len(split_audio) > 0:
+                split_audio.export(wav_path, format="wav")
+                return True
+        if ok:
+            logging.info(f"[TTS_MS] ✓ {part_label}")
             return True
-
-        logging.error(f"[TTS_MS] ✗ {part_label} 全部 {max_retries} 次嘗試與靜音容錯均失敗")
+        if silent_fallback and create_silent_wav(wav_path, ffmpeg_path, duration=float(silent_duration)):
+            record = {
+                "silent_fallback_used": True, "chapter": chapter,
+                "segment_index": segment_index,
+                "original_text_hash": hashlib.sha256(str(text).encode("utf-8")).hexdigest(),
+                "failure_reason": str(last_error)[:500], "attempts": attempts,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if fallback_records is not None:
+                fallback_records.append(record)
+            logging.warning("[TTS_MS] %s 使用有限 Silent Fallback", part_label)
+            return True
         return False
 
 
 async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, rate,
-                                  ffmpeg_path, max_concurrency=5, max_retries=3):
+                                  ffmpeg_path, max_concurrency=5, max_retries=5,
+                                  normalized_retries=3, split_retries=3,
+                                  silent_fallback=True, silent_duration=1.5,
+                                  settings_signature="", fallback_records=None):
     """
     並行非同步處理一章所有段落。
     - 最多同時 max_concurrency 個 Edge-TTS 並行請求。
@@ -186,12 +241,13 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, 
 
     # 整理每個段落的中繼資訊，保留 Cleaner 的空白行作為段落邊界。
     task_metas = []
+    cache_dir = os.path.join(audio_dir, "SegmentCache")
+    os.makedirs(cache_dir, exist_ok=True)
     segment_lines = _segment_lines_with_paragraphs(lines)
     for part_idx, (text, paragraph_end) in enumerate(segment_lines):
-        wav_name = f"{book_title}_chapter_{chap_num}_tmp_part_{part_idx+1:03d}.wav"
-        mp3_name = f"{book_title}_chapter_{chap_num}_tmp_part_{part_idx+1:03d}.mp3"
-        wav_path = os.path.join(audio_dir, wav_name)
-        mp3_path = os.path.join(audio_dir, mp3_name)
+        cache_key = segment_cache_key(text, voice, rate, settings_signature)
+        wav_path = os.path.join(cache_dir, cache_key + ".wav")
+        mp3_path = os.path.join(cache_dir, cache_key + ".mp3")
         part_label = f"[Ch{chap_num} 段落 {part_idx+1}/{len(segment_lines)}]"
         task_metas.append((text, paragraph_end, mp3_path, wav_path, part_label))
 
@@ -203,9 +259,16 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, 
     coros = []
     skip_flags = []
     for text, paragraph_end, mp3_path, wav_path, part_label in task_metas:
-        if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
-            logging.info(f"[TTS_MS] Resuming existing part: {os.path.basename(wav_path)}")
-            coros.append(None)  # placeholder，表示不需要 TTS
+        cache_valid = False
+        if os.path.exists(wav_path):
+            try:
+                validate_wav(wav_path)
+                cache_valid = True
+            except (ArtifactValidationError, OSError, ValueError):
+                cache_valid = False
+        if cache_valid:
+            logging.info(f"[TTS_MS] Resuming validated content cache: {os.path.basename(wav_path)}")
+            coros.append(None)
             skip_flags.append(True)
         else:
             # 清除殘留的不完整 WAV
@@ -213,7 +276,9 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, 
                 os.remove(wav_path)
             coros.append(_generate_one_segment(
                 semaphore, text, mp3_path, wav_path, part_label, voice,
-                rate, ffmpeg_path, max_retries
+                rate, ffmpeg_path, max_retries, normalized_retries, split_retries,
+                silent_fallback, silent_duration, fallback_records, chap_num,
+                len(skip_flags) + 1,
             ))
             skip_flags.append(False)
 
@@ -246,10 +311,11 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, 
     missing_count = 0
 
     for text, paragraph_end, mp3_path, wav_path, part_label in task_metas:
-        if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
+        try:
+            validate_wav(wav_path)
             generated_parts.append(wav_path)
             valid_lines.append(text)
-        else:
+        except (ArtifactValidationError, OSError, ValueError):
             missing_count += 1
 
     if missing_count > 0:
@@ -289,8 +355,16 @@ def run_tts_ms(target_indices=None):
     # Legacy configs have no edge_rate and must keep their original speed.
     # New GUI runs receive +25% from catalog_parser.py.
     rate = tts_cfg.get('edge_rate', '+0%')
-    max_concurrency = int(tts_cfg.get('tts_concurrency', 5))
-    max_retries = int(tts_cfg.get('tts_max_retries', 3))
+    max_concurrency = int(tts_cfg.get('concurrency', tts_cfg.get('tts_concurrency', 5)))
+    max_retries = int(tts_cfg.get('segment_retries', tts_cfg.get('tts_max_retries', 5)))
+    normalized_retries = int(tts_cfg.get('normalized_retries', 3))
+    split_retries = int(tts_cfg.get('split_retries', 3))
+    chapter_retries = int(tts_cfg.get('chapter_retries', 3))
+    fallback_cfg = tts_cfg.get('silent_fallback') or {}
+    fallback_enabled = fallback_cfg.get('enabled', True)
+    fallback_duration = float(fallback_cfg.get('duration_seconds', 1.5))
+    settings_signature = stable_signature({"version": "tts-v5-content-cache", **tts_cfg})
+    fallback_records = []
     logging.info("[TTS_MS] Edge-TTS voice=%s, rate=%s", voice, rate)
 
     filenames = sorted([f for f in os.listdir(clean_text_dir) if f.endswith("_clean.txt")])
@@ -322,8 +396,12 @@ def run_tts_ms(target_indices=None):
         wav_path = os.path.join(audio_dir, wav_filename)
         srt_path = os.path.join(workspace_dir, "Subtitles", f"{book_title}_chapter_{chap_num}.srt")
 
-        wav_ok = os.path.exists(wav_path) and os.path.getsize(wav_path) > 100
-        srt_ok = os.path.exists(srt_path) and os.path.getsize(srt_path) > 10
+        try:
+            wav_validation = validate_wav(wav_path)
+            validate_srt(srt_path, wav_validation["duration_seconds"], expected_text="".join(lines))
+            wav_ok = srt_ok = True
+        except (ArtifactValidationError, OSError, ValueError):
+            wav_ok = srt_ok = False
         if wav_ok and srt_ok:
             logging.info(f"[TTS_MS] Skipping existing WAV + SRT: {wav_filename}")
             succeeded_chapters.add(int(chap_num))
@@ -335,7 +413,7 @@ def run_tts_ms(target_indices=None):
                     os.remove(incomplete_path)
 
         # ── 章節層級重試：最多嘗試 3 次（每次都是全章從頭重做）──
-        CHAPTER_MAX_ATTEMPTS = 3
+        CHAPTER_MAX_ATTEMPTS = chapter_retries
         chapter_success = False
 
         for chapter_attempt in range(1, CHAPTER_MAX_ATTEMPTS + 1):
@@ -353,7 +431,9 @@ def run_tts_ms(target_indices=None):
             generated_parts, valid_lines = asyncio.run(
                 _process_chapter_async(
                     lines, book_title, chap_num, audio_dir,
-                    voice, rate, ffmpeg_path, max_concurrency, max_retries
+                    voice, rate, ffmpeg_path, max_concurrency, max_retries,
+                    normalized_retries, split_retries, fallback_enabled,
+                    fallback_duration, settings_signature, fallback_records,
                 )
             )
 
@@ -369,21 +449,12 @@ def run_tts_ms(target_indices=None):
                 os.makedirs(subtitles_dir, exist_ok=True)
                 srt_path = os.path.join(subtitles_dir, f"{book_title}_chapter_{chap_num}.srt")
                 generate_chapter_srt(generated_parts, valid_lines, srt_path)
-                if os.path.exists(srt_path) and os.path.getsize(srt_path) > 0:
-                    srt_ok = True
-                else:
-                    logging.error(f"[TTS_MS] ✗ 第 {chap_num} 章嘗試 {chapter_attempt} SRT 輸出為空")
+                validate_srt(srt_path, expected_text="".join(valid_lines))
+                srt_ok = True
             except Exception as e:
                 logging.error(f"[TTS_MS] ✗ 第 {chap_num} 章嘗試 {chapter_attempt} SRT 生成失敗: {e}")
 
             if not srt_ok:
-                # 清除本次生成的 part WAV，下次重試從頭來
-                for p in generated_parts:
-                    if os.path.exists(p):
-                        try:
-                            os.remove(p)
-                        except Exception:
-                            pass
                 continue  # 進入下一次章節重試
 
             # ── Step 3: 合併 WAV ──
@@ -392,11 +463,14 @@ def run_tts_ms(target_indices=None):
             if os.path.exists(partial_wav_path):
                 os.remove(partial_wav_path)
             if len(generated_parts) == 1:
-                shutil.move(generated_parts[0], partial_wav_path)
-                if os.path.exists(partial_wav_path) and os.path.getsize(partial_wav_path) > 100:
+                shutil.copy2(generated_parts[0], partial_wav_path)
+                try:
+                    validate_wav(partial_wav_path)
                     os.replace(partial_wav_path, wav_path)
                     logging.info(f"[TTS_MS] ✓ 第 {chap_num} 章 WAV 完成 (單段直接使用)")
                     merge_ok = True
+                except (ArtifactValidationError, OSError, ValueError):
+                    merge_ok = False
             else:
                 concat_list_path = wav_path + "_concat.txt"
                 with open(concat_list_path, "w", encoding="utf-8") as f:
@@ -409,19 +483,15 @@ def run_tts_ms(target_indices=None):
                          "-i", concat_list_path, "-c", "copy", partial_wav_path],
                         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                     )
-                    if os.path.exists(partial_wav_path) and os.path.getsize(partial_wav_path) > 100:
+                    try:
+                        validate_wav(partial_wav_path)
                         os.replace(partial_wav_path, wav_path)
                         logging.info(
                             f"[TTS_MS] ✓ 第 {chap_num} 章 WAV 合併完成 ({len(generated_parts)} 段)"
                         )
                         merge_ok = True
-                        for p in generated_parts:
-                            try:
-                                os.remove(p)
-                            except Exception:
-                                pass
-                    else:
-                        raise ValueError("合併後 WAV 是空檔")
+                    except (ArtifactValidationError, OSError, ValueError) as error:
+                        raise ValueError(f"合併後 WAV 驗證失敗: {error}") from error
                 except Exception as e:
                     logging.error(
                         f"[TTS_MS] ✗ 第 {chap_num} 章嘗試 {chapter_attempt} WAV 合併失敗: {e}"
@@ -439,13 +509,6 @@ def run_tts_ms(target_indices=None):
                         os.remove(partial_wav_path)
                     except Exception:
                         pass
-                # 清除殘留，等待下次重試
-                for p in generated_parts:
-                    if os.path.exists(p):
-                        try:
-                            os.remove(p)
-                        except Exception:
-                            pass
                 if os.path.exists(wav_path):
                     try:
                         os.remove(wav_path)
@@ -482,6 +545,15 @@ def run_tts_ms(target_indices=None):
                 f"[TTS_MS] 第 {chap_num} 章經過 {CHAPTER_MAX_ATTEMPTS} 次完整嘗試仍失敗，流程中止"
             )
 
+    if fallback_records:
+        manifest_path = os.path.join(audio_dir, "silent-fallback-manifest.json")
+        temporary = manifest_path + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump({"schema_version": 1, "count": len(fallback_records),
+                       "segments": fallback_records}, handle, ensure_ascii=False, indent=2)
+            handle.flush(); os.fsync(handle.fileno())
+        os.replace(temporary, manifest_path)
+        logging.warning("[TTS_MS] 本次共有 %s 個 TTS Segment 使用 Silent Fallback", len(fallback_records))
     return succeeded_chapters, failed_chapters
 
 

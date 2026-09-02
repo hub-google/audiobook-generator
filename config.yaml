@@ -31,6 +31,42 @@ tts:
   engine: edge-tts
   edge_voice: zh-CN-YunjianNeural
   edge_rate: '+25%'
+  concurrency: 5
+  segment_retries: 5
+  normalized_retries: 3
+  split_retries: 3
+  chapter_retries: 3
+  silent_fallback:
+    enabled: true
+    duration_seconds: 1.5
+    log_original_text_hash: true
+  cache:
+    enabled: true
+    content_addressed: true
+validation:
+  cache_enabled: true
+  sha256: true
+  strict_artifact_validation: true
+  verify_chapter_continuity: true
+  verify_part_duration: true
+  verify_subtitle_text_coverage: true
+parts:
+  min_hours: 10.0
+  max_hours: 11.0
+  strict_continuity: true
+youtube:
+  privacy_status: public
+  captions:
+    upload: false
+  thumbnail:
+    enabled: true
+  playlist:
+    enabled: true
+  verification:
+    mode: write_ack_then_final_audit
+    per_video_readback: false
+    reconcile_on_ambiguous_state: true
+    final_playlist_audit: true
 paths:
   workspace_base: Workspace
 gdrive_folder_id: ''

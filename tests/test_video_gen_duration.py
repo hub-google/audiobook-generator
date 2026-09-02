@@ -18,8 +18,9 @@ class VideoGenerationDurationTests(unittest.TestCase):
         self.assertIn("Outline=3", SUBTITLE_FORCE_STYLE)
         self.assertIn("Alignment=2,MarginV=45,MarginL=80,MarginR=80", SUBTITLE_FORCE_STYLE)
 
+    @patch("src.video_gen.validate_video")
     @patch("src.video_gen.subprocess.run")
-    def test_ffmpeg_output_is_capped_at_exact_wav_duration(self, run):
+    def test_ffmpeg_output_is_capped_at_exact_wav_duration(self, run, _validate_video):
         with tempfile.TemporaryDirectory() as directory:
             book_title = "測試書"
             workspace = os.path.join(directory, "workspace")
@@ -77,7 +78,7 @@ class VideoGenerationDurationTests(unittest.TestCase):
             with open(output_video, "wb") as handle:
                 handle.write(b"x" * 1001)
 
-            validate_video.side_effect = ArtifactValidationError("duration mismatch")
+            validate_video.side_effect = [ArtifactValidationError("duration mismatch"), {"sha256": "a" * 64}]
 
             def create_partial(command, **_kwargs):
                 with open(command[-1], "wb") as handle:

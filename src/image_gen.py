@@ -6,6 +6,10 @@ import sys
 
 import yaml
 from PIL import Image, ImageDraw, ImageFont
+try:
+    from .artifact_validation import ArtifactValidationError, validate_image
+except ImportError:
+    from artifact_validation import ArtifactValidationError, validate_image
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 if SRC_DIR not in sys.path:
@@ -136,6 +140,7 @@ def generate_title_card(book_title, chap_num, chapter_title, output_path):
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     partial_path = output_path + ".tmp"
     image.save(partial_path, "JPEG", quality=92, optimize=True)
+    validate_image(partial_path, expected_size=(width, height))
     os.replace(partial_path, output_path)
     logging.info("[ImageGen] 已生成無摘要章節標題卡: %s", os.path.basename(output_path))
     return True
@@ -162,9 +167,13 @@ def run_image_gen(target_indices=None):
     for wav_path in wav_files:
         chap_num = parse_chapter_num(os.path.basename(wav_path))
         output_path = os.path.join(images_dir, f"{book_title}_chapter_{chap_num}.jpg")
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 100:
-            skipped += 1
-            continue
+        if os.path.exists(output_path):
+            try:
+                validate_image(output_path)
+                skipped += 1
+                continue
+            except (ArtifactValidationError, OSError, ValueError):
+                logging.warning("[ImageGen] Existing image is invalid; rebuilding: %s", output_path)
         generate_title_card(book_title, chap_num, get_chapter_title(workspace_dir, book_title, chap_num), output_path)
         generated += 1
     logging.info("[ImageGen] 完成。生成=%d，沿用=%d。", generated, skipped)

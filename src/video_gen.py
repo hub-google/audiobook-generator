@@ -11,9 +11,9 @@ import shutil
 import time
 
 try:
-    from .artifact_validation import ArtifactValidationError, validate_video
+    from .artifact_validation import ArtifactValidationError, validate_image, validate_srt, validate_video
 except ImportError:
-    from artifact_validation import ArtifactValidationError, validate_video
+    from artifact_validation import ArtifactValidationError, validate_image, validate_srt, validate_video
 
 
 def get_ffmpeg_path():
@@ -150,7 +150,11 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
     os.makedirs(os.path.dirname(title_card_path), exist_ok=True)
 
     # 優先使用 image_gen 階段已生成的 JPG。
-    jpg_exists = os.path.exists(title_card_path) and os.path.getsize(title_card_path) > 100
+    try:
+        validate_image(title_card_path)
+        jpg_exists = True
+    except (ArtifactValidationError, OSError, ValueError):
+        jpg_exists = False
     if jpg_exists:
         logging.info(f"[VideoGen] ✓ Reusing existing title card: {os.path.basename(title_card_path)}")
         card_ok = True
@@ -175,7 +179,12 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
         "pad=1280:720:(ow-iw)/2:(oh-ih)/2,"
         "format=yuv420p"
     )
-    if os.path.exists(srt_path) and os.path.getsize(srt_path) > 10:
+    try:
+        validate_srt(srt_path, duration)
+        srt_exists = True
+    except (ArtifactValidationError, OSError, ValueError):
+        srt_exists = False
+    if srt_exists:
         escaped_srt = srt_path.replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
         vf_filter = (
             "scale=1280:720:force_original_aspect_ratio=decrease,"
@@ -211,6 +220,8 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if not os.path.exists(partial_video) or os.path.getsize(partial_video) <= 1000:
         raise RuntimeError(f"FFmpeg produced an invalid MP4: {partial_video}")
+    validate_video(partial_video, duration, expected_resolution=(1280, 720),
+                   expected_video_codec="h264", expected_audio_codec="aac")
     os.replace(partial_video, output_video)
     elapsed = time.time() - t0
     logging.info(f"[VideoGen] 🎉 Chapter {chap_num} MP4 generated successfully -> {os.path.basename(output_video)} (took {elapsed:.1f}s)")
@@ -323,8 +334,16 @@ def run_video_gen(build_parts=True, target_indices=None):
     # ── 自動進行 10~11 小時無縫分部 (Part) 影片與 Metadata 切分打包 ──
     try:
         from part_builder import build_all_parts
+        from source_status import confirmed_missing_from_directory
         logging.info("[VideoGen] 正在執行 10~11 小時影片自動無縫分部 (Part) 打包...")
-        built_parts = build_all_parts(book_title, workspace_dir=workspace_dir, output_dir=output_dir, min_hours=10.0, max_hours=11.0)
+        part_cfg = config.get("parts") or {}
+        built_parts = build_all_parts(
+            book_title, workspace_dir=workspace_dir, output_dir=output_dir,
+            min_hours=float(part_cfg.get("min_hours", 10.0)),
+            max_hours=float(part_cfg.get("max_hours", 11.0)),
+            strict_continuity=part_cfg.get("strict_continuity", True),
+            confirmed_missing=confirmed_missing_from_directory(workspace_dir),
+        )
         if not built_parts:
             raise RuntimeError("Part builder produced no MP4 files")
         logging.info(f"[VideoGen] 🎉 成功生成 {len(built_parts)} 部 10~11 小時分部影片！")

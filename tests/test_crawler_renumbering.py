@@ -13,7 +13,7 @@ class CrawlerRenumberingTests(unittest.TestCase):
         response = Mock()
         response.content = (
             b"<html><h1>Origin chapter</h1>"
-            b"<div style='word-wrap: break-word; text-indent: 2em'>chapter body</div></html>"
+            b"<div style='word-wrap: break-word; text-indent: 2em'>chapter body with enough meaningful novel content for strict validation</div></html>"
         )
         response.status_code = 200
         response.url = "https://example.com/read/1"

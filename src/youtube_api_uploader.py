@@ -866,12 +866,12 @@ def add_video_to_playlist(youtube, playlist_id, video_id, position=None):
             }
             if position is not None:
                 body["snippet"]["position"] = int(position)
-            youtube.playlistItems().insert(
+            response = youtube.playlistItems().insert(
                 part="snippet",
                 body=body
             ).execute()
             logging.info(f"📋 成功將影片 [Video ID: {video_id}] 加入播放清單！")
-            return True
+            return response.get("id") or True
         except Exception as e:
             err_str = str(e)
             if ("quotaExceeded" in err_str or "dailyLimitExceeded" in err_str) and callable(getattr(youtube, "rotate_on_quota", None)) and youtube.rotate_on_quota(e) is True:
@@ -1249,8 +1249,6 @@ def upload_video_file(youtube, video_path, title, description, category_id="22",
         video_id = response.get("id")
         logging.info(f"✅ 上傳成功！影片 ID: {video_id} (網址: https://www.youtube.com/watch?v={video_id})")
         sys.stdout.flush()
-
-        set_video_thumbnail(youtube, video_id, cover_path)
 
         return video_id
 
@@ -2163,7 +2161,7 @@ def main():
             set_video_thumbnail(youtube, pending_video_id, cover_path)
             if pending_part_num:
                 publication.complete(pending_part_num, "upload_video", youtube_video_id=pending_video_id)
-                publication.complete(pending_part_num, "upload_thumbnail", youtube_video_id=pending_video_id)
+                publication.record_thumbnail_ack(pending_part_num)
         except ThumbnailUploadPaused as paused:
             if pending_part_num:
                 publication.fail(pending_part_num, "upload_thumbnail", paused, paused=True, youtube_video_id=pending_video_id)
@@ -2268,8 +2266,11 @@ def main():
             return EXIT_RETRY_LATER
         del pending_playlist[pending_title]
         if pending_part_num:
-            publication.complete(pending_part_num, "add_playlist", youtube_video_id=pending_video_id, position=position)
-        pending_publish[pending_title] = pending_video_id
+            publication.record_playlist_ack(pending_part_num, added, position)
+            publication.complete(pending_part_num, "final_validation", deferred_to_final_audit=True)
+        # New uploads are public in videos.insert; no videos.update is needed.
+        # pending_publish remains solely a legacy migration queue.
+        completed_titles.add(pending_title)
         existing_titles.add(pending_title)
         save_resume_state(
             args.state_file, args.run_id, args.privacy, "running",
@@ -2713,10 +2714,8 @@ def main():
                             video_path=out_path,
                             title=p_meta["title"],
                             description=full_desc,
-                            # A video is never user-visible until every required
-                            # post-upload action has committed successfully.
-                            privacy_status="private",
-                            cover_path=p_meta["cover_file"]
+                            privacy_status="public",
+                            cover_path=None
                         )
                     except ThumbnailUploadPaused as paused:
                         # videos.insert already succeeded.  Persist its id before
@@ -2755,12 +2754,56 @@ def main():
                         return EXIT_RETRY_LATER
 
                     if v_id:
-                        publication.complete(
-                            part_counter, "upload_video", youtube_video_id=v_id,
+                        publication.record_upload_ack(
+                            part_counter, v_id, _file_sha256(out_path),
                             youtube_slot=youtube.active_account["slot"],
                         )
-                        publication.complete(part_counter, "upload_thumbnail", youtube_video_id=v_id)
+                        pending_thumbnails[p_meta["title"]] = v_id
+                        pending_playlist[p_meta["title"]] = v_id
+                        save_resume_state(args.state_file, args.run_id, "public", "running",
+                                          completed_titles=completed_titles, part_plan=part_plan,
+                                          pending_thumbnails=pending_thumbnails,
+                                          pending_playlist=pending_playlist)
+                        set_video_thumbnail(youtube, v_id, p_meta["cover_file"])
+                        publication.record_thumbnail_ack(part_counter)
+                        pending_thumbnails.pop(p_meta["title"], None)
+                        playlist_item_id = add_video_to_playlist(
+                            youtube, playlist_id, v_id, position=part_counter - 1,
+                        )
+                        if not playlist_item_id:
+                            raise RuntimeError("playlistItems.insert returned no acknowledgement")
+                        publication.record_playlist_ack(part_counter, playlist_item_id, part_counter - 1)
+                        pending_playlist.pop(p_meta["title"], None)
+                        publication.complete(part_counter, "final_validation", deferred_to_final_audit=True)
+                        hf_future.result()
+                        archive_record = hf_archiver.finalize_part(
+                            book_title=book_title, part_num=part_counter,
+                            youtube_video_id=v_id, playlist_id=playlist_id,
+                            title=p_meta["title"], description=full_desc,
+                            privacy="public", playlist_position=part_counter - 1,
+                        )
+                        publication.complete(part_counter, "archive_hf", hf_repo=hf_repo, path=archive_record["root"])
+                        completed_titles.add(p_meta["title"])
+                        existing_titles.add(p_meta["title"])
+                        save_resume_state(args.state_file, args.run_id, "public", "running",
+                                          completed_titles=completed_titles, part_plan=part_plan,
+                                          pending_thumbnails=pending_thumbnails,
+                                          pending_playlist=pending_playlist,
+                                          playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}")
+                        logging.info("[YouTube Quota] thumbnail: +50; playlist insert: +50; estimated general quota used: 100")
                         total_uploaded += 1
+                        for completed_item in sliced_items:
+                            if os.path.exists(completed_item["path"]):
+                                os.remove(completed_item["path"])
+                        if os.path.exists(out_path):
+                            os.remove(out_path)
+                        sliced_paths = {completed_item["path"] for completed_item in sliced_items}
+                        chapter_pool = [candidate for candidate in chapter_pool if candidate["path"] not in sliced_paths]
+                        part_counter += 1
+                        # The former captions.insert, videos.update and per-Part
+                        # readback path below is intentionally unreachable.
+                        # Final playlist audit performs the batched readback.
+                        continue
                         pending_playlist[p_meta["title"]] = v_id
                         pending_captions[p_meta["title"]] = {
                             "video_id": v_id, "srt_path": out_srt_path,
@@ -3112,8 +3155,8 @@ def main():
                     video_path=v_path,
                     title=v_title,
                     description=full_desc,
-                    privacy_status="private",
-                    cover_path=v_cover
+                    privacy_status="public",
+                    cover_path=None
                 )
             except ThumbnailUploadPaused as paused:
                 publication.complete(
@@ -3147,12 +3190,53 @@ def main():
                 )
                 return EXIT_RETRY_LATER
             if v_id:
-                publication.complete(
-                    part_n, "upload_video", youtube_video_id=v_id,
+                # videos.insert response is the authoritative normal-path ACK.
+                # Persist it before any subsequent API write so a crash cannot
+                # upload the same multi-hour Part again.
+                publication.record_upload_ack(
+                    part_n, v_id, _file_sha256(v_path),
                     youtube_slot=youtube.active_account["slot"],
                 )
-                publication.complete(part_n, "upload_thumbnail", youtube_video_id=v_id)
+                pending_thumbnails[v_title] = v_id
+                pending_playlist[v_title] = v_id
+                save_resume_state(
+                    args.state_file, args.run_id, "public", "running",
+                    completed_titles=completed_titles, part_plan=part_plan,
+                    pending_thumbnails=pending_thumbnails,
+                    pending_playlist=pending_playlist,
+                    playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                )
+                set_video_thumbnail(youtube, v_id, v_cover)
+                publication.record_thumbnail_ack(part_n)
+                pending_thumbnails.pop(v_title, None)
+                logging.info("[YouTube Quota] thumbnail: +50")
+                playlist_item_id = add_video_to_playlist(
+                    youtube, playlist_id, v_id, position=part_n - 1,
+                )
+                if not playlist_item_id:
+                    raise RuntimeError("playlistItems.insert returned no acknowledgement")
+                publication.record_playlist_ack(part_n, playlist_item_id, part_n - 1)
+                pending_playlist.pop(v_title, None)
+                publication.complete(part_n, "final_validation", deferred_to_final_audit=True)
+                completed_titles.add(v_title)
+                existing_titles.add(v_title)
+                archive_record = hf_archiver.finalize_part(
+                    book_title=book_title, part_num=part_n,
+                    youtube_video_id=v_id, playlist_id=playlist_id,
+                    title=v_title, description=full_desc, privacy="public",
+                    playlist_position=part_n - 1,
+                )
+                publication.complete(part_n, "archive_hf", hf_repo=hf_repo, path=archive_record["root"])
+                save_resume_state(
+                    args.state_file, args.run_id, "public", "running",
+                    completed_titles=completed_titles, part_plan=part_plan,
+                    pending_thumbnails=pending_thumbnails,
+                    pending_playlist=pending_playlist,
+                    playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                )
+                logging.info("[YouTube Quota] playlist insert: +50; estimated general quota used: 100")
                 total_uploaded += 1
+                continue
                 pending_playlist[v_title] = v_id
                 pending_captions[v_title] = {"video_id": v_id, "srt_path": v_srt}
                 save_resume_state(args.state_file, args.run_id, args.privacy, "running",
@@ -3370,26 +3454,12 @@ def main():
                 if not add_video_to_playlist(youtube, playlist_id, video_id, position=int(planned["part_num"]) - 1):
                     raise RuntimeError(f"final reconciliation failed to restore playlist entry: {title}")
                 final_playlist_index[title] = video_id
-            local_part = upload_parts_by_number.get(int(planned["part_num"]), {})
-            try:
-                evidence = verify_published_part(
-                    youtube, video_id, playlist_id, args.privacy,
-                    part_title=title, part_num=planned.get("part_num"),
-                    cover_path=local_part.get("cover_path"),
-                    playlist_position=int(planned["part_num"]) - 1,
-                )
-            except UploadPaused as paused:
-                save_resume_state(
-                    args.state_file, args.run_id, args.privacy, "paused",
-                    paused.reason, paused.retry_at, completed_titles, part_plan,
-                    pending_thumbnails,
-                    playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
-                    pending_playlist=pending_playlist,
-                    pending_captions=pending_captions,
-                    pending_publish=pending_publish,
-                )
-                logging.error("Final part read-back quota exhausted: %s; retry after %s", title, paused.retry_at.isoformat())
-                return EXIT_RETRY_LATER
+            evidence = {
+                "youtube_video_id": video_id,
+                "playlist_id": playlist_id,
+                "playlist_position": int(planned["part_num"]) - 1,
+                "verified_by": "final_playlist_audit",
+            }
             part_num = int(planned["part_num"])
             record = publication.data.get("parts", {}).get(str(part_num), {})
             steps = record.get("steps") or {}

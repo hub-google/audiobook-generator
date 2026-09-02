@@ -416,7 +416,9 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         self.assertEqual(request.next_chunk.call_count, 2)
         request.next_chunk.assert_called_with(num_retries=3)
         sleep.assert_called_once_with(1)
-        thumbnail.assert_called_once_with(youtube, "video-1", None)
+        # videos.insert is a single-responsibility operation.  The caller
+        # durably checkpoints its ACK before invoking thumbnails.set.
+        thumbnail.assert_not_called()
 
     @patch("src.youtube_api_uploader.set_video_thumbnail")
     @patch("src.youtube_api_uploader.time.sleep")

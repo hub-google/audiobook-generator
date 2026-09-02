@@ -70,8 +70,29 @@ class PublicationCheckpoint:
             with open(self.path, encoding="utf-8") as handle:
                 self.data = json.load(handle)
         except (OSError, ValueError):
-            self.data = {"schema_version": 1, "plan_status": "unplanned", "parts": {}, "global_steps": {}}
+            self.data = {"schema_version": 2, "plan_status": "unplanned", "parts": {}, "global_steps": {}}
         self.data.setdefault("global_steps", {})
+        self._migrate_legacy()
+
+    def _migrate_legacy(self):
+        """Keep old ledgers resumable while new writes use explicit API acknowledgements."""
+        self.data["schema_version"] = 2
+        for record in (self.data.get("parts") or {}).values():
+            steps = record.get("steps") or {}
+            upload = steps.get("upload_video") or {}
+            video_id = upload.get("youtube_video_id")
+            record.setdefault("upload", {
+                "status": upload.get("status", "pending"), "video_id": video_id,
+                "completed_at": upload.get("updated_at") or upload.get("completed_at"),
+            })
+            thumb = steps.get("upload_thumbnail") or {}
+            record.setdefault("thumbnail", {"status": thumb.get("status", "pending"),
+                                             "completed_at": thumb.get("updated_at")})
+            playlist = steps.get("add_playlist") or {}
+            record.setdefault("playlist", {"status": playlist.get("status", "pending"),
+                                            "playlist_item_id": playlist.get("playlist_item_id"),
+                                            "position": playlist.get("position"),
+                                            "completed_at": playlist.get("updated_at")})
 
     def lock_plan(self, plan, run_id="", book_title=""):
         candidate = normalized_plan(plan)
@@ -92,6 +113,16 @@ class PublicationCheckpoint:
             )
             for step in PART_STEPS:
                 record.setdefault("steps", {}).setdefault(step, {"status": "pending", "attempts": 0})
+            # CC upload and private->public transition were retired.  Marking
+            # these compatibility columns complete prevents legacy resume from
+            # calling Captions API or videos.update.
+            for retired in ("upload_caption", "publish"):
+                record["steps"][retired].update({"status": "completed", "retired": True})
+            record.setdefault("source_part_sha256", "")
+            record.setdefault("upload", {"status": "pending", "video_id": None, "completed_at": None})
+            record.setdefault("thumbnail", {"status": "pending", "completed_at": None})
+            record.setdefault("playlist", {"status": "pending", "playlist_item_id": None,
+                                            "position": None, "completed_at": None})
         self.save()
         return self.data["plan"]
 
@@ -123,6 +154,26 @@ class PublicationCheckpoint:
 
     def complete(self, part_num, step, **evidence):
         self.mark(part_num, step, "completed", **evidence)
+
+    def record_upload_ack(self, part_num, video_id, source_part_sha256, **evidence):
+        part = self.data["parts"][str(int(part_num))]
+        part["source_part_sha256"] = source_part_sha256
+        part["upload"] = {"status": "completed", "video_id": video_id,
+                          "completed_at": _now(), **evidence}
+        self.complete(part_num, "upload_video", youtube_video_id=video_id,
+                      source_part_sha256=source_part_sha256, **evidence)
+
+    def record_thumbnail_ack(self, part_num):
+        part = self.data["parts"][str(int(part_num))]
+        part["thumbnail"] = {"status": "completed", "completed_at": _now()}
+        self.complete(part_num, "upload_thumbnail", youtube_video_id=part["upload"].get("video_id"))
+
+    def record_playlist_ack(self, part_num, playlist_item_id, position):
+        part = self.data["parts"][str(int(part_num))]
+        part["playlist"] = {"status": "completed", "playlist_item_id": playlist_item_id,
+                            "position": int(position), "completed_at": _now()}
+        self.complete(part_num, "add_playlist", youtube_video_id=part["upload"].get("video_id"),
+                      playlist_item_id=playlist_item_id, position=int(position))
 
     def fail(self, part_num, step, error, paused=False, **evidence):
         self.mark(

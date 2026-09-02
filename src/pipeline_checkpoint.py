@@ -12,9 +12,11 @@ import hashlib
 from datetime import datetime, timezone
 
 try:
-    from .artifact_validation import ArtifactValidationError, validate_stage, validate_worker_manifest
+    from .artifact_validation import (ArtifactRegistry, ArtifactValidationError,
+                                      stable_signature, validate_stage, validate_worker_manifest)
 except ImportError:
-    from artifact_validation import ArtifactValidationError, validate_stage, validate_worker_manifest
+    from artifact_validation import (ArtifactRegistry, ArtifactValidationError,
+                                     stable_signature, validate_stage, validate_worker_manifest)
 
 
 STAGES = ("crawler", "cleaner", "tts", "subtitle", "image", "video")
@@ -33,16 +35,34 @@ def _utc_now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _atomic_json(path, data):
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    temporary = path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=2)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+
+
 class PipelineCheckpoint:
-    def __init__(self, workspace_dir, book_title, worker_id, chapters, cleaner_fingerprint=""):
+    def __init__(self, workspace_dir, book_title, worker_id, chapters, cleaner_fingerprint="",
+                 stage_settings=None, validation_cache_enabled=True):
         self.workspace_dir = os.path.abspath(workspace_dir)
         self.book_title = book_title
         self.worker_id = int(worker_id)
         self.chapter_numbers = [int(chapter) for chapter in chapters]
         self.cleaner_fingerprint = str(cleaner_fingerprint or "")
+        self.stage_settings = dict(stage_settings or {})
+        if self.cleaner_fingerprint and "cleaner" not in self.stage_settings:
+            self.stage_settings["cleaner"] = {"legacy_fingerprint": self.cleaner_fingerprint}
         checkpoint_dir = os.path.join(self.workspace_dir, "Checkpoints")
         os.makedirs(checkpoint_dir, exist_ok=True)
         self.path = os.path.join(checkpoint_dir, f"worker-{self.worker_id}.json")
+        self.registry = ArtifactRegistry(
+            os.path.join(checkpoint_dir, "artifact-registry.json"),
+            enabled=validation_cache_enabled,
+        )
         self.data = self._load()
         self.reconcile()
 
@@ -94,10 +114,22 @@ class PipelineCheckpoint:
             return False
 
     def validate_output(self, chapter, stage):
-        return validate_stage(
-            stage, self.output_path(chapter, stage), workspace_dir=self.workspace_dir,
-            chapter=int(chapter), book_title=self.book_title,
+        path = self.output_path(chapter, stage)
+        return self.registry.validate(
+            path,
+            lambda candidate: validate_stage(
+                stage, candidate, workspace_dir=self.workspace_dir,
+                chapter=int(chapter), book_title=self.book_title,
+                settings=self.stage_settings.get(stage) or {},
+            ),
+            validator_key=f"{stage}-strict-v2",
+            input_signature=self._input_signature(chapter, stage),
+            settings_signature=self._settings_signature(stage),
         )
+
+    def _settings_signature(self, stage):
+        value = self.stage_settings.get(stage, {})
+        return stable_signature(value)
 
     def _input_signature(self, chapter, stage):
         values = []
@@ -147,8 +179,9 @@ class PipelineCheckpoint:
                 input_signature = self._input_signature(chapter, stage)
                 recorded_signature = record.get("input_signature")
                 stale = bool(recorded_signature and recorded_signature != input_signature)
-                if stage == "cleaner" and self.cleaner_fingerprint:
-                    stale = stale or record.get("settings_signature") != self.cleaner_fingerprint
+                expected_settings = self._settings_signature(stage)
+                if self.stage_settings.get(stage):
+                    stale = stale or record.get("settings_signature") != expected_settings
                 if valid and upstream_complete and not stale:
                     record.update({
                         "status": "completed",
@@ -157,6 +190,9 @@ class PipelineCheckpoint:
                         ).replace("\\", "/"),
                         "validation": validation,
                         "input_signature": input_signature,
+                        "settings_signature": expected_settings,
+                        "output_fingerprint": validation.get("sha256"),
+                        "completed_at": record.get("completed_at") or _utc_now(),
                     })
                     record.pop("error", None)
                     record.pop("error_type", None)
@@ -232,9 +268,9 @@ class PipelineCheckpoint:
             ).replace("\\", "/"),
             "validation": validation,
             "input_signature": self._input_signature(chapter, stage),
+            "settings_signature": self._settings_signature(stage),
+            "output_fingerprint": validation.get("sha256"),
         })
-        if stage == "cleaner" and self.cleaner_fingerprint:
-            record["settings_signature"] = self.cleaner_fingerprint
         record.pop("error", None)
         record.pop("error_type", None)
         record.pop("validation_error", None)
@@ -344,12 +380,7 @@ class PipelineCheckpoint:
 
     def save(self):
         self.data["updated_at"] = _utc_now()
-        temp_path = self.path + ".tmp"
-        with open(temp_path, "w", encoding="utf-8") as checkpoint_file:
-            json.dump(self.data, checkpoint_file, ensure_ascii=False, indent=2)
-            checkpoint_file.flush()
-            os.fsync(checkpoint_file.fileno())
-        os.replace(temp_path, self.path)
+        _atomic_json(self.path, self.data)
 
     def export_manifest(self, destination_path=None, artifact_name=None):
         if destination_path is None:
@@ -400,8 +431,7 @@ class PipelineCheckpoint:
             "source_missing": source_missing,
             "updated_at": _utc_now(),
         }
-        with open(destination_path, "w", encoding="utf-8") as handle:
-            json.dump(manifest, handle, ensure_ascii=False, indent=2)
+        _atomic_json(destination_path, manifest)
         return manifest
 
     def manifest_path(self):

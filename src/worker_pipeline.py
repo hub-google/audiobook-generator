@@ -60,6 +60,25 @@ def parse_chapter_num(filename):
     return 9999
 
 
+def build_stage_settings(config):
+    """Return deterministic, output-affecting settings for every pipeline stage."""
+    tts = config.get("tts") or {}
+    validation = config.get("validation") or {}
+    return {
+        "crawler": {"version": "crawler-v3", "base_url": config.get("base_url"),
+                    "catalog_url": config.get("catalog_url"),
+                    "parser": config.get("crawler") or {}},
+        "cleaner": {"version": "cleaner-v5", **(config.get("cleaner") or {})},
+        "tts": {"version": "tts-v5-content-cache", **tts},
+        "subtitle": {"version": "subtitle-v3-coverage", **(config.get("subtitle") or {}),
+                     "coverage": validation.get("verify_subtitle_text_coverage", True)},
+        "image": {"version": "chapter-image-v3", "cover": config.get("cover") or {},
+                  "image": config.get("image") or {}},
+        "video": {"version": "chapter-video-v3", **(config.get("video") or {})},
+        "part": {"version": "part-concat-v3", **(config.get("parts") or {})},
+    }
+
+
 # ── 最終完整性驗收 ─────────────────────────────────────────
 
 def validate_chapter_completeness(config, exact_indices, tts_failed_chapters=None):
@@ -478,6 +497,8 @@ def restore_locked_artifact(config, worker_id, exact_indices, artifact_dir,
     checkpoint = PipelineCheckpoint(
         workspace_dir, book_title, worker_id, exact_indices,
         cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
+        stage_settings=build_stage_settings(config),
+        validation_cache_enabled=(config.get("validation") or {}).get("cache_enabled", True),
     )
     checkpoint.reconcile()
     incomplete = checkpoint.incomplete_chapters()
