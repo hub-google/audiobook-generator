@@ -164,7 +164,9 @@ def verify_hf_video(part, *, token=None, repo_id=None):
             raise TransientRemoteValidationError(f"cannot resolve HF archive repository: {error}") from error
     try:
         from huggingface_hub import hf_hub_download
-        path = Path(hf_hub_download(repo_id=repo_id, filename=part["hf_video_path"], token=token))
+        path = Path(hf_hub_download(
+            repo_id=repo_id, repo_type="dataset", filename=part["hf_video_path"], token=token
+        ))
     except Exception as error:
         try:
             from huggingface_hub.errors import EntryNotFoundError, RemoteEntryNotFoundError

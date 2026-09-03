@@ -126,8 +126,9 @@ def test_verify_hf_video_checks_size_and_sha(tmp_path):
     plan, part, video = _merge_fixture(tmp_path)
     cached = tmp_path / "cached.mp4"
     cached.write_bytes(video)
-    with patch("huggingface_hub.hf_hub_download", return_value=str(cached)):
+    with patch("huggingface_hub.hf_hub_download", return_value=str(cached)) as download:
         assert verify_hf_video(part, token="token", repo_id="owner/archive") == cached
+        assert download.call_args.kwargs["repo_type"] == "dataset"
     cached.write_bytes(video + b"bad")
     with patch("huggingface_hub.hf_hub_download", return_value=str(cached)):
         with pytest.raises(ArtifactValidationError, match="size mismatch"):
