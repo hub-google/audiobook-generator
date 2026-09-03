@@ -3012,8 +3012,8 @@
         281,
         282
       ],
-      "status": "interrupted",
-      "run_id": 33773376925,
+      "status": "running",
+      "run_id": 33782676156,
       "run_attempt": 1,
       "execution_generation": 1,
       "retry_requested_at": null,
@@ -3025,7 +3025,7 @@
         }
       ],
       "retry_at": null,
-      "reason": "run_cancelled",
+      "reason": null,
       "hf_progress": {
         "completed": 0,
         "total": 0
@@ -3067,7 +3067,7 @@
       },
       "artifact_source_run_id": null,
       "dispatched_at": "2026-09-03T15:34:02.004848+00:00",
-      "run_conclusion": "cancelled",
+      "run_conclusion": null,
       "run_completed_at": "2026-09-03T15:59:02Z"
     },
     {
