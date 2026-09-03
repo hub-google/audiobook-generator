@@ -3010,7 +3010,7 @@
         2120,
         2597
       ],
-      "status": "queued",
+      "status": "needs_attention",
       "run_id": 33737288928,
       "run_attempt": 1,
       "execution_generation": 5,
@@ -3028,7 +3028,7 @@
         }
       ],
       "retry_at": null,
-      "reason": null,
+      "reason": "permanentFailure;",
       "hf_progress": {
         "completed": 25,
         "total": 25
