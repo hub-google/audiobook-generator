@@ -562,7 +562,7 @@ jobs:
   plan_parts:
     name: "🧭 Lock the complete Part plan"
     needs: [setup, resume_planner, process_chapters]
-    if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && (needs.process_chapters.result == 'success' || needs.process_chapters.result == 'skipped')
+    if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && (needs.process_chapters.result == 'success' || needs.process_chapters.result == 'skipped')
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/hub-google/audiobook-worker@sha256:e972f6265789c992503636cbc971239097c602d7e5f364858ed42f4807a6b699
