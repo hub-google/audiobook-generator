@@ -2998,8 +2998,8 @@
         2120,
         2597
       ],
-      "status": "interrupted",
-      "run_id": 33771614311,
+      "status": "needs_attention",
+      "run_id": 33737288928,
       "run_attempt": 1,
       "execution_generation": 5,
       "retry_requested_at": "2026-09-03T09:09:13.514923+00:00",
@@ -3016,7 +3016,7 @@
         }
       ],
       "retry_at": null,
-      "reason": "run_cancelled",
+      "reason": "permanentFailure;",
       "hf_progress": {
         "completed": 25,
         "total": 25
