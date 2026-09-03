@@ -34,6 +34,17 @@ def _sha256(path):
     return digest.hexdigest()
 
 
+def _gh_executable():
+    configured = os.environ.get("GH_CLI", "").strip()
+    if configured:
+        return configured
+    found = shutil.which("gh")
+    if found:
+        return found
+    windows = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "GitHub CLI" / "gh.exe"
+    return str(windows) if windows.is_file() else "gh"
+
+
 def config_fingerprint(config):
     """Identity used to reject artifacts belonging to a different book build."""
     payload = {
@@ -50,18 +61,15 @@ def config_fingerprint(config):
 def list_run_artifacts(repo, run_id, runner=subprocess.run):
     """Return every unexpired artifact in a run (not merely API page one)."""
     command = [
-        "gh", "api", "--paginate", "--slurp",
+        _gh_executable(), "api", "--paginate",
         f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100",
+        "--jq", ".artifacts[] | @json",
     ]
     result = runner(command, capture_output=True, text=True, check=False)
     if result.returncode:
         raise RuntimeError(f"cannot list artifacts for Run {run_id}: {result.stderr.strip()}")
-    pages = json.loads(result.stdout or "[]")
-    if isinstance(pages, dict):
-        pages = [pages]
-    artifacts = []
-    for page in pages:
-        artifacts.extend(x for x in page.get("artifacts", []) if not x.get("expired"))
+    artifacts = [json.loads(line) for line in (result.stdout or "").splitlines() if line.strip()]
+    artifacts = [x for x in artifacts if not x.get("expired")]
     # A rerun can leave duplicate names. The newest artifact is authoritative.
     by_name = {}
     for item in sorted(artifacts, key=lambda x: int(x.get("id") or 0)):
@@ -73,16 +81,14 @@ def list_candidate_runs(repo, current_run_id, explicit="", runner=subprocess.run
     if explicit:
         return [str(explicit)]
     result = runner([
-        "gh", "api", "--paginate", "--slurp",
+        _gh_executable(), "api", "--paginate",
         f"repos/{repo}/actions/workflows/audiobook.yml/runs?event=workflow_dispatch&per_page=100",
+        "--jq", ".workflow_runs[].id",
     ], capture_output=True, text=True, check=False)
     if result.returncode:
         raise RuntimeError(f"cannot discover resumable runs: {result.stderr.strip()}")
-    pages = json.loads(result.stdout or "[]")
-    if isinstance(pages, dict):
-        pages = [pages]
-    runs = [r for p in pages for r in p.get("workflow_runs", [])]
-    return [str(r["id"]) for r in runs if str(r["id"]) != str(current_run_id)]
+    runs = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    return [run_id for run_id in runs if run_id != str(current_run_id)]
 
 
 def download_artifact(repo, artifact, destination, runner=subprocess.run):
@@ -90,7 +96,7 @@ def download_artifact(repo, artifact, destination, runner=subprocess.run):
     destination.mkdir(parents=True, exist_ok=True)
     archive = destination / "artifact.zip"
     result = runner([
-        "gh", "api", f"repos/{repo}/actions/artifacts/{artifact['id']}/zip",
+        _gh_executable(), "api", f"repos/{repo}/actions/artifacts/{artifact['id']}/zip",
     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if result.returncode:
         raise RuntimeError(f"cannot download artifact {artifact['name']}: {result.stderr!r}")
