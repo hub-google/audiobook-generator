@@ -78,6 +78,7 @@ from .state import (
     load_resume_state,
     recover_completed_titles_from_playlist,
     save_resume_state,
+    validate_state_identity,
 )
 from .verification import verify_published_part
 
@@ -95,6 +96,7 @@ __all__ = [
     "load_resume_state",
     "recover_completed_titles_from_playlist",
     "save_resume_state",
+    "validate_state_identity",
     # metadata
     "_chapter_title",
     "build_chapter_timeline",

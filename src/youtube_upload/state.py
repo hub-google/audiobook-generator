@@ -37,11 +37,35 @@ def load_resume_state(path):
         return None
 
 
+try:
+    from ..publication_checkpoint import plan_fingerprint
+except ImportError:
+    from publication_checkpoint import plan_fingerprint
+
+
+def validate_state_identity(saved_state, book_profile_id="", part_plan=None, plan_fingerprint_str="", task_id=""):
+    """Verify whether a restored state dictionary matches expected fingerprint identity."""
+    if not isinstance(saved_state, dict):
+        return True, ""
+    if book_profile_id and saved_state.get("book_profile_id"):
+        if str(saved_state.get("book_profile_id")).strip() != str(book_profile_id).strip():
+            return False, f"checkpoint book_profile_id {saved_state.get('book_profile_id')!r} != expected {book_profile_id!r}"
+    expected_fp = plan_fingerprint_str or (plan_fingerprint(part_plan) if part_plan else "")
+    if expected_fp:
+        state_fp = saved_state.get("plan_fingerprint") or (plan_fingerprint(saved_state.get("part_plan", [])) if saved_state.get("part_plan") else "")
+        if state_fp and state_fp != expected_fp:
+            return False, f"checkpoint plan_fingerprint {state_fp!r} != expected {expected_fp!r}"
+    return True, ""
+
+
 def save_resume_state(path, run_id, privacy, status, reason="", retry_at=None,
                       completed_titles=None, part_plan=None, pending_thumbnails=None,
                       playlist_url=None, pending_playlist=None,
                       pending_captions=None, pending_publish=None,
-                      final_playlist_validation=None):
+                      final_playlist_validation=None,
+                      task_id=None, book_title=None, book_profile_id=None,
+                      source_run_id=None, execution_run_id=None,
+                      plan_fingerprint_str=None):
     previous = load_resume_state(path)
     if (
         os.environ.get("MANUAL_YOUTUBE_RETRY", "").lower() == "true"
@@ -64,17 +88,55 @@ def save_resume_state(path, run_id, privacy, status, reason="", retry_at=None,
             except ValueError:
                 logging.warning("忽略無法解析的舊 retry_at：%s", previous_retry_text)
 
+    resolved_source_run_id = (
+        source_run_id
+        or (previous or {}).get("source_run_id")
+        or (previous or {}).get("run_id")
+        or run_id
+        or ""
+    )
+    resolved_execution_run_id = (
+        execution_run_id
+        or os.environ.get("GITHUB_RUN_ID", "")
+        or run_id
+        or (previous or {}).get("execution_run_id")
+        or ""
+    )
+    resolved_task_id = (
+        task_id
+        or os.environ.get("QUEUE_TASK_ID", "").strip()
+        or (previous or {}).get("task_id")
+        or ""
+    )
+    resolved_book_profile_id = (
+        book_profile_id
+        or (previous or {}).get("book_profile_id")
+        or ""
+    )
+    resolved_book_title = (
+        book_title
+        or (previous or {}).get("book_title")
+        or ""
+    )
+    parts_list = list(part_plan or []) if part_plan is not None else list((previous or {}).get("part_plan") or [])
+    resolved_fingerprint = plan_fingerprint_str or (plan_fingerprint(parts_list) if parts_list else (previous or {}).get("plan_fingerprint") or "")
+
     data = {
         "version": 4,
-        "run_id": str(run_id) if run_id else "",
-        "task_id": os.environ.get("QUEUE_TASK_ID", "").strip(),
+        "run_id": str(resolved_source_run_id or resolved_execution_run_id or run_id or ""),
+        "source_run_id": str(resolved_source_run_id),
+        "execution_run_id": str(resolved_execution_run_id),
+        "task_id": str(resolved_task_id),
+        "book_profile_id": str(resolved_book_profile_id),
+        "book_title": str(resolved_book_title),
+        "plan_fingerprint": str(resolved_fingerprint),
         "privacy": privacy,
         "status": status,
         "reason": reason,
         "retry_at": retry_at.isoformat() if retry_at else None,
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "completed_titles": sorted(completed_titles or []),
-        "part_plan": list(part_plan or []),
+        "part_plan": parts_list,
         "pending_thumbnails": dict(pending_thumbnails or {}),
         "pending_playlist": dict(pending_playlist or {}),
         "pending_captions": dict(pending_captions or {}),

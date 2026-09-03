@@ -41,11 +41,11 @@ from .state import (
 try:
     from ..huggingface_archiver import HuggingFaceArchiver
     from ..metadata_gen import save_book_metadata
-    from ..publication_checkpoint import PublicationCheckpoint
+    from ..publication_checkpoint import PublicationCheckpoint, plan_fingerprint
 except ImportError:
     from huggingface_archiver import HuggingFaceArchiver
     from metadata_gen import save_book_metadata
-    from publication_checkpoint import PublicationCheckpoint
+    from publication_checkpoint import PublicationCheckpoint, plan_fingerprint
 
 
 def _get_symbol(name: str, fallback: Any) -> Any:
@@ -78,6 +78,9 @@ def run_upload_pipeline(args):
     )
     hf_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hf-archive")
 
+    source_run_id = getattr(args, "source_run_id", None) or getattr(args, "run_id", "") or ""
+    execution_run_id = getattr(args, "execution_run_id", None) or os.environ.get("GITHUB_RUN_ID", "") or getattr(args, "run_id", "") or ""
+
     saved_state = load_resume_state(args.state_file)
     completed_titles = set()
     part_plan = []
@@ -85,24 +88,32 @@ def run_upload_pipeline(args):
     pending_playlist = {}
     pending_captions = {}
     pending_publish = {}
-    resume_state_matches = bool(
-        saved_state
-        and (
-            (
-                args.task_id
-                and str(saved_state.get("task_id") or "") == str(args.task_id)
-            )
-            or str(saved_state.get("run_id") or "")
-            == str(args.run_id or saved_state.get("run_id") or "")
-        )
-    )
-    if resume_state_matches:
+    resume_state_matches = False
+    if saved_state:
+        # Check task identity:
+        # 1. task_id check
+        if args.task_id and saved_state.get("task_id"):
+            if str(saved_state.get("task_id")).strip() != str(args.task_id).strip():
+                raise RuntimeError(
+                    f"Checkpoint task mismatch: expected {args.task_id!r}, found {saved_state.get('task_id')!r}; refusing foreign checkpoint"
+                )
+        # 2. publication ledger identity check
+        if publication.is_locked():
+            valid, reason = publication.validate_task_identity(task_id=args.task_id)
+            if not valid:
+                raise RuntimeError(f"Publication ledger task mismatch: {reason}; refusing foreign checkpoint")
+
+        resume_state_matches = True
         completed_titles.update(saved_state.get("completed_titles") or [])
         part_plan = list(saved_state.get("part_plan") or [])
         pending_thumbnails = dict(saved_state.get("pending_thumbnails") or {})
         pending_playlist = dict(saved_state.get("pending_playlist") or {})
         pending_captions = dict(saved_state.get("pending_captions") or {})
         pending_publish = dict(saved_state.get("pending_publish") or {})
+
+        # Inherit source_run_id from previous checkpoint if available
+        if not getattr(args, "source_run_id", None) and (saved_state.get("source_run_id") or saved_state.get("run_id")):
+            source_run_id = saved_state.get("source_run_id") or saved_state.get("run_id")
 
     valid_resume_statuses = {"paused", "running", "planned", "incomplete"}
     if resume_state_matches and saved_state.get("status") in valid_resume_statuses:
@@ -170,6 +181,7 @@ def run_upload_pipeline(args):
 
     SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     book_title = "有聲小說全集"
+    book_profile_id = getattr(args, "book_profile_id", "") or ""
     start_chap, end_chap = 1, 2400
     config_path = os.path.join(SRC_DIR, "..", "config.yaml")
     if args.input_dir and os.path.exists(os.path.join(args.input_dir, "config.yaml")):
@@ -193,6 +205,7 @@ def run_upload_pipeline(args):
                 cfg = yaml.safe_load(f)
                 if cfg:
                     book_title = cfg.get("book_title", book_title)
+                    book_profile_id = cfg.get("book_profile_id", book_profile_id)
                     chaps = cfg.get("selected_indices", [])
                     if chaps:
                         start_chap = chaps[0]
@@ -206,8 +219,24 @@ def run_upload_pipeline(args):
         part_plan = load_measured_prepared_part_plan(args.input_dir, book_title)
         if part_plan:
             logging.info("✅ 已在建立播放清單前實測 %s 個 prepared Part 的 MP4 時長。", len(part_plan))
+    if saved_state and saved_state.get("book_profile_id") and book_profile_id:
+        if str(saved_state["book_profile_id"]).strip() != str(book_profile_id).strip():
+            raise RuntimeError(
+                f"Checkpoint book_profile_id mismatch: expected {book_profile_id!r}, found {saved_state['book_profile_id']!r}; refusing foreign checkpoint"
+            )
+    if publication.is_locked():
+        valid, reason = publication.validate_task_identity(book_profile_id=book_profile_id, part_plan=part_plan)
+        if not valid:
+            raise RuntimeError(f"Publication ledger mismatch: {reason}; refusing foreign checkpoint")
     if part_plan:
-        publication.lock_plan(part_plan, run_id=args.run_id, book_title=book_title)
+        publication.lock_plan(
+            part_plan,
+            run_id=source_run_id,
+            book_title=book_title,
+            book_profile_id=book_profile_id,
+            task_id=args.task_id,
+            execution_run_id=execution_run_id,
+        )
 
     measured_duration_seconds = sum(
         float(part.get("duration") or 0) for part in (part_plan or [])

@@ -6,7 +6,10 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import pytest
+try:
+    import pytest
+except ImportError:
+    pytest = None
 
 from tools.chrome_cookie_harvester import (
     BrowserCardWorker,

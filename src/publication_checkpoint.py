@@ -47,9 +47,9 @@ def _atomic_json(path, data):
 def normalized_plan(plan):
     return [{
         "part_num": int(part["part_num"]),
-        "start_chap": int(part["start_chap"]),
-        "end_chap": int(part["end_chap"]),
-        "chapters": [int(value) for value in part["chapters"]],
+        "start_chap": int(part.get("start_chap", 0)),
+        "end_chap": int(part.get("end_chap", 0)),
+        "chapters": [int(value) for value in part.get("chapters", [])],
         "source_missing_chapters": [
             int(value) for value in part.get("source_missing_chapters", [])
         ],
@@ -96,31 +96,62 @@ class PublicationCheckpoint:
                                             "position": playlist.get("position"),
                                             "completed_at": playlist.get("updated_at")})
 
-    def lock_plan(self, plan, run_id="", book_title=""):
+    def validate_task_identity(self, book_profile_id="", part_plan=None, plan_fingerprint_str="", task_id=""):
+        """Verify whether this publication ledger matches the given fingerprint identity."""
+        if not self.data.get("plan"):
+            return True, ""
+        if task_id and self.data.get("task_id"):
+            if str(self.data.get("task_id")).strip() != str(task_id).strip():
+                return False, f"ledger task_id {self.data.get('task_id')!r} != expected {task_id!r}"
+        if book_profile_id and self.data.get("book_profile_id"):
+            if str(self.data.get("book_profile_id")).strip() != str(book_profile_id).strip():
+                return False, f"ledger book_profile_id {self.data.get('book_profile_id')!r} != expected {book_profile_id!r}"
+        expected_fp = plan_fingerprint_str or (plan_fingerprint(part_plan) if part_plan else "")
+        if expected_fp:
+            ledger_fp = self.data.get("plan_fingerprint") or plan_fingerprint(self.data.get("plan", []))
+            if ledger_fp != expected_fp:
+                return False, f"ledger plan_fingerprint {ledger_fp!r} != expected {expected_fp!r}"
+        return True, ""
+
+    def lock_plan(self, plan, run_id="", book_title="", book_profile_id="", execution_run_id="", task_id=""):
         candidate = normalized_plan(plan)
         fingerprint = plan_fingerprint(candidate)
         existing = self.data.get("plan")
         if existing:
-            existing_parts = {
-                int(p["part_num"]): (int(p["start_chap"]), int(p["end_chap"]))
-                for p in existing
-            }
-            candidate_parts = {
-                int(p["part_num"]): (int(p["start_chap"]), int(p["end_chap"]))
-                for p in candidate
-            }
-            if existing_parts and candidate_parts and existing_parts != candidate_parts:
+            existing_fp = self.data.get("plan_fingerprint") or plan_fingerprint(existing)
+            if existing_fp != fingerprint:
                 raise RuntimeError(
                     "locked Part plan differs from current chapter inventory; refusing to repartition"
                 )
+            if book_profile_id and self.data.get("book_profile_id") and str(self.data.get("book_profile_id")).strip() != str(book_profile_id).strip():
+                raise RuntimeError(
+                    f"locked Part plan book_profile_id {self.data.get('book_profile_id')!r} differs from current {book_profile_id!r}; refusing foreign checkpoint"
+                )
+            if not self.data.get("source_run_id") and run_id:
+                self.data["source_run_id"] = str(run_id)
+            if execution_run_id or run_id:
+                self.data["execution_run_id"] = str(execution_run_id or run_id)
+            if book_profile_id and not self.data.get("book_profile_id"):
+                self.data["book_profile_id"] = str(book_profile_id)
+            if book_title and not self.data.get("book_title"):
+                self.data["book_title"] = str(book_title)
+            if task_id and not self.data.get("task_id"):
+                self.data["task_id"] = str(task_id)
+            if not self.data.get("plan_fingerprint"):
+                self.data["plan_fingerprint"] = existing_fp
             if self.data.get("plan_status") != "locked":
                 self.data["plan_status"] = "locked"
-                self.data["plan_fingerprint"] = plan_fingerprint(existing)
-                self.save()
+            self.save()
             return self.data["plan"]
+
         self.data.update({
-            "source_run_id": str(run_id or ""), "book_title": book_title,
-            "plan_status": "locked", "plan_fingerprint": fingerprint,
+            "source_run_id": str(run_id or ""),
+            "execution_run_id": str(execution_run_id or run_id or ""),
+            "book_profile_id": str(book_profile_id or ""),
+            "book_title": str(book_title or ""),
+            "task_id": str(task_id or ""),
+            "plan_status": "locked",
+            "plan_fingerprint": fingerprint,
             "plan": candidate,
         })
         for part in self.data["plan"]:

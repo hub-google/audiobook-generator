@@ -748,6 +748,54 @@ jobs:
           name: shared-config
           path: prepared_source
 
+      - name: Validate and normalize restored YouTube upload checkpoint
+        if: hashFiles('upload_resume_state/state.json') != ''
+        env:
+          QUEUE_TASK_ID: ${{ github.event.inputs.queue_task_id }}
+          EXECUTION_RUN_ID: ${{ github.run_id }}
+          SOURCE_RUN_ID: ${{ inputs.resume_source_run_id || github.run_id }}
+        run: |
+          python - <<'PY'
+          import json, os, sys, yaml
+          from src.publication_checkpoint import PublicationCheckpoint, plan_fingerprint
+          from src.youtube_upload.state import load_resume_state
+
+          state_file = "upload_resume_state/state.json"
+          state = load_resume_state(state_file)
+          if not state:
+              sys.exit(0)
+
+          config_path = "prepared_source/config.yaml"
+          book_profile_id = ""
+          if os.path.exists(config_path):
+              with open(config_path, encoding="utf-8") as f:
+                  cfg = yaml.safe_load(f) or {}
+                  book_profile_id = str(cfg.get("book_profile_id") or "").strip()
+
+          if book_profile_id and state.get("book_profile_id") and str(state["book_profile_id"]).strip() != book_profile_id:
+              print(f"::error title=Checkpoint rejected::Checkpoint book_profile_id {state['book_profile_id']!r} != expected {book_profile_id!r}")
+              sys.exit(1)
+
+          plan_path = "prepared_plan/parts-plan.json"
+          if os.path.exists(plan_path) and state.get("part_plan"):
+              with open(plan_path, encoding="utf-8") as f:
+                  locked = json.load(f)
+              expected_fp = plan_fingerprint(locked.get("parts", []))
+              actual_fp = plan_fingerprint(state["part_plan"])
+              if expected_fp != actual_fp:
+                  print("::error title=Checkpoint rejected::part_plan fingerprint differs from current prepared plan")
+                  sys.exit(1)
+
+          publication = PublicationCheckpoint(state_file)
+          if publication.is_locked():
+              valid, reason = publication.validate_task_identity(book_profile_id=book_profile_id)
+              if not valid:
+                  print(f"::error title=Checkpoint rejected::{reason}")
+                  sys.exit(1)
+
+          print("Restored YouTube upload checkpoint validated successfully.")
+          PY
+
       - name: Restore verified manual cover when configured
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -845,7 +893,7 @@ jobs:
           for attempt in 1 2 3; do
             echo "YouTube uploader attempt $attempt/3"
             set +e
-            python src/youtube_api_uploader.py --run-id "${{ inputs.resume_source_run_id || github.run_id }}" --input-dir prepared_parts --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
+            python src/youtube_api_uploader.py --run-id "${{ inputs.resume_source_run_id || github.run_id }}" --source-run-id "${{ inputs.resume_source_run_id || github.run_id }}" --execution-run-id "${{ github.run_id }}" --input-dir prepared_parts --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
             code=$?
             set -e
 
@@ -871,6 +919,8 @@ jobs:
       - name: Enforce strict publication evidence
         env:
           SOURCE_RUN_ID: ${{ inputs.resume_source_run_id || github.run_id }}
+          EXECUTION_RUN_ID: ${{ github.run_id }}
+          BOOK_PROFILE_ID: ${{ steps.gen_matrix.outputs.book_profile_id || needs.setup.outputs.book_profile_id }}
         run: |
           python - <<'PY'
           import os
@@ -878,7 +928,9 @@ jobs:
 
           result = validate_upload_success(
               "upload_resume_state/state.json",
-              expected_run_id=os.environ["SOURCE_RUN_ID"],
+              expected_run_id=os.environ.get("SOURCE_RUN_ID"),
+              execution_run_id=os.environ.get("EXECUTION_RUN_ID"),
+              expected_book_profile_id=os.environ.get("BOOK_PROFILE_ID"),
           )
           print(
               "Strict success gate passed: "

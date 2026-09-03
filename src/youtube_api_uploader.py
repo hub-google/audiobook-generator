@@ -107,6 +107,7 @@ try:
         upload_caption_file,
         upload_video_file,
         validate_chapter_inventory,
+        validate_state_identity,
         validate_user_facing_playlist,
         verify_published_part,
     )
@@ -177,6 +178,7 @@ except ImportError:
         upload_caption_file,
         upload_video_file,
         validate_chapter_inventory,
+        validate_state_identity,
         validate_user_facing_playlist,
         verify_published_part,
     )
@@ -187,6 +189,9 @@ _atomic_write_json = atomic_write_json
 def main():
     parser = argparse.ArgumentParser(description="YouTube API Fast Uploader & Playlist Builder")
     parser.add_argument("--run-id", help="GitHub Actions Run ID containing video worker artifacts")
+    parser.add_argument("--source-run-id", help="Original source run ID for this publication task")
+    parser.add_argument("--execution-run-id", help="Current execution run ID (retry / resume run ID)")
+    parser.add_argument("--book-title", help="Book title override")
     parser.add_argument("--input-dir", help="Local directory containing MP4 files")
     parser.add_argument("--repo", default="hub-google/audiobook-generator", help="GitHub Repository")
     parser.add_argument("--privacy", default="public", choices=["public", "unlisted", "private"], help="Privacy status")
