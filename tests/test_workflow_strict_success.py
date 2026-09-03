@@ -90,6 +90,9 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
                       "Rerun worker IDs", "Reused Part numbers", "Rerun Part numbers",
                       "Publication resume position"):
             self.assertIn(label, summary["run"])
+        final_step = next(step for step in self.jobs["final_merge"]["steps"]
+                          if step.get("name") == "Reuse or create the complete Final Merge manifest")
+        self.assertIn("HF_TOKEN", final_step["env"])
 
     def test_run_names_are_readable_and_dispatcher_history_is_pruned(self):
         self.assertIn("有聲小說製作", self.text)

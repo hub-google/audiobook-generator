@@ -753,6 +753,8 @@ jobs:
       - name: Reuse or create the complete Final Merge manifest
         env:
           RESUME_MODE: ${{ needs.resume_planner.outputs.mode }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
         run: |
           if [ "$RESUME_MODE" = "publication" ]; then
             cp -a resume_bundle/final-merge/. final_merge/
