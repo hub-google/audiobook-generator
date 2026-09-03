@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 911,
-  "updated_at": "2026-09-03T09:10:08.201645+00:00",
+  "revision": 912,
+  "updated_at": "2026-09-03T09:10:16.759526+00:00",
   "queue": [
     {
       "task_id": "book-20260830-d351738f",
