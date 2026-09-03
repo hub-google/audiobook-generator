@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 903,
-  "updated_at": "2026-09-03T09:07:17.693036+00:00",
+  "revision": 904,
+  "updated_at": "2026-09-03T09:07:22.393332+00:00",
   "queue": [
     {
       "task_id": "book-20260830-d351738f",
@@ -2651,14 +2651,14 @@
         2120,
         2597
       ],
-      "status": "dispatching",
+      "status": "needs_attention",
       "run_id": null,
       "run_attempt": 0,
       "execution_generation": 4,
       "retry_requested_at": "2026-09-03T09:06:57.422508+00:00",
       "run_history": [],
       "retry_at": null,
-      "reason": null,
+      "reason": "dispatch_failed: GitHub API POST /actions/workflows/audiobook.yml/dispatches failed (422): {\"message\":\"Cannot trigger a 'workflow_dispatch' on a disabled workflow\",\"documentation_url\":\"https://docs.github.com/rest/actions/workflows#create-a-workflow-dispatch-event\",\"status\":\"422\"}",
       "hf_progress": {
         "completed": 0,
         "total": 0
@@ -2668,7 +2668,7 @@
         "total": 0
       },
       "created_at": "2026-08-30T01:43:09.424779+00:00",
-      "updated_at": "2026-09-03T09:07:17.693014+00:00",
+      "updated_at": "2026-09-03T09:07:22.393292+00:00",
       "run_conclusion": null,
       "run_completed_at": null,
       "book_profile_id": "cb2718d5fff49854",
