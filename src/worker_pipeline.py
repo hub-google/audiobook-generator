@@ -379,7 +379,7 @@ def _copy_artifact_files_to_workspace(src_dir, workspace_dir, book_title):
             elif "source_missing" in f and f.endswith(".json"):
                 dest_folder = "SourceStatus"
             elif (
-                f.startswith("worker-")
+                (f.startswith("worker-") or f == "artifact-registry.json")
                 and f.endswith(".json")
                 and os.path.basename(root) == "Checkpoints"
             ):
@@ -428,6 +428,8 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
     checkpoint = PipelineCheckpoint(
         workspace_dir, book_title, worker_id, exact_indices,
         cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
+        stage_settings=build_stage_settings(config),
+        validation_cache_enabled=(config.get("validation") or {}).get("cache_enabled", True),
     )
     logging.info("=== Worker %s resumable per-stage pipeline (%s chapters) ===",
                  worker_id, len(exact_indices))
@@ -483,6 +485,17 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
 def restore_locked_artifact(config, worker_id, exact_indices, artifact_dir,
                             source_config_path, expected_source_run_id=""):
     """Restore and strictly validate the one fingerprint-locked source Run artifact."""
+    logging.info("=" * 60)
+    logging.info("[ArtifactRestore] === Worker %s Artifact Restore & Validation ===", worker_id)
+    logging.info("[ArtifactRestore] Source Run ID: %s", expected_source_run_id or "(none)")
+    logging.info("[ArtifactRestore] Expected chapters: %s (Total: %d)", exact_indices, len(exact_indices))
+
+    if not expected_source_run_id:
+        logging.info("[ArtifactRestore] No resume_source_run_id provided; proceeding as new run.")
+        logging.info("[ArtifactRestore] Final result: complete=false")
+        logging.info("=" * 60)
+        return False
+
     book_title = config["book_title"]
     workspace_dir = os.path.abspath(os.path.join(
         SRC_DIR, "..", config["paths"]["workspace_base"], book_title
@@ -496,19 +509,34 @@ def restore_locked_artifact(config, worker_id, exact_indices, artifact_dir,
             for root, _, files in os.walk(artifact_dir)
             for name in files
         ]
+
+    artifact_found = bool(artifact_files)
+    logging.info("[ArtifactRestore] Artifact directory: %s", artifact_dir)
+    logging.info("[ArtifactRestore] Artifact found/downloaded: %s", "YES" if artifact_found else "NO")
+    logging.info("[ArtifactRestore] Artifact file count: %d", len(artifact_files))
+
     if not artifact_files:
-        logging.warning("[ArtifactFirst] Run %s has no worker artifact; Cache fallback is allowed.", expected_source_run_id)
+        logging.warning("[ArtifactRestore] Run %s has no worker artifact; Cache fallback is allowed.", expected_source_run_id)
+        logging.info("[ArtifactRestore] Final result: complete=false")
+        logging.info("=" * 60)
         return False
+
     if not os.path.isfile(source_config_path):
         raise RuntimeError(f"Run {expected_source_run_id} worker artifact exists but shared-config is missing")
+
     source_config = load_config(source_config_path)
     current_profile = str(config.get("book_profile_id") or "")
     source_profile = str(source_config.get("book_profile_id") or "")
-    if not current_profile or source_profile != current_profile:
+    profile_match = bool(current_profile and source_profile == current_profile)
+    logging.info("[ArtifactRestore] Book profile check: current='%s', source='%s', match=%s",
+                 current_profile or "missing", source_profile or "missing", profile_match)
+
+    if not profile_match:
         raise RuntimeError(
             f"Run {expected_source_run_id} book fingerprint mismatch: "
             f"expected {current_profile or 'missing'}, got {source_profile or 'missing'}"
         )
+
     _copy_artifact_files_to_workspace(artifact_dir, workspace_dir, book_title)
     checkpoint = PipelineCheckpoint(
         workspace_dir, book_title, worker_id, exact_indices,
@@ -517,17 +545,41 @@ def restore_locked_artifact(config, worker_id, exact_indices, artifact_dir,
         validation_cache_enabled=(config.get("validation") or {}).get("cache_enabled", True),
     )
     checkpoint.reconcile()
+
     incomplete = checkpoint.incomplete_chapters()
+    missing = checkpoint.source_missing_chapters()
+    completed = [c for c in exact_indices if c not in incomplete and c not in missing]
+
+    logging.info("[ArtifactRestore] Checkpoint Reconcile Summary:")
+    logging.info("[ArtifactRestore]   - Restored completed chapters: %s (Count: %d/%d)", completed, len(completed), len(exact_indices))
+    if missing:
+        logging.info("[ArtifactRestore]   - Source missing chapters: %s (Count: %d)", missing, len(missing))
+    logging.info("[ArtifactRestore]   - Incomplete / missing chapters: %s (Count: %d)", incomplete, len(incomplete))
+
     if incomplete:
         logging.warning(
-            "[ArtifactFirst] Run %s artifact is incomplete for Worker %s (%s chapters); Cache fallback is allowed.",
+            "[ArtifactRestore] Run %s artifact is incomplete for Worker %s (%d missing chapters); Pipeline will run to fill missing stages.",
             expected_source_run_id, worker_id, len(incomplete),
         )
+        logging.info("[ArtifactRestore] Final result: complete=false")
+        logging.info("=" * 60)
         return False
+
+    # Export and validate manifest so downstream upload stages find the manifest artifact immediately
+    checkpoint.export_manifest()
+    m_val = checkpoint.validate_manifest()
+    chapter_count = m_val.get("chapter_count", len(completed)) if isinstance(m_val, dict) else len(completed)
+    total_duration = m_val.get("total_duration_seconds", 0.0) if isinstance(m_val, dict) else 0.0
+    missing_count = m_val.get("missing_count", len(missing)) if isinstance(m_val, dict) else len(missing)
+    logging.info("[ArtifactRestore] ✅ Manifest exported & validated: %d chapters, %.1fs duration, %d missing",
+                 chapter_count, total_duration, missing_count)
+
     logging.info(
-        "[ArtifactFirst] Run %s artifact passed fingerprint and chapter validation for Worker %s; Cache is forbidden.",
+        "[ArtifactRestore] 🎉 Run %s artifact passed fingerprint and chapter validation for Worker %s! All chapters complete; skipping pipeline.",
         expected_source_run_id, worker_id,
     )
+    logging.info("[ArtifactRestore] Final result: complete=true")
+    logging.info("=" * 60)
     return True
 
 
@@ -625,6 +677,8 @@ def main():
         checkpoint = PipelineCheckpoint(
             workspace_dir, book_title, args.worker_id, exact_indices,
             cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
+            stage_settings=build_stage_settings(config),
+            validation_cache_enabled=(config.get("validation") or {}).get("cache_enabled", True),
         )
         checkpoint.export_manifest()
         m_val = checkpoint.validate_manifest()

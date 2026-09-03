@@ -121,6 +121,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         )
         self.assertIn("python src/worker_pipeline.py", step["run"])
         self.assertNotIn("for attempt in 1 2 3", step["run"])
+        self.assertEqual(step.get("if"), "steps.artifact_restore.outputs.complete != 'true'")
 
     def test_worker_summary_does_not_export_or_validate_incomplete_manifest(self):
         step = next(

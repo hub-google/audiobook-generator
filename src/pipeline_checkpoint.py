@@ -178,10 +178,11 @@ class PipelineCheckpoint:
                     validation_error = str(error)
                 input_signature = self._input_signature(chapter, stage)
                 recorded_signature = record.get("input_signature")
-                stale = bool(recorded_signature and recorded_signature != input_signature)
+                stale_input = bool(recorded_signature and recorded_signature != input_signature)
                 expected_settings = self._settings_signature(stage)
-                if self.stage_settings.get(stage):
-                    stale = stale or record.get("settings_signature") != expected_settings
+                recorded_settings = record.get("settings_signature")
+                stale_settings = bool(recorded_settings and recorded_settings != expected_settings)
+                stale = stale_input or stale_settings
                 if valid and upstream_complete and not stale:
                     record.update({
                         "status": "completed",
@@ -196,9 +197,12 @@ class PipelineCheckpoint:
                     })
                     record.pop("error", None)
                     record.pop("error_type", None)
+                    record.pop("validation_error", None)
                 else:
                     upstream_complete = False
-                    if stale:
+                    if stale_settings:
+                        record["validation_error"] = "stage settings changed; output must be regenerated"
+                    elif stale_input:
                         record["validation_error"] = "upstream artifact changed; output must be regenerated"
                     elif validation_error:
                         record["validation_error"] = validation_error[:1000]
@@ -314,12 +318,8 @@ class PipelineCheckpoint:
         if record.get("status") != "completed":
             return False
         if stage == "cleaner" and self.cleaner_fingerprint:
-            # mark_completed() stores the canonical signature of stage_settings,
-            # not the raw legacy cleaner fingerprint.  Comparing those two
-            # different representations made a freshly completed cleaner stage
-            # look incomplete until the checkpoint was loaded and reconciled
-            # again, so the same process refused to start TTS.
-            if record.get("settings_signature") != self._settings_signature(stage):
+            recorded_settings = record.get("settings_signature")
+            if recorded_settings and recorded_settings != self._settings_signature(stage):
                 return False
         recorded = record.get("input_signature")
         return not recorded or recorded == self._input_signature(chapter, stage)

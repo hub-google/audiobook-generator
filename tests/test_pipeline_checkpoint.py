@@ -60,6 +60,28 @@ class PipelineCheckpointTests(unittest.TestCase):
                 "completed",
             )
 
+    def test_files_rebuild_checkpoint_with_stage_settings(self):
+        stage_settings = {
+            "crawler": {"version": "v1"},
+            "cleaner": {"version": "v1"},
+            "tts": {"version": "v1"},
+            "subtitle": {"version": "v1"},
+            "image": {"version": "v1"},
+            "video": {"version": "v1"},
+        }
+        checkpoint = PipelineCheckpoint(self.workspace, self.book, 0, [1], stage_settings=stage_settings)
+        for stage in STAGES:
+            self._write_output(checkpoint, 1, stage)
+
+        # Rebuilding from disk without a pre-existing checkpoint ledger should recognize valid files as completed
+        rebuilt = PipelineCheckpoint(self.workspace, self.book, 0, [1], stage_settings=stage_settings)
+        self.assertEqual(rebuilt.incomplete_chapters(), [])
+        for stage in STAGES:
+            self.assertEqual(
+                rebuilt.data["chapters"]["1"]["stages"][stage]["status"],
+                "completed",
+            )
+
     def test_cleaner_fingerprint_invalidates_cleaner_and_downstream(self):
         checkpoint = PipelineCheckpoint(self.workspace, self.book, 0, [1], cleaner_fingerprint="old")
         for stage in STAGES:

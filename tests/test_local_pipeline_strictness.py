@@ -119,6 +119,8 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
         import yaml
         checkpoint = Mock()
         checkpoint.incomplete_chapters.return_value = []
+        checkpoint.source_missing_chapters.return_value = []
+        checkpoint.validate_manifest.return_value = {"chapter_count": 2, "total_duration_seconds": 120.0, "missing_count": 0}
         checkpoint_type.return_value = checkpoint
         config = dict(self.config, book_profile_id="fingerprint-1")
         with tempfile.TemporaryDirectory() as root:
@@ -134,6 +136,8 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
             ))
         copy_files.assert_called_once()
         checkpoint.reconcile.assert_called_once()
+        checkpoint.export_manifest.assert_called_once()
+        checkpoint.validate_manifest.assert_called_once()
 
     def test_locked_artifact_rejects_wrong_book_fingerprint(self):
         import tempfile

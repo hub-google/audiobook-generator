@@ -385,6 +385,7 @@ jobs:
           echo "=================================================="
 
       - name: Run Per-Chapter End-to-End Pipeline (Real-Time Saving)
+        if: steps.artifact_restore.outputs.complete != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -480,6 +481,7 @@ jobs:
           import os
           import yaml
           from src.pipeline_checkpoint import PipelineCheckpoint
+          from src.worker_pipeline import build_stage_settings
 
           with open("config.yaml", encoding="utf-8") as config_file:
               config = yaml.safe_load(config_file)
@@ -492,6 +494,8 @@ jobs:
           checkpoint = PipelineCheckpoint(
               workspace, book_title, worker_id, chapters,
               cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
+              stage_settings=build_stage_settings(config),
+              validation_cache_enabled=(config.get("validation") or {}).get("cache_enabled", True),
           )
           incomplete = checkpoint.incomplete_chapters()
           missing = checkpoint.source_missing_chapters()
