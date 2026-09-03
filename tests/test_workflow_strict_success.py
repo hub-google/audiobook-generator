@@ -77,6 +77,20 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
     def test_worker_concurrency_is_capped_at_seventeen(self):
         self.assertEqual(self.jobs["process_chapters"]["strategy"]["max-parallel"], 17)
 
+    def test_every_downstream_job_stops_when_resume_planner_fails(self):
+        for job_name in ("process_chapters", "plan_parts", "merge_parts", "final_merge", "upload_to_youtube"):
+            self.assertIn("needs.resume_planner.result == 'success'", self.jobs[job_name]["if"], job_name)
+
+    def test_resume_planner_receives_hf_credentials_and_reports_saved_work(self):
+        steps = self.jobs["resume_planner"]["steps"]
+        planner = next(step for step in steps if step.get("id") == "resume")
+        self.assertIn("HF_TOKEN", planner["env"])
+        summary = next(step for step in steps if step.get("name") == "Summarize selected resume work")
+        for label in ("Selected source Run", "Deepest resume mode", "Reused worker IDs",
+                      "Rerun worker IDs", "Reused Part numbers", "Rerun Part numbers",
+                      "Publication resume position"):
+            self.assertIn(label, summary["run"])
+
     def test_run_names_are_readable_and_dispatcher_history_is_pruned(self):
         self.assertIn("有聲小說製作", self.text)
         self.assertIn("inputs.book_title", self.text)

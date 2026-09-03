@@ -7,11 +7,13 @@ try:
     from .artifact_validation import validate_srt, validate_video
     from .part_builder import merge_part_videos
     from .publication_checkpoint import plan_fingerprint
+    from .part_matrix import build_merge_matrix
     from .youtube_api_uploader import (build_part_plan_from_inventory, confirmed_missing_from_directory, download_artifact_task, generate_part_srt, get_run_artifact_names, get_run_manifest_artifact_names, scan_artifact_chapters, validate_chapter_inventory)
 except ImportError:
     from artifact_validation import validate_srt, validate_video
     from part_builder import merge_part_videos
     from publication_checkpoint import plan_fingerprint
+    from part_matrix import build_merge_matrix
     from youtube_api_uploader import (build_part_plan_from_inventory, confirmed_missing_from_directory, download_artifact_task, generate_part_srt, get_run_artifact_names, get_run_manifest_artifact_names, scan_artifact_chapters, validate_chapter_inventory)
 
 def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17, artifact_dir=None):
@@ -121,9 +123,7 @@ def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17, 
     validate_chapter_inventory(inventory, selected[0], selected[-1], source_missing)
     parts = build_part_plan_from_inventory(inventory, 10*3600, 11*3600, source_missing)
     if not parts: raise RuntimeError("validated chapter inventory produced no Parts")
-    worker_count = min(int(max_workers), len(parts)); assignments = [[] for _ in range(worker_count)]
-    for index, part in enumerate(parts): assignments[index % worker_count].append(int(part["part_num"]))
-    matrix = {"include": [{"merge_worker_id": i, "part_numbers": ",".join(map(str, nums))} for i, nums in enumerate(assignments)]}
+    matrix = build_merge_matrix([part["part_num"] for part in parts], max_workers)
     manifest = {"schema_version": 1, "source_run_id": str(run_id), "book_title": str(config.get("book_title") or "有聲小說全集"), "selected_indices": selected, "source_missing_chapters": sorted(source_missing), "chapter_artifacts": {str(int(x["chap_num"])): x["artifact"] for x in inventory}, "parts": parts, "matrix": matrix}
     (output/"parts-plan.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
     shutil.copy2(config_path, output/"config.yaml"); return manifest

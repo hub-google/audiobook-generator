@@ -350,6 +350,8 @@ jobs:
         id: resume
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
         run: |
           python src/resume_planner.py \
             --repo "${{ github.repository }}" \
@@ -359,6 +361,23 @@ jobs:
             --matrix matrix.json \
             --output-dir resume_bundle \
             --github-output "$GITHUB_OUTPUT"
+      - name: Summarize selected resume work
+        run: |
+          python - <<'PY'
+          import json, os
+          plan = json.load(open("resume_bundle/resume-plan.json", encoding="utf-8"))
+          lines = ["## Global Resume Planner", "",
+                   f"- Selected source Run: {plan.get('source_run_id') or 'none'}",
+                   f"- Deepest resume mode: {plan.get('mode')}",
+                   f"- Reused worker IDs: {plan.get('reused_worker_ids', [])}",
+                   f"- Rerun worker IDs: {plan.get('rerun_worker_ids', [])}",
+                   f"- Reused Part numbers: {plan.get('reused_part_numbers', [])}",
+                   f"- Rerun Part numbers: {plan.get('rerun_part_numbers', [])}",
+                   f"- Publication resume position: {plan.get('publication_resume_position')}"]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write("\n".join(lines) + "\n")
+          print(" | ".join(lines[2:]))
+          PY
       - name: Preserve the verified cross-run resume bundle
         uses: actions/upload-artifact@v4
         with:
@@ -373,7 +392,7 @@ jobs:
   process_chapters:
     name: "⚡ Worker ${{ matrix.worker_id }} (Ch ${{ matrix.start_chap }}~${{ matrix.end_chap }})"
     needs: [setup, resume_planner]
-    if: needs.resume_planner.outputs.publication_complete != 'true' && needs.resume_planner.outputs.mode != 'publication' && needs.resume_planner.outputs.mode != 'final_merge'
+    if: needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.resume_planner.outputs.mode != 'publication' && needs.resume_planner.outputs.mode != 'final_merge'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/hub-google/audiobook-worker@sha256:e972f6265789c992503636cbc971239097c602d7e5f364858ed42f4807a6b699
@@ -643,7 +662,7 @@ jobs:
   merge_parts:
     name: "🧩 Merge worker ${{ matrix.merge_worker_id }} — Parts ${{ matrix.part_numbers }}"
     needs: [resume_planner, plan_parts, process_chapters]
-    if: always() && needs.plan_parts.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.resume_planner.outputs.mode != 'publication' && needs.resume_planner.outputs.mode != 'final_merge'
+    if: always() && needs.resume_planner.result == 'success' && needs.plan_parts.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.resume_planner.outputs.mode != 'publication' && needs.resume_planner.outputs.mode != 'final_merge'
     strategy:
       fail-fast: false
       max-parallel: 17
@@ -708,7 +727,7 @@ jobs:
   final_merge:
     name: "🔒 Validate complete Final Merge"
     needs: [resume_planner, plan_parts, merge_parts]
-    if: always() && needs.resume_planner.outputs.publication_complete != 'true' && needs.plan_parts.result == 'success' && (needs.merge_parts.result == 'success' || needs.merge_parts.result == 'skipped')
+    if: always() && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.plan_parts.result == 'success' && (needs.merge_parts.result == 'success' || needs.merge_parts.result == 'skipped')
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/hub-google/audiobook-worker@sha256:e972f6265789c992503636cbc971239097c602d7e5f364858ed42f4807a6b699
@@ -769,7 +788,7 @@ jobs:
     needs: [setup, resume_planner, process_chapters, plan_parts, merge_parts, final_merge]
     # Scheduled runs only check whether the latest manual run needs a retry.
     # They do not create worker artifacts, so never start the uploader for them.
-    if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.final_merge.result == 'success'
+    if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.final_merge.result == 'success'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/hub-google/audiobook-worker@sha256:e972f6265789c992503636cbc971239097c602d7e5f364858ed42f4807a6b699

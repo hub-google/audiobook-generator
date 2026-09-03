@@ -19,10 +19,12 @@ from pathlib import Path
 import yaml
 
 try:
-    from .artifact_validation import ArtifactValidationError, validate_srt, validate_worker_manifest
+    from .artifact_validation import ArtifactValidationError, validate_srt, validate_video, validate_worker_manifest
+    from .part_matrix import build_merge_matrix
     from .publication_checkpoint import PART_STEPS, plan_fingerprint
 except ImportError:
-    from artifact_validation import ArtifactValidationError, validate_srt, validate_worker_manifest
+    from artifact_validation import ArtifactValidationError, validate_srt, validate_video, validate_worker_manifest
+    from part_matrix import build_merge_matrix
     from publication_checkpoint import PART_STEPS, plan_fingerprint
 
 
@@ -48,11 +50,19 @@ def _gh_executable():
 def config_fingerprint(config):
     """Identity used to reject artifacts belonging to a different book build."""
     payload = {
+        "book_title": config.get("book_title"),
         "book_profile_id": config.get("book_profile_id"),
         "profile_revision": config.get("profile_revision"),
+        "catalog_url": config.get("catalog_url"),
         "selected_indices": [int(x) for x in config.get("selected_indices") or []],
+        "source_indices": [int(x) for x in config.get("source_indices") or []],
+        "chapters": config.get("chapters") or [],
+        "chapter_titles": config.get("chapter_titles") or [],
         "chapter_order": config.get("chapter_order") or [],
+        "renumber_selected": bool(config.get("renumber_selected")),
         "cleaner_fingerprint": (config.get("cleaner") or {}).get("fingerprint"),
+        "tts": config.get("tts") or {},
+        "video": config.get("video") or {},
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -117,6 +127,62 @@ def _find(root, name):
     return matches[0] if len(matches) == 1 else None
 
 
+def _find_manifest_path(root, relative_path, fallback_name=""):
+    root = Path(root).resolve()
+    value = str(relative_path or "").replace("\\", "/").lstrip("/")
+    if value:
+        candidate = (root / value).resolve()
+        if root in candidate.parents and candidate.is_file():
+            return candidate
+        matches = [p for p in root.glob(f"**/{value}") if p.is_file()]
+        if len(matches) > 1:
+            raise ArtifactValidationError(f"ambiguous artifact relative path: {value}")
+        if matches:
+            return matches[0]
+    if fallback_name:
+        matches = [p for p in root.glob(f"**/{fallback_name}") if p.is_file()]
+        if len(matches) > 1:
+            raise ArtifactValidationError(f"ambiguous legacy artifact basename: {fallback_name}")
+        return matches[0] if matches else None
+    return None
+
+
+class TransientRemoteValidationError(RuntimeError):
+    """Remote evidence could not be checked; retry instead of invalidating it."""
+
+
+def verify_hf_video(part, *, token=None, repo_id=None):
+    token = token if token is not None else os.environ.get("HF_TOKEN", "")
+    repo_id = repo_id if repo_id is not None else os.environ.get("HF_ARCHIVE_REPO", "").strip()
+    if not token:
+        raise TransientRemoteValidationError("HF_TOKEN is required to validate merge bytes")
+    if not repo_id:
+        try:
+            from huggingface_hub import HfApi
+            repo_id = f"{HfApi(token=token).whoami()['name']}/audiobook-archive"
+        except Exception as error:
+            raise TransientRemoteValidationError(f"cannot resolve HF archive repository: {error}") from error
+    try:
+        from huggingface_hub import hf_hub_download
+        path = Path(hf_hub_download(repo_id=repo_id, filename=part["hf_video_path"], token=token))
+    except Exception as error:
+        try:
+            from huggingface_hub.errors import EntryNotFoundError, RemoteEntryNotFoundError
+            missing_types = (EntryNotFoundError, RemoteEntryNotFoundError)
+        except ImportError:
+            missing_types = ()
+        if missing_types and isinstance(error, missing_types):
+            raise ArtifactValidationError(f"HF video is missing: {part.get('hf_video_path')}") from error
+        raise TransientRemoteValidationError(
+            f"cannot verify HF video {part.get('hf_video_path')}: {error}"
+        ) from error
+    if path.stat().st_size != int(part.get("video_bytes") or 0):
+        raise ArtifactValidationError(f"HF video size mismatch: {part.get('hf_video_path')}")
+    if _sha256(path) != part.get("video_sha256"):
+        raise ArtifactValidationError(f"HF video hash mismatch: {part.get('hf_video_path')}")
+    return path
+
+
 def validate_plan(root, config):
     path = _find(root, "parts-plan.json")
     saved_config = _find(root, "config.yaml")
@@ -135,7 +201,7 @@ def validate_plan(root, config):
     return plan
 
 
-def validate_merge_shard(root, plan, expected_parts=None):
+def validate_merge_shard(root, plan, expected_parts=None, remote_verifier=verify_hf_video):
     recovered = {}
     for path in Path(root).glob("**/shard-manifest-*.json"):
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -157,6 +223,7 @@ def validate_merge_shard(root, plan, expected_parts=None):
             validate_srt(str(subtitle), float(part["duration"]))
             if not part.get("video_sha256") or int(part.get("video_bytes") or 0) <= 0 or not part.get("hf_video_path"):
                 raise ArtifactValidationError(f"Part {number} video evidence incomplete")
+            remote_verifier(part)
             recovered[number] = part
     wanted = {int(x) for x in (expected_parts or [])}
     if wanted and not wanted.issubset(recovered):
@@ -231,13 +298,23 @@ def validate_worker(root, matrix_item, config, require_complete=False):
     completed = []
     for item in data.get("chapters") or []:
         number = int(item["chap_num"])
-        video = _find(root, Path(item.get("video_relpath") or item.get("video") or f"chapter_{number}.mp4").name)
-        subtitle = _find(root, Path(item.get("srt_relpath") or item.get("subtitle") or f"chapter_{number}.srt").name)
+        video = _find_manifest_path(root, item.get("video_relpath") or item.get("video"), f"chapter_{number}.mp4")
+        subtitle = _find_manifest_path(root, item.get("srt_relpath") or item.get("subtitle"), f"chapter_{number}.srt")
         valid = bool(video and subtitle and video.stat().st_size > 1000 and subtitle.stat().st_size > 10)
         if valid and item.get("video_sha256"):
             valid = video.stat().st_size == int(item.get("video_bytes") or 0) and _sha256(video) == item["video_sha256"]
         if valid and item.get("srt_sha256"):
             valid = subtitle.stat().st_size == int(item.get("srt_bytes") or 0) and _sha256(subtitle) == item["srt_sha256"]
+        if valid and not item.get("video_sha256"):
+            try:
+                validate_video(str(video))
+            except ArtifactValidationError:
+                valid = False
+        if valid and not item.get("srt_sha256"):
+            try:
+                validate_srt(str(subtitle))
+            except ArtifactValidationError:
+                valid = False
         if valid:
             completed.append(number)
     complete = set(expected) == set(completed) | {int(x) for x in data.get("source_missing") or []}
@@ -286,29 +363,28 @@ def plan_resume(repo, current_run_id, config_path, matrix_path, output_dir, expl
     empty = {"include": []}
     result = {"mode": "workers", "source_run_id": "", "worker_matrix": {"include": worker_matrix},
               "merge_matrix": empty, "publication_complete": False, "has_plan": False,
-              "final_merge_ready": False}
+              "final_merge_ready": False,
+              "all_worker_ids": [int(item["worker_id"]) for item in worker_matrix]}
 
     for run_id in list_candidate_runs(repo, current_run_id, explicit_source):
-        try:
-            artifacts = list_run_artifacts(repo, run_id)
-            if "shared-config" not in artifacts:
+        artifacts = list_run_artifacts(repo, run_id)
+        if "shared-config" not in artifacts:
+            continue
+        with tempfile.TemporaryDirectory() as temporary:
+            shared = download_artifact(repo, artifacts["shared-config"], Path(temporary) / "shared")
+            source_config_path = _find(shared, "config.yaml")
+            if not source_config_path:
+                if explicit_source:
+                    raise ArtifactValidationError("explicit source Run shared-config is ambiguous or incomplete")
                 continue
-            with tempfile.TemporaryDirectory() as temporary:
-                shared = download_artifact(repo, artifacts["shared-config"], Path(temporary) / "shared")
-                source_config_path = _find(shared, "config.yaml")
-                if not source_config_path:
-                    continue
-                source_config = yaml.safe_load(source_config_path.read_text(encoding="utf-8")) or {}
-                if config_fingerprint(source_config) != config_fingerprint(config):
-                    if explicit_source:
-                        raise ArtifactValidationError("explicit source Run config fingerprint mismatch")
-                    continue
-            result["source_run_id"] = run_id
-            result["artifacts"] = artifacts
-            break
-        except Exception:
-            if explicit_source:
-                raise
+            source_config = yaml.safe_load(source_config_path.read_text(encoding="utf-8")) or {}
+            if config_fingerprint(source_config) != config_fingerprint(config):
+                if explicit_source:
+                    raise ArtifactValidationError("explicit source Run config fingerprint mismatch")
+                continue
+        result["source_run_id"] = run_id
+        result["artifacts"] = artifacts
+        break
     else:
         _write_plan(result, output)
         return result
@@ -320,6 +396,7 @@ def plan_resume(repo, current_run_id, config_path, matrix_path, output_dir, expl
             root = download_artifact(repo, artifacts["prepared-plan"], output / "prepared-plan")
             plan = validate_plan(root, config)
             result["has_plan"] = True
+            result["all_part_numbers"] = [int(part["part_num"]) for part in plan["parts"]]
         except Exception as error:
             result.setdefault("rejected", []).append(f"prepared-plan: {error}")
             shutil.rmtree(output / "prepared-plan", ignore_errors=True)
@@ -334,12 +411,17 @@ def plan_resume(repo, current_run_id, config_path, matrix_path, output_dir, expl
             _write_plan(result, output); return result
         except Exception as complete_error:
             try:
-                validate_publication(output / "publication", plan, config, require_complete=False)
+                _, ledger = validate_publication(output / "publication", plan, config, require_complete=False)
             except Exception as error:
                 result.setdefault("rejected", []).append(f"publication: {error}")
                 shutil.rmtree(output / "publication", ignore_errors=True)
             else:
                 result.setdefault("notes", []).append(f"publication checkpoint is resumable: {complete_error}")
+                for position, part in enumerate(sorted(plan["parts"], key=lambda x: int(x["part_num"]))):
+                    steps = ((ledger.get("parts") or {}).get(str(int(part["part_num"])), {}).get("steps") or {})
+                    if any((steps.get(step) or {}).get("status") != "completed" for step in PART_STEPS):
+                        result["publication_resume_position"] = position
+                        break
 
     if plan and "final-merge" in artifacts:
         try:
@@ -347,6 +429,8 @@ def plan_resume(repo, current_run_id, config_path, matrix_path, output_dir, expl
             validate_final_merge(root, plan)
             result.update(mode="publication", worker_matrix=empty, merge_matrix=empty, final_merge_ready=True)
             _write_plan(result, output); return result
+        except TransientRemoteValidationError:
+            raise
         except Exception as error:
             result.setdefault("rejected", []).append(f"final-merge: {error}")
             shutil.rmtree(output / "final-merge", ignore_errors=True)
@@ -361,6 +445,8 @@ def plan_resume(repo, current_run_id, config_path, matrix_path, output_dir, expl
             try:
                 shard_root = download_artifact(repo, artifact, merge_root / name)
                 recovered_parts.update(validate_merge_shard(shard_root, plan))
+            except TransientRemoteValidationError:
+                raise
             except Exception as error:
                 result.setdefault("rejected", []).append(f"{name}: {error}")
                 shutil.rmtree(merge_root / name, ignore_errors=True)
@@ -369,16 +455,25 @@ def plan_resume(repo, current_run_id, config_path, matrix_path, output_dir, expl
         if not missing_parts:
             result.update(mode="final_merge", worker_matrix=empty, merge_matrix=empty)
             _write_plan(result, output); return result
-        assignments = []
-        for index, number in enumerate(missing_parts):
-            assignments.append({"merge_worker_id": index, "part_numbers": str(number)})
-        result["merge_matrix"] = {"include": assignments}
+        original = (plan.get("matrix") or {}).get("include") or []
+        preserved = []
+        missing = set(missing_parts)
+        for assignment in original:
+            assigned = [int(x) for x in str(assignment.get("part_numbers", "")).split(",") if x.strip()]
+            retained = [number for number in assigned if number in missing]
+            if retained:
+                preserved.append({"merge_worker_id": assignment.get("merge_worker_id", len(preserved)),
+                                  "part_numbers": ",".join(map(str, retained))})
+        covered = [int(x) for item in preserved for x in item["part_numbers"].split(",")]
+        result["merge_matrix"] = ({"include": preserved} if len(preserved) <= 17 and set(covered) == missing
+                                  else build_merge_matrix(missing_parts))
 
     # 3. Only now inspect Workers. Completed workers are omitted; partial ones
     # carry their validated workspace in the resume bundle.
     needed_chapters = set()
     if plan and result["merge_matrix"]["include"]:
-        missing_part_numbers = {int(x["part_numbers"]) for x in result["merge_matrix"]["include"]}
+        missing_part_numbers = {int(number) for item in result["merge_matrix"]["include"]
+                                for number in item["part_numbers"].split(",")}
         needed_chapters = {int(c) for p in plan["parts"] if int(p["part_num"]) in missing_part_numbers for c in p["chapters"]}
     scheduled = []
     for item in worker_matrix:
@@ -405,6 +500,19 @@ def plan_resume(repo, current_run_id, config_path, matrix_path, output_dir, expl
 
 def _write_plan(result, output):
     serializable = dict(result)
+    rerun_workers = [int(item["worker_id"]) for item in (result.get("worker_matrix") or {}).get("include", [])]
+    serializable["rerun_worker_ids"] = rerun_workers
+    serializable["reused_worker_ids"] = [number for number in result.get("all_worker_ids", [])
+                                         if number not in set(rerun_workers)]
+    rerun_parts = [int(number) for item in (result.get("merge_matrix") or {}).get("include", [])
+                   for number in str(item.get("part_numbers", "")).split(",") if number]
+    serializable["rerun_part_numbers"] = rerun_parts
+    serializable["reused_part_numbers"] = [number for number in result.get("all_part_numbers", [])
+                                           if number not in set(rerun_parts)]
+    serializable.setdefault("publication_resume_position", None)
+    result.update({key: serializable[key] for key in (
+        "rerun_worker_ids", "reused_worker_ids", "rerun_part_numbers",
+        "reused_part_numbers", "publication_resume_position")})
     path = Path(output) / "resume-plan.json"
     path.write_text(json.dumps(serializable, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
