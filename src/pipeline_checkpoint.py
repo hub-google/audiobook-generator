@@ -47,7 +47,8 @@ def _atomic_json(path, data):
 
 class PipelineCheckpoint:
     def __init__(self, workspace_dir, book_title, worker_id, chapters, cleaner_fingerprint="",
-                 stage_settings=None, validation_cache_enabled=True, chapter_sources=None):
+                 stage_settings=None, validation_cache_enabled=True, chapter_sources=None,
+                 source_chapter_sources=None):
         self.workspace_dir = os.path.abspath(workspace_dir)
         self.book_title = book_title
         self.worker_id = int(worker_id)
@@ -55,6 +56,7 @@ class PipelineCheckpoint:
         self.cleaner_fingerprint = str(cleaner_fingerprint or "")
         self.stage_settings = dict(stage_settings or {})
         self.chapter_sources = {int(k): v for k, v in (chapter_sources or {}).items()}
+        self.source_chapter_sources = {int(k): v for k, v in (source_chapter_sources or {}).items()}
         if self.cleaner_fingerprint and "cleaner" not in self.stage_settings:
             self.stage_settings["cleaner"] = {"legacy_fingerprint": self.cleaner_fingerprint}
         checkpoint_dir = os.path.join(self.workspace_dir, "Checkpoints")
@@ -173,6 +175,9 @@ class PipelineCheckpoint:
 
             source_changed = False
             if expected_source:
+                if not recorded_source and self.source_chapter_sources.get(int(chapter)):
+                    recorded_source = self.source_chapter_sources[int(chapter)]
+
                 if recorded_source:
                     exp_url = expected_source.get("chapter_url")
                     rec_url = recorded_source.get("chapter_url")
@@ -180,6 +185,8 @@ class PipelineCheckpoint:
                     rec_idx = recorded_source.get("source_index")
                     if exp_url != rec_url or exp_idx != rec_idx:
                         source_changed = True
+                    else:
+                        chapter_record["source_identity"] = expected_source
                 else:
                     has_completed = any(chapter_record.get("stages", {}).get(s, {}).get("status") == "completed" for s in STAGES)
                     if has_completed:

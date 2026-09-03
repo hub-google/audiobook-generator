@@ -559,12 +559,14 @@ def restore_locked_artifact(config, worker_id, exact_indices, artifact_dir,
         )
 
     _copy_artifact_files_to_workspace(artifact_dir, workspace_dir, book_title)
+    source_chapter_sources = extract_chapter_sources(source_config)
     checkpoint = PipelineCheckpoint(
         workspace_dir, book_title, worker_id, exact_indices,
         cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
         stage_settings=build_stage_settings(config),
         validation_cache_enabled=(config.get("validation") or {}).get("cache_enabled", True),
         chapter_sources=extract_chapter_sources(config),
+        source_chapter_sources=source_chapter_sources,
     )
     checkpoint.reconcile()
 

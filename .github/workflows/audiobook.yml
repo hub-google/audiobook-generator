@@ -498,7 +498,7 @@ jobs:
           import os
           import yaml
           from src.pipeline_checkpoint import PipelineCheckpoint
-          from src.worker_pipeline import build_stage_settings
+          from src.worker_pipeline import build_stage_settings, extract_chapter_sources
 
           with open("config.yaml", encoding="utf-8") as config_file:
               config = yaml.safe_load(config_file)
@@ -508,11 +508,14 @@ jobs:
           per_worker = int(config["chapters_per_worker"])
           start = worker_id * per_worker
           chapters = config["selected_indices"][start:start + per_worker]
+          sources = extract_chapter_sources(config)
           checkpoint = PipelineCheckpoint(
               workspace, book_title, worker_id, chapters,
               cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
               stage_settings=build_stage_settings(config),
               validation_cache_enabled=(config.get("validation") or {}).get("cache_enabled", True),
+              chapter_sources=sources,
+              source_chapter_sources=sources,
           )
           incomplete = checkpoint.incomplete_chapters()
           missing = checkpoint.source_missing_chapters()
