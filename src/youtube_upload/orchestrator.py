@@ -355,7 +355,7 @@ def run_upload_pipeline(args):
         youtube, publication, args, playlist_id,
         completed_titles, part_plan, pending_thumbnails,
         pending_playlist, pending_captions, pending_publish,
-        book_title,
+        book_title, existing_titles=existing_titles,
     )
     if exit_code is not None:
         return exit_code

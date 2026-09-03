@@ -8,7 +8,7 @@ import re
 import sys
 from typing import Any
 
-from .errors import UploadPaused
+from .errors import UploadPaused, VideoNotFoundError
 from .media import (
     _file_sha256,
     set_video_thumbnail,
@@ -272,6 +272,23 @@ def run_local_prepared_parts_mode(
                     publication.record_thumbnail_ack(part_n)
                     pending_thumbnails.pop(v_title, None)
                     logging.info("[YouTube Quota] thumbnail: +50")
+                except VideoNotFoundError as not_found:
+                    logging.error("❌ 剛上傳的影片已被 YouTube 移除或無法找到 (Video ID: %s): %s", v_id, not_found)
+                    publication.reset_upload(part_n, reason=f"videoNotFound:{v_id}")
+                    pending_thumbnails.pop(v_title, None)
+                    pending_playlist.pop(v_title, None)
+                    completed_titles.discard(v_title)
+                    existing_titles.discard(v_title)
+                    save_resume_state(
+                        args.state_file, args.run_id, args.privacy, "running",
+                        completed_titles=completed_titles, part_plan=part_plan,
+                        pending_thumbnails=pending_thumbnails,
+                        pending_playlist=pending_playlist,
+                        pending_captions=pending_captions,
+                        pending_publish=pending_publish,
+                        playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                    )
+                    continue
                 except UploadPaused as paused:
                     publication.fail(
                         part_n, "upload_thumbnail", paused,

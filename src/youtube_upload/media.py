@@ -88,6 +88,9 @@ def set_video_thumbnail(youtube, video_id, cover_path, attempts=None):
                     retry_at.isoformat(),
                 )
                 raise UploadPaused("thumbnailRateLimit", retry_at, e) from e
+            if "videoNotFound" in err_str:
+                logging.error(f"❌ 影片 [Video ID: {video_id}] 在 YouTube 上不存在 (videoNotFound)！")
+                raise VideoNotFoundError(f"Video {video_id} not found on YouTube", video_id=video_id, original_error=e) from e
             paused = classify_daily_limit(e)
             if paused:
                 raise paused from e

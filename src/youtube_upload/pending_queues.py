@@ -28,7 +28,7 @@ except ImportError:
 def drain_pending_thumbnails(youtube, publication, args, playlist_id,
                              completed_titles, part_plan, pending_thumbnails,
                              pending_playlist, pending_captions, pending_publish,
-                             book_title):
+                             book_title, existing_titles=None):
     for pending_title, pending_video_id in list(pending_thumbnails.items()):
         pending_part_num = part_number_for_title(part_plan, pending_title)
         part_rec = publication.data.get("parts", {}).get(str(pending_part_num or 0), {})
@@ -75,6 +75,31 @@ def drain_pending_thumbnails(youtube, publication, args, playlist_id,
                 pending_captions=pending_captions,
                 pending_publish=pending_publish,
             )
+        except VideoNotFoundError:
+            logging.error(
+                "❌ 待補封面的影片已從 YouTube 消失 (Video ID: %s, Title: %s)。"
+                "正在清除無效斷點紀錄，將重新進行上傳...",
+                pending_video_id, pending_title,
+            )
+            del pending_thumbnails[pending_title]
+            pending_playlist.pop(pending_title, None)
+            pending_captions.pop(pending_title, None)
+            pending_publish.pop(pending_title, None)
+            completed_titles.discard(pending_title)
+            if existing_titles is not None:
+                existing_titles.discard(pending_title)
+            if pending_part_num:
+                publication.reset_upload(pending_part_num, reason=f"videoNotFound:{pending_video_id}")
+            save_resume_state(
+                args.state_file, args.run_id, args.privacy, "running",
+                completed_titles=completed_titles, part_plan=part_plan,
+                pending_thumbnails=pending_thumbnails,
+                pending_playlist=pending_playlist,
+                pending_captions=pending_captions,
+                pending_publish=pending_publish,
+                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None,
+            )
+            continue
         except UploadPaused as paused:
             if pending_part_num:
                 publication.fail(pending_part_num, "upload_thumbnail", paused, paused=True, youtube_video_id=pending_video_id)

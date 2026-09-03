@@ -8,7 +8,7 @@ import sys
 import threading
 from typing import Any
 
-from .errors import UploadPaused
+from .errors import UploadPaused, VideoNotFoundError
 from .media import (
     _file_sha256,
     generate_part_srt,
@@ -404,6 +404,20 @@ def run_ci_artifact_mode(
                             publication.record_thumbnail_ack(part_counter)
                             pending_thumbnails.pop(p_meta["title"], None)
                             logging.info("[YouTube Quota] thumbnail: +50")
+                        except VideoNotFoundError as not_found:
+                            logging.error("❌ 剛上傳的影片在 YouTube 上無法找到 (Video ID: %s): %s", v_id, not_found)
+                            publication.reset_upload(part_counter, reason=f"videoNotFound:{v_id}")
+                            pending_thumbnails.pop(p_meta["title"], None)
+                            pending_playlist.pop(p_meta["title"], None)
+                            completed_titles.discard(p_meta["title"])
+                            existing_titles.discard(p_meta["title"])
+                            save_resume_state(
+                                args.state_file, args.run_id, "public", "running",
+                                completed_titles=completed_titles, part_plan=part_plan,
+                                pending_thumbnails=pending_thumbnails,
+                                pending_playlist=pending_playlist,
+                            )
+                            continue
                         except UploadPaused as paused:
                             publication.fail(
                                 part_counter, "upload_thumbnail", paused,

@@ -82,6 +82,59 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
         self.assertEqual(raised.exception.reason, "thumbnailRateLimit")
 
     @patch("src.youtube_api_uploader.MediaFileUpload")
+    def test_set_video_thumbnail_raises_video_not_found(self, mock_media):
+        request = type("Request", (), {"execute": lambda self: (_ for _ in ()).throw(Exception("404 videoNotFound"))})()
+        thumbnails = type("Thumbnails", (), {"set": lambda self, **kwargs: request})()
+        youtube = type("YouTube", (), {"thumbnails": lambda self: thumbnails})()
+        with patch.object(youtube_uploader, "THUMBNAIL_MIN_INTERVAL_SECONDS", 0.0), \
+             patch.object(youtube_uploader, "_last_thumbnail_request_at", None), \
+             tempfile.NamedTemporaryFile() as cover:
+            with self.assertRaises(VideoNotFoundError) as raised:
+                set_video_thumbnail(youtube, "video-missing-404", cover.name)
+            self.assertEqual(raised.exception.video_id, "video-missing-404")
+
+    @patch("src.youtube_api_uploader.MediaFileUpload")
+    def test_drain_pending_thumbnails_recovers_from_video_not_found(self, mock_media):
+        from src.youtube_upload.pending_queues import drain_pending_thumbnails
+        youtube = MagicMock()
+        request = type("Request", (), {"execute": lambda self: (_ for _ in ()).throw(Exception("404 videoNotFound"))})()
+        youtube.thumbnails.return_value.set.return_value = request
+
+        publication = MagicMock()
+        publication.data = {"parts": {}}
+        args = MagicMock()
+        args.state_file = "dummy_state.json"
+        args.run_id = "test-run"
+        args.privacy = "public"
+
+        completed = {"Part 21"}
+        existing = {"Part 21"}
+        pending_thumbnails = {"Part 21": "1Iuwaq1h15Q"}
+        pending_playlist = {"Part 21": "1Iuwaq1h15Q"}
+        pending_captions = {}
+        pending_publish = {}
+        part_plan = [{"part_num": 21, "title": "Part 21"}]
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as cover:
+            with patch("src.youtube_upload.pending_queues.resolve_part_cover", return_value=cover.name), \
+                 patch("src.youtube_upload.pending_queues.save_resume_state") as mock_save, \
+                 patch.object(youtube_uploader, "THUMBNAIL_MIN_INTERVAL_SECONDS", 0.0), \
+                 patch.object(youtube_uploader, "_last_thumbnail_request_at", None):
+                exit_code = drain_pending_thumbnails(
+                    youtube, publication, args, "PL123",
+                    completed, part_plan, pending_thumbnails,
+                    pending_playlist, pending_captions, pending_publish,
+                    "全職高手", existing_titles=existing,
+                )
+                self.assertIsNone(exit_code)
+                self.assertNotIn("Part 21", pending_thumbnails)
+                self.assertNotIn("Part 21", pending_playlist)
+                self.assertNotIn("Part 21", completed)
+                self.assertNotIn("Part 21", existing)
+                publication.reset_upload.assert_called_once_with(21, reason="videoNotFound:1Iuwaq1h15Q")
+                mock_save.assert_called()
+
+    @patch("src.youtube_api_uploader.MediaFileUpload")
     def test_set_video_thumbnail_quota_rotates_account(self, mock_media):
         calls = {"execute": 0, "rotate": 0}
 
