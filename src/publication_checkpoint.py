@@ -53,7 +53,6 @@ def normalized_plan(plan):
         "source_missing_chapters": [
             int(value) for value in part.get("source_missing_chapters", [])
         ],
-        "duration": round(float(part.get("duration") or 0), 3),
         "title": str(part.get("title") or ""),
     } for part in plan]
 
@@ -73,6 +72,9 @@ class PublicationCheckpoint:
             self.data = {"schema_version": 2, "plan_status": "unplanned", "parts": {}, "global_steps": {}}
         self.data.setdefault("global_steps", {})
         self._migrate_legacy()
+
+    def is_locked(self):
+        return self.data.get("plan_status") == "locked" and bool(self.data.get("plan"))
 
     def _migrate_legacy(self):
         """Keep old ledgers resumable while new writes use explicit API acknowledgements."""
@@ -98,14 +100,28 @@ class PublicationCheckpoint:
         candidate = normalized_plan(plan)
         fingerprint = plan_fingerprint(candidate)
         existing = self.data.get("plan")
-        if existing and plan_fingerprint(existing) != fingerprint:
-            raise RuntimeError(
-                "locked Part plan differs from current chapter inventory; refusing to repartition"
-            )
+        if existing:
+            existing_parts = {
+                int(p["part_num"]): (int(p["start_chap"]), int(p["end_chap"]))
+                for p in existing
+            }
+            candidate_parts = {
+                int(p["part_num"]): (int(p["start_chap"]), int(p["end_chap"]))
+                for p in candidate
+            }
+            if existing_parts and candidate_parts and existing_parts != candidate_parts:
+                raise RuntimeError(
+                    "locked Part plan differs from current chapter inventory; refusing to repartition"
+                )
+            if self.data.get("plan_status") != "locked":
+                self.data["plan_status"] = "locked"
+                self.data["plan_fingerprint"] = plan_fingerprint(existing)
+                self.save()
+            return self.data["plan"]
         self.data.update({
             "source_run_id": str(run_id or ""), "book_title": book_title,
             "plan_status": "locked", "plan_fingerprint": fingerprint,
-            "plan": existing or candidate,
+            "plan": candidate,
         })
         for part in self.data["plan"]:
             record = self.data.setdefault("parts", {}).setdefault(

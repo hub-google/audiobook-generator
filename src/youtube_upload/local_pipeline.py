@@ -126,9 +126,12 @@ def run_local_prepared_parts_mode(
     publication.mark_global("download_artifacts", "completed", artifact_count=artifact_count)
     publication.mark_global("probe_durations", "completed", chapter_count=chapter_count)
     publication.mark_global("validate_inventory", "completed", chapter_count=chapter_count, source_missing_chapters=source_missing)
-    publication.lock_plan(local_plan, run_id=args.run_id, book_title=book_title)
-    publication.mark_global("lock_plan", "completed", part_count=len(local_plan))
-    part_plan = local_plan
+    if publication.is_locked() and publication.data.get("plan"):
+        part_plan = publication.data["plan"]
+        publication.mark_global("lock_plan", "completed", part_count=len(part_plan))
+    else:
+        part_plan = publication.lock_plan(local_plan, run_id=args.run_id, book_title=book_title)
+        publication.mark_global("lock_plan", "completed", part_count=len(part_plan))
 
     recovered_titles = recover_completed_titles_from_playlist(
         completed_titles,

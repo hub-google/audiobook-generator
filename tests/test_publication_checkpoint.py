@@ -22,6 +22,10 @@ class PublicationCheckpointTests(unittest.TestCase):
 
             restored = PublicationCheckpoint(state)
             restored.lock_plan(self._plan(), run_id="1", book_title="Book")
+            # Duration drift does not trigger repartition error
+            drifted_dur = self._plan()
+            drifted_dur[0]["duration"] = 123.456
+            self.assertEqual(restored.lock_plan(drifted_dur, run_id="1", book_title="Book"), checkpoint.data["plan"])
             with self.assertRaisesRegex(RuntimeError, "refusing to repartition"):
                 restored.lock_plan(self._plan(split=3), run_id="1", book_title="Book")
 
