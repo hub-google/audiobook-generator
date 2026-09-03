@@ -2651,8 +2651,8 @@
         2120,
         2597
       ],
-      "status": "waiting_retry",
-      "run_id": 33737288928,
+      "status": "running",
+      "run_id": 33771614311,
       "run_attempt": 1,
       "execution_generation": 5,
       "retry_requested_at": "2026-09-03T09:09:13.514923+00:00",
@@ -2664,7 +2664,7 @@
         }
       ],
       "retry_at": "2026-09-03T16:20:28.232412+00:00",
-      "reason": "run_failure",
+      "reason": null,
       "hf_progress": {
         "completed": 25,
         "total": 25
@@ -2675,7 +2675,7 @@
       },
       "created_at": "2026-08-30T01:43:09.424779+00:00",
       "updated_at": "2026-09-03T14:20:28.232412+00:00",
-      "run_conclusion": "failure",
+      "run_conclusion": null,
       "run_completed_at": "2026-09-03T12:33:51Z",
       "book_profile_id": "cb2718d5fff49854",
       "profile_snapshot": {
