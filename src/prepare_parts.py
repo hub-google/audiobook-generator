@@ -14,18 +14,52 @@ except ImportError:
     from publication_checkpoint import plan_fingerprint
     from youtube_api_uploader import (build_part_plan_from_inventory, confirmed_missing_from_directory, download_artifact_task, generate_part_srt, get_run_artifact_names, get_run_manifest_artifact_names, scan_artifact_chapters, validate_chapter_inventory)
 
-def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17):
+def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17, artifact_dir=None):
     config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
     selected = [int(n) for n in config.get("selected_indices") or []]
     if not selected: raise RuntimeError("shared config has no selected_indices")
     output, work = Path(output_dir), Path(work_dir); output.mkdir(parents=True, exist_ok=True)
-    manifest_names = get_run_manifest_artifact_names(str(run_id), repo) if repo else []
-    names = get_run_artifact_names(str(run_id), repo)
-    if not manifest_names and not names: raise RuntimeError(f"source Run {run_id} has no worker artifacts")
     inventory, source_missing = [], set()
+    manifest_names = get_run_manifest_artifact_names(str(run_id), repo) if repo and not artifact_dir else []
+    names = get_run_artifact_names(str(run_id), repo) if repo and not artifact_dir else []
+    if artifact_dir:
+        # The global planner may omit completed workers from this Run.  Plan
+        # from the union of its validated old artifacts and newly-produced
+        # current artifacts, keeping every artifact's original name.
+        roots = []
+        for manifest_path in Path(artifact_dir).glob("**/manifest-worker-*.json"):
+            root = manifest_path.parent.parent
+            if root not in roots:
+                roots.append(root)
+        if not roots:
+            raise RuntimeError("combined worker artifact directory contains no manifests")
+        for root in roots:
+            manifest_path = next(iter(root.glob("**/manifest-worker-*.json")), None)
+            if not manifest_path:
+                continue
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            worker_id = int(data["worker_id"])
+            artifact_name = str(data.get("artifact") or f"mp4-worker-{worker_id}")
+            scanned = scan_artifact_chapters(str(root), artifact_name)
+            inventory.extend(scanned)
+            source_missing.update(int(c) for c in data.get("source_missing", []))
+        # Duplicate copies can exist in the resume and current bundles.  They
+        # must describe identical chapter bytes; current validated output wins.
+        by_chapter = {}
+        for item in inventory:
+            number = int(item["chap_num"])
+            previous_item = by_chapter.get(number)
+            if previous_item and previous_item.get("path") and item.get("path"):
+                if _sha256(previous_item["path"]) != _sha256(item["path"]):
+                    raise RuntimeError(f"conflicting artifacts for chapter {number}")
+            by_chapter[number] = item
+        inventory = list(by_chapter.values())
+    if not artifact_dir and not manifest_names and not names: raise RuntimeError(f"source Run {run_id} has no worker artifacts")
 
     # Fast path: load lightweight manifest JSONs (only a few KB per worker)
-    if manifest_names and (not names or len(manifest_names) >= len(names)):
+    if artifact_dir:
+        pass
+    elif manifest_names and (not names or len(manifest_names) >= len(names)):
         for name in manifest_names:
             expanded = work / name
             dl_ok = False
@@ -345,7 +379,7 @@ def safe_hf_name(value):
 def main():
     p=argparse.ArgumentParser(); p.add_argument("--mode",required=True,choices=["plan","merge","fetch","restore-plan","restore-merge"]); p.add_argument("--run-id"); p.add_argument("--repo",default=""); p.add_argument("--config"); p.add_argument("--plan"); p.add_argument("--source-dir"); p.add_argument("--part-numbers",default=""); p.add_argument("--output-dir",required=True); p.add_argument("--sidecar-dir"); p.add_argument("--artifact-dir"); p.add_argument("--work-dir",default="temp_prepare_parts"); p.add_argument("--github-output"); a=p.parse_args()
     if a.mode=="plan":
-        result=plan_parts(a.run_id,a.repo,a.config,a.output_dir,a.work_dir)
+        result=plan_parts(a.run_id,a.repo,a.config,a.output_dir,a.work_dir,artifact_dir=a.artifact_dir)
         if a.github_output:
             with open(a.github_output,"a",encoding="utf-8") as h: h.write("matrix="+json.dumps(result["matrix"],separators=(",",":"))+"\n"+f"part_count={len(result['parts'])}\n")
     elif a.mode=="restore-plan":

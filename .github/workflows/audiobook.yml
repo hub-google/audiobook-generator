@@ -596,12 +596,23 @@ jobs:
             --output-dir prepared_plan \
             --github-output "$GITHUB_OUTPUT"
 
+      - name: Download current Run worker artifacts for combined inventory
+        if: needs.resume_planner.outputs.has_plan != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mp4-worker-*
+          path: current_worker_inputs
+
       - name: Inventory every chapter and lock the complete plan
         id: plan
         if: needs.resume_planner.outputs.has_plan != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          mkdir -p combined_worker_inputs
+          if [ -d resume_bundle/workers ]; then cp -a resume_bundle/workers/. combined_worker_inputs/; fi
+          # Current workers are downloaded in the preceding action step.
+          if [ -d current_worker_inputs ]; then cp -a current_worker_inputs/. combined_worker_inputs/; fi
           for attempt in 1 2 3; do
             echo "Inventory and plan attempt $attempt/3"
             if python src/prepare_parts.py \
@@ -609,6 +620,7 @@ jobs:
               --run-id "${{ github.run_id }}" \
               --repo "${{ github.repository }}" \
               --config prepared_source/config.yaml \
+              --artifact-dir combined_worker_inputs \
               --output-dir prepared_plan \
               --work-dir temp_part_inventory \
               --github-output "$GITHUB_OUTPUT"; then
