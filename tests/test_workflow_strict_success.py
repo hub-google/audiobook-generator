@@ -18,19 +18,15 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("youtube-upload-state-task-", workflow_text)
         self.assertIn("youtube-upload-checkpoint", workflow_text)
 
-    def test_explicit_resume_checkpoint_restore_is_fail_closed(self):
+    def test_publication_checkpoint_is_restored_only_from_planner_validation(self):
         steps = self.jobs["upload_to_youtube"]["steps"]
         restore = next(
             step for step in steps
-            if step.get("name") == "Restore checkpoint artifact from the explicitly resumed run"
+            if step.get("name") == "Prefer the verified artifact checkpoint over cache"
         )
         command = restore["run"]
-        self.assertIn('gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY"', command)
-        self.assertIn("test -s upload_resume_state/state.json", command)
-        self.assertIn("refusing to bypass its YouTube cooldown", command)
-        self.assertIn("searching durable checkpoints for task", command)
-        self.assertIn('state.get("task_id")', command)
-        self.assertIn("target.startswith(root)", command)
+        self.assertIn("resume_bundle/publication", command)
+        self.assertNotIn("gh api", command)
 
     def test_playlist_metadata_quota_is_classified_as_retryable(self):
         uploader_text = UPLOADER_PATH.read_text(encoding="utf-8")
@@ -50,7 +46,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         gate = self.jobs["strict_success_gate"]
         self.assertEqual(
             set(gate["needs"]),
-            {"setup", "process_chapters", "plan_parts", "merge_parts", "upload_to_youtube"},
+            {"setup", "resume_planner", "process_chapters", "plan_parts", "merge_parts", "final_merge", "upload_to_youtube"},
         )
         command = gate["steps"][0]["run"]
         self.assertIn('"$SETUP_RESULT" != "success"', command)
@@ -131,15 +127,11 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertNotIn("export_manifest", step["run"])
         self.assertNotIn("validate_manifest", step["run"])
 
-    def test_only_locked_failed_run_is_restored_before_cache(self):
+    def test_only_planner_validated_worker_is_restored_before_cache(self):
         step = next(
             item for item in self.jobs["process_chapters"]["steps"]
-            if item.get("name") == "Download only the locked failed Run (maximum 3 attempts)"
+            if item.get("name") == "Download planner-validated partial worker checkpoint"
         )
-        command = step["run"]
-        self.assertIn('for attempt in 1 2 3', command)
-        self.assertIn('--name "video-worker-$WORKER_ID"', command)
-        self.assertNotIn("mp4-worker", command)
         steps = self.jobs["process_chapters"]["steps"]
         history_index = steps.index(step)
         cache_index = next(
@@ -152,28 +144,28 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
             if item.get("name") == "Validate and restore only the locked failed Run"
         )
         self.assertIn("--stage restore_artifact", restore["run"])
-        self.assertNotIn("restore_history", self.text)
+        self.assertIn("resume_bundle/workers/video-worker-", restore["run"])
 
     def test_youtube_job_waits_for_plan_and_every_merge_worker(self):
         steps = self.jobs["upload_to_youtube"]["steps"]
         self.assertFalse(any("WORKER_RESULT" in str(step) for step in steps))
         self.assertEqual(
             set(self.jobs["upload_to_youtube"]["needs"]),
-            {"setup", "process_chapters", "plan_parts", "merge_parts"},
+            {"setup", "resume_planner", "process_chapters", "plan_parts", "merge_parts", "final_merge"},
         )
         self.assertIn("needs.setup.result == 'success'", self.jobs["upload_to_youtube"]["if"])
-        self.assertIn("needs.merge_parts.result == 'success'", self.jobs["upload_to_youtube"]["if"])
+        self.assertIn("needs.final_merge.result == 'success'", self.jobs["upload_to_youtube"]["if"])
         self.assertEqual(self.jobs["merge_parts"]["strategy"]["max-parallel"], 17)
 
     def test_locked_plan_and_completed_merge_shards_are_reused(self):
         plan_steps=self.jobs["plan_parts"]["steps"]
         self.assertTrue(any(step.get("id")=="restore_plan" for step in plan_steps))
         plan=next(step for step in plan_steps if step.get("id")=="plan")
-        self.assertEqual(plan.get("if"),"steps.restore_plan.outcome != 'success'")
+        self.assertEqual(plan.get("if"),"needs.resume_planner.outputs.has_plan != 'true'")
         merge_steps=self.jobs["merge_parts"]["steps"]
-        self.assertTrue(any(step.get("id")=="restore_merge" for step in merge_steps))
+        self.assertFalse(any(step.get("id")=="restore_merge" for step in merge_steps))
         merge=next(step for step in merge_steps if step.get("name")=="Merge only assigned locked Parts")
-        self.assertEqual(merge.get("if"),"steps.restore_merge.outcome != 'success'")
+        self.assertNotIn("if", merge)
 
     def test_matrix_validation_imports_yaml(self):
         step = next(

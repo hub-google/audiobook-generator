@@ -210,14 +210,14 @@ class LocalPipelineStrictnessTests(unittest.TestCase):
     def test_workflow_enforces_artifact_before_conditional_cache(self):
         from pathlib import Path
         workflow = (Path(__file__).parents[1] / ".github" / "workflows" / "audiobook.yml").read_text(encoding="utf-8")
-        history = workflow.index("Download only the locked failed Run (maximum 3 attempts)")
+        history = workflow.index("Download planner-validated partial worker checkpoint")
         cache = workflow.index("Restore Cache only when artifact is absent or incomplete")
         self.assertLess(history, cache)
         cache_block = workflow[cache:workflow.index("- name: Log Cache Location", cache)]
         self.assertIn("if: steps.artifact_restore.outputs.complete != 'true'", cache_block)
         self.assertIn('for attempt in 1 2 3', workflow)
         self.assertNotIn("restore_history", workflow)
-        self.assertNotIn("mp4-worker-$WORKER_ID", workflow)
+        self.assertIn("resume_bundle/workers/video-worker-", workflow)
         self.assertIn(
             "${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-",
             cache_block,

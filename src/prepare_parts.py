@@ -6,10 +6,12 @@ import yaml
 try:
     from .artifact_validation import validate_srt, validate_video
     from .part_builder import merge_part_videos
+    from .publication_checkpoint import plan_fingerprint
     from .youtube_api_uploader import (build_part_plan_from_inventory, confirmed_missing_from_directory, download_artifact_task, generate_part_srt, get_run_artifact_names, get_run_manifest_artifact_names, scan_artifact_chapters, validate_chapter_inventory)
 except ImportError:
     from artifact_validation import validate_srt, validate_video
     from part_builder import merge_part_videos
+    from publication_checkpoint import plan_fingerprint
     from youtube_api_uploader import (build_part_plan_from_inventory, confirmed_missing_from_directory, download_artifact_task, generate_part_srt, get_run_artifact_names, get_run_manifest_artifact_names, scan_artifact_chapters, validate_chapter_inventory)
 
 def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17):
@@ -143,23 +145,32 @@ def restore_locked_merge_result(plan_path, part_numbers, source_dir, output_dir)
         shutil.copy2(path, output / path.name)
     return True
 
-def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir):
+def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir, artifact_dir=None):
     plan = json.loads(Path(plan_path).read_text(encoding="utf-8")); wanted = {int(n) for n in part_numbers}
     assigned = [p for p in plan["parts"] if int(p["part_num"]) in wanted]
     if {int(p["part_num"]) for p in assigned} != wanted: raise RuntimeError("matrix assignment contains an unknown Part")
     artifacts = sorted({plan["chapter_artifacts"][str(c)] for p in assigned for c in p["chapters"]})
     output, work = Path(output_dir), Path(work_dir); output.mkdir(parents=True, exist_ok=True); inventory=[]
     for name in artifacts:
-        expanded=work/name
-        dl_ok = False
-        for dl_attempt in range(1, 4):
-            if download_artifact_task(plan["source_run_id"], repo, name, str(expanded)):
-                dl_ok = True
-                break
-            if dl_attempt < 3:
-                time.sleep(5 * dl_attempt)
-        if not dl_ok:
-            raise RuntimeError(f"could not download {name} after 3 attempts")
+        expanded = None
+        if artifact_dir:
+            candidates = [p for p in Path(artifact_dir).glob(f"**/{name}") if p.is_dir()]
+            if not candidates and "-worker-" in name:
+                worker_suffix = name.rsplit("-worker-", 1)[1]
+                candidates = [p for p in Path(artifact_dir).glob(f"**/*-worker-{worker_suffix}") if p.is_dir()]
+            if candidates:
+                expanded = candidates[0]
+        if expanded is None:
+            expanded=work/name
+            dl_ok = False
+            for dl_attempt in range(1, 4):
+                if download_artifact_task(plan["source_run_id"], repo, name, str(expanded)):
+                    dl_ok = True
+                    break
+                if dl_attempt < 3:
+                    time.sleep(5 * dl_attempt)
+            if not dl_ok:
+                raise RuntimeError(f"could not download {name} after 3 attempts")
         inventory.extend(scan_artifact_chapters(str(expanded), name))
     by_chapter={int(x["chap_num"]):x for x in inventory}; completed=[]; hf_operations=[]
     from huggingface_hub import CommitOperationAdd, HfApi
@@ -215,7 +226,7 @@ def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir):
         hf_operations.append(CommitOperationAdd(path_in_repo=remote_video,path_or_fileobj=str(video)))
         hf_operations.append(CommitOperationAdd(path_in_repo=remote_subtitle,path_or_fileobj=str(subtitle)))
         files={"video":{"path":remote_video,"bytes":video.stat().st_size,"sha256":completed_part["video_sha256"]},"subtitle":{"path":remote_subtitle,"bytes":subtitle.stat().st_size,"sha256":completed_part["subtitle_sha256"]}}
-        merge_manifest={"schema_version":1,"status":"merge_complete","source_run_id":plan["source_run_id"],"book_title":plan["book_title"],"part":completed_part,"files":files}
+        merge_manifest={"schema_version":2,"stage":"merge_part","status":"completed","fingerprint":plan_fingerprint(plan["parts"]),"source_run_id":plan["source_run_id"],"input_range":{"part_num":number,"chapters":[int(c) for c in part["chapters"]]},"book_title":plan["book_title"],"part":completed_part,"files":files}
         part_manifest={"project":"有聲小說","book_title":plan["book_title"],"part_number":number,"start_chapter":start,"end_chapter":end,"chapters":[int(c) for c in part["chapters"]],"source_missing_chapters":[int(c) for c in plan.get("source_missing_chapters",[])],"source_run_id":str(plan["source_run_id"]),"queue_task_id":"","files":files,"status":"uploaded_pending_youtube_metadata"}
         sidecars={"merge_manifest.json":merge_manifest,"part_manifest.json":part_manifest,"media_info.json":_media_info(video)}
         for filename,payload in sidecars.items():
@@ -246,7 +257,7 @@ def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir):
         print(f"[HF_MEDIA_MARKER] DONE | Part {item['part_num']} | Ch {item['start_chap']}~{item['end_chap']} | {item['hf_video_path']}",flush=True)
         (output/item["video"]).unlink(missing_ok=True)
     shard_name="shard-manifest-"+"-".join(map(str,sorted(wanted)))+".json"
-    (output/shard_name).write_text(json.dumps({"source_run_id":plan["source_run_id"],"parts":completed},ensure_ascii=False,indent=2)+"\n",encoding="utf-8"); return completed
+    (output/shard_name).write_text(json.dumps({"schema_version":2,"stage":"merge_parts","status":"completed","fingerprint":plan_fingerprint(plan["parts"]),"source_run_id":plan["source_run_id"],"input_parts":sorted(wanted),"parts":completed},ensure_ascii=False,indent=2)+"\n",encoding="utf-8"); return completed
 
 def _sha256(path):
     digest=hashlib.sha256()
@@ -332,7 +343,7 @@ def safe_hf_name(value):
     return re.sub(r"\s+"," ",value).strip(" ._") or "未命名"
 
 def main():
-    p=argparse.ArgumentParser(); p.add_argument("--mode",required=True,choices=["plan","merge","fetch","restore-plan","restore-merge"]); p.add_argument("--run-id"); p.add_argument("--repo",default=""); p.add_argument("--config"); p.add_argument("--plan"); p.add_argument("--source-dir"); p.add_argument("--part-numbers",default=""); p.add_argument("--output-dir",required=True); p.add_argument("--sidecar-dir"); p.add_argument("--work-dir",default="temp_prepare_parts"); p.add_argument("--github-output"); a=p.parse_args()
+    p=argparse.ArgumentParser(); p.add_argument("--mode",required=True,choices=["plan","merge","fetch","restore-plan","restore-merge"]); p.add_argument("--run-id"); p.add_argument("--repo",default=""); p.add_argument("--config"); p.add_argument("--plan"); p.add_argument("--source-dir"); p.add_argument("--part-numbers",default=""); p.add_argument("--output-dir",required=True); p.add_argument("--sidecar-dir"); p.add_argument("--artifact-dir"); p.add_argument("--work-dir",default="temp_prepare_parts"); p.add_argument("--github-output"); a=p.parse_args()
     if a.mode=="plan":
         result=plan_parts(a.run_id,a.repo,a.config,a.output_dir,a.work_dir)
         if a.github_output:
@@ -344,6 +355,6 @@ def main():
             with open(a.github_output,"a",encoding="utf-8") as h: h.write("matrix="+json.dumps(result["matrix"],separators=(",",":"))+"\n"+f"part_count={len(result['parts'])}\n")
     elif a.mode=="restore-merge":
         if not restore_locked_merge_result(a.plan,[int(n) for n in a.part_numbers.split(",") if n],a.source_dir,a.output_dir): raise SystemExit(1)
-    elif a.mode=="merge": merge_assigned_parts(a.plan,[int(n) for n in a.part_numbers.split(",") if n],a.repo,a.output_dir,a.work_dir)
+    elif a.mode=="merge": merge_assigned_parts(a.plan,[int(n) for n in a.part_numbers.split(",") if n],a.repo,a.output_dir,a.work_dir,a.artifact_dir)
     else: fetch_parts_from_hf(a.plan,a.output_dir,a.sidecar_dir)
 if __name__=="__main__": main()

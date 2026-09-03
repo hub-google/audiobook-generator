@@ -494,13 +494,31 @@ class PipelineCheckpoint:
                 "artifact": artifact_name,
                 "video_relpath": os.path.relpath(video_path, self.workspace_dir).replace("\\", "/"),
                 "srt_relpath": os.path.relpath(srt_path, self.workspace_dir).replace("\\", "/"),
+                "video_bytes": os.path.getsize(video_path) if os.path.exists(video_path) else 0,
+                "video_sha256": (video_rec.get("validation") or {}).get("sha256") or (
+                    self.validate_output(chapter, "video").get("sha256") if os.path.exists(video_path) else ""
+                ),
+                "srt_bytes": os.path.getsize(srt_path) if os.path.exists(srt_path) else 0,
+                "srt_sha256": self.validate_output(chapter, "subtitle").get("sha256") if os.path.exists(srt_path) else "",
             })
 
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
+            "stage": "worker",
+            "status": "completed" if not self.incomplete_chapters() else "partial",
             "worker_id": self.worker_id,
             "artifact": artifact_name,
             "book_title": self.book_title,
+            "fingerprint": stable_signature({
+                "book_title": self.book_title,
+                "worker_id": self.worker_id,
+                "input_chapters": self.chapter_numbers,
+                "cleaner_fingerprint": self.cleaner_fingerprint,
+                "stage_settings": self.stage_settings,
+                "chapter_sources": self.chapter_sources,
+            }),
+            "input_range": {"chapters": self.chapter_numbers},
+            "source_run_id": str(os.environ.get("RESUME_SOURCE_RUN_ID") or os.environ.get("GITHUB_RUN_ID") or "local"),
             "chapters": chapters,
             "source_missing": source_missing,
             "updated_at": _utc_now(),

@@ -477,8 +477,10 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
         and chapter not in missing_chapters
     ]
     print_final_report(complete_chapters, final_failed, worker_id, missing_chapters)
-    require_complete_worker(final_failed, worker_id)
     manifest = checkpoint.export_manifest()
+    # Persist a verifiable partial manifest before failing the job.  The next
+    # Run can restore the completed chapters and schedule only this worker.
+    require_complete_worker(final_failed, worker_id)
     m_val = checkpoint.validate_manifest()
     chapter_count = m_val.get("chapter_count", len(complete_chapters)) if isinstance(m_val, dict) else len(complete_chapters)
     total_duration = m_val.get("total_duration_seconds", 0.0) if isinstance(m_val, dict) else 0.0

@@ -320,14 +320,60 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: shared-config
-          path: config.yaml
+          path: |
+            config.yaml
+            matrix.json
+
+  resume_planner:
+    name: "🧭 Global Resume Planner (Publication → Final → Merge → Worker)"
+    needs: setup
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/hub-google/audiobook-worker@sha256:e972f6265789c992503636cbc971239097c602d7e5f364858ed42f4807a6b699
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      mode: ${{ steps.resume.outputs.mode }}
+      source_run_id: ${{ steps.resume.outputs.source_run_id }}
+      worker_matrix: ${{ steps.resume.outputs.worker_matrix }}
+      merge_matrix: ${{ steps.resume.outputs.merge_matrix }}
+      publication_complete: ${{ steps.resume.outputs.publication_complete }}
+      has_plan: ${{ steps.resume.outputs.has_plan }}
+      final_merge_ready: ${{ steps.resume.outputs.final_merge_ready }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: shared-config
+      - name: Plan the deepest valid resume point
+        id: resume
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python src/resume_planner.py \
+            --repo "${{ github.repository }}" \
+            --run-id "${{ github.run_id }}" \
+            --source-run-id "${{ inputs.resume_source_run_id }}" \
+            --config config.yaml \
+            --matrix matrix.json \
+            --output-dir resume_bundle \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Preserve the verified cross-run resume bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: resume-plan
+          path: resume_bundle/
+          if-no-files-found: error
+          retention-days: 7
 
 # ─────────────────────────────────────────────────────────────
 # Worker Pipeline: 並行獨立處理各 Worker 的章節 (一條龍 End-to-End)
 # ─────────────────────────────────────────────────────────────
   process_chapters:
     name: "⚡ Worker ${{ matrix.worker_id }} (Ch ${{ matrix.start_chap }}~${{ matrix.end_chap }})"
-    needs: setup
+    needs: [setup, resume_planner]
+    if: needs.resume_planner.outputs.publication_complete != 'true' && needs.resume_planner.outputs.mode != 'publication' && needs.resume_planner.outputs.mode != 'final_merge'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/hub-google/audiobook-worker@sha256:e972f6265789c992503636cbc971239097c602d7e5f364858ed42f4807a6b699
@@ -337,7 +383,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 17
-      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.resume_planner.outputs.worker_matrix) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -346,32 +392,11 @@ jobs:
         with:
           name: shared-config
 
-      - name: Download only the locked failed Run (maximum 3 attempts)
-        id: locked_source_download
-        if: inputs.resume_source_run_id != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SOURCE_RUN_ID: ${{ inputs.resume_source_run_id }}
-          WORKER_ID: ${{ matrix.worker_id }}
-        run: |
-          has_worker=$(gh api "repos/${{ github.repository }}/actions/runs/$SOURCE_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"video-worker-$WORKER_ID\") | .name")
-          if [ -n "$has_worker" ]; then
-            for attempt in 1 2 3; do
-              echo "Downloading video-worker-$WORKER_ID attempt $attempt/3"
-              rm -rf previous-worker-artifact
-              if gh run download "$SOURCE_RUN_ID" --repo "${{ github.repository }}" \
-                --name "video-worker-$WORKER_ID" --dir previous-worker-artifact; then
-                break
-              fi
-              if [ "$attempt" -eq 3 ]; then
-                echo "::error title=Failed to download worker artifact::Run $SOURCE_RUN_ID video-worker-$WORKER_ID failed after 3 attempts"
-                exit 1
-              fi
-              sleep 15
-            done
-          else
-            echo "Worker $WORKER_ID had not completed in source run $SOURCE_RUN_ID; will use exact Cache or rebuild missing stages."
-          fi
+      - name: Download planner-validated partial worker checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: resume-plan
+          path: resume_bundle
 
       - name: Validate and restore only the locked failed Run
         id: artifact_restore
@@ -379,9 +404,9 @@ jobs:
           python src/worker_pipeline.py \
             --stage restore_artifact \
             --worker-id ${{ matrix.worker_id }} \
-            --artifact-dir previous-worker-artifact \
+            --artifact-dir "resume_bundle/workers/video-worker-${{ matrix.worker_id }}" \
             --source-config config.yaml \
-            --source-run-id "${{ inputs.resume_source_run_id }}"
+            --source-run-id "${{ needs.resume_planner.outputs.source_run_id }}"
 
       - name: Restore Cache only when artifact is absent or incomplete
         if: steps.artifact_restore.outputs.complete != 'true'
@@ -409,6 +434,7 @@ jobs:
           QUEUE_TASK_ID: ${{ github.event.inputs.queue_task_id }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          RESUME_SOURCE_RUN_ID: ${{ needs.resume_planner.outputs.source_run_id || github.run_id }}
         run: |
           # Network-facing stages already implement their own bounded retries.
           # Retrying the whole worker repeats deterministic validation failures
@@ -535,8 +561,8 @@ jobs:
 # ─────────────────────────────────────────────────────────────
   plan_parts:
     name: "🧭 Lock the complete Part plan"
-    needs: [setup, process_chapters]
-    if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.process_chapters.result == 'success'
+    needs: [setup, resume_planner, process_chapters]
+    if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && (needs.process_chapters.result == 'success' || needs.process_chapters.result == 'skipped')
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/hub-google/audiobook-worker@sha256:e972f6265789c992503636cbc971239097c602d7e5f364858ed42f4807a6b699
@@ -544,7 +570,7 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     outputs:
-      matrix: ${{ steps.restore_plan.outputs.matrix || steps.plan.outputs.matrix }}
+      matrix: ${{ needs.resume_planner.outputs.has_plan == 'true' && needs.resume_planner.outputs.merge_matrix || steps.plan.outputs.matrix }}
       part_count: ${{ steps.restore_plan.outputs.part_count || steps.plan.outputs.part_count }}
     timeout-minutes: 180
     steps:
@@ -554,39 +580,25 @@ jobs:
         with:
           name: shared-config
           path: prepared_source
-      - name: Restore locked Part plan on Resume (maximum 3 attempts)
-        id: download_plan
-        if: inputs.resume_source_run_id != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SOURCE_RUN_ID: ${{ inputs.resume_source_run_id }}
-        run: |
-          for attempt in 1 2 3; do
-            echo "Downloading prepared-plan attempt $attempt/3 from Run $SOURCE_RUN_ID"
-            rm -rf previous_prepared_plan
-            if gh run download "$SOURCE_RUN_ID" --repo "${{ github.repository }}" --name prepared-plan --dir previous_prepared_plan; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error title=Failed to download prepared-plan::Could not download prepared-plan from Run $SOURCE_RUN_ID after 3 attempts"
-              exit 1
-            fi
-            sleep 15
-          done
+      - name: Download planner-validated resume data
+        uses: actions/download-artifact@v4
+        with:
+          name: resume-plan
+          path: resume_bundle
 
       - name: Validate and restore locked failed Run Part plan
         id: restore_plan
-        if: inputs.resume_source_run_id != ''
+        if: needs.resume_planner.outputs.has_plan == 'true'
         run: |
           python src/prepare_parts.py --mode restore-plan \
-            --source-dir previous_prepared_plan \
+            --source-dir resume_bundle/prepared-plan \
             --config prepared_source/config.yaml \
             --output-dir prepared_plan \
             --github-output "$GITHUB_OUTPUT"
 
       - name: Inventory every chapter and lock the complete plan
         id: plan
-        if: steps.restore_plan.outcome != 'success'
+        if: needs.resume_planner.outputs.has_plan != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -618,7 +630,8 @@ jobs:
 
   merge_parts:
     name: "🧩 Merge worker ${{ matrix.merge_worker_id }} — Parts ${{ matrix.part_numbers }}"
-    needs: plan_parts
+    needs: [resume_planner, plan_parts, process_chapters]
+    if: always() && needs.plan_parts.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.resume_planner.outputs.mode != 'publication' && needs.resume_planner.outputs.mode != 'final_merge'
     strategy:
       fail-fast: false
       max-parallel: 17
@@ -636,47 +649,17 @@ jobs:
         with:
           name: prepared-plan
           path: prepared_plan
-      - name: Download locked failed Run Merge result (maximum 3 attempts)
-        id: download_merge
-        if: inputs.resume_source_run_id != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SOURCE_RUN_ID: ${{ inputs.resume_source_run_id }}
-          MERGE_WORKER_ID: ${{ matrix.merge_worker_id }}
-        run: |
-          has_merge=$(gh api "repos/${{ github.repository }}/actions/runs/$SOURCE_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"merge-result-$MERGE_WORKER_ID\") | .name")
-          if [ -n "$has_merge" ]; then
-            for attempt in 1 2 3; do
-              echo "Downloading merge-result-$MERGE_WORKER_ID attempt $attempt/3"
-              rm -rf previous_merge_result
-              if gh run download "$SOURCE_RUN_ID" --repo "${{ github.repository }}" --name "merge-result-$MERGE_WORKER_ID" --dir previous_merge_result; then
-                break
-              fi
-              if [ "$attempt" -eq 3 ]; then
-                echo "::error title=Failed to download merge result::Could not download merge-result-$MERGE_WORKER_ID from Run $SOURCE_RUN_ID after 3 attempts"
-                exit 1
-              fi
-              sleep 15
-            done
-            echo "has_artifact=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Merge result not found in Run $SOURCE_RUN_ID; will perform merge"
-            echo "has_artifact=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Validate and restore locked failed Run Merge result
-        id: restore_merge
-        if: inputs.resume_source_run_id != '' && steps.download_merge.outputs.has_artifact == 'true'
-        run: |
-          python src/prepare_parts.py --mode restore-merge \
-            --plan prepared_plan/parts-plan.json \
-            --part-numbers "${{ matrix.part_numbers }}" \
-            --source-dir previous_merge_result \
-            --output-dir prepared_parts
-          echo "complete=true" >> "$GITHUB_OUTPUT"
-
+      - uses: actions/download-artifact@v4
+        with:
+          name: resume-plan
+          path: resume_inputs
+      - name: Download newly completed worker media
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: mp4-worker-*
+          path: resume_inputs/current-workers
       - name: Merge only assigned locked Parts
-        if: steps.restore_merge.outcome != 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -690,6 +673,7 @@ jobs:
               --plan prepared_plan/parts-plan.json \
               --part-numbers "${{ matrix.part_numbers }}" \
               --output-dir prepared_parts \
+              --artifact-dir resume_inputs \
               --work-dir temp_merge_worker; then
               break
             fi
@@ -709,15 +693,71 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  final_merge:
+    name: "🔒 Validate complete Final Merge"
+    needs: [resume_planner, plan_parts, merge_parts]
+    if: always() && needs.resume_planner.outputs.publication_complete != 'true' && needs.plan_parts.result == 'success' && (needs.merge_parts.result == 'success' || needs.merge_parts.result == 'skipped')
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/hub-google/audiobook-worker@sha256:e972f6265789c992503636cbc971239097c602d7e5f364858ed42f4807a6b699
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: prepared-plan
+          path: prepared_plan
+      - uses: actions/download-artifact@v4
+        with:
+          name: resume-plan
+          path: resume_bundle
+      - name: Download newly merged Parts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: merge-result-*
+          path: current_merge_results
+      - name: Reuse or create the complete Final Merge manifest
+        env:
+          RESUME_MODE: ${{ needs.resume_planner.outputs.mode }}
+        run: |
+          if [ "$RESUME_MODE" = "publication" ]; then
+            cp -a resume_bundle/final-merge/. final_merge/
+            python - <<'PY'
+          import json
+          from src.resume_planner import validate_final_merge
+          plan = json.load(open("prepared_plan/parts-plan.json", encoding="utf-8"))
+          validate_final_merge("final_merge", plan)
+          PY
+          else
+            mkdir -p all_merge_results
+            if [ -d resume_bundle/merge-results ]; then cp -a resume_bundle/merge-results/. all_merge_results/; fi
+            if [ -d current_merge_results ]; then cp -a current_merge_results/. all_merge_results/; fi
+            python src/resume_planner.py --build-final \
+              --run-id "${{ github.run_id }}" \
+              --plan prepared_plan/parts-plan.json \
+              --sidecar-dir all_merge_results \
+              --output-dir final_merge
+          fi
+      - name: Publish verified Final Merge artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-merge
+          path: final_merge/
+          if-no-files-found: error
+          retention-days: 7
+
 # ─────────────────────────────────────────────────────────────
 # Ordered HF and YouTube publisher; this job never merges chapters
 # ─────────────────────────────────────────────────────────────
   upload_to_youtube:
     name: "📤 Ordered HF + YouTube publication"
-    needs: [setup, process_chapters, plan_parts, merge_parts]
+    needs: [setup, resume_planner, process_chapters, plan_parts, merge_parts, final_merge]
     # Scheduled runs only check whether the latest manual run needs a retry.
     # They do not create worker artifacts, so never start the uploader for them.
-    if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.merge_parts.result == 'success'
+    if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.final_merge.result == 'success'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/hub-google/audiobook-worker@sha256:e972f6265789c992503636cbc971239097c602d7e5f364858ed42f4807a6b699
@@ -736,66 +776,21 @@ jobs:
             upload_resume_state/
             Workspace/*/Cover/
             Upload_Subtitles/
-          key: youtube-upload-state-task-${{ github.event.inputs.queue_task_id || inputs.resume_source_run_id || github.run_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: youtube-upload-state-task-${{ github.event.inputs.queue_task_id || needs.resume_planner.outputs.source_run_id || github.run_id }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            youtube-upload-state-task-${{ github.event.inputs.queue_task_id || inputs.resume_source_run_id || github.run_id }}-
+            youtube-upload-state-task-${{ github.event.inputs.queue_task_id || needs.resume_planner.outputs.source_run_id || github.run_id }}-
 
-      - name: Restore checkpoint artifact from the explicitly resumed run
-        if: inputs.resume_source_run_id != '' && hashFiles('upload_resume_state/state.json') == ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          QUEUE_TASK_ID: ${{ github.event.inputs.queue_task_id }}
-          SOURCE_RUN_ID: ${{ inputs.resume_source_run_id }}
-        shell: bash
+      - name: Restore planner-validated publication checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: resume-plan
+          path: resume_bundle
+      - name: Prefer the verified artifact checkpoint over cache
         run: |
-          has_yt_cp=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts" --jq '.artifacts[] | select(.name == "youtube-upload-checkpoint") | .name')
-          if [ -n "$has_yt_cp" ]; then
-            for attempt in 1 2 3; do
-              echo "Downloading youtube-upload-checkpoint attempt $attempt/3"
-              if gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name youtube-upload-checkpoint --dir upload_resume_state; then
-                break
-              fi
-              if [ "$attempt" -eq 3 ]; then
-                echo "::error title=Checkpoint restore failed::Failed to download youtube-upload-checkpoint from Run $SOURCE_RUN_ID after 3 attempts"
-                exit 1
-              fi
-              sleep 15
-            done
+          if [ -d resume_bundle/publication ]; then
+            mkdir -p upload_resume_state
+            cp -a resume_bundle/publication/. upload_resume_state/
           fi
-          if [ ! -s upload_resume_state/state.json ] && [ -n "$QUEUE_TASK_ID" ]; then
-            echo "Explicit source Run has no checkpoint; searching durable checkpoints for task $QUEUE_TASK_ID."
-            for artifact_id in $(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=youtube-upload-checkpoint&per_page=100" --jq '.artifacts[] | select(.expired == false) | .id'); do
-              candidate_dir=$(mktemp -d)
-              gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$candidate_dir/checkpoint.zip"
-              if python - "$candidate_dir/checkpoint.zip" "$QUEUE_TASK_ID" upload_resume_state <<'PY'
-          import json, os, sys, zipfile
-          archive, task_id, destination = sys.argv[1:]
-          with zipfile.ZipFile(archive) as bundle:
-              state_names = [name for name in bundle.namelist() if os.path.basename(name) == "state.json"]
-              if len(state_names) != 1:
-                  raise SystemExit(1)
-              state = json.loads(bundle.read(state_names[0]))
-              if str(state.get("task_id") or "") != task_id:
-                  raise SystemExit(1)
-              for name in bundle.namelist():
-                  target = os.path.abspath(os.path.join(destination, name))
-                  root = os.path.abspath(destination) + os.sep
-                  if target.startswith(root) and not name.endswith("/"):
-                      os.makedirs(os.path.dirname(target), exist_ok=True)
-                      with bundle.open(name) as source, open(target, "wb") as output:
-                          output.write(source.read())
-          PY
-              then
-                echo "Restored task-matched checkpoint artifact $artifact_id."
-                break
-              fi
-            done
-          fi
-          test -s upload_resume_state/state.json || {
-            echo "::error title=Checkpoint restore failed::Run $SOURCE_RUN_ID did not provide upload_resume_state/state.json; refusing to bypass its YouTube cooldown"
-            exit 1
-          }
 
       - name: Download immutable Part plan
         uses: actions/download-artifact@v4
@@ -814,7 +809,7 @@ jobs:
         env:
           QUEUE_TASK_ID: ${{ github.event.inputs.queue_task_id }}
           EXECUTION_RUN_ID: ${{ github.run_id }}
-          SOURCE_RUN_ID: ${{ inputs.resume_source_run_id || github.run_id }}
+          SOURCE_RUN_ID: ${{ needs.resume_planner.outputs.source_run_id || github.run_id }}
         run: |
           python - <<'PY'
           import json, os, sys, yaml
@@ -875,12 +870,11 @@ jobs:
             sleep 10
           done
 
-      - name: Download merge-worker subtitles and verification sidecars
+      - name: Download Final Merge subtitles and verification sidecars
         uses: actions/download-artifact@v4
         with:
-          pattern: merge-result-*
+          name: final-merge
           path: prepared_sidecars
-          merge-multiple: true
 
       - name: Fetch and verify merge-complete Parts from HF
         env:
@@ -954,7 +948,7 @@ jobs:
           for attempt in 1 2 3; do
             echo "YouTube uploader attempt $attempt/3"
             set +e
-            python src/youtube_api_uploader.py --run-id "${{ inputs.resume_source_run_id || github.run_id }}" --source-run-id "${{ inputs.resume_source_run_id || github.run_id }}" --execution-run-id "${{ github.run_id }}" --input-dir prepared_parts --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
+            python src/youtube_api_uploader.py --run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --source-run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --execution-run-id "${{ github.run_id }}" --input-dir prepared_parts --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
             code=$?
             set -e
 
@@ -979,7 +973,7 @@ jobs:
 
       - name: Enforce strict publication evidence
         env:
-          SOURCE_RUN_ID: ${{ inputs.resume_source_run_id || github.run_id }}
+          SOURCE_RUN_ID: ${{ needs.resume_planner.outputs.source_run_id || github.run_id }}
           EXECUTION_RUN_ID: ${{ github.run_id }}
           BOOK_PROFILE_ID: ${{ steps.gen_matrix.outputs.book_profile_id || needs.setup.outputs.book_profile_id }}
         run: |
@@ -1086,7 +1080,7 @@ jobs:
             upload_resume_state/
             Workspace/*/Cover/
             Upload_Subtitles/
-          key: youtube-upload-state-task-${{ github.event.inputs.queue_task_id || inputs.resume_source_run_id || github.run_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: youtube-upload-state-task-${{ github.event.inputs.queue_task_id || needs.resume_planner.outputs.source_run_id || github.run_id }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Preserve YouTube upload checkpoint for the next run
         if: always() && hashFiles('upload_resume_state/state.json') != ''
@@ -1113,28 +1107,39 @@ jobs:
   strict_success_gate:
     name: "Strict final success gate"
     if: always() && github.event_name == 'workflow_dispatch'
-    needs: [setup, process_chapters, plan_parts, merge_parts, upload_to_youtube]
+    needs: [setup, resume_planner, process_chapters, plan_parts, merge_parts, final_merge, upload_to_youtube]
     runs-on: ubuntu-latest
     steps:
       - name: Require every production job to succeed
         env:
           SETUP_RESULT: ${{ needs.setup.result }}
+          PLANNER_RESULT: ${{ needs.resume_planner.result }}
+          PUBLICATION_COMPLETE: ${{ needs.resume_planner.outputs.publication_complete }}
           WORKERS_RESULT: ${{ needs.process_chapters.result }}
           PLAN_RESULT: ${{ needs.plan_parts.result }}
           MERGE_RESULT: ${{ needs.merge_parts.result }}
+          FINAL_MERGE_RESULT: ${{ needs.final_merge.result }}
           YOUTUBE_RESULT: ${{ needs.upload_to_youtube.result }}
         run: |
           echo "## Strict final success gate" >> "$GITHUB_STEP_SUMMARY"
           echo "- Setup: **$SETUP_RESULT**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Resume Planner: **$PLANNER_RESULT**" >> "$GITHUB_STEP_SUMMARY"
           echo "- All chapter workers: **$WORKERS_RESULT**" >> "$GITHUB_STEP_SUMMARY"
           echo "- Complete Part plan: **$PLAN_RESULT**" >> "$GITHUB_STEP_SUMMARY"
           echo "- Parallel Part merge and HF media upload: **$MERGE_RESULT**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Final Merge validation: **$FINAL_MERGE_RESULT**" >> "$GITHUB_STEP_SUMMARY"
           echo "- YouTube video/subtitle/playlist publication: **$YOUTUBE_RESULT**" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$SETUP_RESULT" != "success" ] || \
-             [ "$WORKERS_RESULT" != "success" ] || \
+          if [ "$SETUP_RESULT" != "success" ] || [ "$PLANNER_RESULT" != "success" ]; then
+            exit 1
+          fi
+          if [ "$PUBLICATION_COMPLETE" = "true" ]; then
+            echo "✅ Planner verified that publication was already fully complete; no production job was repeated." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if { [ "$WORKERS_RESULT" != "success" ] && [ "$WORKERS_RESULT" != "skipped" ]; } || \
              [ "$PLAN_RESULT" != "success" ] || \
-             [ "$MERGE_RESULT" != "success" ] || \
-             [ "$YOUTUBE_RESULT" != "success" ]; then
+             { [ "$MERGE_RESULT" != "success" ] && [ "$MERGE_RESULT" != "skipped" ]; } || \
+             [ "$FINAL_MERGE_RESULT" != "success" ] || [ "$YOUTUBE_RESULT" != "success" ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "❌ The audiobook is incomplete. This run must remain failed." >> "$GITHUB_STEP_SUMMARY"
             exit 1
