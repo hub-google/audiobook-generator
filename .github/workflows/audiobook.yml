@@ -557,14 +557,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python src/prepare_parts.py \
-            --mode plan \
-            --run-id "${{ github.run_id }}" \
-            --repo "${{ github.repository }}" \
-            --config prepared_source/config.yaml \
-            --output-dir prepared_plan \
-            --work-dir temp_part_inventory \
-            --github-output "$GITHUB_OUTPUT"
+          for attempt in 1 2 3; do
+            echo "Inventory and plan attempt $attempt/3"
+            if python src/prepare_parts.py \
+              --mode plan \
+              --run-id "${{ github.run_id }}" \
+              --repo "${{ github.repository }}" \
+              --config prepared_source/config.yaml \
+              --output-dir prepared_plan \
+              --work-dir temp_part_inventory \
+              --github-output "$GITHUB_OUTPUT"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "Inventory and plan failed after 3 attempts"
+              exit 1
+            fi
+            sleep 15
+          done
       - name: Publish immutable Part plan
         uses: actions/upload-artifact@v4
         with:
@@ -622,13 +632,23 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
         run: |
-          python src/prepare_parts.py \
-            --mode merge \
-            --repo "${{ github.repository }}" \
-            --plan prepared_plan/parts-plan.json \
-            --part-numbers "${{ matrix.part_numbers }}" \
-            --output-dir prepared_parts \
-            --work-dir temp_merge_worker
+          for attempt in 1 2 3; do
+            echo "Merge parts attempt $attempt/3"
+            if python src/prepare_parts.py \
+              --mode merge \
+              --repo "${{ github.repository }}" \
+              --plan prepared_plan/parts-plan.json \
+              --part-numbers "${{ matrix.part_numbers }}" \
+              --output-dir prepared_parts \
+              --work-dir temp_merge_worker; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "Merge parts failed after 3 attempts"
+              exit 1
+            fi
+            sleep 20
+          done
       - name: Publish lightweight subtitles and MP4 verification sidecars
         uses: actions/upload-artifact@v4
         with:
@@ -733,7 +753,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: python src/cover_assets.py --restore-config prepared_source/config.yaml
+        run: |
+          for attempt in 1 2 3; do
+            echo "Restore manual cover attempt $attempt/3"
+            if python src/cover_assets.py --restore-config prepared_source/config.yaml; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "Restore manual cover failed after 3 attempts"
+              exit 1
+            fi
+            sleep 10
+          done
 
       - name: Download merge-worker subtitles and verification sidecars
         uses: actions/download-artifact@v4
@@ -747,11 +778,21 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
         run: |
-          python src/prepare_parts.py \
-            --mode fetch \
-            --plan prepared_plan/parts-plan.json \
-            --sidecar-dir prepared_sidecars \
-            --output-dir prepared_parts
+          for attempt in 1 2 3; do
+            echo "Fetch Parts from HF attempt $attempt/3"
+            if python src/prepare_parts.py \
+              --mode fetch \
+              --plan prepared_plan/parts-plan.json \
+              --sidecar-dir prepared_sidecars \
+              --output-dir prepared_parts; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "Fetch Parts from HF failed after 3 attempts"
+              exit 1
+            fi
+            sleep 20
+          done
 
       - name: Run YouTube API Uploader
         env:
@@ -801,23 +842,31 @@ jobs:
           MANUAL_YOUTUBE_RETRY: "false"
 
         run: |
-          set +e
-          python src/youtube_api_uploader.py --run-id "${{ inputs.resume_source_run_id || github.run_id }}" --input-dir prepared_parts --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
-          code=$?
-          set -e
+          for attempt in 1 2 3; do
+            echo "YouTube uploader attempt $attempt/3"
+            set +e
+            python src/youtube_api_uploader.py --run-id "${{ inputs.resume_source_run_id || github.run_id }}" --input-dir prepared_parts --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
+            code=$?
+            set -e
 
-          if [ "$code" -eq 0 ]; then exit 0; fi
-          if [ "$code" -eq 75 ]; then
-            reason=$(python -c 'import json; print(json.load(open("upload_resume_state/state.json", encoding="utf-8")).get("reason") or "retryable YouTube API failure")' 2>/dev/null || echo "retryable YouTube API failure")
-            retry_at=$(python -c 'import json; print(json.load(open("upload_resume_state/state.json", encoding="utf-8")).get("retry_at") or "unknown")' 2>/dev/null || echo "unknown")
-            echo "::error title=YouTube upload paused::$reason; checkpoint preserved; retry after $retry_at"
-            echo "⏸️ YouTube daily limit: **$reason**. Checkpoint preserved; retry after **$retry_at**." >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
+            if [ "$code" -eq 0 ]; then exit 0; fi
+            if [ "$code" -eq 75 ]; then
+              reason=$(python -c 'import json; print(json.load(open("upload_resume_state/state.json", encoding="utf-8")).get("reason") or "retryable YouTube API failure")' 2>/dev/null || echo "retryable YouTube API failure")
+              retry_at=$(python -c 'import json; print(json.load(open("upload_resume_state/state.json", encoding="utf-8")).get("retry_at") or "unknown")' 2>/dev/null || echo "unknown")
+              echo "::error title=YouTube upload paused::$reason; checkpoint preserved; retry after $retry_at"
+              echo "⏸️ YouTube daily limit: **$reason**. Checkpoint preserved; retry after **$retry_at**." >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
 
-          echo "::error title=YouTube publication code failure::reason=permanentFailure; checkpoint preserved; fix the code or data before retrying"
-          echo "❌ YouTube publication failed with exit code **$code**. This is not classified as a retryable API limit; the checkpoint is preserved and automatic retry is disabled." >> "$GITHUB_STEP_SUMMARY"
-          exit "$code"
+            if [ "$attempt" -lt 3 ]; then
+              echo "YouTube uploader failed with exit code $code; retrying in 30s..."
+              sleep 30
+            else
+              echo "::error title=YouTube publication code failure::reason=permanentFailure; checkpoint preserved; fix the code or data before retrying"
+              echo "❌ YouTube publication failed with exit code **$code** after 3 attempts. Checkpoint preserved." >> "$GITHUB_STEP_SUMMARY"
+              exit "$code"
+            fi
+          done
 
       - name: Enforce strict publication evidence
         env:

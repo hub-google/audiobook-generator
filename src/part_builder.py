@@ -15,6 +15,7 @@ import contextlib
 import subprocess
 import shutil
 import logging
+import time
 
 try:
     from .artifact_validation import ArtifactRegistry, ArtifactValidationError, sha256_file, stable_signature, validate_video
@@ -261,40 +262,39 @@ def merge_part_videos(part_info, output_video_path, settings=None):
     if os.path.exists(partial_path):
         os.remove(partial_path)
 
-    if len(files) == 1:
-        shutil.copy(files[0], partial_path)
-        validate_video(partial_path, expected_duration)
-        os.replace(partial_path, output_video_path)
-        registry.validate(output_video_path, validate_video, validator_key="part-video-v3",
-                          input_signature=input_signature,
-                          settings_signature=stable_signature(settings or {"concat": "ffmpeg-copy-v3"}),
-                          audio_duration=expected_duration)
-        return True
-
     concat_txt = os.path.join(os.path.dirname(output_video_path), f"concat_part_{part_info['part_num']}.txt")
+    if len(files) > 1:
+        with open(concat_txt, "w", encoding="utf-8") as f:
+            for mp4 in files:
+                safe_p = os.path.abspath(mp4).replace("\\", "/").replace("'", "'\\''")
+                f.write(f"file '{safe_p}'\n")
 
-    with open(concat_txt, "w", encoding="utf-8") as f:
-        for mp4 in files:
-            safe_p = os.path.abspath(mp4).replace("\\", "/").replace("'", "'\\''")
-            f.write(f"file '{safe_p}'\n")
+    ok = False
+    for attempt in range(1, 4):
+        if os.path.exists(partial_path):
+            try:
+                os.remove(partial_path)
+            except Exception:
+                pass
 
-    cmd = [
-        FFMPEG_PATH, "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", concat_txt,
-        "-c", "copy",
-        partial_path
-    ]
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if os.path.exists(concat_txt):
-        try:
-            os.remove(concat_txt)
-        except Exception:
-            pass
+        if len(files) == 1:
+            shutil.copy(files[0], partial_path)
+        else:
+            cmd = [
+                FFMPEG_PATH, "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", concat_txt,
+                "-c", "copy",
+                partial_path
+            ]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if res.returncode != 0 or not os.path.exists(partial_path):
+                logging.warning(f"❌ 【第 {part_info['part_num']} 部】影片合併失敗 (attempt {attempt}/3): {res.stderr}")
+                if attempt < 3:
+                    time.sleep(5 * attempt)
+                continue
 
-    ok = res.returncode == 0 and os.path.exists(partial_path)
-    if ok:
         try:
             validate_video(partial_path, expected_duration)
             os.replace(partial_path, output_video_path)
@@ -302,16 +302,26 @@ def merge_part_videos(part_info, output_video_path, settings=None):
                               input_signature=input_signature,
                               settings_signature=stable_signature(settings or {"concat": "ffmpeg-copy-v3"}),
                               audio_duration=expected_duration)
-        except (ArtifactValidationError, OSError, ValueError) as error:
-            logging.error("Part strict validation failed: %s", error)
-            ok = False
-        if ok:
+            ok = True
             size_mb = os.path.getsize(output_video_path) / (1024 * 1024)
-            logging.info(f"✅ 【第 {part_info['part_num']} 部】無損影片合併成功 -> {os.path.basename(output_video_path)} ({size_mb:.1f} MB)")
-    else:
-        if os.path.exists(partial_path):
-            os.remove(partial_path)
-        logging.error(f"❌ 【第 {part_info['part_num']} 部】影片合併失敗: {res.stderr}")
+            logging.info(f"✅ 【第 {part_info['part_num']} 部】無損影片合併成功 -> {os.path.basename(output_video_path)} ({size_mb:.1f} MB) (attempt {attempt}/3)")
+            break
+        except (ArtifactValidationError, OSError, ValueError) as error:
+            logging.warning(f"Part {part_info['part_num']} strict validation failed (attempt {attempt}/3): {error}")
+            if os.path.exists(partial_path):
+                try:
+                    os.remove(partial_path)
+                except Exception:
+                    pass
+            if attempt < 3:
+                time.sleep(5 * attempt)
+
+    if os.path.exists(concat_txt):
+        try:
+            os.remove(concat_txt)
+        except Exception:
+            pass
+
     return ok
 
 def build_all_parts(book_title, workspace_dir=None, output_dir=None, min_hours=10.0,

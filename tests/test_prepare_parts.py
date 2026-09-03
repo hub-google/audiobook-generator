@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import yaml
 
-from src.prepare_parts import merge_assigned_parts, plan_parts, restore_locked_merge_result, restore_locked_plan
+from src.prepare_parts import (fetch_parts_from_hf, merge_assigned_parts, plan_parts, restore_locked_merge_result, restore_locked_plan)
 from src.youtube_api_uploader import scan_artifact_chapters
 from src.part_builder import get_media_duration
 
@@ -307,11 +307,59 @@ class PreparePartsTests(unittest.TestCase):
                  patch('src.prepare_parts.merge_part_videos', side_effect=make_video), \
                  patch('src.prepare_parts.validate_video', return_value={'valid': True}), \
                  patch('src.prepare_parts._media_info', return_value={'format': {'duration': '300'}}):
-                # Should not raise RuntimeError because dur is recovered from SRT
                 merge_assigned_parts(plan, [1], 'owner/repo', root / 'out', root / 'work')
 
             api.create_commit.assert_called_once()
 
+    def test_fetch_parts_from_hf_retries_corrupt_download_and_succeeds(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            plan = root / 'parts-plan.json'
+            plan.write_text(json.dumps({
+                'source_run_id': '123', 'book_title': '測試書',
+                'parts': [{'part_num': 1, 'start_chap': 1, 'end_chap': 1}],
+            }), encoding='utf-8')
+            sidecars = root / 'sidecars'
+            sidecars.mkdir()
+            valid_bytes = b'valid video content'
+            valid_sha = hashlib.sha256(valid_bytes).hexdigest()
+            part_info = {
+                'part_num': 1, 'start_chap': 1, 'end_chap': 1,
+                'video': '測試書_Part_01_Ch0001_to_Ch0001.mp4',
+                'subtitle': '測試書_Part_01_Ch0001_to_Ch0001.srt',
+                'hf_video_path': 'remote/video.mp4',
+                'video_bytes': len(valid_bytes),
+                'video_sha256': valid_sha,
+            }
+            (sidecars / 'shard-manifest-1.json').write_text(json.dumps({
+                'source_run_id': '123', 'parts': [part_info]
+            }), encoding='utf-8')
+            (sidecars / '測試書_Part_01_Ch0001_to_Ch0001.srt').write_text('subtitle content', encoding='utf-8')
+
+            corrupt_file = root / 'corrupt.mp4'
+            corrupt_file.write_bytes(b'truncated')
+            valid_file = root / 'valid.mp4'
+            valid_file.write_bytes(valid_bytes)
+
+            download_calls = []
+            def mock_download(_repo, _path, **kwargs):
+                download_calls.append(kwargs)
+                if len(download_calls) < 3:
+                    return str(corrupt_file)
+                return str(valid_file)
+
+            with patch.dict('os.environ', {'HF_TOKEN': 'token', 'HF_ARCHIVE_REPO': 'owner/archive'}), \
+                 patch('huggingface_hub.HfApi'), \
+                 patch('huggingface_hub.hf_hub_download', side_effect=mock_download), \
+                 patch('time.sleep'):
+                fetch_parts_from_hf(str(plan), str(root / 'out'), sidecar_dir=str(sidecars))
+
+            self.assertEqual(len(download_calls), 3)
+            target_video = root / 'out' / '測試書_Part_01_Ch0001_to_Ch0001.mp4'
+            self.assertTrue(target_video.is_file())
+            self.assertEqual(target_video.stat().st_size, len(valid_bytes))
 
 if __name__ == '__main__':
     unittest.main()
+

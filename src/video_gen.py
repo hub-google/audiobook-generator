@@ -196,8 +196,6 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
 
     # ── FFmpeg：靜態圖 + 音訊 + 硬字幕 → MP4 ──
     partial_video = output_video + ".partial.mp4"
-    if os.path.exists(partial_video):
-        os.remove(partial_video)
     cmd = [
         FFMPEG_PATH, "-y",
         "-loop", "1",
@@ -216,16 +214,36 @@ def generate_chapter_video(book_title, wav_path, workspace_dir, output_dir, fall
         "-t", f"{duration:.6f}",
         partial_video
     ]
-    t0 = time.time()
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if not os.path.exists(partial_video) or os.path.getsize(partial_video) <= 1000:
-        raise RuntimeError(f"FFmpeg produced an invalid MP4: {partial_video}")
-    validate_video(partial_video, duration, expected_resolution=(1280, 720),
-                   expected_video_codec="h264", expected_audio_codec="aac")
-    os.replace(partial_video, output_video)
-    elapsed = time.time() - t0
-    logging.info(f"[VideoGen] 🎉 Chapter {chap_num} MP4 generated successfully -> {os.path.basename(output_video)} (took {elapsed:.1f}s)")
-    return output_video, duration
+    last_err = None
+    for attempt in range(1, 4):
+        if os.path.exists(partial_video):
+            try:
+                os.remove(partial_video)
+            except Exception:
+                pass
+        t0 = time.time()
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if not os.path.exists(partial_video) or os.path.getsize(partial_video) <= 1000:
+                raise RuntimeError(f"FFmpeg produced an invalid MP4: {partial_video}")
+            validate_video(partial_video, duration, expected_resolution=(1280, 720),
+                           expected_video_codec="h264", expected_audio_codec="aac")
+            os.replace(partial_video, output_video)
+            elapsed = time.time() - t0
+            logging.info(f"[VideoGen] 🎉 Chapter {chap_num} MP4 generated successfully -> {os.path.basename(output_video)} (took {elapsed:.1f}s, attempt {attempt}/3)")
+            return output_video, duration
+        except Exception as exc:
+            last_err = exc
+            logging.warning(f"[VideoGen] Chapter {chap_num} generation attempt {attempt}/3 failed: {exc}")
+            if os.path.exists(partial_video):
+                try:
+                    os.remove(partial_video)
+                except Exception:
+                    pass
+            if attempt < 3:
+                time.sleep(3 * attempt)
+    raise RuntimeError(f"Failed to generate video for chapter {chap_num} after 3 attempts: {last_err}")
+
 
 
 def run_video_gen(build_parts=True, target_indices=None):

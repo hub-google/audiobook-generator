@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -47,19 +48,23 @@ def _find_gh() -> str:
     raise FileNotFoundError("找不到 GitHub CLI (gh)。請先安裝並執行 gh auth login。")
 
 
-def get_run_artifact_names(run_id, repo):
+def get_run_artifact_names(run_id, repo, max_attempts=3):
     subproc_run = _get_symbol("subprocess", subprocess).run
+    time_mod = _get_symbol("time", time)
     cmd = [
         _find_gh(), "api", "--paginate",
         f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100",
         "--jq", ".artifacts[].name",
     ]
-    res = subproc_run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if res.returncode != 0:
-        logging.error(f"Failed to fetch artifacts for run {run_id}: {res.stderr}")
-        return []
-    all_names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
-    return select_worker_artifacts(all_names)
+    for attempt in range(1, max_attempts + 1):
+        res = subproc_run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if res.returncode == 0:
+            all_names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
+            return select_worker_artifacts(all_names)
+        logging.warning(f"Failed to fetch artifacts for run {run_id} (attempt {attempt}/{max_attempts}): {res.stderr.strip()}")
+        if attempt < max_attempts:
+            time_mod.sleep(3 * attempt)
+    return []
 
 
 def select_worker_artifacts(all_names):
@@ -80,19 +85,23 @@ def artifact_worker_index(name):
     return int(match.group(1))
 
 
-def get_run_manifest_artifact_names(run_id, repo):
+def get_run_manifest_artifact_names(run_id, repo, max_attempts=3):
     subproc_run = _get_symbol("subprocess", subprocess).run
+    time_mod = _get_symbol("time", time)
     cmd = [
         _find_gh(), "api", "--paginate",
         f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100",
         "--jq", ".artifacts[].name",
     ]
-    res = subproc_run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if res.returncode != 0:
-        logging.error(f"Failed to fetch manifest artifacts for run {run_id}: {res.stderr}")
-        return []
-    all_names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
-    return select_manifest_artifacts(all_names)
+    for attempt in range(1, max_attempts + 1):
+        res = subproc_run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if res.returncode == 0:
+            all_names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
+            return select_manifest_artifacts(all_names)
+        logging.warning(f"Failed to fetch manifest artifacts for run {run_id} (attempt {attempt}/{max_attempts}): {res.stderr.strip()}")
+        if attempt < max_attempts:
+            time_mod.sleep(3 * attempt)
+    return []
 
 
 def select_manifest_artifacts(all_names):
@@ -310,20 +319,27 @@ def _make_planned_part(part_num, items, duration):
     }
 
 
-def download_artifact_task(run_id, repo, artifact_name, dest_dir):
+def download_artifact_task(run_id, repo, artifact_name, dest_dir, max_attempts=3):
     subproc_run = _get_symbol("subprocess", subprocess).run
-    if os.path.exists(dest_dir):
-        shutil.rmtree(dest_dir, ignore_errors=True)
-    os.makedirs(dest_dir, exist_ok=True)
+    time_mod = _get_symbol("time", time)
+    for attempt in range(1, max_attempts + 1):
+        if os.path.exists(dest_dir):
+            shutil.rmtree(dest_dir, ignore_errors=True)
+        os.makedirs(dest_dir, exist_ok=True)
 
-    dl_cmd = [
-        _find_gh(), "run", "download", str(run_id),
-        "--repo", repo,
-        "--name", artifact_name,
-        "--dir", dest_dir,
-    ]
-    res = subproc_run(dl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    return res.returncode == 0
+        dl_cmd = [
+            _find_gh(), "run", "download", str(run_id),
+            "--repo", repo,
+            "--name", artifact_name,
+            "--dir", dest_dir,
+        ]
+        res = subproc_run(dl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if res.returncode == 0:
+            return True
+        logging.warning("download_artifact_task attempt %s/%s failed for %s: %s", attempt, max_attempts, artifact_name, res.stderr.strip())
+        if attempt < max_attempts:
+            time_mod.sleep(5 * attempt)
+    return False
 
 
 def get_latest_successful_run_id(repo):

@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import base64
 import json
+import logging
 import os
+import time
 from pathlib import Path
 
 import requests
@@ -129,34 +131,46 @@ def upload_github_cover(local_path, profile_id, repo, token, branch="automation-
 
 
 def restore_cover(record, destination, token):
-    if record.get("provider") == "github":
-        github_token = token or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
-        repo = record.get("repo") or os.environ.get("GITHUB_REPOSITORY", "")
-        branch = record.get("branch") or "automation-state"
-        url = f"https://api.github.com/repos/{repo}/contents/{record['remote_path']}"
-        response = requests.get(url, headers={
-            "Accept": "application/vnd.github.raw+json", "Authorization": f"Bearer {github_token}",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }, params={"ref": branch}, timeout=60)
-        if response.status_code != 200:
-            raise RuntimeError(f"GitHub 手動封面下載失敗 ({response.status_code})")
-        cached = Path(destination).with_suffix(".download")
-        cached.parent.mkdir(parents=True, exist_ok=True)
-        cached.write_bytes(response.content)
-    else:
-        from huggingface_hub import hf_hub_download
-        cached = hf_hub_download(record["repo_id"], record["remote_path"], repo_type="dataset", token=token)
-    destination = Path(destination)
-    validate_cached_cover(cached, record.get("sha256", ""))
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary_destination = destination.with_suffix(destination.suffix + ".tmp")
-    temporary_destination.write_bytes(Path(cached).read_bytes())
-    os.replace(temporary_destination, destination)
-    marker = destination.with_suffix(".manual.json")
-    temporary_marker = marker.with_suffix(marker.suffix + ".tmp")
-    temporary_marker.write_text(json.dumps({"source": "manual", "sha256": record.get("sha256", "")}), encoding="utf-8")
-    os.replace(temporary_marker, marker)
-    return destination
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            if record.get("provider") == "github":
+                github_token = token or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
+                repo = record.get("repo") or os.environ.get("GITHUB_REPOSITORY", "")
+                branch = record.get("branch") or "automation-state"
+                url = f"https://api.github.com/repos/{repo}/contents/{record['remote_path']}"
+                response = requests.get(url, headers={
+                    "Accept": "application/vnd.github.raw+json", "Authorization": f"Bearer {github_token}",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                }, params={"ref": branch}, timeout=60)
+                if response.status_code != 200:
+                    raise RuntimeError(f"GitHub 手動封面下載失敗 ({response.status_code})")
+                cached = Path(destination).with_suffix(".download")
+                cached.parent.mkdir(parents=True, exist_ok=True)
+                cached.write_bytes(response.content)
+            else:
+                from huggingface_hub import hf_hub_download
+                cached = hf_hub_download(
+                    record["repo_id"], record["remote_path"],
+                    repo_type="dataset", token=token, force_download=(attempt > 1),
+                )
+            destination = Path(destination)
+            validate_cached_cover(cached, record.get("sha256", ""))
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary_destination = destination.with_suffix(destination.suffix + ".tmp")
+            temporary_destination.write_bytes(Path(cached).read_bytes())
+            os.replace(temporary_destination, destination)
+            marker = destination.with_suffix(".manual.json")
+            temporary_marker = marker.with_suffix(marker.suffix + ".tmp")
+            temporary_marker.write_text(json.dumps({"source": "manual", "sha256": record.get("sha256", "")}), encoding="utf-8")
+            os.replace(temporary_marker, marker)
+            return destination
+        except Exception as err:
+            last_error = err
+            logging.warning("restore_cover attempt %s/3 failed: %s", attempt, err)
+            if attempt < 3:
+                time.sleep(5 * attempt)
+    raise RuntimeError(f"restore_cover 失敗 (已重試 3 次): {last_error}")
 
 
 def restore_from_config(config_path, workspace_root="Workspace"):
@@ -188,12 +202,12 @@ def restore_from_config(config_path, workspace_root="Workspace"):
                     )
                 record = profile.get("manual_cover") or {}
                 if record:
-                    print(
-                        "♻️ [MANUAL_COVER_RECOVERY] locked config omitted manual_cover; "
-                        f"recovered profile {profile_id}", flush=True,
+                    logging.info(
+                        "[MANUAL_COVER_RECOVERY] locked config omitted manual_cover; "
+                        f"recovered profile {profile_id}"
                     )
         except Exception as error:
-            print(f"⚠️ 無法查詢最新手動封面設定：{error}", flush=True)
+            logging.warning(f"無法查詢最新手動封面設定：{error}")
     if not record:
         summary = os.environ.get("GITHUB_STEP_SUMMARY")
         if summary:
@@ -209,7 +223,7 @@ def restore_from_config(config_path, workspace_root="Workspace"):
         raise RuntimeError(f"手動封面已設定，但缺少 {provider} 讀取 Token")
     destination = Path(workspace_root) / config["book_title"] / "Cover" / "master_cover.jpg"
     restore_cover(record, destination, token)
-    print(f"✅ [MANUAL_COVER_CHECK] PASS | restored and verified {destination}", flush=True)
+    print(f"[MANUAL_COVER_CHECK] PASS | restored and verified {destination}", flush=True)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as handle:

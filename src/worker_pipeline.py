@@ -23,6 +23,7 @@ import logging
 import argparse
 import shutil
 import subprocess
+import time
 
 try:
     from pipeline_checkpoint import PipelineCheckpoint, STAGES
@@ -315,27 +316,42 @@ def run_resumable_chapter(config, checkpoint, chapter_url, chapter_num, worker_i
         checkpoint.prepare_for_run(chapter_num, stage_names)
         for stage in stage_names:
             checkpoint.mark_running(chapter_num, stage)
-        try:
-            operation()
-            for stage in stage_names:
-                checkpoint.mark_completed(chapter_num, stage)
-        except SourceMissingError as error:
-            if stage_names[0] != "crawler":
-                raise
-            evidence = SourceStatusStore(checkpoint.workspace_dir).load(chapter_num)
-            checkpoint.mark_source_missing(chapter_num, error, evidence=evidence)
-            logging.warning(
-                "::warning title=Origin website missing chapter::Chapter %s has no article "
-                "after repeated successful HTTP responses and was skipped.", chapter_num,
-            )
-            return
-        except Exception as error:
+
+        op_success = False
+        last_op_error = None
+        for attempt in range(1, 4):
+            try:
+                operation()
+                op_success = True
+                for stage in stage_names:
+                    checkpoint.mark_completed(chapter_num, stage)
+                break
+            except SourceMissingError as error:
+                if stage_names[0] != "crawler":
+                    raise
+                evidence = SourceStatusStore(checkpoint.workspace_dir).load(chapter_num)
+                checkpoint.mark_source_missing(chapter_num, error, evidence=evidence)
+                logging.warning(
+                    "::warning title=Origin website missing chapter::Chapter %s has no article "
+                    "after repeated successful HTTP responses and was skipped.", chapter_num,
+                )
+                return
+            except Exception as error:
+                last_op_error = error
+                logging.warning(
+                    "[WORKER] Chapter %s stage %s attempt %s/3 failed: %s",
+                    chapter_num, ",".join(stage_names), attempt, error,
+                )
+                if attempt < 3:
+                    time.sleep(3 * attempt)
+
+        if not op_success:
             for stage in stage_names:
                 if checkpoint.is_completed(chapter_num, stage):
                     checkpoint.mark_completed(chapter_num, stage)
                 else:
-                    checkpoint.mark_failed(chapter_num, stage, error)
-            raise
+                    checkpoint.mark_failed(chapter_num, stage, last_op_error)
+            raise last_op_error
 
 def _copy_artifact_files_to_workspace(src_dir, workspace_dir, book_title):
     """Safely map and copy chapter artifacts into the canonical Workspace structure."""

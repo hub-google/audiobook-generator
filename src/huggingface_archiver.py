@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,6 +18,23 @@ from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def retry_hf_call(func, *args, max_attempts=3, backoff=5, **kwargs):
+    """Retry a Hugging Face API or download function up to max_attempts times."""
+    last_err = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return func(*args, **kwargs)
+        except Exception as exc:
+            last_err = exc
+            logging.warning(
+                "HuggingFace call %s attempt %s/%s failed: %s",
+                getattr(func, "__name__", str(func)), attempt, max_attempts, exc,
+            )
+            if attempt < max_attempts:
+                time.sleep(backoff * attempt)
+    raise last_err
 
 
 def safe_name(value):
@@ -56,13 +75,14 @@ class HuggingFaceArchiver:
         self.repo_id = repo_id
         self.project = safe_name(project)
         self.api = HfApi(token=token)
-        self.api.create_repo(repo_id, repo_type="dataset", private=private, exist_ok=True)
+        retry_hf_call(self.api.create_repo, repo_id, repo_type="dataset", private=private, exist_ok=True)
         self.state_file = Path(state_file)
         try:
             self.state = json.loads(self.state_file.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             try:
-                remote_state = hf_hub_download(
+                remote_state = retry_hf_call(
+                    hf_hub_download,
                     repo_id, "_system/archive_state.json", repo_type="dataset", token=token,
                 )
                 self.state = json.loads(Path(remote_state).read_text(encoding="utf-8"))
@@ -83,14 +103,16 @@ class HuggingFaceArchiver:
         return f"{self._book_root(book_title)}/{folder}"
 
     def _upload(self, local_path, remote_path, message):
-        self.api.upload_file(
+        retry_hf_call(
+            self.api.upload_file,
             path_or_fileobj=str(local_path), path_in_repo=remote_path,
             repo_id=self.repo_id, repo_type="dataset", commit_message=message,
         )
 
     def _upload_json(self, value, remote_path, message):
         payload = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-        self.api.upload_file(
+        retry_hf_call(
+            self.api.upload_file,
             path_or_fileobj=payload, path_in_repo=remote_path,
             repo_id=self.repo_id, repo_type="dataset", commit_message=message,
         )
@@ -142,8 +164,11 @@ class HuggingFaceArchiver:
         ]
         merge_manifest = {"schema_version": 1, "status": "merge_complete", "source_run_id": str(run_id or ""), "book_title": book_title, "part": manifest, "files": fingerprint}
         operations.append(self._json_operation(merge_manifest, f"{part_root}/merge_manifest.json"))
-        self.api.create_commit(repo_id=self.repo_id, repo_type="dataset", operations=operations,
-                               commit_message=f"Archive {book_title} Part {int(part_num):02d}")
+        retry_hf_call(
+            self.api.create_commit,
+            repo_id=self.repo_id, repo_type="dataset", operations=operations,
+            commit_message=f"Archive {book_title} Part {int(part_num):02d}",
+        )
         record = {"status": "uploaded_pending_youtube_metadata", "root": part_root, "files": fingerprint, "manifest": manifest}
         book["parts"][str(int(part_num))] = record
         book["master_cover_path"] = str(master_cover_path)
@@ -164,7 +189,7 @@ class HuggingFaceArchiver:
         part_root = self._part_root(book_title, part_num, start_chap, end_chap)
         root = self._book_root(book_title)
         video_remote, subtitle_remote = f"{part_root}/{video.name}", f"{part_root}/{subtitle.name}"
-        remote = set(self.api.list_repo_files(self.repo_id, repo_type="dataset"))
+        remote = set(retry_hf_call(self.api.list_repo_files, self.repo_id, repo_type="dataset"))
         required = {video_remote, subtitle_remote, f"{part_root}/merge_manifest.json", f"{part_root}/part_manifest.json", f"{part_root}/media_info.json"}
         missing = required - remote
         if missing:
@@ -246,7 +271,7 @@ class HuggingFaceArchiver:
             if parts.get(str(number), {}).get("status") == "complete"
             and not self._is_complete_part(parts[str(number)])
         ]
-        remote = set(self.api.list_repo_files(self.repo_id, repo_type="dataset"))
+        remote = set(retry_hf_call(self.api.list_repo_files, self.repo_id, repo_type="dataset"))
         required = set()
         for item in parts.values():
             if self._is_complete_part(item):
@@ -275,6 +300,9 @@ class HuggingFaceArchiver:
         if cover.is_file(): operations.append(CommitOperationAdd(path_in_repo=f"{book['root']}/master_cover.jpg", path_or_fileobj=str(cover)))
         config = Path(book.get("source_config_path") or "")
         if config.is_file(): operations.append(CommitOperationAdd(path_in_repo=f"{book['root']}/source_config.yaml", path_or_fileobj=str(config)))
-        self.api.create_commit(repo_id=self.repo_id, repo_type="dataset", operations=operations,
-                               commit_message=f"Finalize {book_title} archive metadata")
+        retry_hf_call(
+            self.api.create_commit,
+            repo_id=self.repo_id, repo_type="dataset", operations=operations,
+            commit_message=f"Finalize {book_title} archive metadata",
+        )
         return {"repo_id": self.repo_id, "book_root": book.get("root"), "parts": int(expected_parts), "verified": True}

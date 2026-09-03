@@ -1,6 +1,6 @@
 """Plan the whole book, then merge locked Parts on up to 17 matrix workers."""
 from __future__ import annotations
-import argparse, hashlib, json, os, shutil, subprocess
+import argparse, hashlib, json, logging, os, shutil, subprocess, time
 from pathlib import Path
 import yaml
 try:
@@ -26,8 +26,15 @@ def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17):
     if manifest_names and (not names or len(manifest_names) >= len(names)):
         for name in manifest_names:
             expanded = work / name
-            if not download_artifact_task(str(run_id), repo, name, str(expanded)):
-                raise RuntimeError(f"could not download {name}")
+            dl_ok = False
+            for dl_attempt in range(1, 4):
+                if download_artifact_task(str(run_id), repo, name, str(expanded)):
+                    dl_ok = True
+                    break
+                if dl_attempt < 3:
+                    time.sleep(5 * dl_attempt)
+            if not dl_ok:
+                raise RuntimeError(f"could not download {name} after 3 attempts")
             manifest_files = list(expanded.glob("**/*.json"))
             if not manifest_files:
                 raise RuntimeError(f"{name} contains no manifest JSON")
@@ -46,8 +53,15 @@ def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17):
         # Fallback / backward compatibility: download worker artifacts
         for name in names:
             expanded = work / name
-            if not download_artifact_task(str(run_id), repo, name, str(expanded)):
-                raise RuntimeError(f"could not download {name}")
+            dl_ok = False
+            for dl_attempt in range(1, 4):
+                if download_artifact_task(str(run_id), repo, name, str(expanded)):
+                    dl_ok = True
+                    break
+                if dl_attempt < 3:
+                    time.sleep(5 * dl_attempt)
+            if not dl_ok:
+                raise RuntimeError(f"could not download {name} after 3 attempts")
             manifest_files = list(expanded.glob("**/manifest-worker-*.json"))
             if manifest_files:
                 data = json.loads(manifest_files[0].read_text(encoding="utf-8"))
@@ -118,7 +132,15 @@ def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir):
     output, work = Path(output_dir), Path(work_dir); output.mkdir(parents=True, exist_ok=True); inventory=[]
     for name in artifacts:
         expanded=work/name
-        if not download_artifact_task(plan["source_run_id"], repo, name, str(expanded)): raise RuntimeError(f"could not download {name}")
+        dl_ok = False
+        for dl_attempt in range(1, 4):
+            if download_artifact_task(plan["source_run_id"], repo, name, str(expanded)):
+                dl_ok = True
+                break
+            if dl_attempt < 3:
+                time.sleep(5 * dl_attempt)
+        if not dl_ok:
+            raise RuntimeError(f"could not download {name} after 3 attempts")
         inventory.extend(scan_artifact_chapters(str(expanded), name))
     by_chapter={int(x["chap_num"]):x for x in inventory}; completed=[]; hf_operations=[]
     from huggingface_hub import CommitOperationAdd, HfApi
@@ -146,8 +168,26 @@ def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir):
                 f"missing_subtitles={missing_subtitles}, invalid_durations={invalid_durations}"
             )
         stem=f"{plan['book_title']}_Part_{number:02d}_Ch{start:04d}_to_Ch{end:04d}"; video,subtitle=output/f"{stem}.mp4",output/f"{stem}.srt"
-        if not generate_part_srt(items,str(subtitle)): raise RuntimeError(f"could not generate Part {number} subtitle")
-        if not merge_part_videos(dict(part,files=[x["path"] for x in items]),str(video)): raise RuntimeError(f"could not merge Part {number}")
+        srt_ok = False
+        for srt_attempt in range(1, 4):
+            if generate_part_srt(items, str(subtitle)):
+                srt_ok = True
+                break
+            if srt_attempt < 3:
+                time.sleep(2 * srt_attempt)
+        if not srt_ok:
+            raise RuntimeError(f"could not generate Part {number} subtitle after 3 attempts")
+
+        merge_ok = False
+        for merge_attempt in range(1, 4):
+            if merge_part_videos(dict(part, files=[x["path"] for x in items]), str(video)):
+                merge_ok = True
+                break
+            if merge_attempt < 3:
+                time.sleep(5 * merge_attempt)
+        if not merge_ok:
+            raise RuntimeError(f"could not merge Part {number} after 3 attempts")
+
         folder=f"有聲小說_{safe_hf_name(plan['book_title'])}_第{number:02d}部_第{start:04d}章-第{end:04d}章"
         remote_root=f"有聲小說/{safe_hf_name(plan['book_title'])}/{folder}"
         remote_video=f"{remote_root}/{video.name}"; remote_subtitle=f"{remote_root}/{subtitle.name}"
@@ -168,8 +208,21 @@ def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir):
         if not hf_token: raise RuntimeError("HF_TOKEN is required for every merge worker")
         api=HfApi(token=hf_token)
         if not hf_repo: hf_repo=f"{api.whoami()['name']}/audiobook-archive"
-        api.create_repo(hf_repo,repo_type="dataset",private=True,exist_ok=True)
-        api.create_commit(repo_id=hf_repo,repo_type="dataset",operations=hf_operations,commit_message=f"Archive merged Parts for {plan['book_title']}: {','.join(map(str,sorted(wanted)))}")
+        commit_success = False
+        commit_err = None
+        for commit_attempt in range(1, 4):
+            try:
+                api.create_repo(hf_repo,repo_type="dataset",private=True,exist_ok=True)
+                api.create_commit(repo_id=hf_repo,repo_type="dataset",operations=hf_operations,commit_message=f"Archive merged Parts for {plan['book_title']}: {','.join(map(str,sorted(wanted)))}")
+                commit_success = True
+                break
+            except Exception as e:
+                commit_err = e
+                print(f"[MERGE_PARTS] HF create_commit attempt {commit_attempt}/3 failed: {e}", flush=True)
+                if commit_attempt < 3:
+                    time.sleep(10 * commit_attempt)
+        if not commit_success:
+            raise RuntimeError(f"HF create_commit failed after 3 attempts: {commit_err}")
     for item in completed:
         print(f"[HF_MEDIA_MARKER] DONE | Part {item['part_num']} | Ch {item['start_chap']}~{item['end_chap']} | {item['hf_video_path']}",flush=True)
         (output/item["video"]).unlink(missing_ok=True)
@@ -204,9 +257,49 @@ def fetch_parts_from_hf(plan_path, output_dir, sidecar_dir=None):
         number,start,end=int(part["part_num"]),int(part["start_chap"]),int(part["end_chap"])
         info=manifests.get(number)
         if not info: raise RuntimeError(f"missing merge-worker sidecar for Part {number}")
-        cached=hf_hub_download(repo,info["hf_video_path"],repo_type="dataset",token=token)
-        target=output/info["video"]; shutil.copy2(cached,target)
-        if target.stat().st_size!=int(info["video_bytes"]) or _sha256(target)!=info["video_sha256"]: raise RuntimeError(f"HF MP4 verification failed for Part {number}")
+        target=output/info["video"]
+        success = False
+        last_error = None
+        for attempt in range(1, 4):
+            try:
+                print(f"[FETCH_PARTS] Downloading Part {number} (attempt {attempt}/3) from HF...", flush=True)
+                cached = hf_hub_download(
+                    repo,
+                    info["hf_video_path"],
+                    repo_type="dataset",
+                    token=token,
+                    force_download=(attempt > 1),
+                )
+                if target.exists():
+                    target.unlink(missing_ok=True)
+                shutil.copy2(cached, target)
+                actual_size = target.stat().st_size
+                expected_size = int(info["video_bytes"])
+                if actual_size != expected_size:
+                    raise RuntimeError(f"HF MP4 size mismatch for Part {number}: expected {expected_size}, got {actual_size}")
+                actual_sha = _sha256(target)
+                expected_sha = info["video_sha256"]
+                if actual_sha != expected_sha:
+                    raise RuntimeError(f"HF MP4 sha256 mismatch for Part {number}: expected {expected_sha}, got {actual_sha}")
+                print(f"[FETCH_PARTS] Part {number} downloaded & verified successfully (attempt {attempt}/3).", flush=True)
+                success = True
+                break
+            except Exception as e:
+                last_error = e
+                print(f"[FETCH_PARTS] Attempt {attempt}/3 failed for Part {number}: {e}", flush=True)
+                try:
+                    if 'cached' in locals() and Path(cached).exists():
+                        Path(cached).unlink(missing_ok=True)
+                except Exception:
+                    pass
+                if target.exists():
+                    target.unlink(missing_ok=True)
+                if attempt < 3:
+                    time.sleep(10 * attempt)
+
+        if not success:
+            raise RuntimeError(f"HF MP4 verification failed for Part {number} after 3 attempts: {last_error}")
+
         subtitle_source=next(iter(sidecars.glob(f"**/{info['subtitle']}")),None)
         if not subtitle_source: raise RuntimeError(f"GitHub artifact subtitle is missing for Part {number}")
         shutil.copy2(subtitle_source,output/info["subtitle"])

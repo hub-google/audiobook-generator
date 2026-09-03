@@ -67,7 +67,17 @@ jobs:
           if [ "$FORCE_RETRY" = "true" ]; then
             EXTRA_ARGS="--force"
           fi
-          python src/queue_dispatcher.py $EXTRA_ARGS 2>&1 | tee dispatcher-result.txt
+          for attempt in 1 2 3; do
+            echo "Queue dispatcher attempt $attempt/3"
+            if python src/queue_dispatcher.py $EXTRA_ARGS 2>&1 | tee dispatcher-result.txt; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "Queue dispatcher failed after 3 attempts"
+              exit 1
+            fi
+            sleep 15
+          done
 
       - name: Write dispatcher result to job summary
         if: always()
