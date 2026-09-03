@@ -215,9 +215,29 @@ def run_upload_pipeline(args):
 
     meta_info = save_book_metadata(book_title, start_chap, end_chap)
     cover_path = meta_info["cover_file"]
-    if not part_plan and args.input_dir:
-        part_plan = load_measured_prepared_part_plan(args.input_dir, book_title)
-        if part_plan:
+    if args.input_dir:
+        measured_plan = load_measured_prepared_part_plan(args.input_dir, book_title)
+        if measured_plan:
+            measured_durations = {
+                int(p["part_num"]): float(p.get("duration") or 0)
+                for p in measured_plan
+            }
+            if any(dur <= 0 for dur in measured_durations.values()):
+                raise RuntimeError("缺少全部影片的實測時長，任一 Part 時長必須大於 0")
+
+            if part_plan:
+                locked_part_nums = {int(p["part_num"]) for p in part_plan}
+                measured_part_nums = set(measured_durations.keys())
+                if locked_part_nums != measured_part_nums:
+                    raise RuntimeError(
+                        f"Measured parts {sorted(measured_part_nums)} do not match locked plan parts {sorted(locked_part_nums)}"
+                    )
+                runtime_plan = [dict(p) for p in part_plan]
+                for p in runtime_plan:
+                    p["duration"] = measured_durations[int(p["part_num"])]
+                part_plan = runtime_plan
+            else:
+                part_plan = measured_plan
             logging.info("✅ 已在建立播放清單前實測 %s 個 prepared Part 的 MP4 時長。", len(part_plan))
     if saved_state and saved_state.get("book_profile_id") and book_profile_id:
         if str(saved_state["book_profile_id"]).strip() != str(book_profile_id).strip():

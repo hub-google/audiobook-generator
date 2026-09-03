@@ -114,11 +114,14 @@ def run_local_prepared_parts_mode(
     if locked_parts and {int(item["part_num"]) for item in parts_to_upload} != set(locked_parts):
         raise RuntimeError("HF prepared Parts do not exactly cover the locked Part plan")
     for item in parts_to_upload:
+        duration = float(get_media_duration(item["video_path"]) or 0)
+        if duration <= 0:
+            raise RuntimeError(f"prepared Part {item['part_num']} has no measured MP4 duration")
         local_plan.append({
             "part_num": item["part_num"], "start_chap": item["start_chap"],
             "end_chap": item["end_chap"],
             "chapters": item.get("chapters") or list(range(item["start_chap"], item["end_chap"] + 1)),
-            "duration": get_media_duration(item["video_path"]), "title": item["title"],
+            "duration": duration, "title": item["title"],
         })
     artifact_count = len(set(prepared_plan.get("chapter_artifacts", {}).values())) if prepared_plan.get("chapter_artifacts") else len(files_to_upload)
     chapter_count = len(prepared_plan.get("chapter_artifacts", {})) if prepared_plan.get("chapter_artifacts") else sum(len(p.get("chapters", [])) for p in local_plan)
@@ -127,11 +130,25 @@ def run_local_prepared_parts_mode(
     publication.mark_global("probe_durations", "completed", chapter_count=chapter_count)
     publication.mark_global("validate_inventory", "completed", chapter_count=chapter_count, source_missing_chapters=source_missing)
     if publication.is_locked() and publication.data.get("plan"):
-        part_plan = publication.data["plan"]
-        publication.mark_global("lock_plan", "completed", part_count=len(part_plan))
+        base_plan = publication.data["plan"]
+        publication.mark_global("lock_plan", "completed", part_count=len(base_plan))
     else:
-        part_plan = publication.lock_plan(local_plan, run_id=args.run_id, book_title=book_title)
-        publication.mark_global("lock_plan", "completed", part_count=len(part_plan))
+        base_plan = publication.lock_plan(local_plan, run_id=args.run_id, book_title=book_title)
+        publication.mark_global("lock_plan", "completed", part_count=len(base_plan))
+
+    measured_durations = {int(item["part_num"]): float(item["duration"]) for item in local_plan}
+    locked_part_nums = {int(p["part_num"]) for p in base_plan}
+    measured_part_nums = set(measured_durations.keys())
+    if measured_part_nums != locked_part_nums:
+        raise RuntimeError(
+            f"Measured parts {sorted(measured_part_nums)} do not match locked plan parts {sorted(locked_part_nums)}"
+        )
+    if any(d <= 0 for d in measured_durations.values()):
+        raise RuntimeError("缺少全部影片的實測時長，任一 Part 時長必須大於 0")
+
+    part_plan = [dict(p) for p in base_plan]
+    for p in part_plan:
+        p["duration"] = measured_durations[int(p["part_num"])]
 
     recovered_titles = recover_completed_titles_from_playlist(
         completed_titles,
@@ -314,13 +331,25 @@ def run_local_prepared_parts_mode(
                     return parts_to_upload, part_plan, total_uploaded, EXIT_RETRY_LATER
             else:
                 pending_thumbnails.pop(v_title, None)
-            playlist_item_id = add_video_to_playlist(
-                youtube, playlist_id, v_id, position=part_n - 1,
+            part_rec = publication.data.get("parts", {}).get(str(part_n), {})
+            playlist_rec = part_rec.get("playlist") or {}
+            playlist_step = (part_rec.get("steps") or {}).get("add_playlist") or {}
+            has_pl_ack = (
+                playlist_rec.get("status") == "completed"
+                or playlist_rec.get("playlist_item_id")
+                or playlist_step.get("status") == "completed"
             )
-            if not playlist_item_id:
-                raise RuntimeError("playlistItems.insert returned no acknowledgement")
-            publication.record_playlist_ack(part_n, playlist_item_id, part_n - 1)
-            pending_playlist.pop(v_title, None)
+            if has_pl_ack:
+                logging.info("⏭️ Part %s 播放清單已於 Checkpoint 標記完成；跳過 insert：%s", part_n, v_title)
+                pending_playlist.pop(v_title, None)
+            else:
+                playlist_item_id = add_video_to_playlist(
+                    youtube, playlist_id, v_id, position=part_n - 1,
+                )
+                if not playlist_item_id:
+                    raise RuntimeError("playlistItems.insert returned no acknowledgement")
+                publication.record_playlist_ack(part_n, playlist_item_id, part_n - 1)
+                pending_playlist.pop(v_title, None)
             publication.complete(part_n, "final_validation", deferred_to_final_audit=True)
             completed_titles.add(v_title)
             existing_titles.add(v_title)

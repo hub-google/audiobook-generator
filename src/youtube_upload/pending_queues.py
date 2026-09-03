@@ -190,6 +190,25 @@ def drain_pending_playlist(youtube, publication, args, playlist_id,
                            pending_captions, pending_publish):
     for pending_title, pending_video_id in list(pending_playlist.items()):
         pending_part_num = part_number_for_title(part_plan, pending_title)
+        part_rec = publication.data.get("parts", {}).get(str(pending_part_num or 0), {})
+        playlist_rec = part_rec.get("playlist") or {}
+        playlist_step = (part_rec.get("steps") or {}).get("add_playlist") or {}
+        if playlist_rec.get("status") == "completed" or playlist_rec.get("playlist_item_id") or playlist_step.get("status") == "completed":
+            logging.info("⏭️ Part %s 播放清單已於 Checkpoint 標記完成；清除待補佇列：%s", pending_part_num, pending_title)
+            del pending_playlist[pending_title]
+            completed_titles.add(pending_title)
+            existing_titles.add(pending_title)
+            save_resume_state(
+                args.state_file, args.run_id, args.privacy, "running",
+                completed_titles=completed_titles, part_plan=part_plan,
+                pending_thumbnails=pending_thumbnails,
+                pending_playlist=pending_playlist,
+                pending_captions=pending_captions,
+                pending_publish=pending_publish,
+                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+            )
+            continue
+
         planned = next((p for p in part_plan if p.get("title") == pending_title), {})
         position = int(planned.get("part_num", 0)) - 1 if planned else None
         try:

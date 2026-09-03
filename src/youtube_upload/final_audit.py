@@ -7,7 +7,6 @@ from typing import Any
 
 from .errors import UploadPaused
 from .playlists import (
-    add_video_to_playlist,
     completed_playlist_title,
     get_channel_upload_video_index,
     get_ordered_playlist_items,
@@ -104,6 +103,11 @@ def run_final_playlist_and_archive_audit(
                 (record.get("upload") or {}).get("video_id")
                 or (record.get("steps", {}).get("upload_video") or {}).get("youtube_video_id")
             )
+            has_playlist_ack = bool(
+                (record.get("playlist") or {}).get("status") == "completed"
+                or (record.get("playlist") or {}).get("playlist_item_id")
+                or ((record.get("steps") or {}).get("add_playlist") or {}).get("status") == "completed"
+            )
 
             video_id = None
             if title in final_playlist_index:
@@ -113,52 +117,86 @@ def run_final_playlist_and_archive_audit(
                 final_playlist_index[title] = video_id
 
             if not video_id:
+                if known_video_id:
+                    try:
+                        v_res = youtube.videos().list(part="id,snippet", id=known_video_id).execute()
+                        if v_res.get("items"):
+                            video_id = known_video_id
+                            logging.info(
+                                "Final reconciliation verified video existence via known video ID: Part %s | video=%s",
+                                part_num, video_id,
+                            )
+                    except UploadPaused as paused:
+                        save_resume_state(
+                            args.state_file, args.run_id, args.privacy, "paused",
+                            paused.reason, paused.retry_at, completed_titles, part_plan,
+                            pending_thumbnails,
+                            playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                            pending_playlist=pending_playlist,
+                            pending_captions=pending_captions,
+                            pending_publish=pending_publish,
+                        )
+                        return EXIT_RETRY_LATER
+                    except Exception as e:
+                        logging.debug("videos().list check failed for %s: %s", known_video_id, e)
+
+                if not video_id:
+                    for attempt, delay in enumerate(RECONCILIATION_DELAYS):
+                        if final_channel_index is None:
+                            try:
+                                final_channel_index = get_channel_upload_video_index(youtube)
+                            except UploadPaused as paused:
+                                save_resume_state(
+                                    args.state_file, args.run_id, args.privacy, "paused",
+                                    paused.reason, paused.retry_at, completed_titles, part_plan,
+                                    pending_thumbnails,
+                                    playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                                    pending_playlist=pending_playlist,
+                                    pending_captions=pending_captions,
+                                    pending_publish=pending_publish,
+                                    )
+                                return EXIT_RETRY_LATER
+                        video_id = final_channel_index.get(title)
+                        if video_id:
+                            break
+                        logging.warning(
+                            "影片尚未在 YouTube 播放清單或頻道中立即可讀；%s 秒後重試 (%s/%s): %s",
+                            delay, attempt + 1, len(RECONCILIATION_DELAYS), title,
+                        )
+                        sleep_fn(delay)
+                        try:
+                            _refresh_playlist()
+                        except UploadPaused as paused:
+                            save_resume_state(
+                                args.state_file, args.run_id, args.privacy, "paused",
+                                paused.reason, paused.retry_at, completed_titles, part_plan,
+                                pending_thumbnails,
+                                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                                pending_playlist=pending_playlist,
+                                pending_captions=pending_captions,
+                                pending_publish=pending_publish,
+                            )
+                            return EXIT_RETRY_LATER
+                        except Exception:
+                            pass
+                        if title in final_playlist_index:
+                            video_id = final_playlist_index[title]
+                            break
+                        if known_video_id and any(item.get("video_id") == known_video_id for item in final_playlist_items):
+                            video_id = known_video_id
+                            final_playlist_index[title] = video_id
+                            break
+                        final_channel_index = None
+
+                if not video_id:
+                    raise RuntimeError(f"final reconciliation cannot find the video in either the playlist or channel uploads: {title}")
+
+            # Verify playlist membership; wait for eventual consistency if not yet readable
+            if title not in final_playlist_index and not any(item.get("video_id") == video_id for item in final_playlist_items):
                 for attempt, delay in enumerate(RECONCILIATION_DELAYS):
-                    if known_video_id:
-                        try:
-                            v_res = youtube.videos().list(part="id,snippet", id=known_video_id).execute()
-                            if v_res.get("items"):
-                                video_id = known_video_id
-                                logging.info(
-                                    "Final reconciliation verified video existence via known video ID: Part %s | video=%s",
-                                    part_num, video_id,
-                                )
-                                break
-                        except UploadPaused as paused:
-                            save_resume_state(
-                                args.state_file, args.run_id, args.privacy, "paused",
-                                paused.reason, paused.retry_at, completed_titles, part_plan,
-                                pending_thumbnails,
-                                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
-                                pending_playlist=pending_playlist,
-                                pending_captions=pending_captions,
-                                pending_publish=pending_publish,
-                            )
-                            return EXIT_RETRY_LATER
-                        except Exception as e:
-                            logging.debug("videos().list check failed for %s: %s", known_video_id, e)
-
-                    if final_channel_index is None:
-                        try:
-                            final_channel_index = get_channel_upload_video_index(youtube)
-                        except UploadPaused as paused:
-                            save_resume_state(
-                                args.state_file, args.run_id, args.privacy, "paused",
-                                paused.reason, paused.retry_at, completed_titles, part_plan,
-                                pending_thumbnails,
-                                playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}",
-                                pending_playlist=pending_playlist,
-                                pending_captions=pending_captions,
-                                pending_publish=pending_publish,
-                            )
-                            return EXIT_RETRY_LATER
-                    video_id = final_channel_index.get(title)
-                    if video_id:
-                        break
-
                     logging.warning(
-                        "影片尚未在 YouTube 播放清單或頻道中立即可讀；%s 秒後重試 (%s/%s): %s",
-                        delay, attempt + 1, len(RECONCILIATION_DELAYS), title,
+                        "Part %s (%s) 尚未在 YouTube 播放清單中可讀；%s 秒後重新讀取 (%s/%s)...",
+                        part_num, title, delay, attempt + 1, len(RECONCILIATION_DELAYS),
                     )
                     sleep_fn(delay)
                     try:
@@ -174,32 +212,26 @@ def run_final_playlist_and_archive_audit(
                             pending_publish=pending_publish,
                         )
                         return EXIT_RETRY_LATER
-                    if title in final_playlist_index:
-                        video_id = final_playlist_index[title]
+                    except Exception:
+                        pass
+                    if title in final_playlist_index or any(item.get("video_id") == video_id for item in final_playlist_items):
                         break
-                    if known_video_id and any(item.get("video_id") == known_video_id for item in final_playlist_items):
-                        video_id = known_video_id
-                        final_playlist_index[title] = video_id
-                        break
-                    final_channel_index = None
 
-                if not video_id:
-                    if final_channel_index is None:
-                        try:
-                            final_channel_index = get_channel_upload_video_index(youtube)
-                        except Exception:
-                            final_channel_index = {}
-                    video_id = final_channel_index.get(title)
-
-                if not video_id:
-                    raise RuntimeError(f"final reconciliation cannot find the video in either the playlist or channel uploads: {title}")
-
-                if title not in final_playlist_index and not any(item.get("video_id") == video_id for item in final_playlist_items):
-                    logging.warning("Final reconciliation restoring playlist entry: Part %s | video=%s", planned.get("part_num"), video_id)
-                    if not add_video_to_playlist(youtube, playlist_id, video_id, position=int(planned["part_num"]) - 1):
-                        raise RuntimeError(f"final reconciliation failed to restore playlist entry: {title}")
-                    _refresh_playlist()
-                    final_playlist_index[title] = video_id
+            in_playlist = (
+                title in final_playlist_index
+                or any(item.get("video_id") == video_id for item in final_playlist_items)
+            )
+            if not in_playlist:
+                if has_playlist_ack:
+                    logging.warning(
+                        "Part %s 已具備 successful playlist ACK，但在 playlistItems.list 中暫未可見；依 eventual consistency 保留 write ACK，絕不重複 insert: %s",
+                        part_num, title,
+                    )
+                else:
+                    logging.warning(
+                        "Part %s 在播放清單中不可見且無 playlist ACK: %s",
+                        part_num, title,
+                    )
 
             evidence = {
                 "youtube_video_id": video_id,
@@ -207,26 +239,32 @@ def run_final_playlist_and_archive_audit(
                 "playlist_position": int(planned["part_num"]) - 1,
                 "verified_by": "final_playlist_audit",
             }
-            part_num = int(planned["part_num"])
-            record = publication.data.get("parts", {}).get(str(part_num), {})
             steps = record.get("steps") or {}
-            for step in PART_STEPS:
-                if step == "archive_hf":
-                    continue
-                if (steps.get(step) or {}).get("status") != "completed":
+            # Remote evidence only recovers what it actually proves
+            if (steps.get("upload_video") or {}).get("status") != "completed":
+                publication.complete(
+                    part_num,
+                    "upload_video",
+                    recovered_from_youtube=True,
+                    youtube_video_id=video_id,
+                )
+            if (steps.get("add_playlist") or {}).get("status") != "completed":
+                if in_playlist or has_playlist_ack:
                     publication.complete(
                         part_num,
-                        step,
-                        recovered_from_youtube=True,
+                        "add_playlist",
+                        recovered_from_playlist=True,
                         youtube_video_id=video_id,
+                        playlist_id=playlist_id,
+                        playlist_position=int(planned["part_num"]) - 1,
                     )
             publication.complete(part_num, "final_validation", **evidence)
 
         if len(final_playlist_items) != len(part_plan):
-            for delay in RECONCILIATION_DELAYS:
+            for attempt, delay in enumerate(RECONCILIATION_DELAYS):
                 logging.warning(
-                    "播放清單影片數 (%s/%s) 尚未同步完整；%s 秒後重新讀取...",
-                    len(final_playlist_items), len(part_plan), delay,
+                    "播放清單影片數 (%s/%s) 尚未同步完整；%s 秒後重新讀取 (%s/%s)...",
+                    len(final_playlist_items), len(part_plan), delay, attempt + 1, len(RECONCILIATION_DELAYS),
                 )
                 sleep_fn(delay)
                 try:
