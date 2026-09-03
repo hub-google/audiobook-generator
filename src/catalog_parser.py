@@ -5,6 +5,7 @@ import yaml
 import json
 import argparse
 import base64
+import hashlib
 import requests
 import unicodedata
 from decimal import Decimal
@@ -545,7 +546,9 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
         "manual_cover": dict(snapshot.get("manual_cover") or {}),
         "cleaner": {
             "remove_patterns": cleaner_patterns,
-            "fingerprint": str(snapshot.get("cleaner_fingerprint") or ""),
+            "fingerprint": str(snapshot.get("cleaner_fingerprint") or "") or hashlib.sha256(
+                ("cleaner-v4-prosody|" + json.dumps(cleaner_patterns, ensure_ascii=False, separators=(",", ":"))).encode("utf-8")
+            ).hexdigest(),
         },
         "tts": {
             "engine": "edge-tts",
@@ -645,10 +648,95 @@ def generate_matrix(catalog_url, start_chap=1, end_chap=10, chapters_per_worker=
     return matrix, res["book_title"], chapters_per_worker
 
 
+def generate_matrix_from_config(config):
+    selected_indices = [int(x) for x in config.get("selected_indices") or []]
+    if not selected_indices:
+        raise ValueError("config has no selected_indices")
+    book_title = str(config.get("book_title") or "有聲小說全集")
+    cpw = int(config.get("chapters_per_worker") or 10)
+    if cpw <= 0:
+        cpw = 10
+    total_selected = len(selected_indices)
+    if math.ceil(total_selected / cpw) > MAX_PARALLEL_WORKERS:
+        cpw = math.ceil(total_selected / MAX_PARALLEL_WORKERS)
+    includes = []
+    for i in range(0, total_selected, cpw):
+        chunk = selected_indices[i:i + cpw]
+        includes.append({
+            "worker_id": len(includes),
+            "book_title": book_title,
+            "start_chap": chunk[0],
+            "end_chap": chunk[-1],
+        })
+    matrix = {"include": includes}
+    print(f"[CatalogParser] Restored Matrix: {len(includes)} workers, max {cpw} chapters/worker, total {total_selected} chapters")
+    return matrix, book_title, cpw
+
+
+def validate_and_restore_config(config_path, output_config_path=None, output_matrix_path=None):
+    if not os.path.isfile(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f) or {}
+
+    book_title = config.get("book_title")
+    if not book_title or not str(book_title).strip():
+        raise RuntimeError("Strict resume validation failed: config.yaml is missing book_title")
+
+    book_profile_id = config.get("book_profile_id")
+    if not book_profile_id or not str(book_profile_id).strip():
+        raise RuntimeError("Strict resume validation failed: config.yaml is missing book_profile_id")
+
+    if "profile_revision" not in config or config["profile_revision"] is None:
+        raise RuntimeError("Strict resume validation failed: config.yaml is missing profile_revision")
+
+    cleaner = config.get("cleaner")
+    if not isinstance(cleaner, dict):
+        raise RuntimeError("Strict resume validation failed: config.yaml is missing cleaner configuration")
+    if not isinstance(cleaner.get("remove_patterns"), list):
+        raise RuntimeError("Strict resume validation failed: cleaner.remove_patterns must be a list")
+    cleaner_fp = cleaner.get("fingerprint")
+    if not cleaner_fp or not str(cleaner_fp).strip():
+        raise RuntimeError("Strict resume validation failed: cleaner.fingerprint is missing or empty")
+
+    if "manual_cover" not in config or not isinstance(config.get("manual_cover"), dict):
+        raise RuntimeError("Strict resume validation failed: config.yaml is missing manual_cover configuration")
+
+    selected_indices = config.get("selected_indices")
+    if not selected_indices or not isinstance(selected_indices, list):
+        raise RuntimeError("Strict resume validation failed: config.yaml is missing selected_indices")
+
+    source_indices = config.get("source_indices")
+    if not source_indices or not isinstance(source_indices, list) or len(source_indices) != len(selected_indices):
+        raise RuntimeError("Strict resume validation failed: config.yaml source_indices does not match selected_indices")
+
+    chapters = config.get("chapters")
+    if not chapters or not isinstance(chapters, list) or len(chapters) != len(selected_indices):
+        raise RuntimeError("Strict resume validation failed: config.yaml chapters does not match selected_indices")
+
+    if "chapter_order" not in config or not isinstance(config.get("chapter_order"), list):
+        raise RuntimeError("Strict resume validation failed: config.yaml is missing chapter_order")
+
+    if output_config_path and os.path.abspath(config_path) != os.path.abspath(output_config_path):
+        import shutil
+        os.makedirs(os.path.dirname(os.path.abspath(output_config_path)), exist_ok=True)
+        shutil.copy2(config_path, output_config_path)
+
+    if output_matrix_path:
+        matrix, _, _ = generate_matrix_from_config(config)
+        os.makedirs(os.path.dirname(os.path.abspath(output_matrix_path)), exist_ok=True)
+        with open(output_matrix_path, "w", encoding="utf-8") as f:
+            json.dump(matrix, f, ensure_ascii=False)
+        print(f"[CatalogParser] Restored Matrix JSON written to {output_matrix_path} ({len(matrix['include'])} workers)")
+
+    return config
+
+
 if __name__ == "__main__":
     # 範例網址格式: https://tw.hjwzw.com/Book/Chapter/1644
     parser = argparse.ArgumentParser(description="Parse novel catalog and generate config.yaml + matrix.json")
-    parser.add_argument("--url",            type=str, required=True, help="Catalog URL (e.g. https://tw.hjwzw.com/Book/Chapter/1644)")
+    parser.add_argument("--restore-config",  type=str, default="", help="Path to existing config.yaml to validate and restore for resume")
+    parser.add_argument("--url",            type=str, default="", help="Catalog URL (e.g. https://tw.hjwzw.com/Book/Chapter/1644)")
     parser.add_argument("--start",          type=int, default=1,  help="Start chapter index (1-based)")
     parser.add_argument("--end",            type=int, default=10, help="End chapter index (1-based)")
     parser.add_argument("--output",         type=str, default="config.yaml", help="Output YAML config path")
@@ -660,6 +748,13 @@ if __name__ == "__main__":
     parser.add_argument("--chapter-order-b64", type=str, default="", help="Base64 JSON array of stable catalog UUIDs in production order")
     parser.add_argument("--book-profile-snapshot-b64", type=str, default="", help="Base64 JSON immutable per-book settings snapshot")
     args = parser.parse_args()
+
+    if args.restore_config:
+        validate_and_restore_config(args.restore_config, args.output, args.matrix_output)
+        raise SystemExit(0)
+
+    if not args.url:
+        parser.error("the following arguments are required: --url (or provide --restore-config)")
 
     exclude_list = []
     if args.exclude_chapters:

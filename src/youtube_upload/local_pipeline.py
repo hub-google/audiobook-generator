@@ -249,27 +249,33 @@ def run_local_prepared_parts_mode(
             task_id=args.task_id,
             source_missing_chapters=item.get("source_missing_chapters") or [],
         )
-        logging.info(f"[API_UPLOAD_MARKER] START | Part {part_n}/{len(parts_to_upload)} | Ch {item['start_chap']}~{item['end_chap']} | {os.path.basename(v_path)}")
-        try:
-            publication.mark(part_n, "upload_video", "running")
-            v_id = upload_video_file(
-                youtube,
-                video_path=v_path,
-                title=v_title,
-                description=full_desc,
-                privacy_status="public",
-                cover_path=None,
-            )
-        except UploadPaused as paused:
-            publication.fail(part_n, "upload_video", paused, paused=True)
-            save_resume_state(args.state_file, args.run_id, args.privacy, "paused",
-                              paused.reason, paused.retry_at, completed_titles, part_plan,
-                              pending_thumbnails, playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None)
-            logging.error(
-                "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
-                len(completed_titles), len(part_plan), paused.retry_at.isoformat(), args.run_id, paused.reason,
-            )
-            return parts_to_upload, part_plan, total_uploaded, EXIT_RETRY_LATER
+        part_rec = publication.data.get("parts", {}).get(str(part_n), {})
+        existing_vid = part_rec.get("upload", {}).get("video_id") or existing_video_ids.get(v_title)
+        if existing_vid and part_rec.get("upload", {}).get("status") == "completed":
+            v_id = existing_vid
+            logging.info("⏭️ Part %s 影片已於 Checkpoint 記錄 (Video ID: %s)，跳過 upload_video", part_n, v_id)
+        else:
+            logging.info(f"[API_UPLOAD_MARKER] START | Part {part_n}/{len(parts_to_upload)} | Ch {item['start_chap']}~{item['end_chap']} | {os.path.basename(v_path)}")
+            try:
+                publication.mark(part_n, "upload_video", "running")
+                v_id = upload_video_file(
+                    youtube,
+                    video_path=v_path,
+                    title=v_title,
+                    description=full_desc,
+                    privacy_status="public",
+                    cover_path=None,
+                )
+            except UploadPaused as paused:
+                publication.fail(part_n, "upload_video", paused, paused=True)
+                save_resume_state(args.state_file, args.run_id, args.privacy, "paused",
+                                  paused.reason, paused.retry_at, completed_titles, part_plan,
+                                  pending_thumbnails, playlist_url=f"https://www.youtube.com/playlist?list={playlist_id}" if playlist_id else None)
+                logging.error(
+                    "[API_UPLOAD_STATUS] PAUSED | uploaded=%s | total=%s | retry_at=%s | source_run=%s | reason=%s",
+                    len(completed_titles), len(part_plan), paused.retry_at.isoformat(), args.run_id, paused.reason,
+                )
+                return parts_to_upload, part_plan, total_uploaded, EXIT_RETRY_LATER
         if v_id:
             publication.record_upload_ack(
                 part_n, v_id, _file_sha256(v_path),

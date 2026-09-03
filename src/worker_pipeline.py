@@ -411,6 +411,26 @@ def _copy_artifact_files_to_workspace(src_dir, workspace_dir, book_title):
                     shutil.copy2(src_path, dest_path)
 
 
+def extract_chapter_sources(config):
+    chapter_sources = {}
+    selected_indices = list(config.get("selected_indices", []))
+    source_indices = list(config.get("source_indices", []))
+    raw_chapters = list(config.get("chapters", []))
+    raw_titles = list(config.get("chapter_titles", []))
+    for i, sel_idx in enumerate(selected_indices):
+        c_url = raw_chapters[i]["url"] if (i < len(raw_chapters) and isinstance(raw_chapters[i], dict)) else (str(raw_chapters[i]) if i < len(raw_chapters) else "")
+        s_idx = source_indices[i] if i < len(source_indices) else sel_idx
+        title = raw_titles[i] if i < len(raw_titles) else ""
+        chapter_sources[int(sel_idx)] = {
+            "output_chapter": int(sel_idx),
+            "source_index": int(s_idx),
+            "chapter_url": c_url,
+            "chapter_title": title,
+            "source_identity": f"{s_idx}|{c_url}",
+        }
+    return chapter_sources
+
+
 def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
                  build_parts=True, force=False):
     """Run the strict resumable pipeline for local and Actions callers alike."""
@@ -430,6 +450,7 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
         cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
         stage_settings=build_stage_settings(config),
         validation_cache_enabled=(config.get("validation") or {}).get("cache_enabled", True),
+        chapter_sources=extract_chapter_sources(config),
     )
     logging.info("=== Worker %s resumable per-stage pipeline (%s chapters) ===",
                  worker_id, len(exact_indices))
@@ -543,6 +564,7 @@ def restore_locked_artifact(config, worker_id, exact_indices, artifact_dir,
         cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
         stage_settings=build_stage_settings(config),
         validation_cache_enabled=(config.get("validation") or {}).get("cache_enabled", True),
+        chapter_sources=extract_chapter_sources(config),
     )
     checkpoint.reconcile()
 

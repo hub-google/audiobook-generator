@@ -47,13 +47,14 @@ def _atomic_json(path, data):
 
 class PipelineCheckpoint:
     def __init__(self, workspace_dir, book_title, worker_id, chapters, cleaner_fingerprint="",
-                 stage_settings=None, validation_cache_enabled=True):
+                 stage_settings=None, validation_cache_enabled=True, chapter_sources=None):
         self.workspace_dir = os.path.abspath(workspace_dir)
         self.book_title = book_title
         self.worker_id = int(worker_id)
         self.chapter_numbers = [int(chapter) for chapter in chapters]
         self.cleaner_fingerprint = str(cleaner_fingerprint or "")
         self.stage_settings = dict(stage_settings or {})
+        self.chapter_sources = {int(k): v for k, v in (chapter_sources or {}).items()}
         if self.cleaner_fingerprint and "cleaner" not in self.stage_settings:
             self.stage_settings["cleaner"] = {"legacy_fingerprint": self.cleaner_fingerprint}
         checkpoint_dir = os.path.join(self.workspace_dir, "Checkpoints")
@@ -154,6 +155,7 @@ class PipelineCheckpoint:
 
     def reconcile(self):
         """Rebuild completion from files and invalidate downstream false success."""
+        TOPOLOGICAL_STAGES = ("crawler", "cleaner", "image", "tts", "subtitle", "video")
         for chapter in self.chapter_numbers:
             chapter_record = self.data["chapters"].setdefault(
                 str(int(chapter)), {"overall_status": "pending", "stages": {}}
@@ -165,8 +167,41 @@ class PipelineCheckpoint:
                     record["reason"] = "source_missing"
                 self._refresh_chapter(chapter)
                 continue
-            upstream_complete = True
-            for stage in STAGES:
+
+            expected_source = self.chapter_sources.get(int(chapter))
+            recorded_source = chapter_record.get("source_identity")
+
+            source_changed = False
+            if expected_source:
+                if recorded_source:
+                    exp_url = expected_source.get("chapter_url")
+                    rec_url = recorded_source.get("chapter_url")
+                    exp_idx = expected_source.get("source_index")
+                    rec_idx = recorded_source.get("source_index")
+                    if exp_url != rec_url or exp_idx != rec_idx:
+                        source_changed = True
+                else:
+                    has_completed = any(chapter_record.get("stages", {}).get(s, {}).get("status") == "completed" for s in STAGES)
+                    if has_completed:
+                        raise RuntimeError(
+                            f"Chapter {chapter} has completed stages but missing source_identity (UNKNOWN); stopping pipeline"
+                        )
+                    chapter_record["source_identity"] = expected_source
+
+            if source_changed:
+                chapter_record["source_identity"] = expected_source
+                for stage in STAGES:
+                    rec = self._stage_record(chapter, stage)
+                    rec["status"] = "pending"
+                    rec["validation_error"] = "chapter source identity changed; output invalidated"
+                    out_path = self.output_path(chapter, stage)
+                    if os.path.exists(out_path):
+                        try:
+                            os.remove(out_path)
+                        except OSError:
+                            pass
+
+            for stage in TOPOLOGICAL_STAGES:
                 record = self._stage_record(chapter, stage)
                 try:
                     validation = self.validate_output(chapter, stage)
@@ -176,14 +211,29 @@ class PipelineCheckpoint:
                     validation = None
                     valid = False
                     validation_error = str(error)
+
                 input_signature = self._input_signature(chapter, stage)
                 recorded_signature = record.get("input_signature")
-                stale_input = bool(recorded_signature and recorded_signature != input_signature)
                 expected_settings = self._settings_signature(stage)
                 recorded_settings = record.get("settings_signature")
+
+                if record.get("status") == "completed":
+                    if not expected_settings or recorded_settings is None or recorded_signature is None:
+                        raise RuntimeError(
+                            f"Chapter {chapter} stage {stage} completed record has UNKNOWN/missing signature "
+                            f"(expected_settings={expected_settings!r}, recorded_settings={recorded_settings!r}, recorded_signature={recorded_signature!r})"
+                        )
+
+                stale_input = bool(recorded_signature and recorded_signature != input_signature)
                 stale_settings = bool(recorded_settings and recorded_settings != expected_settings)
                 stale = stale_input or stale_settings
-                if valid and upstream_complete and not stale:
+
+                upstreams_valid = all(
+                    self._stage_record(chapter, up).get("status") == "completed"
+                    for up in STAGE_INPUTS[stage]
+                )
+
+                if valid and upstreams_valid and not stale:
                     record.update({
                         "status": "completed",
                         "output": os.path.relpath(
@@ -199,11 +249,12 @@ class PipelineCheckpoint:
                     record.pop("error_type", None)
                     record.pop("validation_error", None)
                 else:
-                    upstream_complete = False
                     if stale_settings:
                         record["validation_error"] = "stage settings changed; output must be regenerated"
                     elif stale_input:
                         record["validation_error"] = "upstream artifact changed; output must be regenerated"
+                    elif not upstreams_valid:
+                        record["validation_error"] = "upstream dependencies not completed; output must be regenerated"
                     elif validation_error:
                         record["validation_error"] = validation_error[:1000]
                     if record.get("status") in ("completed", "running"):
@@ -242,6 +293,8 @@ class PipelineCheckpoint:
         record["started_at"] = _utc_now()
         record.pop("error", None)
         record.pop("error_type", None)
+        if self.chapter_sources.get(int(chapter)):
+            self.data["chapters"][str(int(chapter))]["source_identity"] = self.chapter_sources[int(chapter)]
         self._refresh_chapter(chapter)
         self.save()
 
@@ -278,6 +331,8 @@ class PipelineCheckpoint:
         record.pop("error", None)
         record.pop("error_type", None)
         record.pop("validation_error", None)
+        if self.chapter_sources.get(int(chapter)):
+            self.data["chapters"][str(int(chapter))]["source_identity"] = self.chapter_sources[int(chapter)]
         self._refresh_chapter(chapter)
         self.save()
 
@@ -317,12 +372,19 @@ class PipelineCheckpoint:
         record = self._stage_record(chapter, stage)
         if record.get("status") != "completed":
             return False
-        if stage == "cleaner" and self.cleaner_fingerprint:
-            recorded_settings = record.get("settings_signature")
-            if recorded_settings and recorded_settings != self._settings_signature(stage):
-                return False
+        expected_settings = self._settings_signature(stage)
+        recorded_settings = record.get("settings_signature")
+        input_signature = self._input_signature(chapter, stage)
         recorded = record.get("input_signature")
-        return not recorded or recorded == self._input_signature(chapter, stage)
+
+        if not expected_settings or recorded_settings is None or recorded is None:
+            raise RuntimeError(
+                f"Chapter {chapter} stage {stage} has UNKNOWN/missing signature; cannot verify completion"
+            )
+
+        if recorded_settings != expected_settings or recorded != input_signature:
+            return False
+        return True
 
     def mark_worker_stage_running(self, stage):
         record = self.data.setdefault("worker_stages", {}).setdefault(
