@@ -34237,12 +34237,12 @@
       "retry_at": null,
       "reason": null,
       "hf_progress": {
-        "completed": 0,
-        "total": 0
+        "completed": 21,
+        "total": 21
       },
       "youtube_progress": {
         "completed": 0,
-        "total": 0
+        "total": 21
       },
       "created_at": "2026-08-30T01:44:06.353793+00:00",
       "updated_at": "2026-09-04T06:40:41.438808+00:00",
