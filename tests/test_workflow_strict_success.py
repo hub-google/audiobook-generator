@@ -106,6 +106,29 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("Delete older dispatcher run records", self.dispatcher_text)
         self.assertIn('actions/runs/$old_run_id', self.dispatcher_text)
 
+    def test_resume_dispatch_requires_original_identity_inputs(self):
+        restore = next(
+            step for step in self.jobs["setup"]["steps"]
+            if step.get("name") == "Restore authoritative shared-config on Resume"
+        )
+        command = restore["run"]
+        self.assertIn("Strict resume dispatch validation failed", command)
+        self.assertIn('("book_title", supplied_title)', command)
+        self.assertIn('("chapter_label", chapter_label)', command)
+        self.assertIn('("queue_task_id", queue_task_id)', command)
+        self.assertIn("does not match source config", command)
+
+    def test_setup_summary_uses_restored_config_not_dispatch_defaults(self):
+        summary = next(
+            step for step in self.jobs["setup"]["steps"]
+            if step.get("name") == "Generate Setup Summary"
+        )
+        command = summary["run"]
+        self.assertIn("config.get('book_title')", command)
+        self.assertIn("config.get('catalog_url')", command)
+        self.assertIn("min(selected)", command)
+        self.assertNotIn("github.event.inputs.catalog_url", command)
+
     def test_schedule_is_isolated_from_manual_production_workflow(self):
         self.assertNotIn("schedule:", self.text)
         self.assertIn("schedule:", self.dispatcher_text)

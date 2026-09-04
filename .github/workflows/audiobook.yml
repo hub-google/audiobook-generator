@@ -8,7 +8,7 @@ on:
       book_title:
         description: '小說書名（只用於可讀的 Run 名稱）'
         required: false
-        default: '待解析書名'
+        default: ''
       chapter_label:
         description: '顯示用的實際章節標籤（例如：Ch1-3156 或 Ch1-3300(實做3156章)；留空時自動用 Ch{start}-{end}）'
         required: false
@@ -231,6 +231,37 @@ jobs:
             --output config.yaml \
             --matrix-output matrix.json
 
+          DISPATCH_BOOK_TITLE="${{ github.event.inputs.book_title }}" \
+          DISPATCH_CHAPTER_LABEL="${{ github.event.inputs.chapter_label }}" \
+          DISPATCH_QUEUE_TASK_ID="${{ github.event.inputs.queue_task_id }}" \
+          python - <<'PY'
+          import os
+          import yaml
+
+          with open("config.yaml", encoding="utf-8") as handle:
+              config = yaml.safe_load(handle) or {}
+
+          expected_title = str(config.get("book_title") or "").strip()
+          supplied_title = os.environ.get("DISPATCH_BOOK_TITLE", "").strip()
+          chapter_label = os.environ.get("DISPATCH_CHAPTER_LABEL", "").strip()
+          queue_task_id = os.environ.get("DISPATCH_QUEUE_TASK_ID", "").strip()
+          missing = [name for name, value in (
+              ("book_title", supplied_title),
+              ("chapter_label", chapter_label),
+              ("queue_task_id", queue_task_id),
+          ) if not value]
+          if missing:
+              raise SystemExit(
+                  "Strict resume dispatch validation failed: missing original input(s): "
+                  + ", ".join(missing)
+              )
+          if supplied_title != expected_title:
+              raise SystemExit(
+                  "Strict resume dispatch validation failed: book_title "
+                  f"{supplied_title!r} does not match source config {expected_title!r}"
+              )
+          PY
+
       - name: Parse Catalog & Generate config.yaml + matrix.json
         if: github.event.inputs.resume_source_run_id == ''
         run: |
@@ -297,24 +328,28 @@ jobs:
 
       - name: Generate Setup Summary
         run: |
-          echo "## 📚 Audiobook Pipeline Started" >> "$GITHUB_STEP_SUMMARY"
-          echo "✅ **Target URL:** ${{ github.event.inputs.catalog_url }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "✅ **Chapter Range:** ${START} ~ ${END}" >> "$GITHUB_STEP_SUMMARY"
-          echo "✅ **Actual Selected Chapters:** $(python -c "import yaml; c = yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}; print(len(c.get('selected_indices') or []))")" >> "$GITHUB_STEP_SUMMARY"
-          echo "✅ **Workers Created:** $(jq '.include | length' matrix.json)" >> "$GITHUB_STEP_SUMMARY"
           python - <<'PY'
-          import os, yaml
+          import os, yaml, json
           with open("config.yaml", encoding="utf-8") as handle:
               config = yaml.safe_load(handle) or {}
+          with open("matrix.json", encoding="utf-8") as handle:
+              matrix = (json.load(handle) or {}).get("include") or []
           cleaner = config.get("cleaner") or {}
+          selected = [int(value) for value in config.get("selected_indices") or []]
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## 📚 Audiobook Pipeline Started\n")
+              summary.write(f"✅ **Book:** {config.get('book_title')}\n")
+              summary.write(f"✅ **Target URL:** {config.get('catalog_url')}\n")
+              summary.write(f"✅ **Chapter Range:** {min(selected)} ~ {max(selected)}\n")
+              summary.write(f"✅ **Actual Selected Chapters:** {len(selected)}\n")
+              summary.write(f"✅ **Workers Created:** {len(matrix)}\n")
+              summary.write(f"✅ **Resume Source Run:** {os.environ.get('SOURCE_RUN_ID') or 'none'}\n")
               summary.write(f"✅ **Book Profile:** `{config.get('book_profile_id') or 'manual/default'}` revision {config.get('profile_revision', 0)}\n")
               summary.write(f"✅ **Cleaner Rules:** {len(cleaner.get('remove_patterns') or [])}\n")
               summary.write(f"✅ **Cleaner Fingerprint:** `{(cleaner.get('fingerprint') or 'none')[:12]}`\n")
           PY
         env:
-          START: ${{ github.event.inputs.start_chap }}
-          END: ${{ github.event.inputs.end_chap }}
+          SOURCE_RUN_ID: ${{ github.event.inputs.resume_source_run_id }}
 
       - name: Upload config.yaml as shared artifact
         uses: actions/upload-artifact@v4
