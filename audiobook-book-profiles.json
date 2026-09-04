@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 60,
-  "updated_at": "2026-09-04T06:38:36.087512+00:00",
+  "revision": 61,
+  "updated_at": "2026-09-04T06:40:23.585151+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -517,7 +517,10 @@
     "e88e54bb53c028c9": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/49345",
       "book_title": "逼我重生是吧",
-      "cleaner_remove_patterns": [],
+      "cleaner_remove_patterns": [
+        "請：wap.xshuquge.net",
+        "wap.xshuquge.net"
+      ],
       "duplicate_detection": {
         "use_normalized_number": true,
         "use_chapter_name": true,
@@ -525,7 +528,7 @@
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 2,
+      "profile_revision": 3,
       "manual_cover": {
         "source": "manual_upload",
         "provider": "github",
@@ -539,7 +542,7 @@
         "sha256": "70ac282076dc7f2fbac71faa117709d1208eccb4954ff7d11aac78644881e7a8",
         "quality": 98
       },
-      "updated_at": "2026-09-04T06:38:36.087512+00:00"
+      "updated_at": "2026-09-04T06:40:23.585151+00:00"
     },
     "edb40b934ab51950": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/35775",
