@@ -356,22 +356,89 @@ def mark_task_needs_attention(queue, task_id, reason="run_failed", conclusion="f
 def delete_task(queue, task_id):
     queue = normalize_queue(queue)
     queue["queue"] = [item for item in queue["queue"] if item.get("task_id") != task_id]
+    queue["completed"] = [item for item in queue.get("completed", []) if item.get("task_id") != task_id]
     return touch(queue)
 
 
-def requeue_task_after_active(queue, task_id, active_id=None):
-    """Requeue an interrupted book immediately behind the active book.
+def mark_tasks_completed(queue, task_ids, conclusion="success", ended_at=None):
+    """Mark one or more tasks as completed and move them to the completed list."""
+    queue = normalize_queue(queue)
+    id_set = set(task_ids) if isinstance(task_ids, (list, tuple, set)) else {task_ids}
+    now = utc_now()
+    finish_time = ended_at or now
 
-    A cancelled Actions run is only one execution attempt.  The durable book
-    task remains in the queue until the user explicitly deletes it.
+    for task in queue.get("queue", []):
+        if task.get("task_id") in id_set:
+            run_id = task.get("run_id")
+            history = list(task.get("run_history") or [])
+            if run_id and not any(item.get("run_id") == run_id for item in history):
+                history.append({
+                    "run_id": run_id,
+                    "conclusion": conclusion,
+                    "ended_at": finish_time,
+                })
+            task.update({
+                "status": "completed",
+                "reason": None,
+                "retry_at": None,
+                "run_conclusion": conclusion,
+                "run_completed_at": finish_time,
+                "run_history": history,
+                "updated_at": now,
+            })
+    return touch(queue)
+
+
+def mark_task_completed(queue, task_id, conclusion="success", ended_at=None):
+    return mark_tasks_completed(queue, [task_id], conclusion=conclusion, ended_at=ended_at)
+
+
+def move_tasks_to_pending(queue, task_ids, status="paused"):
+    """Move completed task(s) back to the pending queue with a non-blocking status."""
+    queue = normalize_queue(queue)
+    id_set = set(task_ids) if isinstance(task_ids, (list, tuple, set)) else {task_ids}
+    now = utc_now()
+
+    moved = []
+    remaining_completed = []
+    for task in queue.get("completed", []):
+        if task.get("task_id") in id_set:
+            task.update({
+                "status": status,
+                "run_id": None,
+                "run_conclusion": None,
+                "run_completed_at": None,
+                "reason": None,
+                "retry_at": None,
+                "updated_at": now,
+            })
+            moved.append(task)
+        else:
+            remaining_completed.append(task)
+
+    queue["completed"] = remaining_completed
+    queue["queue"].extend(moved)
+    return touch(queue)
+
+
+def move_task_to_pending(queue, task_id, status="paused"):
+    return move_tasks_to_pending(queue, [task_id], status=status)
+
+
+
+def requeue_task_after_active(queue, task_id, active_id=None):
+    """Requeue an interrupted, active, or completed book immediately behind the active book.
+
+    Any existing or cancelled Actions run is recorded to history, and the durable
+    book task is cleanly reset to queued status.
     """
     queue = normalize_queue(queue)
+    if any(item.get("task_id") == task_id for item in queue.get("completed", [])):
+        queue = move_task_to_pending(queue, task_id, status="paused")
     index = next((i for i, item in enumerate(queue["queue"]) if item.get("task_id") == task_id), None)
     if index is None:
         raise KeyError(task_id)
     task = queue["queue"][index]
-    if is_task_active(task):
-        raise ValueError("執行中的任務必須先取消目前 Run，再重新排程")
 
     if not active_id:
         active_id = next(
@@ -398,6 +465,7 @@ def requeue_task_after_active(queue, task_id, active_id=None):
         "retry_requested_at": utc_now(),
         "execution_generation": int(task.get("execution_generation") or 1) + 1,
         "run_history": history,
+        "requeue_after_edit": False,
     })
 
     task = queue["queue"].pop(index)

@@ -10,6 +10,7 @@ def make_app():
     app = object.__new__(AudiobookGUIApp)
     app.btn_toggle_task = Mock()
     app.btn_stop_task = Mock()
+    app.btn_toggle_completed = Mock()
     app.btn_sample_text = Mock()
     app.github_observations = {}
     return app
@@ -22,6 +23,15 @@ class GuiQueueControlTests(unittest.TestCase):
         app._update_queue_control_states({"status": "queued"})
         self.assertEqual(app.btn_toggle_task.config.call_args.kwargs["state"], tk.NORMAL)
         self.assertEqual(app.btn_stop_task.config.call_args.kwargs["state"], tk.DISABLED)
+        self.assertEqual(app.btn_toggle_completed.config.call_args.kwargs["state"], tk.NORMAL)
+        self.assertEqual(app.btn_toggle_completed.config.call_args.kwargs["text"], "標記為已完成")
+
+        app._update_queue_control_states({"status": "completed"})
+        self.assertEqual(app.btn_toggle_completed.config.call_args.kwargs["state"], tk.NORMAL)
+        self.assertEqual(app.btn_toggle_completed.config.call_args.kwargs["text"], "移回未完成")
+
+        app._update_queue_control_states([])
+        self.assertEqual(app.btn_toggle_completed.config.call_args.kwargs["state"], tk.DISABLED)
 
         app._update_queue_control_states({"status": "running"})
         self.assertEqual(app.btn_toggle_task.config.call_args.kwargs["state"], tk.DISABLED)

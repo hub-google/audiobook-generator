@@ -3,8 +3,9 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 from src.cloud_queue import (
-    add_tasks, current_task, empty_queue, format_chapter_label, move_chapter_order, move_task, move_tasks, new_task, next_task,
-    mark_task_interrupted, mark_task_needs_attention, requeue_task_after_active, settle_interrupted_task, update_task,
+    add_tasks, current_task, delete_task, empty_queue, format_chapter_label, move_chapter_order, move_task, move_tasks, new_task, next_task,
+    mark_task_completed, mark_task_interrupted, mark_task_needs_attention, mark_tasks_completed, move_tasks_to_pending,
+    requeue_task_after_active, settle_interrupted_task, update_task,
     update_task_chapters, normalize_chapter_order, normalize_queue,
 )
 from src.queue_dispatcher import Dispatcher, artifact_source_run_id, failed_artifact_source_candidates
@@ -548,16 +549,32 @@ Part 2/2 | Ch 51-100
         self.assertEqual(queue["queue"][0]["status"], "queued")
         self.assertIsNone(queue["queue"][0]["run_id"])
 
-    def test_every_non_active_state_can_be_requeued(self):
-        for status in ("queued", "paused", "stopped", "interrupted", "needs_attention"):
+    def test_every_task_state_can_be_requeued(self):
+        for status in ("queued", "paused", "stopped", "interrupted", "needs_attention", "running", "dispatching", "canceling", "waiting_retry"):
             with self.subTest(status=status):
                 task = new_task("https://example/1", "第一部")
                 queue = add_tasks(empty_queue(), [task])
-                queue = update_task(queue, task["task_id"], status=status)
+                queue = update_task(queue, task["task_id"], status=status, run_id=9999 if status in ("running", "dispatching", "canceling") else None)
 
                 queue = requeue_task_after_active(queue, task["task_id"])
 
                 self.assertEqual(queue["queue"][0]["status"], "queued")
+                self.assertIsNone(queue["queue"][0]["run_id"])
+                if status in ("running", "dispatching", "canceling"):
+                    self.assertEqual(queue["queue"][0]["run_history"][0]["run_id"], 9999)
+                    self.assertEqual(queue["queue"][0]["run_history"][0]["conclusion"], "cancelled")
+
+    def test_completed_task_can_be_requeued_back_to_queue(self):
+        task = new_task("https://example/1", "第一部")
+        queue = add_tasks(empty_queue(), [task])
+        queue = update_task(queue, task["task_id"], status="completed")
+        self.assertEqual(len(queue.get("completed", [])), 1)
+        self.assertEqual(len(queue.get("queue", [])), 0)
+
+        queue = requeue_task_after_active(queue, task["task_id"])
+        self.assertEqual(len(queue.get("completed", [])), 0)
+        self.assertEqual(len(queue.get("queue", [])), 1)
+        self.assertEqual(queue["queue"][0]["status"], "queued")
 
     def test_completed_task_moves_out_of_queue_and_releases_its_position(self):
         first = new_task("https://example/1", "吞噬星空")
@@ -799,6 +816,46 @@ Part 2/2 | Ch 51-100
         summary = dispatcher.run()
 
         self.assertNotIn("已啟動《", summary)
+
+    def test_mark_tasks_completed_moves_to_completed_list(self):
+        task = new_task("https://example/1", "完成測試書")
+        queue = add_tasks(empty_queue(), [task])
+        self.assertEqual(len(queue["queue"]), 1)
+        self.assertEqual(len(queue["completed"]), 0)
+
+        queue = mark_tasks_completed(queue, [task["task_id"]], conclusion="success")
+        self.assertEqual(len(queue["queue"]), 0)
+        self.assertEqual(len(queue["completed"]), 1)
+        self.assertEqual(queue["completed"][0]["status"], "completed")
+        self.assertEqual(queue["completed"][0]["run_conclusion"], "success")
+
+    def test_move_tasks_to_pending_restores_to_queue(self):
+        task = new_task("https://example/1", "移回未完成測試書")
+        queue = add_tasks(empty_queue(), [task])
+        queue = mark_tasks_completed(queue, task["task_id"])
+        self.assertEqual(len(queue["completed"]), 1)
+
+        queue = move_tasks_to_pending(queue, [task["task_id"]], status="paused")
+        self.assertEqual(len(queue["completed"]), 0)
+        self.assertEqual(len(queue["queue"]), 1)
+        self.assertEqual(queue["queue"][0]["status"], "paused")
+        self.assertEqual(queue["queue"][0]["position"], 1)
+
+    def test_delete_task_removes_from_both_queue_and_completed(self):
+        task1 = new_task("https://example/1", "進行中書")
+        task2 = new_task("https://example/2", "已完成書")
+        queue = add_tasks(empty_queue(), [task1, task2])
+        queue = mark_tasks_completed(queue, task2["task_id"])
+
+        self.assertEqual(len(queue["queue"]), 1)
+        self.assertEqual(len(queue["completed"]), 1)
+
+        queue = delete_task(queue, task2["task_id"])
+        self.assertEqual(len(queue["completed"]), 0)
+        self.assertEqual(len(queue["queue"]), 1)
+
+        queue = delete_task(queue, task1["task_id"])
+        self.assertEqual(len(queue["queue"]), 0)
 
 
 if __name__ == "__main__":

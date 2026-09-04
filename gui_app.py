@@ -31,8 +31,9 @@ try:
     from crawler import fetch_chapter_text
     from cloud_queue import (
         BLOCKING_STATES, GitHubQueueStore, add_tasks, delete_task,
-        format_chapter_label, is_task_active, mark_task_interrupted, mark_task_waiting_retry,
-        move_chapter_order, move_tasks, new_task, normalize_chapter_order, requeue_task_after_active, settle_interrupted_task,
+        format_chapter_label, is_task_active, mark_task_completed, mark_task_interrupted, mark_task_waiting_retry,
+        mark_tasks_completed, move_chapter_order, move_tasks, move_tasks_to_pending,
+        new_task, normalize_chapter_order, requeue_task_after_active, settle_interrupted_task,
         update_task, update_task_chapters,
     )
     from github_run_status import (
@@ -248,6 +249,10 @@ class AudiobookGUIApp:
         )
         self.btn_stop_task.pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="重新排程", command=self.requeue_selected_task).pack(side=tk.LEFT, padx=2)
+        self.btn_toggle_completed = ttk.Button(
+            buttons, text="標記為已完成", command=self.toggle_completed_selected_task, state=tk.DISABLED,
+        )
+        self.btn_toggle_completed.pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="刪除", command=self.delete_selected_task).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="查看進度", command=self.open_selected_task_progress).pack(side=tk.LEFT, padx=2)
         ttk.Button(buttons, text="立即同步", command=self.sync_cloud_queue).pack(side=tk.RIGHT, padx=2)
@@ -502,6 +507,13 @@ class AudiobookGUIApp:
                             ))
                         elif (observation.get("kind") == "ok" and
                               observation.get("raw_status") == "completed" and
+                              observation.get("raw_conclusion") == "success"):
+                            terminal_updates.append((
+                                task["task_id"], run_id, "completed", None, "success",
+                                observation.get("github_updated_at"),
+                            ))
+                        elif (observation.get("kind") == "ok" and
+                              observation.get("raw_status") == "completed" and
                               observation.get("raw_conclusion") != "success"):
                             conclusion = observation.get("raw_conclusion") or "unknown"
                             terminal_updates.append((
@@ -522,7 +534,11 @@ class AudiobookGUIApp:
                                 (item for item in latest.get("queue", []) if item.get("task_id") == task_id), None
                             )
                             if current and current.get("run_id") == run_id and current.get("status") in BLOCKING_STATES:
-                                if target == "interrupted":
+                                if target == "completed":
+                                    latest = mark_task_completed(
+                                        latest, task_id, conclusion=conclusion or "success", ended_at=ended_at,
+                                    )
+                                elif target == "interrupted":
                                     latest = settle_interrupted_task(
                                         latest, task_id, reason=reason,
                                         conclusion=conclusion, ended_at=ended_at,
@@ -913,6 +929,16 @@ class AudiobookGUIApp:
             state=tk.NORMAL if has_cancellable_run else tk.DISABLED,
             text="正在取消…" if statuses == {"canceling"} else "取消本次 Run",
         )
+        if hasattr(self, "btn_toggle_completed"):
+            if not tasks:
+                self.btn_toggle_completed.config(state=tk.DISABLED, text="標記為已完成")
+            else:
+                is_in_success_tree = hasattr(self, "queue_tree") and self.queue_tree is getattr(self, "success_queue_tree", None)
+                all_completed = (statuses == {"completed"}) or is_in_success_tree
+                self.btn_toggle_completed.config(
+                    state=tk.NORMAL,
+                    text="移回未完成" if all_completed else "標記為已完成",
+                )
         if hasattr(self, "btn_batch_cover_info"):
             self.btn_batch_cover_info.config(state=tk.NORMAL if tasks else tk.DISABLED)
         self.btn_sample_text.config(state=tk.NORMAL if len(tasks) == 1 else tk.DISABLED)
@@ -1804,6 +1830,61 @@ class AudiobookGUIApp:
             f"✓ 已將 {len(task_ids)} 筆小說任務{action}",
         )
 
+    def toggle_completed_selected_task(self):
+        tasks = self._selected_tasks()
+        if not tasks:
+            messagebox.showinfo("手動調整", "請先選取一筆或多筆小說任務。")
+            return
+        is_in_success_tree = hasattr(self, "queue_tree") and self.queue_tree is getattr(self, "success_queue_tree", None)
+        all_completed = all(task.get("status") == "completed" for task in tasks) or is_in_success_tree
+        task_ids = [task["task_id"] for task in tasks]
+
+        if all_completed:
+            action = "移回未完成"
+            if hasattr(self, "btn_toggle_completed"):
+                self.btn_toggle_completed.config(state=tk.DISABLED, text=f"正在{action}…")
+            self.selected_status_var.set(f"{len(tasks)} 筆小說任務｜正在{action}…")
+
+            def mutate(queue):
+                return move_tasks_to_pending(queue, task_ids, status="paused")
+
+            self._mutate_queue_async(
+                mutate,
+                f"Move {len(task_ids)} audiobook task(s) back to pending queue",
+                f"✓ 已將 {len(task_ids)} 筆小說任務{action}（設為暫停狀態）",
+            )
+        else:
+            running_titles = [
+                task.get("book_title") or task.get("task_id")
+                for task in tasks
+                if task.get("status") in {"running", "dispatching"}
+            ]
+            if running_titles:
+                titles_str = "、".join(running_titles[:3])
+                if len(running_titles) > 3:
+                    titles_str += f" 等 {len(running_titles)} 部"
+                if not messagebox.askyesno(
+                    "確認標記為已完成",
+                    f"選取的小說中包含正在執行中的任務（{titles_str}）。\n"
+                    "確定要手動標記為已完成並移至已完成分類嗎？\n\n"
+                    "（此操作將任務歸類至已完成，不會自動取消遠端正在運行的 GitHub Run）",
+                ):
+                    return
+
+            action = "標記為已完成"
+            if hasattr(self, "btn_toggle_completed"):
+                self.btn_toggle_completed.config(state=tk.DISABLED, text=f"正在{action}…")
+            self.selected_status_var.set(f"{len(tasks)} 筆小說任務｜正在{action}…")
+
+            def mutate(queue):
+                return mark_tasks_completed(queue, task_ids, conclusion="manual_success")
+
+            self._mutate_queue_async(
+                mutate,
+                f"Mark {len(task_ids)} audiobook task(s) as completed",
+                f"✓ 已將 {len(task_ids)} 筆小說任務{action}",
+            )
+
     def _find_active_task_id(self, exclude_task_id=None):
         for other in (self.cloud_queue or {}).get("queue", []):
             other_id = other.get("task_id")
@@ -1822,88 +1903,50 @@ class AudiobookGUIApp:
             return
         title = task.get("book_title") or "小說任務"
         run_id = task.get("run_id")
-        observation = self.github_observations.get(task.get("task_id")) or {}
-        github_active = (
-            run_id and observation.get("kind") == "ok" and
-            observation.get("raw_status") != "completed"
-        )
-        # If GitHub could not be verified, retain the conservative local guard
-        # so an active Run is not orphaned and duplicated.
-        active = github_active or (
-            run_id and observation.get("kind") != "ok" and
-            task.get("status") in {"running", "dispatching", "waiting_retry", "canceling"}
-        )
         active_task_id = self._find_active_task_id(exclude_task_id=task.get("task_id"))
-        if active:
-            if not messagebox.askyesno(
-                    "確認重新排程",
-                    f"「{title}」目前的 Run 仍在 GitHub 執行。\n"
-                    "要先取消本次 Run，並在確認結束後自動重新排程嗎？"):
-                return
-            self.selected_status_var.set(f"《{title}》｜正在取消目前 Run，之後會自動重新排程…")
+        self.selected_status_var.set(f"《{title}》｜正在重新排程…")
 
-            def worker():
-                try:
-                    store, repo, token = self._queue_store()
-                    run_already_ended = False
+        def worker():
+            try:
+                # 1. 自動取消遠端舊 Run（若存在）
+                if run_id:
                     try:
+                        _, repo, token = self._queue_store()
                         response = requests.post(
                             f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel",
                             headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-                            timeout=15,
+                            timeout=10,
                         )
-                        if response.status_code == 409:
-                            run_already_ended = True
-                        elif response.status_code not in (200, 202):
-                            raise RuntimeError(f"取消 Run 失敗 ({response.status_code}): {response.text}")
-                    except Exception as cancel_err:
-                        if not isinstance(cancel_err, RuntimeError):
-                            run_already_ended = True
+                        if response.status_code in (200, 202):
+                            self.root.after(0, lambda: self.log(f"🛑 已向 GitHub 發送取消 Run {run_id} 要求"))
+                        elif response.status_code in (404, 409):
+                            self.root.after(0, lambda: self.log(f"ℹ Run {run_id} 已結束或不存在 ({response.status_code})"))
                         else:
-                            raise
+                            self.root.after(0, lambda s=response.status_code: self.log(f"⚠ 取消 Run {run_id} 回應 {s}，繼續重新排程"))
+                    except Exception as cancel_err:
+                        self.root.after(0, lambda err=str(cancel_err): self.log(f"⚠ 取消 Run 異常 ({err})，繼續重新排程"))
 
-                    if run_already_ended:
-                        def requeue_finished(value):
-                            value = update_task(
-                                value, task["task_id"], status="needs_attention",
-                                reason="user_requeue_after_run_ended",
-                            )
-                            return requeue_task_after_active(value, task["task_id"], active_id=active_task_id)
-                        queue = store.mutate(
-                            requeue_finished,
-                            f"Requeue completed audiobook task {task['task_id']}",
-                        )
-                    else:
-                        queue = store.mutate(
-                            lambda value: update_task(
-                                value, task["task_id"], status="canceling",
-                                reason="user_requeue", requeue_after_edit=True,
-                            ),
-                            f"Cancel and requeue audiobook task {task['task_id']}",
-                        )
-                    self.cloud_queue = queue
-                    self.root.after(0, lambda: self._render_queue(queue))
-                    result_message = (
-                        f"✓ {title} 的 Run 已結束，已直接重新排程。"
-                        if run_already_ended else
-                        f"✓ {title} 的 Run 取消要求已送出；GitHub 確認結束後會自動重新排程。"
-                    )
-                    self.root.after(0, lambda message=result_message: self.log(message))
-                    try:
-                        self._dispatch_queue_workflow()
-                    except Exception as dispatch_error:
-                        self.root.after(0, lambda e=str(dispatch_error): self.log(
-                            f"⚠ 重新排程已完成，但調度器暫時無法啟動：{e}"
-                        ))
-                except Exception as error:
-                    self.root.after(0, lambda e=str(error): messagebox.showerror("重新排程失敗", e))
-            threading.Thread(target=worker, daemon=True).start()
-            return
-        self._mutate_queue_async(
-            lambda queue: requeue_task_after_active(queue, task["task_id"], active_id=active_task_id),
-            f"Requeue audiobook task {task['task_id']}",
-            f"✓ {title} 已排到目前執行中小說的下一順位",
-        )
+                # 2. 直接更新雲端佇列，無條件重新排程
+                store, _, _ = self._queue_store()
+                queue = store.mutate(
+                    lambda value: requeue_task_after_active(value, task["task_id"], active_id=active_task_id),
+                    f"Requeue audiobook task {task['task_id']}",
+                )
+                self.cloud_queue = queue
+                self.root.after(0, lambda: self._render_queue(queue))
+                self.root.after(0, lambda: self.log(f"✓ 《{title}》已重新排入雲端佇列"))
+
+                # 3. 立即喚醒雲端調度器
+                try:
+                    self._dispatch_queue_workflow()
+                except Exception as dispatch_error:
+                    self.root.after(0, lambda e=str(dispatch_error): self.log(
+                        f"⚠ 重新排程已完成，但調度器暫時無法啟動：{e}"
+                    ))
+            except Exception as error:
+                self.root.after(0, lambda e=str(error): messagebox.showerror("重新排程失敗", e))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def stop_selected_task(self):
         task = self._selected_task()

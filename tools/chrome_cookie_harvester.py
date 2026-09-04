@@ -66,8 +66,9 @@ def extract_youtube_cookies(
                 "--disable-blink-features=AutomationControlled",
                 "--no-default-browser-check",
                 "--no-first-run",
+                "--start-maximized",
             ],
-            "viewport": {"width": 1280, "height": 800},
+            "no_viewport": True,
         }
         if chrome_exe:
             launch_kwargs["executable_path"] = chrome_exe
@@ -286,8 +287,9 @@ class BrowserCardWorker:
                 "--disable-blink-features=AutomationControlled",
                 "--no-default-browser-check",
                 "--no-first-run",
+                "--start-maximized",
             ],
-            "viewport": {"width": 1280, "height": 800},
+            "no_viewport": True,
         }
         if chrome_exe:
             launch_kwargs["executable_path"] = chrome_exe
@@ -377,17 +379,17 @@ class BrowserCardWorker:
                 externalChannelId: channelId
             };
             
-            let card1 = {
-                videoId: videoId,
-                teaserStartMs: card1Ms,
-                playlistInfoCard: { fullPlaylistId: playlistId },
-                infoCardEntityId: String(Date.now()),
-                customMessage: "第一次收聽？從第一集開始",
-                teaserText: "第一次收聽？從第一集開始"
-            };
+            let infoCards = [];
             if (firstVideoId && firstVideoId !== videoId) {
-                card1.videoInfoCard = { videoId: firstVideoId };
-                delete card1.playlistInfoCard;
+                let card1 = {
+                    videoId: videoId,
+                    teaserStartMs: card1Ms,
+                    videoInfoCard: { videoId: firstVideoId },
+                    infoCardEntityId: String(Date.now()),
+                    customMessage: "第一次收聽？從第一集開始",
+                    teaserText: "第一次收聽？從第一集開始"
+                };
+                infoCards.push(card1);
             }
             
             let card2 = {
@@ -398,6 +400,7 @@ class BrowserCardWorker:
                 customMessage: "完整小說播放清單",
                 teaserText: "完整小說播放清單"
             };
+            infoCards.push(card2);
             
             let payload = {
                 context: {
@@ -417,7 +420,7 @@ class BrowserCardWorker:
                 delegationContext: delegationContext,
                 externalVideoId: videoId,
                 infoCardEdit: {
-                    infoCards: [card1, card2]
+                    infoCards: infoCards
                 }
             };
             
@@ -469,12 +472,22 @@ class BrowserCardWorker:
         ext = (result.get("data") or {}).get("responseContext", {}).get("webResponseContextExtensionData", {})
         if ext.get("challenge"):
             if progress_callback:
-                progress_callback("⚠️ Google 要求身分驗證，請在開啟的 Chrome 視窗內確認後稍候…")
-            time.sleep(5)
-            result = self._page.evaluate(js_code, args)
-            ext = (result.get("data") or {}).get("responseContext", {}).get("webResponseContextExtensionData", {})
-            if ext.get("challenge"):
-                raise RuntimeError("Google Studio 仍要求身分驗證，請在 Chrome 視窗內確認登入狀態後再試。")
+                progress_callback("⚠️ Google 要求身分驗證！請在開啟的 Chrome 視窗內點選確認/完成驗證（最多等待 90 秒）…")
+            start_wait = time.time()
+            challenge_cleared = False
+            while time.time() - start_wait < 90:
+                time.sleep(3)
+                result = self._page.evaluate(js_code, args)
+                if not result.get("ok"):
+                    continue
+                ext = (result.get("data") or {}).get("responseContext", {}).get("webResponseContextExtensionData", {})
+                if not ext.get("challenge"):
+                    challenge_cleared = True
+                    if progress_callback:
+                        progress_callback("✅ Google 身分驗證已通過！繼續掛載資訊卡…")
+                    break
+            if not challenge_cleared:
+                raise RuntimeError("Google Studio 身分驗證逾時，請在開啟的 Chrome 視窗內確認登入與驗證後再試。")
         return True
 
     def close(self) -> None:
