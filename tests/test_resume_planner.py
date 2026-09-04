@@ -8,6 +8,7 @@ import pytest
 
 from src.artifact_validation import ArtifactValidationError
 from src.part_matrix import build_merge_matrix
+from src.publication_checkpoint import plan_structure_fingerprint
 from src.resume_planner import (
     TransientRemoteValidationError,
     list_candidate_runs,
@@ -72,6 +73,14 @@ def test_media_fingerprint_tracks_source_voice_and_video_but_not_publication_met
         assert config_fingerprint(changed) != config_fingerprint(base)
     publication_only = dict(base); publication_only["youtube_description"] = "new"
     assert config_fingerprint(publication_only) == config_fingerprint(base)
+
+
+def test_part_structure_fingerprint_ignores_title_only():
+    base = [{"part_num": 1, "start_chap": 1, "end_chap": 2, "chapters": [1, 2], "title": ""}]
+    titled = [{**base[0], "title": "YouTube display title"}]
+    changed = [{**base[0], "chapters": [1, 3], "end_chap": 3}]
+    assert plan_structure_fingerprint(base) == plan_structure_fingerprint(titled)
+    assert plan_structure_fingerprint(base) != plan_structure_fingerprint(changed)
 
 
 @pytest.mark.parametrize("count", [1, 17, 18, 50])

@@ -62,6 +62,17 @@ def plan_fingerprint(plan):
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def plan_structure_fingerprint(plan):
+    """Part identity independent of publication-only display titles."""
+    structural = []
+    for part in normalized_plan(plan):
+        structural.append({key: part[key] for key in (
+            "part_num", "start_chap", "end_chap", "chapters", "source_missing_chapters"
+        )})
+    payload = json.dumps(structural, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 class PublicationCheckpoint:
     def __init__(self, state_file):
         self.path = os.path.join(os.path.dirname(os.path.abspath(state_file)), "part_execution.json")

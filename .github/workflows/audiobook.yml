@@ -846,7 +846,7 @@ jobs:
         run: |
           python - <<'PY'
           import json, os, sys, yaml
-          from src.publication_checkpoint import PublicationCheckpoint, plan_fingerprint
+          from src.publication_checkpoint import PublicationCheckpoint, plan_structure_fingerprint
           from src.youtube_upload.state import load_resume_state
 
           state_file = "upload_resume_state/state.json"
@@ -869,8 +869,8 @@ jobs:
           if os.path.exists(plan_path) and state.get("part_plan"):
               with open(plan_path, encoding="utf-8") as f:
                   locked = json.load(f)
-              expected_fp = plan_fingerprint(locked.get("parts", []))
-              actual_fp = plan_fingerprint(state["part_plan"])
+              expected_fp = plan_structure_fingerprint(locked.get("parts", []))
+              actual_fp = plan_structure_fingerprint(state["part_plan"])
               if expected_fp != actual_fp:
                   print("::error title=Checkpoint rejected::part_plan fingerprint differs from current prepared plan")
                   sys.exit(1)

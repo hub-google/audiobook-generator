@@ -28,6 +28,11 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("resume_bundle/publication", command)
         self.assertNotIn("gh api", command)
 
+    def test_state_plan_validation_ignores_publication_title_but_keeps_part_structure(self):
+        step = next(item for item in self.jobs["upload_to_youtube"]["steps"]
+                    if item.get("name") == "Validate and normalize restored YouTube upload checkpoint")
+        self.assertIn("plan_structure_fingerprint", step["run"])
+
     def test_playlist_metadata_quota_is_classified_as_retryable(self):
         uploader_text = UPLOADER_PATH.read_text(encoding="utf-8")
         self.assertIn("PAUSED during playlist metadata update", uploader_text)
