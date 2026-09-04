@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 57,
-  "updated_at": "2026-08-30T02:36:15.209065+00:00",
+  "revision": 58,
+  "updated_at": "2026-09-04T06:37:16.520853+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -513,6 +513,33 @@
         "quality": 98
       },
       "updated_at": "2026-08-30T02:34:15.884438+00:00"
+    },
+    "e88e54bb53c028c9": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/49345",
+      "book_title": "逼我重生是吧",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "manual_cover": {
+        "source": "manual_upload",
+        "provider": "github",
+        "repo": "hub-google/audiobook-generator",
+        "branch": "automation-state",
+        "remote_path": "manual-covers/e88e54bb53c028c9/master_cover.jpg",
+        "blob_sha": "3bc76113a06147405d44242a5459cdb9256ccade",
+        "width": 1280,
+        "height": 720,
+        "bytes": 485546,
+        "sha256": "8abc1121c2c669d041d876f30fe247714b8744b476d6a6aaf5eab4cecec33aab",
+        "quality": 98
+      },
+      "updated_at": "2026-09-04T06:37:16.520853+00:00"
     }
   }
 }
