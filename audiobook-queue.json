@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 962,
-  "updated_at": "2026-09-04T06:23:09.724810+00:00",
+  "revision": 963,
+  "updated_at": "2026-09-04T06:40:35.158103+00:00",
   "queue": [
     {
       "task_id": "book-20260830-c0bc9790",
@@ -5609,7 +5609,10 @@
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/49345",
       "start_chapter": 1,
       "end_chapter": 699,
-      "excluded_chapters": [],
+      "excluded_chapters": [
+        332,
+        699
+      ],
       "renumber_selected": true,
       "duplicate_chapter_count": 4,
       "chapter_title_overrides": {},
@@ -5946,7 +5949,6 @@
         329,
         330,
         331,
-        332,
         333,
         334,
         335,
@@ -6313,6 +6315,7 @@
         696,
         697,
         698,
+        332,
         699
       ],
       "status": "queued",
@@ -6332,7 +6335,7 @@
         "total": 0
       },
       "created_at": "2026-09-04T05:37:40.039691+00:00",
-      "updated_at": "2026-09-04T05:37:40.039691+00:00"
+      "updated_at": "2026-09-04T06:40:35.158103+00:00"
     },
     {
       "task_id": "book-20260904-793435da",
