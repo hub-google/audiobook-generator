@@ -174,6 +174,29 @@ def run_local_prepared_parts_mode(
         if v_title in existing_titles and v_title in completed_titles:
             logging.info("⏭️ 已存在於播放清單，跳過：%s", v_title)
             preexisting_video_id = existing_video_ids.get(v_title)
+            # A legacy completed_titles entry proves the remote publication
+            # sequence reached its acknowledgement point, but it does not by
+            # itself prove local media validity.  Re-validate the actual HF
+            # bytes downloaded for this run before backfilling local steps.
+            v_srt_name = os.path.basename(v_path).replace(".mp4", ".srt")
+            v_srt = os.path.join(upload_subtitles_dir, v_srt_name)
+            if not os.path.exists(v_srt):
+                v_srt = v_path.replace(".mp4", ".srt")
+            if not os.path.exists(v_srt):
+                raise RuntimeError(f"completed Part {part_n} lacks its validated subtitle bytes")
+            duration = get_media_duration(v_path)
+            publication.complete(part_n, "prepare_chapters", validated_from_hf=True,
+                                 chapter_count=item["end_chap"] - item["start_chap"] + 1)
+            publication.complete(part_n, "generate_subtitle", **validate_srt(v_srt, duration))
+            publication.complete(part_n, "merge_video", output=v_path, reused_existing=True)
+            publication.complete(part_n, "validate_video", **validate_video(v_path))
+            cover_validation = validate_image(v_cover, expected_size=(1280, 720))
+            publication.complete(part_n, "generate_metadata_cover", title=v_title,
+                                 cover_sha256=cover_validation["sha256"])
+            # completed_titles is persisted only after thumbnail, playlist,
+            # and HF acknowledgements; safe legacy migration must not upload it again.
+            if ((publication.data.get("parts") or {}).get(str(part_n), {}).get("thumbnail") or {}).get("status") != "completed":
+                publication.record_thumbnail_ack(part_n)
             if part_n in hf_archiver.completed_parts(book_title):
                 publication.complete(part_n, "archive_hf", recovered_from_hf=True, hf_repo=hf_repo)
             elif preexisting_video_id:
