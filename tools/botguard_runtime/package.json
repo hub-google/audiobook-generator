@@ -1,8 +1,0 @@
-{
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "bgutils-js": "4.0.3",
-    "jsdom": "24.1.3"
-  }
-}
