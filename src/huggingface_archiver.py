@@ -62,6 +62,7 @@ def media_info(path):
 
 
 class HuggingFaceArchiver:
+    source_fingerprint = ""
     REQUIRED_YOUTUBE_FIELDS = {
         "title", "description", "youtube_video_id", "youtube_playlist_id",
         "playlist_position", "privacy", "caption_language",
@@ -72,6 +73,7 @@ class HuggingFaceArchiver:
             raise ValueError("HF_ARCHIVE_REPO is required")
         if private is None:
             private = os.environ.get("HF_DATASET_PRIVATE", "false").lower() == "true"
+        self.source_fingerprint = ""
         self.repo_id = repo_id
         self.project = safe_name(project)
         self.api = HfApi(token=token)
@@ -95,8 +97,11 @@ class HuggingFaceArchiver:
         temporary.write_text(json.dumps(self.state, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(temporary, self.state_file)
 
+    def _book_key(self, book_title):
+        return self.source_fingerprint or book_title
+
     def _book_root(self, book_title):
-        return f"{self.project}/{safe_name(book_title)}"
+        return f"{self.project}/{self.source_fingerprint or safe_name(book_title)}"
 
     def _part_root(self, book_title, part_num, start_chap, end_chap):
         folder = f"{self.project}_{safe_name(book_title)}_第{int(part_num):02d}部_第{int(start_chap):04d}章-第{int(end_chap):04d}章"
@@ -136,7 +141,7 @@ class HuggingFaceArchiver:
         fingerprint = {
             "video": {"path": video_remote, "bytes": video.stat().st_size, "sha256": sha256_file(video)},
         }
-        book = self.state["books"].setdefault(book_title, {"parts": {}, "root": root})
+        book = self.state["books"].setdefault(self._book_key(book_title), {"parts": {}, "root": root})
         previous = book["parts"].get(str(int(part_num)), {})
         if previous.get("status") in {"complete", "uploaded_pending_youtube_metadata"} and previous.get("files") == fingerprint:
             return previous
@@ -213,7 +218,7 @@ class HuggingFaceArchiver:
             "files": fingerprint,
             "manifest": manifest,
         }
-        book = self.state["books"].setdefault(book_title, {"parts": {}, "root": root})
+        book = self.state["books"].setdefault(self._book_key(book_title), {"parts": {}, "root": root})
         book["parts"][str(int(part_num))] = record
         book["master_cover_path"] = str(master_cover_path)
         if source_config_path: book["source_config_path"] = str(source_config_path)
@@ -222,7 +227,7 @@ class HuggingFaceArchiver:
 
     def finalize_part(self, *, book_title, part_num, youtube_video_id, playlist_id,
                       title, description, privacy, playlist_position):
-        book = self.state["books"][book_title]
+        book = self.state["books"][self._book_key(book_title)]
         record = book["parts"][str(int(part_num))]
         metadata = {
             "title": title, "description": description,
@@ -242,7 +247,7 @@ class HuggingFaceArchiver:
         self._save()
 
     def completed_parts(self, book_title):
-        book = self.state.get("books", {}).get(book_title, {})
+        book = self.state.get("books", {}).get(self._book_key(book_title), {})
         return {
             int(number)
             for number, item in book.get("parts", {}).items()
@@ -260,7 +265,7 @@ class HuggingFaceArchiver:
         )
 
     def verify_book(self, book_title, expected_parts):
-        book = self.state.get("books", {}).get(book_title, {})
+        book = self.state.get("books", {}).get(self._book_key(book_title), {})
         parts = book.get("parts", {})
         missing = [
             number for number in range(1, int(expected_parts) + 1)

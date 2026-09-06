@@ -1,3 +1,8 @@
+try:
+    from .source_identity import workspace_name
+except ImportError:
+    from source_identity import workspace_name
+
 import os
 import re
 import unicodedata
@@ -56,7 +61,7 @@ def _is_repeated_opening_title(line, title):
     return ratio >= 0.72 and shared >= min(6, len(title_key))
 
 
-def _clean_opening_lines(text, title, book_title, scan_nonempty=12):
+def _clean_opening_lines(text, title, book_title, scan_nonempty=12, source_labels=None):
     title_key = _comparison_text(title)
     book_key = _comparison_text(book_title)
     kept = []
@@ -70,7 +75,13 @@ def _clean_opening_lines(text, title, book_title, scan_nonempty=12):
         if in_opening and line:
             line_key = _comparison_text(line)
             remove = bool(_OPENING_AD_RE.search(line))
-            remove = remove or line_key == "黃金屋"
+            if source_labels is None:
+                try:
+                    from .sources.hjwzw import HJWZWSource
+                except ImportError:
+                    from sources.hjwzw import HJWZWSource
+                source_labels = HJWZWSource.opening_labels
+            remove = remove or line_key in {_comparison_text(x) for x in source_labels}
             remove = remove or bool(book_key and line_key == book_key)
             remove = remove or bool(title_key and _is_repeated_opening_title(line, title))
         if not remove:
@@ -78,12 +89,12 @@ def _clean_opening_lines(text, title, book_title, scan_nonempty=12):
     return "\n".join(kept)
 
 
-def clean_text_content(text, title, book_title, remove_patterns=None):
+def clean_text_content(text, title, book_title, remove_patterns=None, source_labels=None):
     text = text.replace('\r\n', '\n').replace('\r', '\n')
     for unwanted_text in validate_remove_patterns(remove_patterns):
         text = text.replace(unwanted_text, '')
     text = text.replace('\xa0', ' ').replace('\u3000', ' ')
-    text = _clean_opening_lines(text, title, book_title)
+    text = _clean_opening_lines(text, title, book_title, source_labels=source_labels)
     text = re.sub(r'\n[ \t]*\n+', '\n', text)
     return text.strip()
 
@@ -149,7 +160,7 @@ def run_cleaner(target_indices=None):
     config = load_config()
     book_title = config['book_title']
     
-    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", config['paths']['workspace_base'], book_title))
+    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", config['paths']['workspace_base'], workspace_name(config)))
     raw_text_dir = os.path.join(workspace_dir, "RawText")
     clean_text_dir = os.path.join(workspace_dir, "CleanText")
     
@@ -191,9 +202,17 @@ def run_cleaner(target_indices=None):
         raw_content = "".join(lines[1:])
         
         cleaner_config = config.get("cleaner") or {}
+        source_labels = None
+        if config.get('source_id'):
+            try:
+                from .sources import resolve_source
+            except ImportError:
+                from sources import resolve_source
+            source_labels = resolve_source(config['catalog_url'], config['source_id']).opening_labels
         cleaned_text = clean_text_content(
             raw_content, title, book_title,
             remove_patterns=cleaner_config.get("remove_patterns") or [],
+            source_labels=source_labels,
         )
         chunked_text = chunk_text(cleaned_text)
         

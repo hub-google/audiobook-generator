@@ -1,3 +1,8 @@
+try:
+    from .source_identity import workspace_name
+except ImportError:
+    from source_identity import workspace_name
+
 import os
 import time
 import json
@@ -27,25 +32,17 @@ USER_AGENTS = [
 ]
 
 
-def fetch_chapter_text(url, timeout=15):
-    """Fetch one chapter using the same HTML selectors as the production crawler."""
-    headers = {"User-Agent": random.choice(USER_AGENTS)}
-    response = requests.get(url, headers=headers, timeout=timeout)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.content, "html.parser", from_encoding="utf-8")
-    title_h1 = soup.find("h1")
-    title = title_h1.get_text(strip=True) if title_h1 else "未知章節"
-    content_div = soup.find(
-        "div",
-        style=lambda value: value and "word-wrap: break-word" in value and "text-indent: 2em" in value,
-    )
-    raw_text = content_div.get_text(separator="\n") if content_div else ""
-    if not raw_text.strip():
-        page_text = soup.get_text(" ", strip=True)
-        if looks_like_anti_bot_page(page_text):
-            raise RuntimeError("來源網站回傳防機器人或流量限制頁面")
-        raise ValueError(f"找不到章節內文（頁面標題：{title}）")
-    return title, raw_text
+def fetch_chapter_text(url, timeout=15, source_id=None, html=None):
+    try:
+        from .sources import resolve_source
+        from .sources.http_client import fetch_page
+    except ImportError:
+        from sources import resolve_source
+        from sources.http_client import fetch_page
+    source = resolve_source(url, source_id)
+    if html is None:
+        html = fetch_page(url, source, timeout).content
+    return source.parse_chapter(html, url)
 
 def load_config():
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.yaml")
@@ -54,93 +51,7 @@ def load_config():
 
 def run_crawler():
     config = load_config()
-    book_title = config['book_title']
-    base_url = config['base_url']
-    chapters = config['chapters']
-    
-    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", config['paths']['workspace_base'], book_title))
-    raw_text_dir = os.path.join(workspace_dir, "RawText")
-    os.makedirs(raw_text_dir, exist_ok=True)
-        
-    progress_file = os.path.join(workspace_dir, "progress.json")
-    scraped_chapters = []
-    if os.path.exists(progress_file):
-        try:
-            with open(progress_file, "r", encoding="utf-8") as f:
-                scraped_chapters = json.load(f).get("scraped_chapters", [])
-        except (json.JSONDecodeError, OSError) as error:
-            logging.warning("[Crawler] Ignoring corrupt progress index %s: %s", progress_file, error)
-            
-    for i, chap_url in enumerate(chapters):
-        if chap_url in scraped_chapters:
-            logging.info(f"[Crawler] Skipping already scraped chapter: {chap_url}")
-            continue
-            
-        url = base_url + chap_url
-        logging.info(f"[Crawler] Scraping {url}...")
-        
-        user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0"
-        ]
-        
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                headers = {"User-Agent": random.choice(user_agents)}
-                
-                # Random delay to prevent ban
-                delay = random.uniform(2, 5)
-                time.sleep(delay)
-                
-                resp = requests.get(url, headers=headers, timeout=10)
-                resp.raise_for_status()
-                resp.encoding = 'utf-8'
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                
-                title_h1 = soup.find('h1')
-                title = title_h1.text.strip() if title_h1 else f"Unknown_Chapter_{i+1}"
-                
-                content_div = soup.find('div', style=lambda value: value and 'word-wrap: break-word' in value and 'text-indent: 2em' in value)
-                raw_text = content_div.get_text(separator='\n') if content_div else ""
-                
-                if not raw_text:
-                    logging.warning(f"[Crawler] Warning: No content found for {title}")
-                    break
-                    
-                raw_filename = f"{book_title}_chapter_{i+1}_raw.txt"
-                raw_path = os.path.join(raw_text_dir, raw_filename)
-                
-                raw_tmp = raw_path + ".tmp"
-                with open(raw_tmp, "w", encoding="utf-8") as f:
-                    f.write(title + "\n\n" + raw_text)
-                    f.flush()
-                    os.fsync(f.fileno())
-                validate_text(raw_tmp, clean=False)
-                os.replace(raw_tmp, raw_path)
-                logging.info(f"[Crawler] Saved raw text for {title} to {raw_path}")
-                
-                # Update progress
-                scraped_chapters.append(chap_url)
-                progress_tmp = progress_file + ".tmp"
-                with open(progress_tmp, "w", encoding="utf-8") as f:
-                    json.dump({"scraped_chapters": scraped_chapters}, f)
-                os.replace(progress_tmp, progress_file)
-                    
-                break # Success, exit retry loop
-            except Exception as e:
-                logging.error(f"[Crawler] Attempt {attempt+1}/{max_retries} failed for {url}: {e}")
-                if attempt < max_retries - 1:
-                    backoff = 2 ** attempt
-                    logging.info(f"[Crawler] Retrying in {backoff} seconds...")
-                    time.sleep(backoff)
-                else:
-                    logging.error(f"[Crawler] Max retries reached for {url}. Skipping.")
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    run_crawler()
+    run_crawler_worker(config, config['chapters'], exact_indices=config.get('selected_indices'))
 
 
 def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None):
@@ -150,10 +61,16 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
     """
     book_title = config['book_title']
     base_url   = config['base_url']
+    from urllib.parse import urljoin
+    try:
+        from .sources import resolve_source, SourceParseError, SourceAccessError
+    except ImportError:
+        from sources import resolve_source, SourceParseError, SourceAccessError
+    source = resolve_source(config.get('catalog_url') or base_url, config.get('source_id'))
 
     workspace_dir = os.path.abspath(os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "..",
-        config['paths']['workspace_base'], book_title
+        config['paths']['workspace_base'], workspace_name(config)
     ))
     raw_text_dir = os.path.join(workspace_dir, "RawText")
     os.makedirs(raw_text_dir, exist_ok=True)
@@ -179,10 +96,22 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
 
         raw_filename = f"{book_title}_chapter_{global_idx}_raw.txt"
         raw_path     = os.path.join(raw_text_dir, raw_filename)
+        provenance_path = raw_path + '.source.json'
+        expected_provenance = {
+            'source_fingerprint': config.get('source_fingerprint'),
+            'url': urljoin(base_url, chap_url), 'parser_version': source.version,
+        }
+        provenance_matches = not config.get('source_schema_version')
+        if not provenance_matches:
+            try:
+                with open(provenance_path, encoding='utf-8') as handle:
+                    provenance_matches = json.load(handle) == expected_provenance
+            except (OSError, ValueError):
+                pass
 
         # progress.json is only an index. The actual output file is the source of
         # truth, otherwise a stale progress entry can permanently skip a chapter.
-        if os.path.exists(raw_path):
+        if os.path.exists(raw_path) and provenance_matches:
             try:
                 validate_text(raw_path, clean=False)
                 source_status.mark_available(global_idx)
@@ -191,48 +120,20 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
             except (ArtifactValidationError, OSError, ValueError):
                 logging.warning("[Crawler Worker] RawText %s is corrupt; rebuilding", global_idx)
 
-        if source_status.is_confirmed_missing(global_idx):
+        if not config.get("source_schema_version") and source_status.is_confirmed_missing(global_idx):
             raise SourceMissingError(
-                f"chapter {global_idx} is confirmed missing from the origin website: {base_url + chap_url}"
+                f"chapter {global_idx} is confirmed missing from the origin website: {urljoin(base_url, chap_url)}"
             )
 
-        url = base_url + chap_url
+        url = urljoin(base_url, chap_url)
         logging.info(f"[Crawler Worker] Scraping chapter {global_idx}: {url}")
 
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                headers = {"User-Agent": random.choice(user_agents)}
-                time.sleep(random.uniform(2, 5))
-
-                resp = requests.get(url, headers=headers, timeout=10)
-                resp.raise_for_status()
-                soup = BeautifulSoup(resp.content, 'html.parser', from_encoding='utf-8')
-
-                title_h1  = soup.find('h1')
-                title     = title_h1.text.strip() if title_h1 else f"Unknown_Chapter_{global_idx}"
+                title, raw_text = fetch_chapter_text(url, source_id=source.source_id)
                 edited_titles = config.get("chapter_title_by_index") or {}
                 title = str(edited_titles.get(str(global_idx), edited_titles.get(global_idx, title)))
-
-                content_div = soup.find('div', style=lambda v: v and 'word-wrap: break-word' in v and 'text-indent: 2em' in v)
-                raw_text    = content_div.get_text(separator='\n') if content_div else ""
-
-                if not raw_text:
-                    page_text = soup.get_text(" ", strip=True)
-                    if looks_like_anti_bot_page(page_text):
-                        raise RuntimeError("anti-bot or rate-limit page returned by origin")
-                    evidence = source_status.record_empty_page(
-                        global_idx, url, resp.status_code, resp.url, title, resp.content,
-                    )
-                    if evidence.get("status") == "source_missing":
-                        raise SourceMissingError(
-                            f"chapter {global_idx} is confirmed missing from the origin website "
-                            f"after {evidence.get('confirmation_count', 3)} matching HTTP 200 empty responses"
-                        )
-                    raise ValueError(
-                        f"No chapter content in response (title={title!r}); "
-                        "recorded as source_missing_candidate"
-                    )
 
                 raw_filename = f"{book_title}_chapter_{global_idx}_raw.txt"
                 raw_path     = os.path.join(raw_text_dir, raw_filename)
@@ -243,6 +144,10 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
                     os.fsync(f.fileno())
                 validate_text(raw_tmp, clean=False)
                 os.replace(raw_tmp, raw_path)
+                if config.get('source_schema_version'):
+                    with open(provenance_path + '.tmp', 'w', encoding='utf-8') as handle:
+                        json.dump(expected_provenance, handle, ensure_ascii=False)
+                    os.replace(provenance_path + '.tmp', provenance_path)
                 source_status.mark_available(global_idx)
                 logging.info(f"[Crawler Worker] Saved: {raw_filename}")
 
@@ -255,7 +160,7 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
                 os.replace(progress_tmp, progress_file)
                 break
 
-            except SourceMissingError:
+            except (SourceMissingError, SourceParseError, SourceAccessError):
                 raise
             except Exception as e:
                 logging.error(f"[Crawler Worker] Attempt {attempt+1}/{max_retries} failed for chapter {global_idx}: {e}")
@@ -266,3 +171,8 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
                     raise RuntimeError(
                         f"[Crawler Worker] 章節 {global_idx} 爬取失敗，已重試 {max_retries} 次: {e}"
                     )
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    run_crawler()

@@ -221,7 +221,11 @@ def restore_from_config(config_path, workspace_root="Workspace"):
     if not token:
         provider = "GitHub" if record.get("provider") == "github" else "Hugging Face"
         raise RuntimeError(f"手動封面已設定，但缺少 {provider} 讀取 Token")
-    destination = Path(workspace_root) / config["book_title"] / "Cover" / "master_cover.jpg"
+    try:
+        from .source_identity import workspace_name
+    except ImportError:
+        from source_identity import workspace_name
+    destination = Path(workspace_root) / workspace_name(config) / "Cover" / "master_cover.jpg"
     restore_cover(record, destination, token)
     print(f"[MANUAL_COVER_CHECK] PASS | restored and verified {destination}", flush=True)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")

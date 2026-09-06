@@ -50,7 +50,7 @@ def parse_chapter_info(filename):
     return 999999, 999999
 
 
-def get_or_create_playlist(youtube, playlist_title, playlist_desc="", alternate_titles=None):
+def get_or_create_playlist(youtube, playlist_title, playlist_desc="", alternate_titles=None, source_fingerprint=""):
     """Return ``(playlist_id, created)`` for the requested playlist."""
     accepted_titles = {str(playlist_title).strip()}
     accepted_titles.update(
@@ -66,6 +66,8 @@ def get_or_create_playlist(youtube, playlist_title, playlist_desc="", alternate_
                     pageToken=page_token,
                 ).execute()
                 for item in response.get("items", []):
+                    if source_fingerprint and f"來源識別：{source_fingerprint}" not in item["snippet"].get("description", ""):
+                        continue
                     if item["snippet"]["title"].strip() in accepted_titles:
                         playlist_id = item["id"]
                         logging.info(f"✅ 找到已有播放清單 (ID: {playlist_id}):【{playlist_title}】")

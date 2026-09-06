@@ -1,3 +1,4 @@
+from urllib.parse import urljoin
 import os
 import sys
 import json
@@ -970,7 +971,7 @@ class AudiobookGUIApp:
                 "label": label,
                 "source_index": source_index,
                 "output_index": output_index,
-                "url": catalog["base_url"] + catalog["chapters"][source_index - 1],
+                "url": urljoin(catalog["base_url"], catalog["chapters"][source_index - 1]),
                 "catalog_title": catalog["chapter_titles"][source_index - 1],
             })
         return samples
@@ -1642,6 +1643,7 @@ class AudiobookGUIApp:
             return
         task = new_task(
             catalog_url=self.url_entry.get().strip(),
+            catalog_identity=self.catalog_data.get("catalog_identity", ""),
             book_title=self.catalog_data.get("book_title", ""),
             start_chapter=start,
             end_chapter=end,
@@ -1737,6 +1739,7 @@ class AudiobookGUIApp:
                         requeue_after_cancel=active,
                         renumber_selected=renumber_selected,
                         duplicate_chapter_count=(self.catalog_data or {}).get("duplicate_chapter_count"),
+                        catalog_identity=(self.catalog_data or {}).get("catalog_identity", ""),
                         chapter_title_overrides=chapter_title_overrides,
                         chapter_order=self.chapter_order,
                         chapter_normalized_number_overrides=chapter_normalized_number_overrides,
@@ -1783,6 +1786,7 @@ class AudiobookGUIApp:
                             url, result["book_title"], 1, result["total_chapters"],
                             renumber_selected=True,
                             duplicate_chapter_count=result.get("duplicate_chapter_count"),
+                            catalog_identity=result.get("catalog_identity", ""),
                             chapter_order=list(range(1, result["total_chapters"] + 1)),
                         ))
                     store, _, _ = self._queue_store()
@@ -3024,6 +3028,8 @@ class AudiobookGUIApp:
                             json.dumps(profile_snapshot(
                                 book_profile_id(url), {
                                     "profile_revision": 0,
+                                    "catalog_url": url,
+                                    "catalog_identity": self.catalog_data.get("catalog_identity", ""),
                                     "cleaner_remove_patterns": self.cleaner_remove_patterns,
                                     "duplicate_detection": self.duplicate_detection,
                                     "chapter_title_overrides": self.chapter_title_overrides,

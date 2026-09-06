@@ -1,3 +1,8 @@
+try:
+    from .source_identity import workspace_name
+except ImportError:
+    from source_identity import workspace_name
+
 import os
 import yaml
 import logging
@@ -337,7 +342,7 @@ def run_tts_ms(target_indices=None):
     config = load_config()
     book_title = config['book_title']
 
-    workspace_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", config['paths']['workspace_base'], book_title)
+    workspace_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", config['paths']['workspace_base'], workspace_name(config))
     clean_text_dir = os.path.join(workspace_dir, "CleanText")
     audio_dir = os.path.join(workspace_dir, "Audio")
     ffmpeg_path = get_ffmpeg_path()

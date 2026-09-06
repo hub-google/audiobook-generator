@@ -153,8 +153,13 @@ def clean_pure_plot_summary(text):
     return text
 
 def _catalog_book_url(catalog_url):
-    match = re.search(r"/Book/(?:Chapter/)?(\d+)", str(catalog_url or ""), re.I)
-    return f"https://tw.hjwzw.com/Book/{match.group(1)}" if match else ""
+    if not catalog_url:
+        return ""
+    try:
+        from .sources import resolve_source
+    except ImportError:
+        from sources import resolve_source
+    return resolve_source(catalog_url).metadata_url(catalog_url)
 
 
 def _validate_plot_source(book_title, text, source):
@@ -178,17 +183,18 @@ def fetch_book_summary_details(book_title, catalog_url=None):
     book_url = _catalog_book_url(catalog_url or os.getenv("BOOK_CATALOG_URL", ""))
     if book_url:
         try:
-            res = requests.get(book_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
-            res.raise_for_status()
-            soup = BeautifulSoup(res.content, "html.parser")
-            title_tag = soup.find("meta", attrs={"property": "og:title"})
-            desc_tag = soup.find("meta", attrs={"property": "og:description"})
-            author_tag = soup.find("meta", attrs={"property": "og:novel:author"})
-            category_tag = soup.find("meta", attrs={"property": "og:novel:category"})
-            page_title = str(title_tag.get("content") or "").strip() if title_tag else ""
-            description = str(desc_tag.get("content") or "").strip() if desc_tag else ""
-            author = str(author_tag.get("content") or "").strip() if author_tag else ""
-            category = str(category_tag.get("content") or "").strip() if category_tag else ""
+            try:
+                from .sources import resolve_source
+                from .sources.http_client import fetch_page
+            except ImportError:
+                from sources import resolve_source
+                from sources.http_client import fetch_page
+            adapter = resolve_source(book_url)
+            details = adapter.parse_metadata(fetch_page(book_url, adapter).content, book_url)
+            page_title = details['title']
+            description = details['description']
+            author = details['author']
+            category = details['category']
             if page_title and book_title not in page_title and page_title not in book_title:
                 raise ValueError(f"目錄書名是「{page_title}」，不是「{book_title}」")
             identity = f"書名：《{page_title or book_title}》；作者：{author or '未標示'}；類型：{category or '未標示'}；原始簡介：{description}"
@@ -1153,7 +1159,8 @@ def ensure_master_cover(book_title, book_workspace_dir, force_regenerate=False, 
 
 def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=None, is_completed=True, part_num=None, force_regenerate_master=False, cover_analyzer=None):
     src_dir = os.path.dirname(os.path.abspath(__file__))
-    book_workspace_dir = os.path.abspath(os.path.join(src_dir, "..", "Workspace", book_title))
+    storage_name = os.environ.get('BOOK_SOURCE_FINGERPRINT') or book_title
+    book_workspace_dir = os.path.abspath(os.path.join(src_dir, "..", "Workspace", storage_name))
     if not workspace_dir:
         # 上傳器可能先建立所有 Part 再逐一上傳；每部必須有獨立成品路徑，
         # 才不會全部指向最後一次覆寫的 youtube_cover.jpg。
@@ -1162,6 +1169,8 @@ def save_book_metadata(book_title, start_chap=1, end_chap=2400, workspace_dir=No
     # part_builder 傳入 Workspace/{書名}/Part_XX；主視覺仍固定回到書籍根目錄。
     if re.fullmatch(r"Part_\d+", os.path.basename(workspace_dir), re.IGNORECASE):
         book_workspace_dir = os.path.dirname(workspace_dir)
+    else:
+        book_workspace_dir = workspace_dir
 
     os.makedirs(workspace_dir, exist_ok=True)
     master_cover, generated_info = ensure_master_cover(

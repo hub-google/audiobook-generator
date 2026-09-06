@@ -1,3 +1,8 @@
+try:
+    from .source_identity import workspace_name
+except ImportError:
+    from source_identity import workspace_name
+
 """
 worker_pipeline.py — GitHub Actions Matrix Worker 統一入口
 
@@ -66,7 +71,8 @@ def build_stage_settings(config):
     tts = config.get("tts") or {}
     validation = config.get("validation") or {}
     return {
-        "crawler": {"version": "crawler-v3", "base_url": config.get("base_url"),
+        "crawler": {"version": "crawler-v4-sources", "source_id": config.get("source_id"),
+                    "source_fingerprint": config.get("source_fingerprint"), "parser_version": config.get("parser_version"), "base_url": config.get("base_url"),
                     "catalog_url": config.get("catalog_url"),
                     "parser": config.get("crawler") or {}},
         "cleaner": {"version": "cleaner-v5", **(config.get("cleaner") or {})},
@@ -98,7 +104,7 @@ def validate_chapter_completeness(config, exact_indices, tts_failed_chapters=Non
     from image_gen import generate_title_card, get_chapter_title
     book_title = config['book_title']
     workspace_dir = os.path.abspath(os.path.join(
-        SRC_DIR, "..", config['paths']['workspace_base'], book_title
+        SRC_DIR, "..", config['paths']['workspace_base'], workspace_name(config)
     ))
     audio_dir     = os.path.join(workspace_dir, "Audio")
     images_dir    = os.path.join(workspace_dir, "Images")
@@ -426,7 +432,9 @@ def extract_chapter_sources(config):
             "source_index": int(s_idx),
             "chapter_url": c_url,
             "chapter_title": title,
-            "source_identity": f"{s_idx}|{c_url}",
+            "source_identity": f"{config.get('source_fingerprint', '')}|{s_idx}|{c_url}",
+            "source_fingerprint": config.get("source_fingerprint"),
+            "parser_version": config.get("parser_version"),
         }
     return chapter_sources
 
@@ -434,6 +442,8 @@ def extract_chapter_sources(config):
 def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
                  build_parts=True, force=False):
     """Run the strict resumable pipeline for local and Actions callers alike."""
+    os.environ['BOOK_CATALOG_URL'] = config.get('catalog_url', '')
+    os.environ['BOOK_SOURCE_FINGERPRINT'] = config.get('source_fingerprint', '')
     chapters = list(config.get("chapters", []) if chapters is None else chapters)
     exact_indices = list(
         config.get("selected_indices", []) if exact_indices is None else exact_indices
@@ -443,7 +453,7 @@ def run_pipeline(config, worker_id=0, chapters=None, exact_indices=None,
 
     book_title = config["book_title"]
     workspace_dir = os.path.abspath(os.path.join(
-        SRC_DIR, "..", config["paths"]["workspace_base"], book_title
+        SRC_DIR, "..", config["paths"]["workspace_base"], workspace_name(config)
     ))
     checkpoint = PipelineCheckpoint(
         workspace_dir, book_title, worker_id, exact_indices,
@@ -521,7 +531,7 @@ def restore_locked_artifact(config, worker_id, exact_indices, artifact_dir,
 
     book_title = config["book_title"]
     workspace_dir = os.path.abspath(os.path.join(
-        SRC_DIR, "..", config["paths"]["workspace_base"], book_title
+        SRC_DIR, "..", config["paths"]["workspace_base"], workspace_name(config)
     ))
     artifact_dir = os.path.abspath(artifact_dir)
     source_config_path = os.path.abspath(source_config_path)
@@ -698,7 +708,7 @@ def main():
         require_complete_worker(final_failed, args.worker_id)
         book_title = config["book_title"]
         workspace_dir = os.path.abspath(os.path.join(
-            SRC_DIR, "..", config["paths"]["workspace_base"], book_title
+            SRC_DIR, "..", config["paths"]["workspace_base"], workspace_name(config)
         ))
         checkpoint = PipelineCheckpoint(
             workspace_dir, book_title, args.worker_id, exact_indices,

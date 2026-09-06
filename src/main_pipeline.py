@@ -1,3 +1,8 @@
+try:
+    from .source_identity import workspace_name
+except ImportError:
+    from source_identity import workspace_name
+
 """Strict local entry point shared with the GitHub Actions worker pipeline."""
 
 import json
@@ -67,7 +72,7 @@ def main(config_path=None):
     config = load_config(config_path)
     book_title = config.get("book_title", "UnknownBook")
     workspace_dir = os.path.abspath(os.path.join(
-        PROJECT_DIR, config["paths"]["workspace_base"], book_title
+        PROJECT_DIR, config["paths"]["workspace_base"], workspace_name(config)
     ))
     setup_logger(workspace_dir)
     logging.info("=== Strict Local Audiobook Pipeline Started ===")

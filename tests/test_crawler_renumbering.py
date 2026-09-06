@@ -16,13 +16,13 @@ class CrawlerRenumberingTests(unittest.TestCase):
             b"<div style='word-wrap: break-word; text-indent: 2em'>chapter body with enough meaningful novel content for strict validation</div></html>"
         )
         response.status_code = 200
-        response.url = "https://example.com/read/1"
+        response.url = "https://tw.hjwzw.com/read/1"
         response.raise_for_status.return_value = None
         get.return_value = response
 
         with tempfile.TemporaryDirectory() as directory:
             config = {
-                "book_title": "book", "base_url": "https://example.com",
+                "book_title": "book", "base_url": "https://tw.hjwzw.com",
                 "paths": {"workspace_base": directory},
             }
             run_crawler_worker(
@@ -39,9 +39,9 @@ class CrawlerRenumberingTests(unittest.TestCase):
             self.assertEqual(
                 [call.args[0] for call in get.call_args_list],
                 [
-                    "https://example.com/read/1",
-                    "https://example.com/read/3",
-                    "https://example.com/read/5",
+                    "https://tw.hjwzw.com/read/1",
+                    "https://tw.hjwzw.com/read/3",
+                    "https://tw.hjwzw.com/read/5",
                 ],
             )
 

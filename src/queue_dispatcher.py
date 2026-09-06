@@ -402,6 +402,7 @@ class Dispatcher:
             profiles, task.get("catalog_url") or "", task.get("book_title") or "",
         )
         snapshot = profile_snapshot(profile_id, profile)
+        snapshot["catalog_identity"] = task.get("catalog_identity") or ""
         # Existing tasks created before book profiles retain their edited titles
         # until the first explicit profile save migrates them.
         if not snapshot.get("chapter_title_overrides") and task.get("chapter_title_overrides"):

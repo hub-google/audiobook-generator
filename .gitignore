@@ -66,3 +66,7 @@ ehthumbs.db
 firebase-debug.log
 .gui-active-run.json
 .codex-temp-run-inputs/
+
+# Multi-source architecture documentation and local sample exports
+!docs/multiple-sources.md
+Samples/

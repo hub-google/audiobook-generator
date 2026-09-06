@@ -162,6 +162,14 @@ class PipelineCheckpoint:
             chapter_record = self.data["chapters"].setdefault(
                 str(int(chapter)), {"overall_status": "pending", "stages": {}}
             )
+            expected_source = self.chapter_sources.get(int(chapter)) or {}
+            previous_source = chapter_record.get("source_identity") or {}
+            if expected_source.get('source_fingerprint') and (
+                expected_source.get('source_fingerprint') != previous_source.get('source_fingerprint')
+                or expected_source.get('parser_version') != previous_source.get('parser_version')
+                or expected_source.get('chapter_url') != previous_source.get('chapter_url')
+            ):
+                chapter_record.pop('source', None)
             if (chapter_record.get("source") or {}).get("status") == "source_missing":
                 for stage in STAGES:
                     record = self._stage_record(chapter, stage)
@@ -183,7 +191,9 @@ class PipelineCheckpoint:
                     rec_url = recorded_source.get("chapter_url")
                     exp_idx = expected_source.get("source_index")
                     rec_idx = recorded_source.get("source_index")
-                    if exp_url != rec_url or exp_idx != rec_idx:
+                    if (exp_url != rec_url or exp_idx != rec_idx
+                        or expected_source.get('source_fingerprint') != recorded_source.get('source_fingerprint')
+                        or expected_source.get('parser_version') != recorded_source.get('parser_version')):
                         source_changed = True
                     else:
                         chapter_record["source_identity"] = expected_source

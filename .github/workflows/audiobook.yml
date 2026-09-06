@@ -203,6 +203,7 @@ jobs:
     outputs:
       matrix: ${{ steps.gen_matrix.outputs.matrix }}
       book_profile_id: ${{ steps.gen_matrix.outputs.book_profile_id }}
+      source_max_parallel: ${{ steps.gen_matrix.outputs.source_max_parallel }}
 
     steps:
       - name: Checkout Code
@@ -293,6 +294,7 @@ jobs:
           echo "" >> $GITHUB_OUTPUT
           echo 'EOF' >> $GITHUB_OUTPUT
           python -c "import yaml; print('book_profile_id=' + str((yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}).get('book_profile_id') or ''))" >> $GITHUB_OUTPUT
+          python -c "import yaml; print('source_max_parallel=' + str((yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}).get('source_max_parallel', 1)))" >> $GITHUB_OUTPUT
 
       - name: Validate non-empty chapter matrix
         run: |
@@ -436,7 +438,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
-      max-parallel: 17
+      max-parallel: ${{ fromJSON(needs.setup.outputs.source_max_parallel || '1') }}
       matrix: ${{ fromJSON(needs.resume_planner.outputs.worker_matrix) }}
 
     steps:
@@ -470,7 +472,6 @@ jobs:
           key: ${{ needs.setup.outputs.book_profile_id }}-${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             ${{ needs.setup.outputs.book_profile_id }}-${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-
-            ${{ matrix.book_title }}-chap${{ matrix.start_chap }}-${{ matrix.end_chap }}-worker${{ matrix.worker_id }}-
 
       - name: Log Cache Location
         run: |
@@ -583,7 +584,8 @@ jobs:
           with open("config.yaml", encoding="utf-8") as config_file:
               config = yaml.safe_load(config_file)
           book_title = config["book_title"]
-          workspace = os.path.abspath(os.path.join(config["paths"]["workspace_base"], book_title))
+          from src.source_identity import workspace_name
+          workspace = os.path.abspath(os.path.join(config["paths"]["workspace_base"], workspace_name(config)))
           worker_id = int(os.environ["WORKER_ID"])
           per_worker = int(config["chapters_per_worker"])
           start = worker_id * per_worker
@@ -1094,7 +1096,8 @@ jobs:
           book_title = publication.data.get("book_title", "")
           books = hf_state.get("books", {})
           hf_repo = hf_state.get("repo_id", "尚未建立")
-          current_hf_book = books.get(book_title, {}) if book_title else {}
+          hf_book_key = publication.data.get('source_fingerprint') or book_title
+          current_hf_book = books.get(hf_book_key, {}) if hf_book_key else {}
           hf_parts = (current_hf_book.get("parts") or {}).values()
           hf_done = sum(item.get("status") == "complete" for item in hf_parts)
           print("[RUN_SUMMARY] " + json.dumps({

@@ -23,7 +23,7 @@ class BookProfileTests(unittest.TestCase):
 
     def test_normalized_url_has_stable_book_id(self):
         left = "HTTPS://TW.HJWZW.COM/Book/Chapter/1644/"
-        right = "https://tw.hjwzw.com/Book/Chapter/1644"
+        right = "https://tw.hjwzw.com/Book/Chapter/1644/"
         self.assertEqual(normalize_catalog_url(left), normalize_catalog_url(right))
         self.assertEqual(book_profile_id(left), book_profile_id(right))
 

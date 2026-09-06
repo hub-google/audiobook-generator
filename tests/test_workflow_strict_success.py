@@ -80,7 +80,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("調度訊息", summary_step.get("run", ""))
 
     def test_worker_concurrency_is_capped_at_seventeen(self):
-        self.assertEqual(self.jobs["process_chapters"]["strategy"]["max-parallel"], 17)
+        self.assertEqual(self.jobs["process_chapters"]["strategy"]["max-parallel"], "${{ fromJSON(needs.setup.outputs.source_max_parallel || '1') }}")
 
     def test_every_downstream_job_stops_when_resume_planner_fails(self):
         for job_name in ("process_chapters", "plan_parts", "merge_parts", "final_merge", "upload_to_youtube"):
@@ -236,7 +236,8 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
             if step.get("name") == "Generate Job Summary"
         )
         self.assertIn('book_title = publication.data.get("book_title", "")', summary)
-        self.assertIn("books.get(book_title, {})", summary)
+        self.assertIn("books.get(hf_book_key, {})", summary)
+        self.assertIn("publication.data.get('source_fingerprint') or book_title", summary)
         self.assertNotIn("for book in books.values()", summary)
         self.assertIn("Current Book Hugging Face Parts", summary)
 

@@ -51,6 +51,9 @@ def config_fingerprint(config):
     """Identity used to reject artifacts belonging to a different book build."""
     payload = {
         "book_title": config.get("book_title"),
+        "source_fingerprint": config.get("source_fingerprint"),
+        "source_id": config.get("source_id"),
+        "parser_version": config.get("parser_version"),
         "book_profile_id": config.get("book_profile_id"),
         "profile_revision": config.get("profile_revision"),
         "catalog_url": config.get("catalog_url"),

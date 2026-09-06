@@ -165,13 +165,14 @@ def format_chapter_label(start_chap, end_chap, excluded_chapters=None, renumber_
 
 def new_task(catalog_url, book_title="", start_chapter=1, end_chapter=None, excluded_chapters=None,
              renumber_selected=False, duplicate_chapter_count=None, chapter_title_overrides=None,
-             chapter_order=None, chapter_normalized_number_overrides=None):
+             chapter_order=None, chapter_normalized_number_overrides=None, catalog_identity=""):
     now = utc_now()
     return {
         "task_id": f"book-{datetime.now(timezone.utc):%Y%m%d}-{uuid.uuid4().hex[:8]}",
         "position": 0,
         "book_title": str(book_title or "待解析"),
         "catalog_url": str(catalog_url).strip(),
+        "catalog_identity": str(catalog_identity),
         "start_chapter": int(start_chapter),
         "end_chapter": int(end_chapter) if end_chapter is not None else None,
         "excluded_chapters": sorted({int(value) for value in (excluded_chapters or [])}),
@@ -262,7 +263,7 @@ def update_task(queue, task_id, **changes):
 def update_task_chapters(queue, task_id, start_chapter, end_chapter, excluded_chapters=None,
                          requeue_after_cancel=False, renumber_selected=False,
                          duplicate_chapter_count=None, chapter_title_overrides=None,
-                         chapter_order=None, chapter_normalized_number_overrides=None):
+                         chapter_order=None, chapter_normalized_number_overrides=None, catalog_identity=None):
     """Persist an edited chapter plan and optionally restart after cancellation."""
     start = int(start_chapter)
     end = int(end_chapter)
@@ -274,6 +275,8 @@ def update_task_chapters(queue, task_id, start_chapter, end_chapter, excluded_ch
         "excluded_chapters": excluded,
         "renumber_selected": bool(renumber_selected),
     }
+    if catalog_identity is not None:
+        changes['catalog_identity'] = str(catalog_identity)
     if duplicate_chapter_count is not None:
         changes["duplicate_chapter_count"] = int(duplicate_chapter_count)
     if chapter_title_overrides is not None:

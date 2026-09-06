@@ -72,13 +72,15 @@ class CatalogParserMatrixTests(unittest.TestCase):
             "<a href='/Book/Read/1,10'>第一章 開始</a>"
             "</html>"
         ).encode("utf-8")
+        response.url = "https://tw.hjwzw.com/Book/Chapter/1"
+        response.status_code = 200
         response.raise_for_status.return_value = None
         get.return_value = response
 
-        result = parse_catalog("https://example.com/Book/Chapter/1")
+        result = parse_catalog("https://tw.hjwzw.com/Book/Chapter/1")
 
         self.assertEqual(result["total_chapters"], 2)
-        self.assertEqual(result["chapters"], ["/Book/Read/1,10", "/Book/Read/1,10"])
+        self.assertEqual(result["chapters"], ["https://tw.hjwzw.com/Book/Read/1,10", "https://tw.hjwzw.com/Book/Read/1,10"])
         self.assertEqual(result["duplicate_indices"], [2])
         self.assertEqual(result["duplicate_chapter_count"], 1)
 

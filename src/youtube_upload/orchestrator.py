@@ -182,6 +182,7 @@ def run_upload_pipeline(args):
     SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     book_title = "有聲小說全集"
     book_profile_id = getattr(args, "book_profile_id", "") or ""
+    source_fingerprint = ""
     start_chap, end_chap = 1, 2400
     config_path = os.path.join(SRC_DIR, "..", "config.yaml")
     if args.input_dir and os.path.exists(os.path.join(args.input_dir, "config.yaml")):
@@ -206,6 +207,11 @@ def run_upload_pipeline(args):
                 if cfg:
                     book_title = cfg.get("book_title", book_title)
                     book_profile_id = cfg.get("book_profile_id", book_profile_id)
+                    source_fingerprint = cfg.get("source_fingerprint", "")
+                    hf_archiver.source_fingerprint = source_fingerprint
+                    os.environ['BOOK_SOURCE_FINGERPRINT'] = source_fingerprint
+                    os.environ['BOOK_CATALOG_URL'] = cfg.get('catalog_url', '')
+                    os.environ['BOOK_PREPARED_DIR'] = os.path.abspath(args.input_dir) if args.input_dir else ''
                     chaps = cfg.get("selected_indices", [])
                     if chaps:
                         start_chap = chaps[0]
@@ -258,6 +264,12 @@ def run_upload_pipeline(args):
             execution_run_id=execution_run_id,
         )
 
+    if source_fingerprint:
+        if publication.data.get('source_fingerprint') not in (None, '', source_fingerprint):
+            raise RuntimeError('Publication source fingerprint mismatch')
+        publication.data['source_fingerprint'] = source_fingerprint
+        publication.save()
+
     measured_duration_seconds = sum(
         float(part.get("duration") or 0) for part in (part_plan or [])
     )
@@ -268,11 +280,14 @@ def run_upload_pipeline(args):
     processing_playlist_name = f"[處理中]《{book_title}》全集"
     resumable_playlist_titles = [legacy_playlist_name, processing_playlist_name]
     playlist_desc = f"《{book_title}》完整版有聲書全集 (第 {start_chap} 至 {end_chap} 章)，高音質連續播映版。\n歡迎訂閱開啟小鈴鐺！"
+    if source_fingerprint:
+        playlist_desc += f"\n來源識別：{source_fingerprint}"
     publication.mark_global("playlist", "running")
     try:
         playlist_id, playlist_created = get_or_create_playlist(
             youtube, playlist_name, playlist_desc,
             alternate_titles=resumable_playlist_titles,
+            **({"source_fingerprint": source_fingerprint} if source_fingerprint else {}),
         )
     except UploadPaused as paused:
         publication.mark_global("playlist", "paused", error=paused.reason)
@@ -439,11 +454,11 @@ def run_upload_pipeline(args):
     if exit_code is not None:
         return exit_code
 
-    upload_subtitles_dir = os.path.abspath("Upload_Subtitles")
+    upload_subtitles_dir = os.path.abspath(os.path.join("Upload_Subtitles", source_fingerprint))
     os.makedirs(upload_subtitles_dir, exist_ok=True)
-    temp_parts_dir = os.path.abspath("temp_parts_output")
+    temp_parts_dir = os.path.abspath(os.path.join("temp_parts_output", source_fingerprint))
     os.makedirs(temp_parts_dir, exist_ok=True)
-    temp_dl_dir = os.path.abspath("temp_api_upload_workspace")
+    temp_dl_dir = os.path.abspath(os.path.join("temp_api_upload_workspace", source_fingerprint))
     os.makedirs(temp_dl_dir, exist_ok=True)
 
     total_uploaded = 0

@@ -1,3 +1,8 @@
+try:
+    from .source_identity import workspace_name
+except ImportError:
+    from source_identity import workspace_name
+
 import os
 import glob
 import re
@@ -251,7 +256,7 @@ def run_video_gen(build_parts=True, target_indices=None):
     book_title = config['book_title']
 
     workspace_dir = os.path.abspath(os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", config['paths']['workspace_base'], book_title
+        os.path.dirname(os.path.abspath(__file__)), "..", config['paths']['workspace_base'], workspace_name(config)
     ))
     audio_dir   = os.path.join(workspace_dir, "Audio")
     images_dir  = os.path.join(workspace_dir, "Images")
@@ -263,7 +268,7 @@ def run_video_gen(build_parts=True, target_indices=None):
 
     # 最終成品放在 Output（full.mp4 + metadata）
     output_dir = os.path.abspath(os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "Output", book_title
+        os.path.dirname(os.path.abspath(__file__)), "..", "Output", workspace_name(config)
     ))
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)

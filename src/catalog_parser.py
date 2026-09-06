@@ -400,69 +400,27 @@ def effective_chapter_title(parsed_result, source_uuid):
         f"第{parts['normalized_number']}章", parts["chapter_name"],
     ) if value).strip()
 
-def parse_catalog(catalog_url):
-    """
-    抓取小說目錄頁面，解析書名與章節 URL 列表。
-    """
-    parsed_uri = urlparse(catalog_url)
-    base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}"
+def catalog_identity(result):
+    # Titles/URLs/order are all relevant to a user's selection and overrides.
+    data = {'chapters': result['chapters'], 'titles': result.get('chapter_titles') or []}
+    return hashlib.sha256(json.dumps(data, ensure_ascii=False, sort_keys=True).encode('utf-8')).hexdigest()
 
-    headers = {"User-Agent": USER_AGENTS[0]}
-    response = requests.get(catalog_url, headers=headers, timeout=15)
-    response.raise_for_status()
 
-    # 使用 response.content (bytes) 配合 from_encoding 讓 BeautifulSoup 自行處理編碼
-    # 避免 requests 自動偵測編碼錯誤導致中文亂碼
-    soup = BeautifulSoup(response.content, 'html.parser', from_encoding='utf-8')
-
-    # 1. 解析書名
-    book_title = "未知小說"
-    h1_tag = soup.find('h1')
-    if h1_tag and h1_tag.text.strip():
-        book_title = h1_tag.text.strip()
-    else:
-        og_title = soup.find('meta', property='og:title')
-        if og_title and og_title.get('content'):
-            book_title = og_title['content'].strip()
-        elif soup.title:
-            book_title = soup.title.text.split('-')[0].split('_')[0].strip()
-
-    # 清理書名中不合法的檔名字元
-    book_title = re.sub(r'[\\/:*?"<>|]', '', book_title)
-
-    # 2. 解析章節連結
-    chapter_urls = []
-    chapter_titles = []
-    for a in soup.find_all('a', href=True):
-        href = a['href'].strip()
-        # 匹配 hjwzw.com 的 /Book/Read/ 格式，或其他通用格式
-        if '/Book/Read/' in href or '/read/' in href.lower():
-            if href.startswith('http'):
-                # 絕對網址：取出路徑部分
-                from urllib.parse import urlparse as _up
-                full_href = _up(href).path
-            elif href.startswith('/'):
-                full_href = href
-            else:
-                full_href = '/' + href.lstrip('/')
-
-            # Preserve every catalog entry. Duplicate entries must remain visible
-            # so the GUI can annotate them and let the user decide whether to
-            # uncheck them.
-            chapter_urls.append(full_href)
-            chapter_titles.append(a.text.strip() or f"第 {len(chapter_urls)} 章")
-
-    duplicate_analysis = analyze_duplicate_chapters(chapter_titles, chapter_urls)
-
-    result = {
-        "success": True,
-        "book_title": book_title,
-        "base_url": base_url,
-        "chapters": chapter_urls,
-        "chapter_titles": chapter_titles,
-        "total_chapters": len(chapter_urls)
-    }
-    result.update(duplicate_analysis)
+def parse_catalog(catalog_url, html=None):
+    try:
+        from .sources import resolve_source
+        from .sources.http_client import fetch_page
+    except ImportError:
+        from sources import resolve_source
+        from sources.http_client import fetch_page
+    source = resolve_source(catalog_url)
+    if html is None:
+        html = fetch_page(catalog_url, source).content
+    result = source.parse_catalog(html, catalog_url)
+    result['source_max_parallel'] = source.max_parallel
+    result['book_title'] = re.sub(r'[\\/:*?"<>|]', '', result['book_title'])
+    result['catalog_identity'] = catalog_identity(result)
+    result.update(analyze_duplicate_chapters(result['chapter_titles'], result['chapters']))
     return result
 
 def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="config.yaml",
@@ -520,8 +478,23 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
     )
 
     snapshot = dict(book_profile_snapshot or {})
+    try:
+        from .source_identity import source_fingerprint
+    except ImportError:
+        from source_identity import source_fingerprint
+    fingerprint = source_fingerprint(catalog_url)
+    if snapshot.get('catalog_url') and source_fingerprint(snapshot['catalog_url']) != fingerprint:
+        raise ValueError('Book profile belongs to a different source URL')
     cleaner_patterns = validate_remove_patterns(snapshot.get("cleaner_remove_patterns") or [])
     config_data = {
+        "source_schema_version": 1,
+        "source_max_parallel": max(1, min(17, int(res.get("source_max_parallel") or 1))),
+        "source_fingerprint": fingerprint,
+        "source_id": res.get("source_id", ""),
+        "parser_version": res.get("parser_version", ""),
+        "source_book_id": res.get("source_book_id", ""),
+        "chapter_records": [res["chapter_records"][i-1] for i in source_indices] if res.get("chapter_records") else [],
+        "catalog_snapshot": res,
         "book_title": res["book_title"],
         "base_url": res["base_url"],
         "catalog_url": catalog_url,
@@ -541,7 +514,7 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
         "renumber_selected": bool(renumber_selected),
         "chapter_order": source_indices,
         "chapters_per_worker": chapters_per_worker,  # 新增：讓 Worker 知道每台機器的額度
-        "book_profile_id": snapshot.get("book_profile_id") or book_profile_id(catalog_url),
+        "book_profile_id": book_profile_id(catalog_url),
         "profile_revision": int(snapshot.get("profile_revision") or 0),
         "manual_cover": dict(snapshot.get("manual_cover") or {}),
         "cleaner": {
@@ -777,7 +750,6 @@ if __name__ == "__main__":
 
     # ── 只爬取一次目錄，共用於 config 與 matrix ──
     print(f"[CatalogParser] 正在解析目錄：{args.url}")
-    parsed = parse_catalog(args.url)
     snapshot = {}
     if args.book_profile_snapshot_b64:
         try:
@@ -787,6 +759,11 @@ if __name__ == "__main__":
         if not isinstance(snapshot, dict):
             raise ValueError("書籍設定快照必須是 JSON 物件")
         validate_remove_patterns(snapshot.get("cleaner_remove_patterns") or [])
+    parsed = parse_catalog(args.url)
+    if snapshot.get("catalog_identity"):
+        actual = catalog_identity(parsed)
+        if actual != snapshot["catalog_identity"]:
+            raise ValueError('目錄已變更，請重新解析並確認選章；不會按舊位置抓取另一章')
     overrides = snapshot.get("chapter_title_overrides") or decode_chapter_title_overrides(args.chapter_title_overrides_b64)
     apply_chapter_title_overrides(
         parsed, overrides, snapshot.get("chapter_normalized_number_overrides") or {},

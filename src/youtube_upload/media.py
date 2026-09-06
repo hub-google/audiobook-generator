@@ -327,6 +327,14 @@ def resolve_part_srt(title="", part_num=None, search_dirs=None):
             os.path.join(BASE_DIR, "Output"),
         ]
 
+        fingerprint = os.environ.get('BOOK_SOURCE_FINGERPRINT')
+        if fingerprint:
+            search_dirs = [os.path.join(BASE_DIR, root, fingerprint) for root in
+                           ('Upload_Subtitles', 'Output', 'Workspace')]
+            prepared = os.environ.get('BOOK_PREPARED_DIR')
+            if prepared:
+                search_dirs.insert(0, prepared)
+
     for s_dir in search_dirs:
         if not os.path.exists(s_dir):
             continue
@@ -358,6 +366,14 @@ def resolve_part_cover(title="", part_num=None, search_dirs=None):
             os.path.join(BASE_DIR, "Cover"),
             os.path.join(BASE_DIR, "Output"),
         ]
+
+        fingerprint = os.environ.get('BOOK_SOURCE_FINGERPRINT')
+        if fingerprint:
+            search_dirs = [os.path.join(BASE_DIR, root, fingerprint) for root in
+                           ('Upload_Subtitles', 'Output', 'Workspace')]
+            prepared = os.environ.get('BOOK_PREPARED_DIR')
+            if prepared:
+                search_dirs.insert(0, prepared)
 
     for s_dir in search_dirs:
         if not os.path.exists(s_dir):

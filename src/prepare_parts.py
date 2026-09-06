@@ -124,7 +124,7 @@ def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17, 
     parts = build_part_plan_from_inventory(inventory, 10*3600, 11*3600, source_missing)
     if not parts: raise RuntimeError("validated chapter inventory produced no Parts")
     matrix = build_merge_matrix([part["part_num"] for part in parts], max_workers)
-    manifest = {"schema_version": 1, "source_run_id": str(run_id), "book_title": str(config.get("book_title") or "有聲小說全集"), "selected_indices": selected, "source_missing_chapters": sorted(source_missing), "chapter_artifacts": {str(int(x["chap_num"])): x["artifact"] for x in inventory}, "parts": parts, "matrix": matrix}
+    manifest = {"source_fingerprint": config.get("source_fingerprint", ""), "schema_version": 1, "source_run_id": str(run_id), "book_title": str(config.get("book_title") or "有聲小說全集"), "selected_indices": selected, "source_missing_chapters": sorted(source_missing), "chapter_artifacts": {str(int(x["chap_num"])): x["artifact"] for x in inventory}, "parts": parts, "matrix": matrix}
     (output/"parts-plan.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
     shutil.copy2(config_path, output/"config.yaml"); return manifest
 
@@ -253,7 +253,7 @@ def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir, ar
             raise RuntimeError(f"could not merge Part {number} after 3 attempts")
 
         folder=f"有聲小說_{safe_hf_name(plan['book_title'])}_第{number:02d}部_第{start:04d}章-第{end:04d}章"
-        remote_root=f"有聲小說/{safe_hf_name(plan['book_title'])}/{folder}"
+        remote_root=f"有聲小說/{plan.get('source_fingerprint') or safe_hf_name(plan['book_title'])}/{folder}"
         remote_video=f"{remote_root}/{video.name}"; remote_subtitle=f"{remote_root}/{subtitle.name}"
         completed_part={**part,"video":video.name,"subtitle":subtitle.name,"hf_video_path":remote_video,"hf_subtitle_path":remote_subtitle,"video_bytes":video.stat().st_size,"video_sha256":_sha256(video),"subtitle_bytes":subtitle.stat().st_size,"subtitle_sha256":_sha256(subtitle),"video_validation":validate_video(str(video),float(part["duration"])),"subtitle_validation":validate_srt(str(subtitle),float(part["duration"]))}
         completed.append(completed_part)

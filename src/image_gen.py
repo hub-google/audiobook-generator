@@ -1,3 +1,8 @@
+try:
+    from .source_identity import workspace_name
+except ImportError:
+    from source_identity import workspace_name
+
 import glob
 import logging
 import os
@@ -150,7 +155,7 @@ def run_image_gen(target_indices=None):
     """依 Audio 章節檔生成標題卡，不讀取或生成章節摘要。"""
     config = load_config()
     book_title = config.get("book_title", "UnknownBook")
-    workspace_dir = os.path.abspath(os.path.join(SRC_DIR, "..", config["paths"]["workspace_base"], book_title))
+    workspace_dir = os.path.abspath(os.path.join(SRC_DIR, "..", config["paths"]["workspace_base"], workspace_name(config)))
     audio_dir = os.path.join(workspace_dir, "Audio")
     images_dir = os.path.join(workspace_dir, "Images")
     os.makedirs(images_dir, exist_ok=True)

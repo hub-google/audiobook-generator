@@ -18,7 +18,7 @@ except ImportError:
 
 
 PROFILE_PATH = "audiobook-book-profiles.json"
-PROFILE_SCHEMA_VERSION = 3
+PROFILE_SCHEMA_VERSION = 4
 MAX_PATTERNS = 100
 MAX_PATTERN_LENGTH = 10_000
 
@@ -32,7 +32,7 @@ def normalize_catalog_url(value):
     parts = urlsplit(raw)
     if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
         raise ValueError("小說目錄網址無效")
-    path = parts.path.rstrip("/") or "/"
+    path = parts.path or "/"
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, parts.query, ""))
 
 
@@ -157,6 +157,8 @@ def update_book_profile(data, catalog_url, book_title="", cleaner_remove_pattern
 def profile_snapshot(profile_id, profile):
     snapshot = {
         "book_profile_id": profile_id,
+        "catalog_url": profile.get("catalog_url", ""),
+        "catalog_identity": profile.get("catalog_identity", ""),
         "profile_revision": int(profile.get("profile_revision") or 0),
         "cleaner_remove_patterns": validate_remove_patterns(profile.get("cleaner_remove_patterns")),
         "duplicate_detection": copy.deepcopy(profile.get("duplicate_detection") or {}),
