@@ -1,0 +1,49 @@
+name: Test Cloudflare Scrape (Isolated)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-cf-scrape
+  cancel-in-progress: true
+
+jobs:
+  test_scrape:
+    name: "🧪 Test 69shuba Cloudflare Scrape (3 Chapters)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: Install Python Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install seleniumbase beautifulsoup4
+
+      - name: Run Test Scrape via Xvfb + SeleniumBase UC
+        run: |
+          xvfb-run -a python tools/test_cf_scrape.py
+
+      - name: Upload Scraped Chapters Sample
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraped-chapters-sample
+          path: scraped_chapters/*.txt
+          if-no-files-found: ignore
