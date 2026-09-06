@@ -62,19 +62,21 @@ def run_test():
             print(f"\n[{idx}/3] 正在抓取第 {chap_num} 章: {chap_url} ...")
 
             start_t = time.time()
-            driver.uc_open_with_reconnect(chap_url, reconnect_time=6)
-
-            # Wait for cloudflare challenge to settle
-            for wait_round in range(10):
-                page_title = driver.title
-                if "Just a moment..." not in page_title and "Cloudflare" not in page_title:
-                    break
-                print(f"  ⏳ 檢測到 Cloudflare 挑戰頁面 ({page_title})，等待驗證中... ({wait_round+1}/10)")
-                try:
-                    driver.uc_gui_click_captcha()
-                except Exception:
-                    pass
-                time.sleep(2)
+            if idx == 1:
+                driver.uc_open_with_reconnect(chap_url, reconnect_time=6)
+                # Wait for cloudflare challenge to settle
+                for wait_round in range(10):
+                    page_title = driver.title
+                    if "Just a moment..." not in page_title and "Cloudflare" not in page_title:
+                        break
+                    print(f"  ⏳ 檢測到 Cloudflare 挑戰頁面 ({page_title})，等待驗證中... ({wait_round+1}/10)")
+                    try:
+                        driver.uc_gui_click_captcha()
+                    except Exception:
+                        pass
+                    time.sleep(2)
+            else:
+                driver.get(chap_url)
 
             page_title = driver.title
             html = driver.page_source
@@ -140,7 +142,7 @@ def run_test():
             })
 
             # Small delay between chapters
-            time.sleep(2)
+            time.sleep(0.5)
 
     finally:
         try:
