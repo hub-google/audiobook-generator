@@ -114,3 +114,30 @@ def test_three_txt_exports_use_production_parser(tmp_path):
     manifest = json.loads((folder/'manifest.json').read_text(encoding='utf-8'))
     assert manifest['transport'] == 'user_saved_html'
     assert all('作者' not in f.read_text(encoding='utf-8').split('\n\n')[0] for f in folder.glob('*.txt'))
+
+
+def test_catalog_url_normalization():
+    shuba = resolve_source('https://www.69shuba.com/book/29590')
+    assert shuba.catalog_url('https://www.69shuba.com/book/29590') == 'https://www.69shuba.com/book/29590/'
+    assert shuba.catalog_url('https://www.69shuba.com/book/29590/') == 'https://www.69shuba.com/book/29590/'
+    assert shuba.catalog_url('https://www.69shuba.com/book/29590.htm') == 'https://www.69shuba.com/book/29590/'
+    assert shuba.catalog_url('https://www.69shuba.com/txt/29590/10') == 'https://www.69shuba.com/book/29590/'
+    assert shuba.catalog_url('https://www.69shuba.com/book/29590?edition=2') == 'https://www.69shuba.com/book/29590/?edition=2'
+
+    hjwzw = resolve_source('https://tw.hjwzw.com/Book/35120')
+    assert hjwzw.catalog_url('https://tw.hjwzw.com/Book/35120') == 'https://tw.hjwzw.com/Book/Chapter/35120'
+    assert hjwzw.catalog_url('https://tw.hjwzw.com/Book/Chapter/35120') == 'https://tw.hjwzw.com/Book/Chapter/35120'
+
+
+def test_parse_catalog_accepts_url_without_trailing_slash():
+    result = parse_catalog('https://www.69shuba.com/book/29590', html=CATALOG)
+    assert result['catalog_url'] == 'https://www.69shuba.com/book/29590/'
+    assert result['total_chapters'] == 3
+
+
+def test_http_404_raises_source_parse_error():
+    response = Mock(status_code=404)
+    with patch('src.sources.http_client.requests.get', return_value=response), patch('src.sources.http_client.time.sleep'):
+        with pytest.raises(SourceParseError, match='HTTP 404'):
+            fetch_page(URL, resolve_source(URL))
+

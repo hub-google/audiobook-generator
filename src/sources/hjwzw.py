@@ -15,6 +15,10 @@ class HJWZWSource(SourceAdapter):
             raise SourceParseError("無效的黃金屋書籍網址")
         return match[1]
 
+    def catalog_url(self, url):
+        query = f'?{urlsplit(url).query}' if urlsplit(url).query else ''
+        return self.absolute_url(url, f"/Book/Chapter/{self.book_id(url)}{query}")
+
     def metadata_url(self, url):
         return self.absolute_url(url, f"/Book/{self.book_id(url)}")
 

@@ -36,6 +36,9 @@ class SourceAdapter:
     def get_referer(self, url):
         return None
 
+    def catalog_url(self, url):
+        return url
+
     def absolute_url(self, base, href):
         url = urljoin(base, href)
         if urlsplit(url).scheme not in ("http", "https") or not self.matches(url):

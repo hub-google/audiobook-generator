@@ -414,9 +414,10 @@ def parse_catalog(catalog_url, html=None):
         from sources import resolve_source
         from sources.http_client import fetch_page
     source = resolve_source(catalog_url)
+    target_url = getattr(source, 'catalog_url', lambda u: u)(catalog_url)
     if html is None:
-        html = fetch_page(catalog_url, source).content
-    result = source.parse_catalog(html, catalog_url)
+        html = fetch_page(target_url, source).content
+    result = source.parse_catalog(html, target_url)
     result['source_max_parallel'] = source.max_parallel
     result['book_title'] = re.sub(r'[\\/:*?"<>|]', '', result['book_title'])
     result['catalog_identity'] = catalog_identity(result)

@@ -2,7 +2,7 @@
 import threading
 import time
 import requests
-from .base import SourceAccessError
+from .base import SourceAccessError, SourceParseError
 
 try:
     from curl_cffi import requests as curl_requests
@@ -48,6 +48,8 @@ def fetch_page(url, source, timeout=20):
 
     if response.status_code in (401, 403, 429):
         raise SourceAccessError(f'來源存取受限 HTTP {response.status_code}: {url}')
+    if response.status_code == 404:
+        raise SourceParseError(f'網頁不存在 HTTP 404: {url}')
     response.raise_for_status()
     source.absolute_url(url, response.url)
     source.soup(response.content)

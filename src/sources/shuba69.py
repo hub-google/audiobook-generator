@@ -22,6 +22,10 @@ class Shuba69Source(SourceAdapter):
         except Exception:
             return f"{urlsplit(url).scheme}://{urlsplit(url).netloc}/"
 
+    def catalog_url(self, url):
+        query = f'?{urlsplit(url).query}' if urlsplit(url).query else ''
+        return self.absolute_url(url, f'/book/{self.book_id(url)}/{query}')
+
     def metadata_url(self, url):
         return self.absolute_url(url, f'/book/{self.book_id(url)}.htm')
 

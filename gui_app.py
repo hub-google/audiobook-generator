@@ -1779,11 +1779,14 @@ class AudiobookGUIApp:
                 tasks = []
                 try:
                     for url in urls:
-                        result = parse_catalog(url)
+                        try:
+                            result = parse_catalog(url)
+                        except Exception as parse_err:
+                            raise RuntimeError(f"解析失敗（{url}）：{parse_err}") from parse_err
                         if not result.get("success"):
-                            raise RuntimeError(f"解析失敗：{url}：{result.get('error')}")
+                            raise RuntimeError(f"解析失敗（{url}）：{result.get('error')}")
                         tasks.append(new_task(
-                            url, result["book_title"], 1, result["total_chapters"],
+                            result.get("catalog_url", url), result["book_title"], 1, result["total_chapters"],
                             renumber_selected=True,
                             duplicate_chapter_count=result.get("duplicate_chapter_count"),
                             catalog_identity=result.get("catalog_identity", ""),
@@ -2237,8 +2240,9 @@ class AudiobookGUIApp:
         def _worker():
             try:
                 res = parse_catalog(url)
+                canonical_url = res.get("catalog_url", url)
                 profiles, _ = self._profile_store()[0].load()
-                _, profile = get_book_profile(profiles, url, res.get("book_title") or "")
+                _, profile = get_book_profile(profiles, canonical_url, res.get("book_title") or "")
                 apply_chapter_title_overrides(
                     res, profile.get("chapter_title_overrides") or {},
                     profile.get("chapter_normalized_number_overrides") or {},
@@ -2253,6 +2257,9 @@ class AudiobookGUIApp:
     def _on_parse_success(self, res, profile=None):
         self.btn_parse.config(state=tk.NORMAL)
         if res and res.get("success"):
+            if res.get("catalog_url") and self.url_entry.get().strip() != res["catalog_url"]:
+                self.url_entry.delete(0, tk.END)
+                self.url_entry.insert(0, res["catalog_url"])
             self.catalog_data = res
             profile = profile or {}
             self.current_book_profile = dict(profile)
