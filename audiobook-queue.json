@@ -1449,14 +1449,14 @@
         1416,
         1417
       ],
-      "status": "queued",
+      "status": "waiting_retry",
       "run_id": 34010014937,
       "run_attempt": 1,
       "execution_generation": 1,
       "retry_requested_at": null,
       "run_history": [],
-      "retry_at": null,
-      "reason": null,
+      "retry_at": "2026-09-06T06:17:25.614986+00:00",
+      "reason": "otherError",
       "hf_progress": {
         "completed": 0,
         "total": 0
