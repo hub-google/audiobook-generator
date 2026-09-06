@@ -34,7 +34,7 @@ jobs:
       - name: Install Python Dependencies
         run: |
           pip install --upgrade pip
-          pip install seleniumbase beautifulsoup4
+          pip install seleniumbase beautifulsoup4 curl_cffi
 
       - name: Run Test Scrape via Xvfb + SeleniumBase UC
         run: |

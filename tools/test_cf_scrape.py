@@ -102,6 +102,28 @@ def run_test():
             cookies = {c["name"]: c["value"] for c in driver.get_cookies()}
             cf_clearance = cookies.get("cf_clearance")
             user_agent = driver.execute_script("return navigator.userAgent")
+            print(f"  🍪 獲取 Cookies: cf_clearance={'[YES: ' + cf_clearance[:15] + '...]' if cf_clearance else '[NONE]'}")
+
+            # If this was chapter 1 and we got cf_clearance, test curl_cffi immediately!
+            if idx == 1 and cf_clearance:
+                print("\n  🧪 [測試] 嘗試使用 curl_cffi 攜帶 cf_clearance 抓取第 2 章...")
+                try:
+                    from curl_cffi import requests as curl_requests
+                    s = curl_requests.Session(impersonate="chrome120")
+                    test_r = s.get(
+                        CHAPTERS_TO_TEST[1]["url"],
+                        headers={"User-Agent": user_agent, "Referer": chap_url},
+                        cookies={"cf_clearance": cf_clearance},
+                        timeout=10,
+                    )
+                    print(f"  🧪 [curl_cffi 測試結果] HTTP {test_r.status_code}, HTML 大小: {len(test_r.content)} bytes")
+                    t_title, t_text = clean_content(test_r.content.decode("gb18030", errors="replace"))
+                    if t_text:
+                        print(f"  🎉 [curl_cffi 大成功] 成功解析正文！章名: {t_title}, 字數: {len(t_text)} 字")
+                    else:
+                        print(f"  ⚠️ [curl_cffi 未提取到正文] 內容片段: {test_r.text[:200]}")
+                except Exception as cf_err:
+                    print(f"  ❌ [curl_cffi 失敗]: {cf_err}")
 
             print(f"  ✅ 抓取成功！章節名: {title}")
             print(f"  📊 正文字數: {len(text)} 字，已儲存至 {out_file}")
