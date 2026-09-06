@@ -5,9 +5,11 @@ from .base import SourceAdapter, Chapter, SourceParseError
 
 class Shuba69Source(SourceAdapter):
     source_id = "shuba69"
+    max_parallel = 17
     hosts = ("www.69shuba.com", "69shuba.com")
     encoding = "gb18030"
-    min_interval = 1.0
+    min_interval = 0.5
+    requires_browser = True
 
     def book_id(self, url):
         match = re.search(r'/(?:book|txt)/(\d+)', urlsplit(url).path, re.I)

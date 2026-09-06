@@ -26,7 +26,8 @@ class SourceAdapter:
     version = "1"
     hosts = ()
     min_interval = 3.0
-    max_parallel = 1
+    max_parallel = 17
+    requires_browser = False
     opening_labels = ()
     encoding = None
 

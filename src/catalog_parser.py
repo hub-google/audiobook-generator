@@ -418,7 +418,8 @@ def parse_catalog(catalog_url, html=None):
     if html is None:
         html = fetch_page(target_url, source).content
     result = source.parse_catalog(html, target_url)
-    result['source_max_parallel'] = source.max_parallel
+    result['source_max_parallel'] = getattr(source, 'max_parallel', 17)
+    result['needs_browser_scrape'] = bool(getattr(source, 'requires_browser', False))
     result['book_title'] = re.sub(r'[\\/:*?"<>|]', '', result['book_title'])
     result['catalog_identity'] = catalog_identity(result)
     result.update(analyze_duplicate_chapters(result['chapter_titles'], result['chapters']))
@@ -489,7 +490,8 @@ def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="co
     cleaner_patterns = validate_remove_patterns(snapshot.get("cleaner_remove_patterns") or [])
     config_data = {
         "source_schema_version": 1,
-        "source_max_parallel": max(1, min(17, int(res.get("source_max_parallel") or 1))),
+        "source_max_parallel": max(1, min(17, int(res.get("source_max_parallel") or 17))),
+        "needs_browser_scrape": bool(res.get("needs_browser_scrape", False)),
         "source_fingerprint": fingerprint,
         "source_id": res.get("source_id", ""),
         "parser_version": res.get("parser_version", ""),

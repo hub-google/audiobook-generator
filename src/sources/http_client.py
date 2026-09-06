@@ -42,6 +42,14 @@ def fetch_page(url, source, timeout=20):
     # Allow mock patch of requests.get in tests
     if getattr(requests.get, '__module__', None) == 'unittest.mock':
         response = requests.get(url, headers=headers, timeout=timeout)
+    elif getattr(source, 'requires_browser', False):
+        try:
+            from .browser_fetcher import fetch_page_browser
+            response = fetch_page_browser(url, source, timeout=timeout)
+        except Exception as e:
+            logging.warning(f"[HttpClient] Browser fetch failed or not available ({e}), falling back to requests session...")
+            session = get_session(source.source_id)
+            response = session.get(url, headers=headers, timeout=timeout)
     else:
         session = get_session(source.source_id)
         response = session.get(url, headers=headers, timeout=timeout)

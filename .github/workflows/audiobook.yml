@@ -195,19 +195,31 @@ jobs:
     name: "🔍 Setup — Parse Catalog & Build Matrix"
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
     outputs:
       matrix: ${{ steps.gen_matrix.outputs.matrix }}
       book_profile_id: ${{ steps.gen_matrix.outputs.book_profile_id }}
       source_max_parallel: ${{ steps.gen_matrix.outputs.source_max_parallel }}
+      needs_browser_scrape: ${{ steps.gen_matrix.outputs.needs_browser_scrape }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb jq
+
+      - name: Install Python Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install seleniumbase beautifulsoup4 pyyaml requests curl_cffi
 
       - name: Restore authoritative shared-config on Resume
         if: github.event.inputs.resume_source_run_id != ''
@@ -268,7 +280,7 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             echo "Catalog parsing attempt $attempt/3"
-            if python src/catalog_parser.py \
+            if xvfb-run -a python src/catalog_parser.py \
               --url "${{ github.event.inputs.catalog_url }}" \
               --start ${{ github.event.inputs.start_chap }} \
               --end   ${{ github.event.inputs.end_chap }} \
@@ -294,7 +306,8 @@ jobs:
           echo "" >> $GITHUB_OUTPUT
           echo 'EOF' >> $GITHUB_OUTPUT
           python -c "import yaml; print('book_profile_id=' + str((yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}).get('book_profile_id') or ''))" >> $GITHUB_OUTPUT
-          python -c "import yaml; print('source_max_parallel=' + str((yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}).get('source_max_parallel', 1)))" >> $GITHUB_OUTPUT
+          python -c "import yaml; print('source_max_parallel=' + str((yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}).get('source_max_parallel', 17)))" >> $GITHUB_OUTPUT
+          python -c "import yaml; print('needs_browser_scrape=' + str((yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}).get('needs_browser_scrape', False)).lower())" >> $GITHUB_OUTPUT
 
       - name: Validate non-empty chapter matrix
         run: |
@@ -424,12 +437,76 @@ jobs:
           retention-days: 7
 
 # ─────────────────────────────────────────────────────────────
+# Pre-scrape Stage: 若來源網站具備 Cloudflare 防護（如 69書吧），
+# 先於 host VM 上啟動虛擬螢幕以 SeleniumBase UC 抓取原始文字
+# ─────────────────────────────────────────────────────────────
+  scrape_chapters:
+    name: "🕷️ Scrape — Worker ${{ matrix.worker_id }} (Ch ${{ matrix.start_chap }}~${{ matrix.end_chap }})"
+    needs: [setup, resume_planner]
+    if: needs.setup.outputs.needs_browser_scrape == 'true' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.resume_planner.outputs.mode != 'publication' && needs.resume_planner.outputs.mode != 'final_merge'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 17
+      matrix: ${{ fromJSON(needs.resume_planner.outputs.worker_matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+      - name: Install Python Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install seleniumbase beautifulsoup4 pyyaml requests curl_cffi
+      - name: Download shared config
+        uses: actions/download-artifact@v4
+        with:
+          name: shared-config
+      - name: Download planner-validated partial worker checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: resume-plan
+          path: resume_bundle
+      - name: Validate and restore only the locked failed Run
+        id: artifact_restore
+        run: |
+          python src/worker_pipeline.py \
+            --stage restore_artifact \
+            --worker-id ${{ matrix.worker_id }} \
+            --artifact-dir "resume_bundle/workers/video-worker-${{ matrix.worker_id }}" \
+            --source-config config.yaml \
+            --source-run-id "${{ needs.resume_planner.outputs.source_run_id }}"
+      - name: Scrape Assigned Chapters via SeleniumBase UC
+        if: steps.artifact_restore.outputs.complete != 'true'
+        run: |
+          xvfb-run -a python src/worker_pipeline.py --stage crawl --worker-id ${{ matrix.worker_id }}
+      - name: Upload RawText Checkpoint
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-worker-${{ matrix.worker_id }}
+          path: Workspace/
+          if-no-files-found: ignore
+
+# ─────────────────────────────────────────────────────────────
 # Worker Pipeline: 並行獨立處理各 Worker 的章節 (一條龍 End-to-End)
 # ─────────────────────────────────────────────────────────────
   process_chapters:
     name: "⚡ Worker ${{ matrix.worker_id }} (Ch ${{ matrix.start_chap }}~${{ matrix.end_chap }})"
-    needs: [setup, resume_planner]
-    if: needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.resume_planner.outputs.mode != 'publication' && needs.resume_planner.outputs.mode != 'final_merge'
+    needs: [setup, resume_planner, scrape_chapters]
+    if: |
+      always() &&
+      needs.setup.result == 'success' &&
+      needs.resume_planner.result == 'success' &&
+      (needs.scrape_chapters.result == 'success' || needs.scrape_chapters.result == 'skipped') &&
+      needs.resume_planner.outputs.publication_complete != 'true' &&
+      needs.resume_planner.outputs.mode != 'publication' &&
+      needs.resume_planner.outputs.mode != 'final_merge'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
@@ -480,6 +557,13 @@ jobs:
           echo "   • 虛擬機工作目錄: Workspace/"
           echo "   • 雲端快取管理頁: https://github.com/${{ github.repository }}/actions/caches"
           echo "=================================================="
+
+      - name: Download scraped raw texts
+        if: needs.setup.outputs.needs_browser_scrape == 'true' && steps.artifact_restore.outputs.complete != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: raw-worker-${{ matrix.worker_id }}
+          path: Workspace/
 
       - name: Run Per-Chapter End-to-End Pipeline (Real-Time Saving)
         if: steps.artifact_restore.outputs.complete != 'true'
