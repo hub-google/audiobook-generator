@@ -1,7 +1,7 @@
 {
-  "schema_version": 3,
-  "revision": 62,
-  "updated_at": "2026-09-04T06:42:53.457501+00:00",
+  "schema_version": 4,
+  "revision": 63,
+  "updated_at": "2026-09-06T03:48:16.360050+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -574,6 +574,23 @@
         "quality": 98
       },
       "updated_at": "2026-09-04T06:42:53.457501+00:00"
+    },
+    "7fa4477431e3363c": {
+      "catalog_url": "https://www.69shuba.com/book/29590/",
+      "book_title": "诡秘之主",
+      "cleaner_remove_patterns": [
+        "PS：凌晨有加更，嗯，之后凌晨的更新我都会提前五分钟，因为0点准时经常被卡。"
+      ],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "updated_at": "2026-09-06T03:48:16.360050+00:00",
+      "manual_cover": {}
     }
   }
 }
