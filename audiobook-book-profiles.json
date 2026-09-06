@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
-  "revision": 64,
-  "updated_at": "2026-09-06T03:50:20.061890+00:00",
+  "revision": 65,
+  "updated_at": "2026-09-06T03:54:56.357396+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -603,6 +603,21 @@
         "sha256": "8cb237e79f98120ea46ebbf16f945da0ee76b2b099cb556047c88ece76167b2c",
         "quality": 98
       }
+    },
+    "13e89fea0c38aebc": {
+      "catalog_url": "https://tw.hjwzw.com/Book/Chapter/40949",
+      "book_title": "我師兄實在太穩健了",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "updated_at": "2026-09-06T03:54:56.357396+00:00",
+      "manual_cover": {}
     }
   }
 }
