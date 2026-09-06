@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 970,
-  "updated_at": "2026-09-06T03:43:42.085057+00:00",
+  "revision": 971,
+  "updated_at": "2026-09-06T03:48:43.610387+00:00",
   "queue": [
     {
       "task_id": "book-20260830-677484cd",
@@ -3685,7 +3685,21 @@
       "catalog_identity": "7a4189263244b33aaf6856d532d3aad5e44ca6516145a5497e83c7818b9dd214",
       "start_chapter": 1,
       "end_chapter": 1417,
-      "excluded_chapters": [],
+      "excluded_chapters": [
+        1158,
+        1276,
+        1364,
+        1408,
+        1409,
+        1410,
+        1411,
+        1412,
+        1413,
+        1414,
+        1415,
+        1416,
+        1417
+      ],
       "renumber_selected": true,
       "duplicate_chapter_count": 39,
       "chapter_title_overrides": {},
@@ -5126,7 +5140,7 @@
         "total": 0
       },
       "created_at": "2026-09-06T03:43:33.154536+00:00",
-      "updated_at": "2026-09-06T03:43:42.085057+00:00"
+      "updated_at": "2026-09-06T03:48:43.610387+00:00"
     }
   ],
   "completed": [
