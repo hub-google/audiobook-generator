@@ -26,7 +26,7 @@ class CleanerProfileTests(unittest.TestCase):
     def test_preview_keyword_is_removed_before_line_cleanup(self):
         text = "輪回盤！\n是這個人煉制的？\n頂點小說ww.2３w.om\n下一句。"
         cleaned = clean_text_content(text, "", "完美世界", ["頂點小說ww.2３w.om"])
-        self.assertEqual(cleaned, "輪回盤！\n是這個人煉制的？\n下一句。")
+        self.assertEqual(cleaned, "輪回盤!\n是這個人煉制的?\n下一句。")
         self.assertNotIn("頂點小說", cleaned)
 
     def test_book_rules_do_not_apply_when_not_supplied(self):
@@ -61,7 +61,7 @@ class CleanerProfileTests(unittest.TestCase):
             "一場曠世之戰落幕，\n然而卻是留下了一個滿目瘡痍的中州。"
         )
         cleaned = clean_text_content(text, title, "鬥破蒼穹")
-        self.assertTrue(cleaned.startswith("一場曠世之戰落幕，"))
+        self.assertTrue(cleaned.startswith("一場曠世之戰落幕,"))
         self.assertNotIn("大結局", cleaned)
 
     def test_chapter_reference_later_in_prose_is_preserved(self):

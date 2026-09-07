@@ -10,7 +10,7 @@ on:
         default: false
         type: boolean
   workflow_run:
-    workflows: ["Audiobook Automation Pipeline (Parallel)"]
+    workflows: ["Audiobook Automation Pipeline (Parallel)", "Cover preflight"]
     types: [completed]
   schedule:
     - cron: "*/15 * * * *"

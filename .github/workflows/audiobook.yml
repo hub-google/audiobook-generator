@@ -1,10 +1,22 @@
 name: Audiobook Automation Pipeline (Parallel)
 
-run-name: "有聲小說製作｜${{ inputs.book_title || '待解析書名' }}｜${{ inputs.chapter_label != '' && inputs.chapter_label || format('Ch{0}-{1}', inputs.start_chap, inputs.end_chap) }}｜${{ inputs.queue_task_id || 'GUI直接執行' }}"
+run-name: "${{ inputs.execution_phase == 'scrape_only' && '【TXT抓取】' || ((inputs.execution_phase == 'resume_processing' || inputs.resume_source_run_id != '') && '【後製續傳】' || '【後製上傳】') }}有聲小說製作｜${{ inputs.book_title || '待解析書名' }}｜${{ inputs.chapter_label != '' && inputs.chapter_label || format('Ch{0}-{1}', inputs.start_chap, inputs.end_chap) }}｜${{ inputs.queue_task_id || 'GUI直接執行' }}"
 
 on:
   workflow_dispatch:
     inputs:
+      execution_phase:
+        description: 'scrape_only / processing / resume_processing'
+        required: true
+        default: 'processing'
+      scrape_source_run_id:
+        description: 'TXT 抓取 Run ID；只允許用於取得 scrape-raw artifact'
+        required: false
+        default: ''
+      cover_source_run_id:
+        description: 'Approved cover preflight Run ID'
+        required: false
+        default: ''
       book_title:
         description: '小說書名（只用於可讀的 Run 名稱）'
         required: false
@@ -276,7 +288,7 @@ jobs:
           PY
 
       - name: Parse Catalog & Generate config.yaml + matrix.json
-        if: github.event.inputs.resume_source_run_id == ''
+        if: github.event.inputs.resume_source_run_id == '' && inputs.scrape_source_run_id == ''
         run: |
           for attempt in 1 2 3; do
             echo "Catalog parsing attempt $attempt/3"
@@ -297,6 +309,21 @@ jobs:
             if [ "$attempt" -eq 3 ]; then exit 1; fi
             sleep 60
           done
+
+      - name: Restore reviewed TXT catalog snapshot
+        if: inputs.resume_source_run_id == '' && inputs.scrape_source_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: shared-config
+          path: scrape_config
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.scrape_source_run_id }}
+      - name: Apply approved cleaner to reviewed catalog
+        if: inputs.resume_source_run_id == '' && inputs.scrape_source_run_id != ''
+        env:
+          PROFILE_SNAPSHOT: ${{ inputs.book_profile_snapshot_b64 }}
+        run: python src/preflight_config.py
 
       - name: Export matrix to GitHub Actions output
         id: gen_matrix
@@ -410,6 +437,7 @@ jobs:
             --config config.yaml \
             --matrix matrix.json \
             --output-dir resume_bundle \
+            ${{ (inputs.execution_phase == 'scrape_only' || (inputs.scrape_source_run_id != '' && inputs.resume_source_run_id == '')) && '--fresh-workers' || '' }} \
             --github-output "$GITHUB_OUTPUT"
       - name: Summarize selected resume work
         run: |
@@ -443,7 +471,7 @@ jobs:
   scrape_chapters:
     name: "🕷️ Scrape — Worker ${{ matrix.worker_id }} (Ch ${{ matrix.start_chap }}~${{ matrix.end_chap }})"
     needs: [setup, resume_planner]
-    if: needs.setup.outputs.needs_browser_scrape == 'true' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.resume_planner.outputs.mode != 'publication' && needs.resume_planner.outputs.mode != 'final_merge'
+    if: inputs.execution_phase == 'scrape_only' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.resume_planner.outputs.mode != 'publication' && needs.resume_planner.outputs.mode != 'final_merge'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -486,12 +514,51 @@ jobs:
         if: steps.artifact_restore.outputs.complete != 'true'
         run: |
           xvfb-run -a python src/worker_pipeline.py --stage crawl --worker-id ${{ matrix.worker_id }}
+      - name: Build per-chapter advertisement review report
+        if: steps.artifact_restore.outputs.complete != 'true'
+        run: |
+          RAW_DIR=$(find Workspace -type d -name RawText -print -quit)
+          python src/ad_review_report.py --raw-dir "$RAW_DIR" --output "Workspace/AdReview/ad-candidates-worker-${{ matrix.worker_id }}.json" --task-id "${{ inputs.queue_task_id }}" --worker-id "${{ matrix.worker_id }}"
       - name: Upload RawText Checkpoint
         uses: actions/upload-artifact@v4
         with:
-          name: raw-worker-${{ matrix.worker_id }}
+          name: scrape-raw-${{ inputs.queue_task_id }}-worker-${{ matrix.worker_id }}
           path: Workspace/
           if-no-files-found: ignore
+          retention-days: 30
+
+  finalize_scrape_review:
+    name: "🧠 Finalize full-book advertisement analysis"
+    needs: [setup, resume_planner, scrape_chapters]
+    if: inputs.execution_phase == 'scrape_only' && needs.scrape_chapters.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install pyyaml requests beautifulsoup4
+      - uses: actions/download-artifact@v4
+        with:
+          name: shared-config
+      - name: Download every normalized TXT worker
+        uses: actions/download-artifact@v4
+        with:
+          pattern: scrape-raw-${{ inputs.queue_task_id }}-worker-*
+          path: all-scrape-workers
+          merge-multiple: true
+      - name: Analyze the complete selected book
+
+        # Downloaded workers must exactly cover the locked selected chapters.
+        run: |
+          RAW_DIR=$(find all-scrape-workers -type d -name RawText -print -quit)
+          python src/ad_review_report.py --raw-dir "$RAW_DIR" --output "AdReview/ad-candidates-full-book.json" --task-id "${{ inputs.queue_task_id }}" --worker-id -1 --config config.yaml
+      - name: Upload authoritative advertisement review report
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrape-review-${{ inputs.queue_task_id }}
+          path: AdReview/
+          if-no-files-found: error
+          retention-days: 30
 
 # ─────────────────────────────────────────────────────────────
 # Worker Pipeline: 並行獨立處理各 Worker 的章節 (一條龍 End-to-End)
@@ -501,6 +568,7 @@ jobs:
     needs: [setup, resume_planner, scrape_chapters]
     if: |
       always() &&
+      inputs.execution_phase != 'scrape_only' &&
       needs.setup.result == 'success' &&
       needs.resume_planner.result == 'success' &&
       (needs.scrape_chapters.result == 'success' || needs.scrape_chapters.result == 'skipped') &&
@@ -559,11 +627,14 @@ jobs:
           echo "=================================================="
 
       - name: Download scraped raw texts
-        if: needs.setup.outputs.needs_browser_scrape == 'true' && steps.artifact_restore.outputs.complete != 'true'
+        if: inputs.scrape_source_run_id != '' && steps.artifact_restore.outputs.complete != 'true'
         uses: actions/download-artifact@v4
         with:
-          name: raw-worker-${{ matrix.worker_id }}
+          name: scrape-raw-${{ inputs.queue_task_id }}-worker-${{ matrix.worker_id }}
           path: Workspace/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.scrape_source_run_id }}
 
       - name: Run Per-Chapter End-to-End Pipeline (Real-Time Saving)
         if: steps.artifact_restore.outputs.complete != 'true'
@@ -702,7 +773,7 @@ jobs:
   plan_parts:
     name: "🧭 Lock the complete Part plan"
     needs: [setup, resume_planner, process_chapters]
-    if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && (needs.process_chapters.result == 'success' || needs.process_chapters.result == 'skipped')
+    if: always() && inputs.execution_phase != 'scrape_only' && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && (needs.process_chapters.result == 'success' || needs.process_chapters.result == 'skipped')
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
@@ -783,7 +854,7 @@ jobs:
   merge_parts:
     name: "🧩 Merge worker ${{ matrix.merge_worker_id }} — Parts ${{ matrix.part_numbers }}"
     needs: [resume_planner, plan_parts, process_chapters]
-    if: always() && needs.resume_planner.result == 'success' && needs.plan_parts.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.resume_planner.outputs.mode != 'publication' && needs.resume_planner.outputs.mode != 'final_merge'
+    if: always() && inputs.execution_phase != 'scrape_only' && needs.resume_planner.result == 'success' && needs.plan_parts.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.resume_planner.outputs.mode != 'publication' && needs.resume_planner.outputs.mode != 'final_merge'
     strategy:
       fail-fast: false
       max-parallel: 17
@@ -848,7 +919,7 @@ jobs:
   final_merge:
     name: "🔒 Validate complete Final Merge"
     needs: [resume_planner, plan_parts, merge_parts]
-    if: always() && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.plan_parts.result == 'success' && (needs.merge_parts.result == 'success' || needs.merge_parts.result == 'skipped')
+    if: always() && inputs.execution_phase != 'scrape_only' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.plan_parts.result == 'success' && (needs.merge_parts.result == 'success' || needs.merge_parts.result == 'skipped')
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
@@ -911,7 +982,7 @@ jobs:
     needs: [setup, resume_planner, process_chapters, plan_parts, merge_parts, final_merge]
     # Scheduled runs only check whether the latest manual run needs a retry.
     # They do not create worker artifacts, so never start the uploader for them.
-    if: always() && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.final_merge.result == 'success'
+    if: always() && inputs.execution_phase != 'scrape_only' && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.final_merge.result == 'success'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
@@ -1023,6 +1094,19 @@ jobs:
             fi
             sleep 10
           done
+
+      - name: Download approved preflight cover
+        if: inputs.cover_source_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: cover-review-${{ inputs.queue_task_id }}
+          path: approved_cover
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.cover_source_run_id }}
+      - name: Restore and validate approved cover
+        if: inputs.cover_source_run_id != ''
+        run: python src/cover_preflight.py --restore approved_cover --config prepared_source/config.yaml --task-id "${{ inputs.queue_task_id }}"
 
       - name: Download Final Merge subtitles and verification sidecars
         uses: actions/download-artifact@v4
@@ -1261,7 +1345,7 @@ jobs:
 
   strict_success_gate:
     name: "Strict final success gate"
-    if: always() && github.event_name == 'workflow_dispatch'
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.execution_phase != 'scrape_only'
     needs: [setup, resume_planner, process_chapters, plan_parts, merge_parts, final_merge, upload_to_youtube]
     runs-on: ubuntu-latest
     steps:

@@ -12,9 +12,11 @@ from urllib.parse import urlsplit, urlunsplit
 try:
     from .cloud_queue import GitHubQueueStore
     from .chapter_numbers import normalize_chapter_number_overrides
+    from .raw_text_normalizer import normalize_scraped_text
 except ImportError:
     from cloud_queue import GitHubQueueStore
     from chapter_numbers import normalize_chapter_number_overrides
+    from raw_text_normalizer import normalize_scraped_text
 
 
 PROFILE_PATH = "audiobook-book-profiles.json"
@@ -44,9 +46,10 @@ def validate_remove_patterns(patterns):
     result = []
     for raw in patterns or []:
         # The field name is retained for persisted-profile compatibility, but
-        # entries are literal text (never regular expressions).  Normalize only
-        # line endings so text pasted on Windows matches downloaded chapter text.
-        pattern = str(raw).replace("\r\n", "\n").replace("\r", "\n")
+        # entries are literal text (never regular expressions).  Use the exact
+        # same canonical form as scraped RawText so spaced/fullwidth variants
+        # resolve to one review rule on every computer.
+        pattern = normalize_scraped_text(str(raw))
         if not pattern.strip() or pattern in result:
             continue
         if len(pattern) > MAX_PATTERN_LENGTH:

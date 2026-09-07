@@ -13,8 +13,10 @@ from bs4 import BeautifulSoup
 import yaml
 try:
     from .artifact_validation import ArtifactValidationError, validate_text
+    from .raw_text_normalizer import RAW_NORMALIZER_VERSION, normalize_scraped_text
 except ImportError:
     from artifact_validation import ArtifactValidationError, validate_text
+    from raw_text_normalizer import RAW_NORMALIZER_VERSION, normalize_scraped_text
 
 try:
     from .source_status import (
@@ -73,7 +75,9 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
         config['paths']['workspace_base'], workspace_name(config)
     ))
     raw_text_dir = os.path.join(workspace_dir, "RawText")
+    source_raw_dir = os.path.join(workspace_dir, "SourceRaw")
     os.makedirs(raw_text_dir, exist_ok=True)
+    os.makedirs(source_raw_dir, exist_ok=True)
     source_status = SourceStatusStore(workspace_dir)
 
     progress_file = os.path.join(workspace_dir, "progress.json")
@@ -100,6 +104,7 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
         expected_provenance = {
             'source_fingerprint': config.get('source_fingerprint'),
             'url': urljoin(base_url, chap_url), 'parser_version': source.version,
+            'raw_normalizer_version': RAW_NORMALIZER_VERSION,
         }
         provenance_matches = not config.get('source_schema_version')
         if not provenance_matches:
@@ -137,9 +142,18 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
 
                 raw_filename = f"{book_title}_chapter_{global_idx}_raw.txt"
                 raw_path     = os.path.join(raw_text_dir, raw_filename)
+                source_raw_path = os.path.join(source_raw_dir, raw_filename)
+                original_text = title + "\n\n" + raw_text
+                normalized_text = normalize_scraped_text(original_text)
+                source_tmp = source_raw_path + ".tmp"
+                with open(source_tmp, "w", encoding="utf-8") as f:
+                    f.write(original_text)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(source_tmp, source_raw_path)
                 raw_tmp = raw_path + ".tmp"
                 with open(raw_tmp, "w", encoding="utf-8") as f:
-                    f.write(title + "\n\n" + raw_text)
+                    f.write(normalized_text)
                     f.flush()
                     os.fsync(f.fileno())
                 validate_text(raw_tmp, clean=False)

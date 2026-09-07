@@ -16,8 +16,10 @@ except ImportError:
 
 try:
     from .book_profiles import validate_remove_patterns
+    from .raw_text_normalizer import normalize_scraped_text
 except ImportError:
     from book_profiles import validate_remove_patterns
+    from raw_text_normalizer import normalize_scraped_text
 
 def load_config():
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.yaml")
@@ -90,7 +92,9 @@ def _clean_opening_lines(text, title, book_title, scan_nonempty=12, source_label
 
 
 def clean_text_content(text, title, book_title, remove_patterns=None, source_labels=None):
-    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    text = normalize_scraped_text(text)
+    title = normalize_scraped_text(title)
+    book_title = normalize_scraped_text(book_title)
     for unwanted_text in validate_remove_patterns(remove_patterns):
         text = text.replace(unwanted_text, '')
     text = text.replace('\xa0', ' ').replace('\u3000', ' ')

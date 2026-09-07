@@ -47,7 +47,10 @@ class GuiQueueControlTests(unittest.TestCase):
         app = make_app()
         app._update_queue_control_states([{"status": "queued"}, {"status": "paused"}])
         self.assertEqual(app.btn_sample_text.config.call_args.kwargs["state"], tk.DISABLED)
-        app._update_queue_control_states({"status": "completed"})
+        app._update_queue_control_states({
+            "status": "waiting_review", "scrape_run_id": 123,
+            "stages": {"scrape": {"status": "completed"}},
+        })
         self.assertEqual(app.btn_sample_text.config.call_args.kwargs["state"], tk.NORMAL)
 
     def test_sample_positions_use_filtered_lower_middle_and_output_number(self):
@@ -103,7 +106,7 @@ class GuiQueueControlTests(unittest.TestCase):
     def test_queued_task_without_run_displays_idle(self):
         app = make_app()
         task = {"task_id": "task-1", "run_id": None, "status": "queued"}
-        self.assertEqual(app._queue_status_text(task), "idle")
+        self.assertEqual(app._queue_status_text(task), "① 等待啟動")
 
 
 if __name__ == "__main__":

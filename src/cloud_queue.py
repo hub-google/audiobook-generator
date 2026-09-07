@@ -18,13 +18,29 @@ except ImportError:
     from chapter_numbers import normalize_chapter_number_overrides
 
 
-QUEUE_SCHEMA_VERSION = 2
-BLOCKING_STATES = {"dispatching", "running", "waiting_retry", "needs_attention", "canceling"}
+QUEUE_SCHEMA_VERSION = 3
+BLOCKING_STATES = {
+    "dispatching", "preparing_assets", "waiting_review", "processing",
+    "running", "waiting_retry", "needs_attention", "canceling",
+}
 TERMINAL_STATES = {"completed", "stopped", "interrupted"}
 
 
-ACTIVE_EXECUTION_STATES = {"dispatching", "running", "canceling"}
-NON_ACTIVE_STATES = {"completed", "stopped", "interrupted", "needs_attention", "paused", "waiting_retry"}
+ACTIVE_EXECUTION_STATES = {"dispatching", "running", "preparing_assets", "processing", "canceling"}
+NON_ACTIVE_STATES = {
+    "completed", "stopped", "interrupted", "needs_attention", "paused",
+    "waiting_retry", "waiting_review",
+}
+
+
+def empty_stage_state():
+    return {
+        "status": "pending",
+        "run_id": None,
+        "run_attempt": 0,
+        "reason": None,
+        "completed_at": None,
+    }
 
 
 def utc_now():
@@ -135,6 +151,19 @@ def normalize_queue(value):
             seen.add(task_id)
     queue["completed"] = completed
     for task in queue["queue"] + queue["completed"]:
+        stages = task.setdefault("stages", {})
+        for stage_name in ("scrape", "cover", "processing", "publication"):
+            current = stages.get(stage_name)
+            default = empty_stage_state()
+            if isinstance(current, dict):
+                default.update(current)
+            stages[stage_name] = default
+        task.setdefault("workflow_phase", "processing" if task.get("run_id") else "queued")
+        task.setdefault("scrape_run_id", stages["scrape"].get("run_id"))
+        task.setdefault("cover_run_id", stages["cover"].get("run_id"))
+        task.setdefault("processing_run_id", stages["processing"].get("run_id"))
+        task.setdefault("scrape_snapshot_id", "")
+        task.setdefault("ad_review", {"status": "pending"})
         task["chapter_order"] = normalize_chapter_order(
             task.get("chapter_order"), task.get("start_chapter") or 1, task.get("end_chapter"),
         )
@@ -189,6 +218,18 @@ def new_task(catalog_url, book_title="", start_chapter=1, end_chapter=None, excl
         ),
         "chapter_order": normalize_chapter_order(chapter_order, start_chapter, end_chapter),
         "status": "queued",
+        "workflow_phase": "queued",
+        "stages": {
+            "scrape": empty_stage_state(),
+            "cover": empty_stage_state(),
+            "processing": empty_stage_state(),
+            "publication": empty_stage_state(),
+        },
+        "scrape_run_id": None,
+        "cover_run_id": None,
+        "processing_run_id": None,
+        "scrape_snapshot_id": "",
+        "ad_review": {"status": "pending"},
         "run_id": None,
         "run_attempt": 0,
         "execution_generation": 1,
@@ -257,6 +298,19 @@ def update_task(queue, task_id, **changes):
         raise KeyError(task_id)
     task.update(changes)
     task["updated_at"] = utc_now()
+    return touch(queue)
+
+
+def approve_preflight(queue, task_id, scrape_run_id, cover_run_id, review):
+    queue = normalize_queue(queue)
+    task = next(t for t in queue["queue"] if t["task_id"] == task_id)
+    if (task.get("status") != "waiting_review" or
+            task.get("scrape_run_id") != scrape_run_id or
+            task.get("cover_run_id") != cover_run_id or
+            any(task["stages"][name]["status"] != "completed" for name in ("scrape", "cover"))):
+        raise ValueError("TXT／封面尚未完成或雲端任務已變更，請重新同步並審核")
+    task.update(workflow_phase="processing", status="queued", run_id=None,
+                processing_run_id=None, reason=None, ad_review=copy.deepcopy(review))
     return touch(queue)
 
 

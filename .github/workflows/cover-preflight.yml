@@ -1,0 +1,48 @@
+name: Cover preflight
+run-name: "【封面與Gemini】${{ inputs.book_title || '待解析書名' }}｜${{ inputs.queue_task_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      book_title: {required: true, type: string}
+      queue_task_id: {required: true, type: string}
+      catalog_url: {required: true, type: string}
+      start_chap: {required: true, type: string}
+      end_chap: {required: true, type: string}
+      exclude_chapters: {required: false, type: string}
+      renumber_selected: {required: false, default: "false", type: string}
+      chapter_title_overrides_b64: {required: false, type: string}
+      chapter_order_b64: {required: false, type: string}
+      book_profile_snapshot_b64: {required: false, type: string}
+
+permissions:
+  contents: read
+
+jobs:
+  generate_cover:
+    name: "🎨 Generate cover and Gemini review data"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -r requirements.txt
+      - run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Parse catalog identity
+        run: |
+          xvfb-run -a python src/catalog_parser.py --url "${{ inputs.catalog_url }}" --start "${{ inputs.start_chap }}" --end "${{ inputs.end_chap }}" --output config.yaml --workers 10 --matrix-output matrix.json --exclude-chapters "${{ inputs.exclude_chapters }}" --renumber-selected "${{ inputs.renumber_selected }}" --chapter-title-overrides-b64 "${{ inputs.chapter_title_overrides_b64 }}" --chapter-order-b64 "${{ inputs.chapter_order_b64 }}" --book-profile-snapshot-b64 "${{ inputs.book_profile_snapshot_b64 }}"
+      - name: Generate reviewable cover
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python src/cover_preflight.py --config config.yaml --task-id "${{ inputs.queue_task_id }}"
+      - name: Upload cover review artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cover-review-${{ inputs.queue_task_id }}
+          path: |
+            Workspace/*/Cover/
+            config.yaml
+          if-no-files-found: error
+          retention-days: 30

@@ -93,11 +93,15 @@ def artifact_source_run_id(queue, profile_id, current_task_id="", current_task=N
 TAIPEI = ZoneInfo("Asia/Taipei")
 STATUS_LABELS = {
     "dispatching": "正在啟動",
+    "preparing_assets": "TXT／封面前置處理中",
+    "waiting_review": "等待人工審核",
+    "processing": "後製／上傳中",
     "running": "製作中",
     "waiting_retry": "等待自動重試",
     "needs_attention": "需要人工處理",
     "canceling": "正在取消",
 }
+_AUTO_TASK = object()
 
 
 def parse_time(value):
@@ -131,6 +135,9 @@ class Dispatcher:
 
     def runs(self):
         return self.request("GET", "/actions/workflows/audiobook.yml/runs", params={"event": "workflow_dispatch", "per_page": 100}).json().get("workflow_runs", [])
+
+    def cover_runs(self):
+        return self.request("GET", "/actions/workflows/cover-preflight.yml/runs", params={"event": "workflow_dispatch", "per_page": 100}).json().get("workflow_runs", [])
 
     def run_by_id(self, run_id):
         response = requests.get(f"{self.api}/actions/runs/{run_id}", headers=self.headers, timeout=30)
@@ -281,13 +288,86 @@ class Dispatcher:
 
     def reconcile(self, queue):
         runs = self.runs()
+        cover_runs = self.cover_runs() if any(
+            task.get("workflow_phase") == "preflight" for task in queue.get("queue", [])
+        ) else []
         by_task = {}
         for run in runs:
             task_id = task_id_from_run_name(run.get("display_title") or run.get("name"))
             if task_id:
                 by_task.setdefault(task_id, []).append(run)
+        covers_by_task = {}
+        for run in cover_runs:
+            task_id = task_id_from_run_name(run.get("display_title") or run.get("name"))
+            if task_id:
+                covers_by_task.setdefault(task_id, []).append(run)
         changed = False
         for task in list(queue["queue"]):
+            if task.get("workflow_phase") == "preflight":
+                if task.get("status") in {"queued", "paused", "stopped", "interrupted"}:
+                    continue
+                task_id = task.get("task_id")
+                stages = task.setdefault("stages", {})
+                scrape = stages.setdefault("scrape", {})
+                cover = stages.setdefault("cover", {})
+                def stage_run(state, candidates):
+                    if state.get("run_id"):
+                        return next((r for r in candidates if int(r["id"]) == int(state["run_id"])), None) or self.run_by_id(state["run_id"])
+                    since = parse_time(state.get("dispatched_at") or task.get("dispatched_at"))
+                    return next((r for r in candidates if not since or
+                                 (parse_time(r.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc)) >= since), None)
+                scrape_run = stage_run(scrape, by_task.get(task_id) or [])
+                cover_run = stage_run(cover, covers_by_task.get(task_id) or [])
+                for name, state, run in (("scrape", scrape, scrape_run), ("cover", cover, cover_run)):
+                    if not run:
+                        continue
+                    run_id = int(run["id"])
+                    raw_status = run.get("status")
+                    conclusion = run.get("conclusion")
+                    next_status = "running" if raw_status != "completed" else (
+                        "completed" if conclusion == "success" else "failed"
+                    )
+                    if state.get("run_id") != run_id or state.get("status") != next_status:
+                        state.update({"run_id": run_id, "status": next_status})
+                        if next_status == "failed":
+                            state["reason"] = conclusion or "failure"
+                        elif next_status == "completed":
+                            state.update({"reason": None, "completed_at": run.get("updated_at")})
+                        task[f"{name}_run_id"] = run_id
+                        changed = True
+                statuses = {scrape.get("status"), cover.get("status")}
+                if task.get("status") == "canceling":
+                    # A user may cancel during the short window before GitHub
+                    # indexes either workflow_dispatch Run. Keep the durable
+                    # task in canceling until both stage dispatches are
+                    # observed or explicitly fail, then stop it.
+                    for run in (scrape_run, cover_run):
+                        if run and run.get("status") != "completed":
+                            response = requests.post(
+                                f"{self.api}/actions/runs/{int(run['id'])}/cancel",
+                                headers=self.headers, timeout=30,
+                            )
+                            if response.status_code not in (200, 202, 409):
+                                raise RuntimeError(
+                                    f"GitHub API POST /actions/runs/{run['id']}/cancel failed "
+                                    f"({response.status_code}): {response.text}"
+                                )
+                    cancel_pending = any(
+                        state.get("status") in {"running", "dispatching"}
+                        for state in (scrape, cover)
+                    )
+                    new_status, reason = ("canceling" if cancel_pending else "stopped"), "user_cancelled"
+                elif "failed" in statuses:
+                    failed_names = [name for name, state in (("TXT", scrape), ("封面", cover)) if state.get("status") == "failed"]
+                    new_status, reason = "needs_attention", "preflight_failed:" + ",".join(failed_names)
+                elif statuses == {"completed"}:
+                    new_status, reason = "waiting_review", None
+                else:
+                    new_status, reason = "preparing_assets", None
+                if task.get("status") != new_status or task.get("reason") != reason:
+                    task.update({"status": new_status, "reason": reason})
+                    changed = True
+                continue
             # Recover the GUI/dispatcher race where GUI records the cancelled
             # Run first.  The durable edit intent must still win.
             if task.get("status") == "interrupted" and task.get("requeue_after_edit"):
@@ -295,6 +375,9 @@ class Dispatcher:
                 changed = True
                 continue
             candidates = by_task.get(task.get("task_id"), [])
+            if task.get("scrape_run_id"):
+                candidates = [r for r in candidates if int(r["id"]) != int(task["scrape_run_id"])
+                              and "【TXT抓取】" not in str(r.get("display_title") or r.get("name") or "")]
             retry_requested_at = parse_time(task.get("retry_requested_at"))
             if retry_requested_at:
                 candidates = [run for run in candidates if (parse_time(run.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc)) >= retry_requested_at]
@@ -389,9 +472,10 @@ class Dispatcher:
 
     def dispatch_next(self, queue):
         active_runs = [r for r in self.runs() if r.get("status") != "completed"]
-        if active_runs:
-            first_run = active_runs[0]
-            return queue, f"Audiobook run {first_run.get('id')} ({first_run.get('display_title') or first_run.get('name')}) is already active on GitHub. Will not dispatch another task."
+        active_cover_runs = [r for r in self.cover_runs() if r.get("status") != "completed"]
+        if active_runs or active_cover_runs:
+            first_run = (active_runs or active_cover_runs)[0]
+            return queue, f"GitHub Run {first_run.get('id')} ({first_run.get('display_title') or first_run.get('name')}) is already active. Will not dispatch another task."
 
         task = next_task(queue)
         if not task:
@@ -402,6 +486,11 @@ class Dispatcher:
             profiles, task.get("catalog_url") or "", task.get("book_title") or "",
         )
         snapshot = profile_snapshot(profile_id, profile)
+        if task.get("workflow_phase") == "processing" and task.get("scrape_run_id"):
+            review = task.get("ad_review") or {}
+            if review.get("status") != "approved":
+                raise RuntimeError("Processing requires approved preflight review")
+            snapshot = profile_snapshot(profile_id, {**profile, "cleaner_remove_patterns": review["remove_patterns"]})
         snapshot["catalog_identity"] = task.get("catalog_identity") or ""
         # Existing tasks created before book profiles retain their edited titles
         # until the first explicit profile save migrates them.
@@ -414,17 +503,36 @@ class Dispatcher:
             )
         task["book_profile_id"] = profile_id
         task["profile_snapshot"] = snapshot
-        source_run_id = self.select_artifact_source_run_id(
-            queue, profile_id, task_id, current_task=task,
-        )
+        stages = task.get("stages") or {}
+        is_processing = task.get("workflow_phase") == "processing"
+        need_scrape = not is_processing and (stages.get("scrape") or {}).get("status") != "completed"
+        need_cover = not is_processing and (stages.get("cover") or {}).get("status") != "completed"
+        # A reviewed TXT Run is an input snapshot, never a processing resume
+        # source.  Only the task's own previous processing Run may supply
+        # worker/video checkpoints; legacy tasks without a TXT snapshot retain
+        # the older failed-artifact discovery as a compatibility fallback.
+        source_run_id = None
+        if is_processing:
+            source_run_id = task.get("processing_run_id") or None
+            if not source_run_id and not task.get("scrape_run_id"):
+                source_run_id = self.select_artifact_source_run_id(
+                    queue, profile_id, task_id, current_task=task,
+                )
         task["artifact_source_run_id"] = source_run_id
-        task.update({"status": "dispatching", "reason": None, "retry_at": None, "dispatched_at": datetime.now(timezone.utc).isoformat()})
+        phase = "processing" if is_processing else "preflight"
+        for name, needed in (("scrape", need_scrape), ("cover", need_cover)):
+            if needed:
+                stages.setdefault(name, {}).update(status="dispatching", run_id=None,
+                    dispatched_at=datetime.now(timezone.utc).isoformat())
+        task.update({"status": "dispatching", "workflow_phase": phase, "reason": None, "retry_at": None, "dispatched_at": datetime.now(timezone.utc).isoformat()})
         queue = update_task(
             queue, task_id,
             book_profile_id=profile_id,
             profile_snapshot=snapshot,
             artifact_source_run_id=source_run_id,
             status="dispatching",
+            workflow_phase=phase,
+            stages=stages,
             reason=None,
             retry_at=None,
             dispatched_at=task["dispatched_at"],
@@ -437,7 +545,7 @@ class Dispatcher:
         renumber = bool(task.get("renumber_selected"))
         chapter_label = format_chapter_label(start_int, end_int, excluded_chapters=excluded, renumber_selected=renumber)
 
-        inputs = {
+        common_inputs = {
             "book_title": task.get("book_title") or "待解析書名",
             "chapter_label": chapter_label,
             "queue_task_id": task_id,
@@ -458,48 +566,92 @@ class Dispatcher:
             ).decode("ascii"),
             "zip_password": "",
         }
+        inputs = dict(common_inputs, execution_phase=("resume_processing" if source_run_id else "processing") if is_processing else "scrape_only",
+                      scrape_source_run_id=str(task.get("scrape_run_id") or ""),
+                      cover_source_run_id=str(task.get("cover_run_id") or ""))
+        cover_inputs = {key: value for key, value in common_inputs.items() if key not in {
+            "chapter_label", "resume_source_run_id", "zip_password",
+        }}
         dispatch_requested_at = datetime.now(timezone.utc)
         try:
-            self.request("POST", "/actions/workflows/audiobook.yml/dispatches", json={"ref": "master", "inputs": inputs})
+            if need_scrape or is_processing:
+                self.request("POST", "/actions/workflows/audiobook.yml/dispatches", json={"ref": "master", "inputs": inputs})
+            if need_cover:
+                self.request("POST", "/actions/workflows/cover-preflight.yml/dispatches", json={"ref": "master", "inputs": cover_inputs})
         except Exception as error:
             latest, latest_sha = self.store.load()
-            failed = update_task(latest, task_id, status="needs_attention", reason=f"dispatch_failed: {error}")
+            # Preserve the successfully submitted sibling when the second
+            # dispatch fails; only the failed dispatch needs another attempt.
+            failed_stage = "cover" if need_cover and (need_scrape or not is_processing) else "processing"
+            if need_scrape and "/audiobook.yml/" in str(error):
+                failed_stage = "scrape"
+            stages.setdefault(failed_stage, {}).update(status="failed", reason=str(error))
+            failed = update_task(latest, task_id, status="needs_attention", stages=stages, reason=f"dispatch_failed: {error}")
             self.store.save(failed, sha=latest_sha, message=f"Record dispatch failure for {task_id}")
             raise
         # workflow_dispatch returns 204 without a Run ID. Match the unique
         # task ID embedded in run-name so the GUI can open/cancel the exact Run
         # immediately instead of waiting for the next 15-minute reconciliation.
-        run_id = None
-        for _ in range(10):
-            for run in self.runs():
-                created_at = parse_time(run.get("created_at"))
-                if (
-                    task_id_from_run_name(run.get("display_title") or run.get("name")) == task_id
-                    and created_at is not None
-                    and created_at >= dispatch_requested_at
-                ):
-                    run_id = int(run["id"])
-                    break
-            if run_id:
+        run_id = None if (need_scrape or is_processing) else task.get("scrape_run_id")
+        cover_run_id = None if need_cover else task.get("cover_run_id")
+        # workflow_dispatch does not return a Run id.  Make one immediate
+        # discovery attempt; if GitHub has not indexed it yet, the durable
+        # dispatching state is attached by the next reconciliation.
+        for _ in range(1):
+            if need_scrape or is_processing:
+                for run in self.runs():
+                    created_at = parse_time(run.get("created_at"))
+                    if (task_id_from_run_name(run.get("display_title") or run.get("name")) == task_id
+                            and created_at is not None and created_at >= dispatch_requested_at):
+                        run_id = int(run["id"]); break
+            if need_cover:
+                for run in self.cover_runs():
+                    created_at = parse_time(run.get("created_at"))
+                    if (task_id_from_run_name(run.get("display_title") or run.get("name")) == task_id
+                            and created_at is not None and created_at >= dispatch_requested_at):
+                        cover_run_id = int(run["id"]); break
+            # Attach as soon as the primary TXT/processing Run is visible.  A
+            # cover Run may appear a few seconds later and is reconciled by
+            # task id; a cover-only retry waits for its own Run.
+            if ((is_processing or need_scrape) and run_id) or (
+                    not is_processing and not need_scrape and (cover_run_id or not need_cover)):
                 break
-            import time
-            time.sleep(3)
-        if run_id:
-            task.update({"status": "running", "run_id": run_id, "run_attempt": 1})
+        if is_processing and run_id:
+            stages.setdefault("processing", {}).update({"run_id": run_id, "status": "running", "run_attempt": int((stages.get("processing") or {}).get("run_attempt") or 0) + 1})
+            task.update({"status": "processing", "run_id": run_id, "processing_run_id": run_id, "run_attempt": 1})
             latest, latest_sha = self.store.load()
-            running = update_task(latest, task_id, status="running", run_id=run_id, run_attempt=1)
-            self.store.save(running, sha=latest_sha, message=f"Attach Run {run_id} to {task_id}")
+            running = update_task(latest, task_id, status="processing", run_id=run_id,
+                                  processing_run_id=run_id, stages=stages, run_attempt=1)
+            self.store.save(running, sha=latest_sha, message=f"Attach processing Run {run_id} to {task_id}")
+        elif run_id or cover_run_id:
+            stages = task.setdefault("stages", {})
+            if need_scrape:
+                stages.setdefault("scrape", {}).update({"run_id": run_id, "status": "running" if run_id else "dispatching", "run_attempt": int((stages.get("scrape") or {}).get("run_attempt") or 0) + 1})
+            if need_cover:
+                stages.setdefault("cover", {}).update({"run_id": cover_run_id, "status": "running" if cover_run_id else "dispatching", "run_attempt": int((stages.get("cover") or {}).get("run_attempt") or 0) + 1})
+            task.update({"status": "preparing_assets", "run_id": run_id, "scrape_run_id": run_id, "cover_run_id": cover_run_id, "run_attempt": 1})
+            latest, latest_sha = self.store.load()
+            running = update_task(latest, task_id, status="preparing_assets", run_id=run_id,
+                                  scrape_run_id=run_id, cover_run_id=cover_run_id,
+                                  stages=stages, run_attempt=1)
+            self.store.save(running, sha=latest_sha, message=f"Attach preflight Runs to {task_id}")
         else:
-            # The durable record remains reserved as dispatching, but never
-            # claim that a Run started until GitHub returns observable evidence.
-            queue = update_task(queue, task_id, status="queued")
-        return queue, f"Dispatched {task.get('book_title')} ({task_id}) as Run {run_id or 'pending discovery'}."
+            # The durable record remains reserved as dispatching/preparing.
+            # GitHub can take a few seconds to index workflow_dispatch; putting
+            # the task back in queued here would allow a duplicate dispatch.
+            queue = update_task(
+                queue, task_id,
+                status="dispatching" if is_processing else "preparing_assets",
+            )
+        if is_processing:
+            return queue, f"Dispatched {task.get('book_title')} ({task_id}) processing Run {run_id or 'pending'} from TXT Run {task.get('scrape_run_id')}."
+        return queue, f"Dispatched {task.get('book_title')} ({task_id}) as TXT Run {run_id or 'pending'} and cover Run {cover_run_id or 'pending'}."
 
-    def summary(self, queue, action, task=None):
+    def summary(self, queue, action, task=_AUTO_TASK):
         """Render a useful operator-facing Markdown report for Actions summary."""
         now = datetime.now(timezone.utc)
         queued = [item for item in queue.get("queue", []) if item.get("status") == "queued"]
-        active = task or current_task(queue)
+        active = current_task(queue) if task is _AUTO_TASK else task
 
         if action == "dispatched":
             headline = f"🚀 **已啟動《{active.get('book_title') or '待解析書名'}》**"
@@ -618,6 +770,11 @@ class Dispatcher:
         # A 204 dispatch response is not proof that GitHub created a run. Never
         # label the still-queued prospective task as launched unless a run was
         # observed and attached by dispatch_next().
+        if dispatched and not any(
+                dispatched.get(key) for key in
+                ("run_id", "scrape_run_id", "cover_run_id", "processing_run_id")):
+            report = self.summary(queue, "idle", None)
+            return report + "\n\n- **Run 建立狀態：** 已保留啟動鎖，等待 GitHub 建立可追蹤的 Run。"
         return self.summary(queue, "dispatched", dispatched) if dispatched else self.summary(queue, "idle")
 
 

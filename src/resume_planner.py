@@ -361,7 +361,7 @@ def _copy_tree(source, destination):
             shutil.copy2(path, target)
 
 
-def plan_resume(repo, current_run_id, config_path, matrix_path, output_dir, explicit_source=""):
+def plan_resume(repo, current_run_id, config_path, matrix_path, output_dir, explicit_source="", fresh_workers=False):
     config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
     worker_matrix = (json.loads(Path(matrix_path).read_text(encoding="utf-8")) or {}).get("include") or []
     output = Path(output_dir); output.mkdir(parents=True, exist_ok=True)
@@ -371,9 +371,20 @@ def plan_resume(repo, current_run_id, config_path, matrix_path, output_dir, expl
               "final_merge_ready": False,
               "all_worker_ids": [int(item["worker_id"]) for item in worker_matrix]}
 
+    # TXT preflight is intentionally a fresh upstream operation.  It must not
+    # inspect video/publication artifacts from an older processing Run merely
+    # because the book configuration happens to match.
+    if fresh_workers:
+        _write_plan(result, output)
+        return result
+
     for run_id in list_candidate_runs(repo, current_run_id, explicit_source):
         artifacts = list_run_artifacts(repo, run_id)
         if "shared-config" not in artifacts:
+            continue
+        if any(name.startswith("scrape-review-") or name.startswith("scrape-raw-") for name in artifacts) and not any(name.startswith("video-worker-") for name in artifacts):
+            if explicit_source:
+                raise ArtifactValidationError("Scraper Run cannot be used as processing resume source")
             continue
         with tempfile.TemporaryDirectory() as temporary:
             shared = download_artifact(repo, artifacts["shared-config"], Path(temporary) / "shared")
@@ -539,6 +550,7 @@ def main():
     parser.add_argument("--repo")
     parser.add_argument("--run-id")
     parser.add_argument("--source-run-id", default="")
+    parser.add_argument("--fresh-workers", action="store_true")
     parser.add_argument("--config")
     parser.add_argument("--matrix")
     parser.add_argument("--output-dir", required=True)
@@ -550,7 +562,8 @@ def main():
     if args.build_final:
         build_final_manifest(args.plan, args.sidecar_dir, args.output_dir, args.run_id)
         return
-    result = plan_resume(args.repo, args.run_id, args.config, args.matrix, args.output_dir, args.source_run_id)
+    result = plan_resume(args.repo, args.run_id, args.config, args.matrix, args.output_dir,
+                         args.source_run_id, fresh_workers=args.fresh_workers)
     _emit_outputs(result, args.github_output)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

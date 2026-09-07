@@ -480,6 +480,10 @@ def generate_gemini_cover_information(book_title, pure_plot, research=None, max_
 status=ok 時，各分析欄位及 visual_brief 不得填未知、未提供、無法判斷或通用抽象方案。supporting_characters 只能是 0 至 2 項。iconic_story_symbol 必須是資料支持且一眼可辨識的巨大人物、物件、生物、建築或環境標誌，不能只寫神秘力量。不得要求留白、文字安全區、遠景小人物、大片天空或極簡構圖。"""
     errors = []
     models = ("gemini-flash-latest", "gemini-3.5-flash")
+    if os.environ.get("COVER_REVIEW_OUTPUT"):
+        os.makedirs(os.environ["COVER_REVIEW_OUTPUT"], exist_ok=True)
+        with open(os.path.join(os.environ["COVER_REVIEW_OUTPUT"], "gemini_analysis_prompt.txt"), "w", encoding="utf-8") as handle:
+            handle.write(instruction)
     for attempt in range(1, max_attempts + 1):
         model = models[(attempt - 1) % len(models)]
         try:

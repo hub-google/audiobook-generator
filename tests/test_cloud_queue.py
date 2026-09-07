@@ -113,7 +113,7 @@ class CloudQueueTests(unittest.TestCase):
             "tasks": [completed, pending],
         })
 
-        self.assertEqual(migrated["schema_version"], 2)
+        self.assertEqual(migrated["schema_version"], 3)
         self.assertNotIn("tasks", migrated)
         self.assertEqual(migrated["queue"][0]["book_title"], "完美世界")
         self.assertEqual(migrated["queue"][0]["position"], 1)
@@ -666,9 +666,10 @@ Part 2/2 | Ch 51-100
         )
         self.assertEqual(dispatch_call.kwargs["json"]["inputs"]["book_title"], "凡人修仙傳")
         self.assertEqual(dispatch_call.kwargs["json"]["inputs"]["chapter_label"], "Ch1-100")
-        self.assertEqual(dispatch_call.kwargs["json"]["inputs"]["resume_source_run_id"], "122")
+        self.assertEqual(dispatch_call.kwargs["json"]["inputs"]["execution_phase"], "scrape_only")
+        self.assertEqual(dispatch_call.kwargs["json"]["inputs"]["resume_source_run_id"], "")
         reserved_queue = dispatcher.store.save.call_args_list[0].args[0]
-        self.assertEqual(reserved_queue["queue"][0]["artifact_source_run_id"], 122)
+        self.assertIsNone(reserved_queue["queue"][0]["artifact_source_run_id"])
         self.assertTrue(reserved_queue["queue"][0]["book_profile_id"])
 
     @patch.object(Dispatcher, "request")
@@ -778,7 +779,9 @@ Part 2/2 | Ch 51-100
         dispatcher.runs = Mock(return_value=[])
 
         summary = dispatcher.run()
-        request.assert_called_once()
+        paths = [call.args[1] for call in request.call_args_list if call.args and call.args[0] == "POST"]
+        self.assertIn("/actions/workflows/audiobook.yml/dispatches", paths)
+        self.assertIn("/actions/workflows/cover-preflight.yml/dispatches", paths)
         self.assertNotIn("已啟動", summary)
         self.assertIn("沒有可啟動的任務", summary)
 

@@ -15,6 +15,8 @@ from dotenv import load_dotenv
 import re
 import webbrowser
 import base64
+import io
+import zipfile
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image, ImageTk
@@ -31,7 +33,7 @@ try:
     )
     from crawler import fetch_chapter_text
     from cloud_queue import (
-        BLOCKING_STATES, GitHubQueueStore, add_tasks, delete_task,
+        BLOCKING_STATES, GitHubQueueStore, add_tasks, delete_task, approve_preflight,
         format_chapter_label, is_task_active, mark_task_completed, mark_task_interrupted, mark_task_waiting_retry,
         mark_tasks_completed, move_chapter_order, move_tasks, move_tasks_to_pending,
         new_task, normalize_chapter_order, requeue_task_after_active, settle_interrupted_task,
@@ -262,15 +264,16 @@ class AudiobookGUIApp:
         review_buttons = ttk.Frame(section)
         review_buttons.pack(fill=tk.X, padx=5, pady=(0, 5))
         self.btn_batch_cover_info = ttk.Button(
-            review_buttons, text="✨ 一鍵產生選取小說封面資訊＋HF Prompt",
-            command=self.open_batch_cover_information, state=tk.DISABLED,
+            review_buttons, text="🎨 封面圖和 Gemini 小說介紹／作封面 Prompt",
+            command=self.open_cover_preflight_review, state=tk.DISABLED,
         )
         self.btn_batch_cover_info.pack(side=tk.LEFT, padx=2)
         self.btn_sample_text = ttk.Button(
-            review_buttons, text="🔍 抽查第一／中間／最後章 Raw 與 Clean",
-            command=self.open_text_sample, state=tk.DISABLED,
+            review_buttons, text="🔍 每個章節的廣告分析結果",
+            command=self.open_ad_analysis_results, state=tk.DISABLED,
         )
         self.btn_sample_text.pack(side=tk.LEFT, padx=2)
+        ttk.Button(review_buttons, text="Raw／Clean 抽查", command=self.open_text_sample).pack(side=tk.LEFT, padx=2)
         ttk.Label(
             review_buttons, text="語音品質檢查：Clean 欄就是 TTS 實際會朗讀的文字",
         ).pack(side=tk.LEFT, padx=8)
@@ -340,7 +343,7 @@ class AudiobookGUIApp:
                 self._observation_checked_time(observation),
                 f"{hf.get('completed', 0)}/{hf.get('total', 0)}",
                 f"{yt.get('completed', 0)}/{yt.get('total', 0)}",
-                task.get("run_id") or "—",
+                self._task_run_summary(task),
             ))
             previous = self.queue_status_cache.get(task["task_id"])
             current = (task.get("status"), task.get("run_id"))
@@ -351,6 +354,8 @@ class AudiobookGUIApp:
                     self.log(f"🚀 {title} 已開始執行｜Run {run_id}")
                 elif status == "completed":
                     self.log(f"✅ {title} 製作完成")
+                elif status == "waiting_review":
+                    self.log(f"✅ {title} 第一階段完成：TXT 與封面都已完成，等待人工審核。")
                 elif status == "waiting_retry":
                     self.log(f"⏳ {title} 暫停等待安全重試")
                 elif status == "needs_attention":
@@ -378,6 +383,23 @@ class AudiobookGUIApp:
             self._update_queue_control_states(None)
 
     def _queue_status_text(self, task):
+        stages = task.get("stages") or {}
+        scrape = (stages.get("scrape") or {}).get("status", "pending")
+        cover = (stages.get("cover") or {}).get("status", "pending")
+        if task.get("workflow_phase") == "preflight":
+            if task.get("status") == "waiting_review":
+                return "② 待人工審核｜TXT✓ 封面✓"
+            if task.get("status") == "needs_attention":
+                failed = []
+                if scrape == "failed": failed.append("TXT失敗")
+                if cover == "failed": failed.append("封面失敗")
+                return "① " + ("／".join(failed) or "前置作業需要處理")
+            labels = {"pending": "待啟動", "dispatching": "啟動中", "running": "處理中", "completed": "✓", "failed": "失敗"}
+            return f"① TXT {labels.get(scrape, scrape)}｜封面 {labels.get(cover, cover)}"
+        if task.get("status") == "processing":
+            return "③ 後製處理中"
+        if task.get("status") == "completed":
+            return "④ 已完成"
         # A bound Run's verified GitHub state is authoritative. Queue-control
         # state must never hide an in-progress (or otherwise verified) Run.
         if task.get("run_id"):
@@ -387,8 +409,14 @@ class AudiobookGUIApp:
             return task.get("status") or "idle"
         status = task.get("status") or "idle"
         if status == "queued":
-            return "idle"
+            return "① 等待啟動"
         return status
+
+    @staticmethod
+    def _task_run_summary(task):
+        if task.get("workflow_phase") == "preflight":
+            return f"TXT {task.get('scrape_run_id') or '—'} / 封面 {task.get('cover_run_id') or '—'}"
+        return str(task.get("processing_run_id") or task.get("run_id") or "—")
 
     @staticmethod
     def _observation_checked_time(observation):
@@ -473,7 +501,13 @@ class AudiobookGUIApp:
                 queue, _ = store.load()
                 terminal_updates = []
                 running_updates = []
-                monitored = [task for task in queue.get("queue", []) if task.get("run_id")]
+                # Preflight owns two independent Runs.  The queue dispatcher
+                # reconciles both atomically; the legacy single-Run observer
+                # must not mark the book complete when only TXT has finished.
+                monitored = [
+                    task for task in queue.get("queue", [])
+                    if task.get("run_id") and task.get("workflow_phase") != "preflight"
+                ]
                 observations = {}
                 with ThreadPoolExecutor(max_workers=min(6, max(1, len(monitored)))) as executor:
                     futures = {
@@ -610,6 +644,159 @@ class AudiobookGUIApp:
         ]
         sections.extend(f"【{key}】\n{value}" for key, value in analysis.items())
         return "\n\n".join(sections)
+
+    def _download_artifact_files(self, run_id, name_prefix):
+        repo, token = self._github_settings()
+        headers = {"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+                   "X-GitHub-Api-Version": "2022-11-28"}
+        response = requests.get(f"https://api.github.com/repos/{repo}/actions/runs/{int(run_id)}/artifacts",
+                                headers=headers, params={"per_page": 100}, timeout=30)
+        response.raise_for_status()
+        artifacts = [item for item in response.json().get("artifacts", [])
+                     if not item.get("expired") and str(item.get("name") or "").startswith(name_prefix)]
+        if not artifacts:
+            raise RuntimeError(f"Run {run_id} 找不到 {name_prefix} artifact，或 artifact 已過期。")
+        files = {}
+        for artifact in artifacts:
+            bundle = requests.get(artifact["archive_download_url"], headers=headers, timeout=90)
+            bundle.raise_for_status()
+            with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
+                for member in archive.infolist():
+                    if not member.is_dir():
+                        files[member.filename.replace("\\", "/")] = archive.read(member)
+        return files
+
+    def open_ad_analysis_results(self):
+        task = self._selected_task()
+        if not task or not task.get("scrape_run_id"):
+            messagebox.showinfo("廣告分析", "TXT 抓取完成後才能查看。")
+            return
+        top = tk.Toplevel(self.root); top.title(f"每個章節的廣告分析結果｜《{task.get('book_title')}》"); top.geometry("1180x760")
+        status = tk.StringVar(value="正在下載廣告分析結果…"); ttk.Label(top, textvariable=status, padding=8).pack(fill=tk.X)
+        panes = ttk.Panedwindow(top, orient=tk.HORIZONTAL); panes.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        tree = ttk.Treeview(panes, columns=("decision", "kind", "text", "count", "chapters"), show="headings")
+        for key, title, width in (("decision", "建議", 65), ("kind", "類型", 105), ("text", "疑似廣告", 390), ("count", "次數", 60), ("chapters", "影響章節", 150)):
+            tree.heading(key, text=title); tree.column(key, width=width)
+        detail = scrolledtext.ScrolledText(panes, wrap=tk.WORD, font=("Microsoft JhengHei", 10))
+        panes.add(tree, weight=3); panes.add(detail, weight=2); rows = {}; review_identity = {}; chapter_texts = {}
+        chapter_bar = ttk.Frame(top, padding=8); chapter_bar.pack(fill=tk.X)
+        ttk.Label(chapter_bar, text="查看章節 Raw／Clean：").pack(side=tk.LEFT)
+        chapter_choice = ttk.Combobox(chapter_bar, state="readonly", width=15); chapter_choice.pack(side=tk.LEFT)
+        def preview_chapter(_event=None):
+            raw = chapter_texts.get(chapter_choice.get(), "")
+            if not raw: return
+            title, _, body = raw.partition("\n")
+            patterns = [item["text"] for item in rows.values() if item.get("approved_remove")]
+            cleaned = clean_text_content(body, title, task.get("book_title") or "", patterns)
+            detail.delete("1.0", tk.END)
+            detail.insert("1.0", f"【正規化 Raw】\n{raw}\n\n【套用目前規則後 Clean】\n{chunk_text(cleaned)}")
+        chapter_choice.bind("<<ComboboxSelected>>", preview_chapter)
+        def select(_event=None):
+            if not tree.selection(): return
+            item = rows[tree.selection()[0]]; detail.delete("1.0", tk.END)
+            detail.insert("1.0", f"判定原因：{item.get('reason')}\n\n影響章節：{item.get('affected_chapters')}\n\n" + "\n\n---\n\n".join(item.get("samples") or []))
+        tree.bind("<<TreeviewSelect>>", select)
+        def toggle(_event=None):
+            for iid in tree.selection():
+                item = rows[iid]; item["approved_remove"] = not item.get("approved_remove", False)
+                tree.set(iid, "decision", "去除" if item["approved_remove"] else "保留")
+        tree.bind("<Double-1>", toggle)
+        manual_text = tk.StringVar()
+        ttk.Entry(chapter_bar, textvariable=manual_text, width=35).pack(side=tk.LEFT, padx=8)
+        def add_manual():
+            patterns = validate_remove_patterns([manual_text.get()])
+            if not patterns: return
+            iid = f"manual-{len(rows)}"
+            rows[iid] = {"text": patterns[0], "approved_remove": True, "reason": "人工新增", "samples": []}
+            tree.insert("", tk.END, iid=iid, values=("去除", "人工新增", patterns[0], "—", "—"))
+            manual_text.set("")
+        ttk.Button(chapter_bar, text="新增刪除文字", command=add_manual).pack(side=tk.LEFT)
+        actions = ttk.Frame(top, padding=(8, 0, 8, 8)); actions.pack(fill=tk.X)
+        ttk.Label(actions, text="雙擊候選可切換「去除／保留」。").pack(side=tk.LEFT)
+        approve_button = ttk.Button(actions, text="確認廣告設定並開始後製", style="Accent.TButton", state=tk.DISABLED)
+        approve_button.pack(side=tk.RIGHT)
+
+        def approve():
+            patterns = sorted({item.get("text", "").strip() for item in rows.values()
+                               if item.get("approved_remove") and item.get("text", "").strip()}, key=len, reverse=True)
+            approve_button.config(state=tk.DISABLED); status.set("正在將審核結果儲存到雲端…")
+            def save_worker():
+                try:
+                    profile_store, _, _ = self._profile_store()
+                    profile_store.mutate(
+                        lambda data: update_book_profile(data, task.get("catalog_url") or "", task.get("book_title") or "",
+                                                         cleaner_remove_patterns=patterns),
+                        f"Approve advertisement review for {task['task_id']}",
+                    )
+                    queue_store, _, _ = self._queue_store()
+                    reviewed_at = datetime.now().astimezone().isoformat()
+                    queue = queue_store.mutate(
+                        lambda data: approve_preflight(data, task["task_id"], task["scrape_run_id"], task["cover_run_id"],
+                            {"status": "approved", "approved_at": reviewed_at, **review_identity,
+                             "remove_patterns": patterns,
+                             "keep_patterns": [item["text"] for item in rows.values() if not item.get("approved_remove")]}),
+                        f"Approve ad review and queue processing for {task['task_id']}",
+                    )
+                    self.cloud_queue = queue
+                    self.root.after(0, lambda: (self._render_queue(queue), top.destroy(),
+                                                self.log(f"✓ 《{task.get('book_title')}》廣告審核已儲存，後製已排程。")))
+                    self._dispatch_queue_workflow()
+                except Exception as error:
+                    self.root.after(0, lambda detail=str(error): (status.set(f"儲存失敗：{detail}"), approve_button.config(state=tk.NORMAL)))
+            threading.Thread(target=save_worker, daemon=True).start()
+        approve_button.config(command=approve)
+        def worker():
+            try:
+                files = self._download_artifact_files(task["scrape_run_id"], f"scrape-review-{task['task_id']}")
+                reports = [json.loads(data.decode("utf-8")) for name, data in files.items()
+                           if name.endswith(".json") and "ad-candidates-" in name]
+                candidates = [item for report in reports for item in report.get("candidates", [])]
+                if len(reports) != 1 or reports[0].get("task_id") != task["task_id"]:
+                    raise RuntimeError("廣告報告任務身分不一致或報告缺失")
+                review_identity.update(raw_fingerprint=reports[0]["raw_fingerprint"], scrape_run_id=task["scrape_run_id"], cover_run_id=task.get("cover_run_id"))
+                chapter_texts.update(reports[0].get("chapter_texts") or {})
+                profiles, _ = self._profile_store()[0].load()
+                _, profile = get_book_profile(profiles, task.get("catalog_url") or "", task.get("book_title") or "")
+                saved_patterns = set(profile.get("cleaner_remove_patterns") or [])
+                known = {item["text"] for item in candidates}
+                candidates.extend({"text": text, "kind": "已儲存規則", "score": 0, "count": 0} for text in saved_patterns - known)
+                def render():
+                    chapter_choice.config(values=sorted(chapter_texts, key=int))
+                    for index, item in enumerate(sorted(candidates, key=lambda x: -float(x.get("score") or 0))):
+                        iid = str(index); item["approved_remove"] = item["text"] in saved_patterns; rows[iid] = item; chapters = item.get("affected_chapters") or []
+                        tree.insert("", tk.END, iid=iid, values=("去除" if item["approved_remove"] else "保留", item.get("kind"), item.get("text"), item.get("count"), ",".join(map(str, chapters[:15])) + ("…" if len(chapters) > 15 else "")))
+                    approve_button.config(state=tk.NORMAL if task.get("status") == "waiting_review" else tk.DISABLED)
+                    status.set(f"已載入 {len(reports)} 個 Worker，共 {len(candidates)} 項候選。")
+                self.root.after(0, render)
+            except Exception as error:
+                self.root.after(0, lambda detail=str(error): status.set(f"載入失敗：{detail}"))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def open_cover_preflight_review(self):
+        task = self._selected_task()
+        if not task or not task.get("cover_run_id"):
+            messagebox.showinfo("封面審核", "封面 Run 完成後才能查看。")
+            return
+        top = tk.Toplevel(self.root); top.title(f"封面圖與 Gemini Prompt｜《{task.get('book_title')}》"); top.geometry("1120x760")
+        status = tk.StringVar(value="正在下載封面審核資料…"); ttk.Label(top, textvariable=status, padding=8).pack(fill=tk.X)
+        panes = ttk.Panedwindow(top, orient=tk.HORIZONTAL); panes.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        image_label = ttk.Label(panes, text="載入中…", anchor=tk.CENTER); prompt = scrolledtext.ScrolledText(panes, wrap=tk.WORD)
+        panes.add(image_label, weight=1); panes.add(prompt, weight=1)
+        def worker():
+            try:
+                files = self._download_artifact_files(task["cover_run_id"], f"cover-review-{task['task_id']}")
+                image_data = next(data for name, data in files.items() if name.endswith("master_cover.jpg"))
+                prompt_data = next(data for name, data in files.items() if name.endswith("master_cover_prompt.json"))
+                record = json.loads(prompt_data.decode("utf-8")); pil = Image.open(io.BytesIO(image_data)); pil.thumbnail((530, 650)); preview_image = pil.copy()
+                analysis_prompt = next((data.decode("utf-8") for name, data in files.items() if name.endswith("gemini_analysis_prompt.txt")), "手動封面或沒有分析呼叫紀錄")
+                def render():
+                    photo = ImageTk.PhotoImage(preview_image)
+                    image_label.config(image=photo, text=""); image_label.image = photo
+                    prompt.insert("1.0", "【Gemini 小說介紹分析 Prompt】\n" + analysis_prompt + "\n\n【分析結果與生圖 Prompt】\n" + json.dumps(record, ensure_ascii=False, indent=2)); status.set("封面圖、小說介紹與封面 Prompt 已載入。")
+                self.root.after(0, render)
+            except Exception as error:
+                self.root.after(0, lambda detail=str(error): status.set(f"載入失敗：{detail}"))
+        threading.Thread(target=worker, daemon=True).start()
 
     def _load_or_generate_cover_information(self, book_title, catalog_url, use_cache=True, progress_callback=None):
         """Load cached cover information or generate it for the batch GUI."""
@@ -895,7 +1082,7 @@ class AudiobookGUIApp:
             self.current_run_id = int(task["run_id"])
             try:
                 self.current_repo, self.current_token = self._github_settings()
-                self.btn_cancel.config(state=tk.NORMAL if task.get("status") in {"running", "dispatching", "waiting_retry"} else tk.DISABLED)
+                self.btn_cancel.config(state=tk.NORMAL if task.get("workflow_phase") != "preflight" and task.get("status") in {"running", "dispatching", "processing", "waiting_retry"} else tk.DISABLED)
             except Exception:
                 pass
         else:
@@ -923,7 +1110,7 @@ class AudiobookGUIApp:
             statuses != {"canceling"} and
             (
                 bool(tasks[0].get("run_id")) or
-                statuses <= {"running", "dispatching", "waiting_retry"}
+                statuses <= {"running", "dispatching", "preparing_assets", "processing", "waiting_retry"}
             )
         )
         self.btn_stop_task.config(
@@ -941,8 +1128,12 @@ class AudiobookGUIApp:
                     text="移回未完成" if all_completed else "標記為已完成",
                 )
         if hasattr(self, "btn_batch_cover_info"):
-            self.btn_batch_cover_info.config(state=tk.NORMAL if tasks else tk.DISABLED)
-        self.btn_sample_text.config(state=tk.NORMAL if len(tasks) == 1 else tk.DISABLED)
+            cover_ready = len(tasks) == 1 and bool(tasks[0].get("cover_run_id")) and \
+                ((tasks[0].get("stages") or {}).get("cover") or {}).get("status") == "completed"
+            self.btn_batch_cover_info.config(state=tk.NORMAL if cover_ready else tk.DISABLED)
+        ad_ready = len(tasks) == 1 and bool(tasks[0].get("scrape_run_id")) and \
+            ((tasks[0].get("stages") or {}).get("scrape") or {}).get("status") == "completed"
+        self.btn_sample_text.config(state=tk.NORMAL if ad_ready else tk.DISABLED)
 
     @staticmethod
     def _text_sample_chapters(task, catalog):
@@ -983,6 +1174,9 @@ class AudiobookGUIApp:
         return raw_text, chunk_text(cleaned)
 
     def _open_cleaner_patterns_dialog(self, task, parent, on_applied):
+        if task.get("scrape_run_id"):
+            self.open_ad_analysis_results()
+            return
         dialog = tk.Toplevel(parent)
         dialog.title(f"《{task.get('book_title') or '待解析'}》刪除關鍵字設定")
         dialog.geometry("900x520")
@@ -1185,10 +1379,21 @@ class AudiobookGUIApp:
         extra = ""
         if task.get("requeue_after_edit"):
             extra = "\n章節設定已更新；正在停止舊 Run，確認停止後會自動重新排程。"
+        stages = task.get("stages") or {}
+        stage_text = ""
+        if task.get("workflow_phase") == "preflight":
+            scrape = stages.get("scrape") or {}; cover = stages.get("cover") or {}
+            stage_text = (
+                f"\n第一階段：TXT {scrape.get('status', 'pending')} (Run {task.get('scrape_run_id') or '—'})"
+                f"｜封面/Gemini {cover.get('status', 'pending')} (Run {task.get('cover_run_id') or '—'})"
+                f"\n人工審核：{(task.get('ad_review') or {}).get('status', 'pending')}"
+            )
+        elif task.get("workflow_phase") == "processing":
+            stage_text = f"\n第三階段：後製／上傳 (Run {task.get('processing_run_id') or task.get('run_id') or '—'})"
         self.selected_status_var.set(
             f"《{task.get('book_title') or '待解析'}》｜第 {task.get('start_chapter') or 1}～{task.get('end_chapter') or '最後'} 章\n"
             f"狀態：{self._queue_status_text(task)}　｜　GitHub Run：{run_text}\n"
-            f"HF：{hf.get('completed', 0)}/{hf.get('total', 0)}　｜　YouTube：{yt.get('completed', 0)}/{yt.get('total', 0)}{extra}"
+            f"HF：{hf.get('completed', 0)}/{hf.get('total', 0)}　｜　YouTube：{yt.get('completed', 0)}/{yt.get('total', 0)}{stage_text}{extra}"
         )
 
     def reset_chapter_editor(self):
@@ -1514,63 +1719,69 @@ class AudiobookGUIApp:
             }
             while not close_event.is_set():
                 task = self._task_from_current_queue(task_id, state["task"])
-                run_id = task.get("run_id")
-                if not run_id:
+                preflight = task.get("workflow_phase") == "preflight"
+                run_ids = ([task.get("scrape_run_id"), task.get("cover_run_id")] if preflight
+                            else [task.get("run_id")])
+                run_ids = list(dict.fromkeys(int(value) for value in run_ids if value))
+                if not run_ids:
                     try:
                         store, _, _ = self._queue_store()
                         queue, _ = store.load()
                         task = next((item for item in queue.get("queue", []) + queue.get("completed", []) if item.get("task_id") == task_id), task)
                     except Exception:
                         pass
-                    run_id = task.get("run_id")
-                    if not run_id:
+                    preflight = task.get("workflow_phase") == "preflight"
+                    run_ids = ([task.get("scrape_run_id"), task.get("cover_run_id")] if preflight
+                                else [task.get("run_id")])
+                    run_ids = list(dict.fromkeys(int(value) for value in run_ids if value))
+                    if not run_ids:
                         self.root.after(0, lambda tid=task_id, t=dict(task): self._update_waiting_task_summary(tid, t))
                         close_event.wait(10)
                         continue
 
-                run_response = requests.get(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}", headers=headers, timeout=15)
-                run_response.raise_for_status()
-                jobs_response = requests.get(
-                    f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100", headers=headers, timeout=15
-                )
-                jobs_response.raise_for_status()
-                run_data = run_response.json()
-                jobs = jobs_response.json().get("jobs", [])
-                marker_events = []
-                # Paint the lightweight Run/Jobs snapshot immediately.  Log
-                # downloads can be large and must never hold the whole window
-                # on "正在取得雲端狀態".
-                self.root.after(
-                    0, lambda tid=task_id, t=dict(task), rd=run_data, js=jobs:
-                    self._apply_task_snapshot(tid, t, rd, js, [])
-                )
-                now = time.time()
-                for job in jobs:
-                    job_id = job.get("id")
-                    job_status = job.get("status")
-                    # Completed jobs are already fully represented by the Jobs
-                    # API.  Fetch only live logs for progress markers; a
-                    # cancelled 20-worker Run therefore opens immediately.
-                    if not job_id or job_status != "in_progress":
-                        continue
-                    if now - state["last_log_check"].get(job_id, 0) < 30:
-                        continue
-                    state["last_log_check"][job_id] = now
-                    try:
-                        log_response = requests.get(
-                            f"https://api.github.com/repos/{repo}/actions/jobs/{job_id}/logs",
-                            headers=headers, timeout=12, allow_redirects=True,
-                        )
-                        if log_response.status_code == 200:
-                            marker_events.extend(self._parse_task_log_markers(log_response.text, job_id))
-                    except requests.RequestException:
-                        pass
-                if marker_events:
-                    self.root.after(
-                        0, lambda tid=task_id, t=dict(task), rd=run_data, js=jobs, me=marker_events:
-                        self._apply_task_snapshot(tid, t, rd, js, me)
+                completed_run_count = 0
+                for run_id in run_ids:
+                    run_response = requests.get(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}", headers=headers, timeout=15)
+                    run_response.raise_for_status()
+                    jobs_response = requests.get(
+                        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100", headers=headers, timeout=15
                     )
-                if run_data.get("status") == "completed":
+                    jobs_response.raise_for_status()
+                    run_data = run_response.json()
+                    jobs = jobs_response.json().get("jobs", [])
+                    if run_data.get("status") == "completed":
+                        completed_run_count += 1
+                    marker_events = []
+                    # Paint each stage immediately.  Preflight keeps polling
+                    # until both the TXT and cover Runs reach a terminal state.
+                    self.root.after(
+                        0, lambda tid=task_id, t=dict(task), rd=run_data, js=jobs:
+                        self._apply_task_snapshot(tid, t, rd, js, [])
+                    )
+                    now = time.time()
+                    for job in jobs:
+                        job_id = job.get("id")
+                        job_status = job.get("status")
+                        if not job_id or job_status != "in_progress":
+                            continue
+                        if now - state["last_log_check"].get(job_id, 0) < 30:
+                            continue
+                        state["last_log_check"][job_id] = now
+                        try:
+                            log_response = requests.get(
+                                f"https://api.github.com/repos/{repo}/actions/jobs/{job_id}/logs",
+                                headers=headers, timeout=12, allow_redirects=True,
+                            )
+                            if log_response.status_code == 200:
+                                marker_events.extend(self._parse_task_log_markers(log_response.text, job_id))
+                        except requests.RequestException:
+                            pass
+                    if marker_events:
+                        self.root.after(
+                            0, lambda tid=task_id, t=dict(task), rd=run_data, js=jobs, me=marker_events:
+                            self._apply_task_snapshot(tid, t, rd, js, me)
+                        )
+                if (not preflight and completed_run_count == len(run_ids)) or (preflight and len(run_ids) >= 2 and completed_run_count == len(run_ids)):
                     break
                 close_event.wait(10)
         except Exception as error:
@@ -1908,6 +2119,20 @@ class AudiobookGUIApp:
         task = self._selected_task()
         if not task:
             return
+        if task.get("workflow_phase") == "preflight":
+            if task.get("status") == "waiting_review":
+                self.open_ad_analysis_results()
+                return
+            stages = task.get("stages") or {}
+            if any((stages.get(name) or {}).get("status") in {"running", "dispatching"} for name in ("scrape", "cover")):
+                messagebox.showinfo("重新排程", "請等待目前 TXT／封面 Run 結束後再重試失敗階段。")
+                return
+            self._mutate_queue_async(
+                lambda value: update_task(value, task["task_id"], status="queued", reason=None),
+                f"Retry failed preflight stages for {task['task_id']}",
+                "已排程重試未完成階段，已完成的 TXT／封面會保留。",
+            )
+            return
         title = task.get("book_title") or "小說任務"
         run_id = task.get("run_id")
         active_task_id = self._find_active_task_id(exclude_task_id=task.get("task_id"))
@@ -1960,8 +2185,11 @@ class AudiobookGUIApp:
         if not task:
             messagebox.showinfo("取消本次 Run", "請先選取一筆小說任務。")
             return
+        run_ids = list(dict.fromkeys(int(value) for value in (
+            task.get("run_id"), task.get("scrape_run_id"), task.get("cover_run_id"), task.get("processing_run_id")
+        ) if value))
         run_id = task.get("run_id")
-        if not (run_id or task.get("status") in {"running", "dispatching", "waiting_retry", "canceling"}):
+        if not (run_ids or task.get("status") in {"running", "dispatching", "preparing_assets", "processing", "waiting_retry", "canceling"}):
             messagebox.showinfo("取消本次 Run", "這筆任務目前沒有可取消的 Run。")
             return
         title = task.get("book_title") or "小說任務"
@@ -1981,25 +2209,33 @@ class AudiobookGUIApp:
         def worker():
             try:
                 store, repo, token = self._queue_store()
-                if run_id:
+                if run_ids:
                     try:
-                        response = requests.post(
-                            f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel",
-                            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}, timeout=15,
-                        )
-                        if response.status_code not in (200, 202, 409):
-                            raise RuntimeError(f"取消 Run 失敗 ({response.status_code}): {response.text}")
+                        failures = []
+                        for current_run_id in run_ids:
+                            response = requests.post(
+                                f"https://api.github.com/repos/{repo}/actions/runs/{current_run_id}/cancel",
+                                headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}, timeout=15,
+                            )
+                            if response.status_code not in (200, 202, 409):
+                                failures.append(f"Run {current_run_id}: {response.status_code}")
+                        if failures:
+                            raise RuntimeError("取消 Run 失敗：" + "、".join(failures))
                     except Exception as cancel_error:
                         if isinstance(cancel_error, RuntimeError):
                             raise
                         logging.warning(f"Could not cancel run {run_id}: {cancel_error}")
-                target_status = "stopped" if task.get("status") == "waiting_retry" or not run_id else "canceling"
+                target_status = (
+                    "stopped" if task.get("status") == "waiting_retry" or
+                    (not run_ids and task.get("workflow_phase") != "preflight")
+                    else "canceling"
+                )
                 queue = store.mutate(lambda value: update_task(value, task["task_id"], status=target_status, reason="user_cancelled"), f"Stop audiobook task {task['task_id']}")
                 self.cloud_queue = queue
                 self.root.after(0, lambda: self._render_queue(queue))
                 self.root.after(0, lambda: self.log(
                     f"✓ GitHub 已接受 {title} 的取消要求；正在等待 Run 停止。"
-                    if run_id else f"✓ {title} 已停止，不會建立新的 Run。"
+                    if run_ids else f"✓ {title} 已停止，不會建立新的 Run。"
                 ))
                 try:
                     self._dispatch_queue_workflow()
