@@ -1,0 +1,79 @@
+{
+  "book_title": "全職高手",
+  "brief": {
+    "analysis": {
+      "世界觀": "現代都市生活中的商業電競聯賽，與以鍵盤滑鼠操作、極限APM操作為核心的3D大型多人線上動作網遊《榮耀》的世界。",
+      "主角外觀與身分": "葉修，前頂尖職業電競選手，現為興欣網吧夜班網管。因長期晝夜顛倒而面色蒼白、略顯虛胖，看似散漫頹廢，但雙手手指修長、極度靈活，常叼著香菸，全神貫注時眼神銳利逼人。",
+      "代表性場景": "深夜飄雪的都市街道旁、燈火通明的興欣網吧吸煙區吧台，電腦螢幕泛著冷光，鍵盤旁放著煙灰缸。",
+      "應避免畫錯的內容": "禁止繪製VR頭盔、全息眼鏡等虛擬實境裝備（原著為傳統PC鍵鼠操作）。葉修身穿普通現代便服，非奇幻戰甲。千機傘不是普通布面雨傘，必須呈現多層金屬機械齒輪與卡榫結構。",
+      "故事類型與時代": "現代都市、電子競技、網遊小說。",
+      "法寶武器或關鍵物件": "「千機傘」（多形態變形機械銀武）、《榮耀》登入帳號卡（帶晶片的黑色或灰色卡片）、機械鍵盤與滑鼠。",
+      "色彩氣氛與構圖": "網吧室內的暖黃燈光與電腦螢幕映照在主角臉上的冷冽藍光形成強烈對比；前景聚焦主角專注操控鍵盤滑鼠的修長手指與香煙煙霧，背景浮現千機傘展開變形的機械幻影，兼具都市寫實感與電競熱血感。"
+    },
+    "analysis_method": "local_evidence_only",
+    "prompt": "Create a high-impact viral Chinese web-novel and micro-drama thumbnail, cinematic 16:9 widescreen, designed to remain instantly readable on a small mobile screen.\n\nGENRE AND STORY:\nGenre: Esports and Gaming Novel.\nEra and setting: Modern day, late-night internet cafe interior with glowing PC monitors and a snowy winter city night outside the window.\nCore dramatic conflict: A legendary esports champion forced into retirement, starting over from scratch as a night-shift internet cafe manager with a new account and an unspecialized character.\n\nMAIN CHARACTER:\nOne visually striking Ye Xiu, a scruffy, pale-skinned night-shift internet cafe manager and former legendary esports pioneer dominates the foreground in a tight waist-up cinematic portrait. The protagonist has Pale complexion, slightly messy dark hair, tired but sharp and confident eyes, holding a lit cigarette, with long, slender, dexterous fingers poised over a mechanical keyboard, wears Casual modern civilian clothes, such as an unzipped dark hoodie over an ordinary t-shirt, and displays Focused and calm expression, intensely glaring at the PC monitor with lightning-fast finger movements on a gaming mouse and mechanical keyboard. The face is large, sharp, attractive, emotionally intense, unobstructed, and occupies 35 to 45 percent of the image height.\n\nSUPPORTING CHARACTERS:\nChen Guo; Su Mucheng. Use zero to two supporting characters only. They remain clearly secondary and must not compete with the protagonist's face.\n\nSTORY ICON:\nA huge, instantly recognizable A monumental semi-transparent phantom of the transforming mechanical Myriad Manifestation Umbrella looming in the background rises behind the protagonist as the dominant background symbol. Include A Glory account card held between his fingers, mechanical gaming peripherals, and the intricate multi-segmented mechanical structure of the Myriad Manifestation Umbrella as a clearly visible story-specific element.\n\nFIXED THUMBNAIL COMPOSITION:\nDense layered poster composition: foreground protagonist, middle-ground supporting characters, monumental story symbol in the background. Characters fill most of the frame. No wide establishing shot, no tiny or distant protagonist, no empty landscape, no large blank sky, and no minimalist composition. Keep every important face above the lower title zone. The lower 35 percent remains visually rich but slightly darker, lower-contrast and less detailed so a large two-line title can be overlaid without an empty text box. Strong separation between faces and background, bold silhouettes, dramatic rim lighting, radiant backlight, cinematic depth, particles, atmospheric energy, premium promotional-poster polish.\n\nCOLOR AND MOOD:\nContrast of warm amber ambient lighting from the cafe interior and cool neon-blue monitor glare, accented by rising white cigarette smoke. Moody, atmospheric cinematic lighting, blending gritty modern late-night reality with vibrant, legendary gaming energy. Vivid colors, deep blacks, brilliant highlights, sharp facial detail, realistic premium Chinese drama promotional-poster aesthetic, sensational but coherent, highly clickable at thumbnail size.\n\nSTORY-SPECIFIC AVOIDANCE:\nDo not draw VR headsets, glasses, or full-dive helmets; the game is played on a standard PC screen with keyboard and mouse.; Do not draw Ye Xiu in fantasy armor or gaming avatar costumes in the real-world scene; he wears ordinary casual street clothes.; Do not draw the Myriad Manifestation Umbrella as a simple fabric rain umbrella; it must be a multi-segmented metallic mechanical contraption..\n\nSTRICT OUTPUT:\nOne coherent scene, not a collage or split panel. No text, no Chinese characters, no English letters, no numbers, no logo, no watermark, no signature, no frame, and no UI.",
+    "source": "https://tw.hjwzw.com/Book/24632",
+    "story_facts": [
+      {
+        "fact": "主角葉修（曾用名葉秋）是網遊《榮耀》中被譽為教科書級別的頂尖高手，因俱樂部排擠而被迫退役並交出神級帳號卡「一葉之秋」。",
+        "source_ids": [
+          "S1",
+          "MODEL_KNOWLEDGE"
+        ]
+      },
+      {
+        "fact": "離開職業圈後的葉修寄身於「興欣網吧」擔任夜班網管，並在《榮耀》新開的第十區以無職業散人角色「君莫笑」重新開始遊戲。",
+        "source_ids": [
+          "S1",
+          "MODEL_KNOWLEDGE"
+        ]
+      },
+      {
+        "fact": "故事的核心世界觀圍繞一款名為《榮耀》的3D第一/第三人稱電腦端動作網遊，玩家以鍵盤與滑鼠進行高難度微操，並擁有成熟的職業電競聯賽。",
+        "source_ids": [
+          "S1",
+          "MODEL_KNOWLEDGE"
+        ]
+      },
+      {
+        "fact": "葉修在新區崛起的核心代表物件是他自製並持續升級的散人「銀武」（自製武器）——「千機傘」，由精密機械零件與卡榫構成，可切換多種職業武器形態。",
+        "source_ids": [
+          "MODEL_KNOWLEDGE"
+        ]
+      },
+      {
+        "fact": "故事初期的代表性現實場景為陳果經營的興欣網吧，這裡既是葉修落腳當網管的地方，也是他未來重回職業聯賽並組建「興欣戰隊」的起點。",
+        "source_ids": [
+          "S1",
+          "MODEL_KNOWLEDGE"
+        ]
+      }
+    ],
+    "synopsis": "書名：《全職高手》；作者：蝴蝶藍；類型：游戲；原始簡介：網游榮耀中被譽為教科書級別的頂尖高手，因為種種原因遭到俱樂部的驅逐，離開職業圈的他寄身于一家網吧成了一個小小的網管，但是，擁有十年游戲經驗的…",
+    "template_version": "viral-v1",
+    "visual_brief": {
+      "appearance": "Pale complexion, slightly messy dark hair, tired but sharp and confident eyes, holding a lit cigarette, with long, slender, dexterous fingers poised over a mechanical keyboard",
+      "avoid_story_errors": [
+        "Do not draw VR headsets, glasses, or full-dive helmets; the game is played on a standard PC screen with keyboard and mouse.",
+        "Do not draw Ye Xiu in fantasy armor or gaming avatar costumes in the real-world scene; he wears ordinary casual street clothes.",
+        "Do not draw the Myriad Manifestation Umbrella as a simple fabric rain umbrella; it must be a multi-segmented metallic mechanical contraption."
+      ],
+      "clothing": "Casual modern civilian clothes, such as an unzipped dark hoodie over an ordinary t-shirt",
+      "core_conflict": "A legendary esports champion forced into retirement, starting over from scratch as a night-shift internet cafe manager with a new account and an unspecialized character",
+      "era_and_setting": "Modern day, late-night internet cafe interior with glowing PC monitors and a snowy winter city night outside the window",
+      "expression_and_action": "Focused and calm expression, intensely glaring at the PC monitor with lightning-fast finger movements on a gaming mouse and mechanical keyboard",
+      "genre": "Esports and Gaming Novel",
+      "genre_color_palette": "Contrast of warm amber ambient lighting from the cafe interior and cool neon-blue monitor glare, accented by rising white cigarette smoke",
+      "iconic_prop_or_power": "A Glory account card held between his fingers, mechanical gaming peripherals, and the intricate multi-segmented mechanical structure of the Myriad Manifestation Umbrella",
+      "iconic_story_symbol": "A monumental semi-transparent phantom of the transforming mechanical Myriad Manifestation Umbrella looming in the background",
+      "lighting_and_mood": "Moody, atmospheric cinematic lighting, blending gritty modern late-night reality with vibrant, legendary gaming energy",
+      "main_character_identity": "Ye Xiu, a scruffy, pale-skinned night-shift internet cafe manager and former legendary esports pioneer",
+      "supporting_characters": [
+        "Chen Guo",
+        "Su Mucheng"
+      ]
+    }
+  },
+  "prompt": "Create a high-impact viral Chinese web-novel and micro-drama thumbnail, cinematic 16:9 widescreen, designed to remain instantly readable on a small mobile screen.\n\nGENRE AND STORY:\nGenre: Esports and Gaming Novel.\nEra and setting: Modern day, late-night internet cafe interior with glowing PC monitors and a snowy winter city night outside the window.\nCore dramatic conflict: A legendary esports champion forced into retirement, starting over from scratch as a night-shift internet cafe manager with a new account and an unspecialized character.\n\nMAIN CHARACTER:\nOne visually striking Ye Xiu, a scruffy, pale-skinned night-shift internet cafe manager and former legendary esports pioneer dominates the foreground in a tight waist-up cinematic portrait. The protagonist has Pale complexion, slightly messy dark hair, tired but sharp and confident eyes, holding a lit cigarette, with long, slender, dexterous fingers poised over a mechanical keyboard, wears Casual modern civilian clothes, such as an unzipped dark hoodie over an ordinary t-shirt, and displays Focused and calm expression, intensely glaring at the PC monitor with lightning-fast finger movements on a gaming mouse and mechanical keyboard. The face is large, sharp, attractive, emotionally intense, unobstructed, and occupies 35 to 45 percent of the image height.\n\nSUPPORTING CHARACTERS:\nChen Guo; Su Mucheng. Use zero to two supporting characters only. They remain clearly secondary and must not compete with the protagonist's face.\n\nSTORY ICON:\nA huge, instantly recognizable A monumental semi-transparent phantom of the transforming mechanical Myriad Manifestation Umbrella looming in the background rises behind the protagonist as the dominant background symbol. Include A Glory account card held between his fingers, mechanical gaming peripherals, and the intricate multi-segmented mechanical structure of the Myriad Manifestation Umbrella as a clearly visible story-specific element.\n\nFIXED THUMBNAIL COMPOSITION:\nDense layered poster composition: foreground protagonist, middle-ground supporting characters, monumental story symbol in the background. Characters fill most of the frame. No wide establishing shot, no tiny or distant protagonist, no empty landscape, no large blank sky, and no minimalist composition. Keep every important face above the lower title zone. The lower 35 percent remains visually rich but slightly darker, lower-contrast and less detailed so a large two-line title can be overlaid without an empty text box. Strong separation between faces and background, bold silhouettes, dramatic rim lighting, radiant backlight, cinematic depth, particles, atmospheric energy, premium promotional-poster polish.\n\nCOLOR AND MOOD:\nContrast of warm amber ambient lighting from the cafe interior and cool neon-blue monitor glare, accented by rising white cigarette smoke. Moody, atmospheric cinematic lighting, blending gritty modern late-night reality with vibrant, legendary gaming energy. Vivid colors, deep blacks, brilliant highlights, sharp facial detail, realistic premium Chinese drama promotional-poster aesthetic, sensational but coherent, highly clickable at thumbnail size.\n\nSTORY-SPECIFIC AVOIDANCE:\nDo not draw VR headsets, glasses, or full-dive helmets; the game is played on a standard PC screen with keyboard and mouse.; Do not draw Ye Xiu in fantasy armor or gaming avatar costumes in the real-world scene; he wears ordinary casual street clothes.; Do not draw the Myriad Manifestation Umbrella as a simple fabric rain umbrella; it must be a multi-segmented metallic mechanical contraption..\n\nSTRICT OUTPUT:\nOne coherent scene, not a collage or split panel. No text, no Chinese characters, no English letters, no numbers, no logo, no watermark, no signature, no frame, and no UI.",
+  "template_version": "viral-v1"
+}

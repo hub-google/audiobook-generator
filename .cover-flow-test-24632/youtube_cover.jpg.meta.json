@@ -1,0 +1,16 @@
+{
+  "book_title": "全職高手",
+  "end_chap": "100",
+  "is_completed": false,
+  "part_num": 1,
+  "start_chap": "1",
+  "template_version": "viral-v1",
+  "typography": {
+    "title_face": "#FFF4D0",
+    "title_font": "fonts/YujiBoku.ttf",
+    "title_inner_stroke": "#BE802B",
+    "title_max_lines": 2,
+    "title_outer_stroke": "#0C0806",
+    "title_shadow": "#000000"
+  }
+}
