@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1029,
-  "updated_at": "2026-09-07T13:05:01.329845+00:00",
+  "revision": 1030,
+  "updated_at": "2026-09-07T13:05:17.181375+00:00",
   "queue": [
     {
       "task_id": "book-20260907-046571a3",
@@ -638,7 +638,7 @@
         "total": 0
       },
       "created_at": "2026-09-07T09:02:53.203089+00:00",
-      "updated_at": "2026-09-07T13:05:01.329809+00:00",
+      "updated_at": "2026-09-07T13:05:17.181375+00:00",
       "book_profile_id": "04b0036cb8c8839e",
       "profile_snapshot": {
         "book_profile_id": "04b0036cb8c8839e",
