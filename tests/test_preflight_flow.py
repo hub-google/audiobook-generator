@@ -29,6 +29,7 @@ def test_approval_requires_both_assets_and_current_run_identity():
 
 def fake_dispatcher(queue):
     dispatcher = Dispatcher("owner/repo", "token")
+    dispatcher.dispatch_discovery_delays = (0,)
     dispatcher.store = Mock()
     dispatcher.store.load.return_value = (queue, "sha")
     dispatcher.profile_store.load = Mock(return_value=({"books": {}}, None))
@@ -106,3 +107,25 @@ def test_dispatch_without_indexed_run_keeps_task_reserved():
     result, _ = dispatcher.dispatch_next(queue)
     assert result["queue"][0]["status"] == "preparing_assets"
     assert result["queue"][0]["workflow_phase"] == "preflight"
+
+
+def test_dispatch_polls_until_both_preflight_run_ids_are_attached():
+    task = new_task("https://example.com/book", "Book", 1, 2)
+    queue = add_tasks(empty_queue(), [task])
+    dispatcher = fake_dispatcher(queue)
+    dispatcher.dispatch_discovery_delays = (0, 0)
+    created = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+    dispatcher.runs = Mock(side_effect=[[], [{
+        "id": 100, "display_title": f"【TXT抓取】Book｜{task['task_id']}", "created_at": created,
+    }]])
+    dispatcher.cover_runs = Mock(side_effect=[[], [{
+        "id": 200, "display_title": f"封面｜Book｜{task['task_id']}", "created_at": created,
+    }]])
+
+    dispatcher.dispatch_next(queue)
+
+    attached = dispatcher.store.save.call_args_list[-1].args[0]["queue"][0]
+    assert attached["scrape_run_id"] == 100
+    assert attached["cover_run_id"] == 200
+    assert attached["stages"]["scrape"]["run_id"] == 100
+    assert attached["stages"]["cover"]["run_id"] == 200

@@ -643,6 +643,7 @@ Part 2/2 | Ch 51-100
         }]
         queue = add_tasks(empty_queue(), [task])
         dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.dispatch_discovery_delays = (0,)
         dispatcher.store = Mock()
         dispatcher.store.load.return_value = (queue, "sha")
         dispatcher.store.save.return_value = "next-sha"
@@ -677,6 +678,7 @@ Part 2/2 | Ch 51-100
         task = new_task("https://example/1", "凡人修仙傳", 1, 100)
         queue = add_tasks(empty_queue(), [task])
         dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.dispatch_discovery_delays = (0,)
         dispatcher.store = Mock()
         dispatcher.store.load.return_value = (queue, "sha")
         dispatcher.profile_store.load = Mock(return_value=({"books": {}}, None))

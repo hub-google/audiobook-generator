@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -120,6 +121,9 @@ class Dispatcher:
         self.store = GitHubQueueStore(repo, token, branch=branch)
         self.profile_store = GitHubBookProfileStore(repo, token, branch=branch)
         self.force = bool(force)
+        # workflow_dispatch returns no Run ID. Poll briefly until GitHub indexes
+        # every requested Run; GUI reconciliation remains the durable fallback.
+        self.dispatch_discovery_delays = (0, 1, 2, 3, 4)
 
         self.headers = {
             "Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
@@ -594,10 +598,12 @@ class Dispatcher:
         # immediately instead of waiting for the next 15-minute reconciliation.
         run_id = None if (need_scrape or is_processing) else task.get("scrape_run_id")
         cover_run_id = None if need_cover else task.get("cover_run_id")
-        # workflow_dispatch does not return a Run id.  Make one immediate
-        # discovery attempt; if GitHub has not indexed it yet, the durable
-        # dispatching state is attached by the next reconciliation.
-        for _ in range(1):
+        # workflow_dispatch does not return a Run id. GitHub indexing is often
+        # a few seconds behind the accepted dispatch, so confirm every Run that
+        # was requested instead of recording a successful dispatch with null IDs.
+        for delay in self.dispatch_discovery_delays:
+            if delay:
+                time.sleep(delay)
             if need_scrape or is_processing:
                 for run in self.runs():
                     created_at = parse_time(run.get("created_at"))
@@ -610,11 +616,9 @@ class Dispatcher:
                     if (task_id_from_run_name(run.get("display_title") or run.get("name")) == task_id
                             and created_at is not None and created_at >= dispatch_requested_at):
                         cover_run_id = int(run["id"]); break
-            # Attach as soon as the primary TXT/processing Run is visible.  A
-            # cover Run may appear a few seconds later and is reconciled by
-            # task id; a cover-only retry waits for its own Run.
-            if ((is_processing or need_scrape) and run_id) or (
-                    not is_processing and not need_scrape and (cover_run_id or not need_cover)):
+            primary_ready = not (need_scrape or is_processing) or bool(run_id)
+            cover_ready = not need_cover or bool(cover_run_id)
+            if primary_ready and cover_ready:
                 break
         if is_processing and run_id:
             stages.setdefault("processing", {}).update({"run_id": run_id, "status": "running", "run_attempt": int((stages.get("processing") or {}).get("run_attempt") or 0) + 1})

@@ -32,6 +32,30 @@ def test_queue_sync_checks_bound_run_against_github():
     assert "GitHub 查證" in source
     assert "_refresh_observation_freshness" in source
     assert "self.root.after(1000, self._refresh_observation_freshness)" in source
+    assert "_observe_preflight_stage" in source
+    assert "scrape-review-" in source
+    assert "cover-review-" in source
+
+
+def test_cover_review_keeps_analysis_and_hf_prompt_separate():
+    source = GUI_SOURCE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    review = next(
+        node for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "AudiobookGUIApp"
+        for node in node.body
+        if isinstance(node, ast.FunctionDef) and node.name == "open_cover_preflight_review"
+    )
+    review_source = ast.get_source_segment(source, review)
+
+    assert 'text="Gemini 小說介紹／視覺分析"' in review_source
+    assert 'text="HF 生圖 Prompt"' in review_source
+    assert 'brief = record.get("brief")' in review_source
+    assert 'analysis_text.insert("1.0", self._format_cover_analysis(brief))' in review_source
+    assert 'prompt_text.insert("1.0", record.get("prompt") or brief.get("prompt", ""))' in review_source
+    assert "gemini_analysis_prompt.txt" not in review_source
+    assert "分析結果與生圖 Prompt" not in review_source
+    assert 'top.geometry("1440x900")' in review_source
 
 
 def test_deferred_gui_callbacks_do_not_capture_exception_targets():

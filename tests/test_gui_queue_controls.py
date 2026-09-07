@@ -1,7 +1,7 @@
 import tkinter as tk
 import unittest
 from datetime import datetime, timezone
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from gui_app import AudiobookGUIApp
 
@@ -17,6 +17,79 @@ def make_app():
 
 
 class GuiQueueControlTests(unittest.TestCase):
+    @patch("gui_app.requests.get")
+    def test_missing_preflight_run_is_recovered_by_task_and_dispatch_time(self, get):
+        response = Mock()
+        response.json.return_value = {"workflow_runs": [
+            {
+                "id": 90,
+                "display_title": "【TXT抓取】old｜book-20260907-046571a3",
+                "created_at": "2026-09-07T10:00:00Z",
+            },
+            {
+                "id": 34115699942,
+                "display_title": "【TXT抓取】current｜book-20260907-046571a3",
+                "created_at": "2026-09-07T11:15:32Z",
+            },
+            {
+                "id": 999,
+                "display_title": "【TXT抓取】another｜book-20260907-deadbeef",
+                "created_at": "2026-09-07T12:00:00Z",
+            },
+        ]}
+        get.return_value = response
+
+        run = AudiobookGUIApp._discover_preflight_run(
+            "owner/repo", "token", "audiobook.yml", "book-20260907-046571a3",
+            "2026-09-07T19:15:29+08:00",
+        )
+
+        self.assertEqual(run["id"], 34115699942)
+        response.raise_for_status.assert_called_once()
+
+    def test_preflight_observations_unlock_review_only_after_both_artifacts(self):
+        queue = {"queue": [{
+            "task_id": "book-1", "workflow_phase": "preflight", "status": "preparing_assets",
+            "scrape_run_id": 100, "cover_run_id": 200,
+            "stages": {
+                "scrape": {"run_id": 100, "status": "running"},
+                "cover": {"run_id": 200, "status": "running"},
+            },
+        }]}
+
+        changed = AudiobookGUIApp._apply_preflight_observations(queue, {
+            "book-1": {
+                "scrape": {"run_id": 100, "status": "completed", "updated_at": "2026-09-07T11:33:49Z"},
+            },
+        })
+        self.assertTrue(changed)
+        self.assertEqual(queue["queue"][0]["status"], "preparing_assets")
+        self.assertEqual(queue["queue"][0]["stages"]["scrape"]["status"], "completed")
+
+        AudiobookGUIApp._apply_preflight_observations(queue, {
+            "book-1": {
+                "cover": {"run_id": 200, "status": "completed", "updated_at": "2026-09-07T10:02:00Z"},
+            },
+        })
+        self.assertEqual(queue["queue"][0]["status"], "waiting_review")
+
+    def test_preflight_observation_cannot_overwrite_a_newer_bound_run(self):
+        queue = {"queue": [{
+            "task_id": "book-1", "workflow_phase": "preflight", "status": "preparing_assets",
+            "scrape_run_id": 101, "cover_run_id": 200,
+            "stages": {
+                "scrape": {"run_id": 101, "status": "running"},
+                "cover": {"run_id": 200, "status": "running"},
+            },
+        }]}
+
+        AudiobookGUIApp._apply_preflight_observations(queue, {
+            "book-1": {"scrape": {"run_id": 100, "status": "completed"}},
+        })
+
+        self.assertEqual(queue["queue"][0]["scrape_run_id"], 101)
+        self.assertEqual(queue["queue"][0]["stages"]["scrape"]["status"], "running")
+
     def test_queue_buttons_only_enable_for_supported_states(self):
         app = make_app()
 

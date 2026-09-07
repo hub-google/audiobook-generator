@@ -40,7 +40,7 @@ try:
         format_chapter_label, is_task_active, mark_task_completed, mark_task_interrupted, mark_task_waiting_retry,
         mark_tasks_completed, move_chapter_order, move_tasks, move_tasks_to_pending,
         new_task, normalize_chapter_order, requeue_task_after_active, settle_interrupted_task,
-        update_task, update_task_chapters,
+        task_id_from_run_name, update_task, update_task_chapters,
     )
     from github_run_status import (
         error_observation, missing_observation, observation_text,
@@ -268,7 +268,7 @@ class AudiobookGUIApp:
         review_buttons = ttk.Frame(section)
         review_buttons.pack(fill=tk.X, padx=5, pady=(0, 5))
         self.btn_batch_cover_info = ttk.Button(
-            review_buttons, text="🎨 封面圖和 Gemini 小說介紹／作封面 Prompt",
+            review_buttons, text="🎨 封面圖／Gemini 小說介紹／HF 生圖 Prompt",
             command=self.open_cover_preflight_review, state=tk.DISABLED,
         )
         self.btn_batch_cover_info.pack(side=tk.LEFT, padx=2)
@@ -505,6 +505,7 @@ class AudiobookGUIApp:
                 queue, _ = store.load()
                 terminal_updates = []
                 running_updates = []
+                preflight_updates = {}
                 # Preflight owns two independent Runs.  The queue dispatcher
                 # reconciles both atomically; the legacy single-Run observer
                 # must not mark the book complete when only TXT has finished.
@@ -513,7 +514,27 @@ class AudiobookGUIApp:
                     if task.get("run_id") and task.get("workflow_phase") != "preflight"
                 ]
                 observations = {}
-                with ThreadPoolExecutor(max_workers=min(6, max(1, len(monitored)))) as executor:
+                preflight_stages = []
+                for task in queue.get("queue", []):
+                    if task.get("workflow_phase") != "preflight":
+                        continue
+                    for stage_name, prefix, workflow_file in (
+                        ("scrape", f"scrape-review-{task.get('task_id')}", "audiobook.yml"),
+                        ("cover", f"cover-review-{task.get('task_id')}", "cover-preflight.yml"),
+                    ):
+                        run_id = task.get(f"{stage_name}_run_id") or \
+                            ((task.get("stages") or {}).get(stage_name) or {}).get("run_id")
+                        if not run_id:
+                            stage = ((task.get("stages") or {}).get(stage_name) or {})
+                            discovered = self._discover_preflight_run(
+                                repo, token, workflow_file, task["task_id"],
+                                stage.get("dispatched_at") or task.get("dispatched_at"),
+                            )
+                            run_id = discovered.get("id") if discovered else None
+                        if run_id:
+                            preflight_stages.append((task["task_id"], stage_name, int(run_id), prefix))
+                worker_count = min(8, max(1, len(monitored) + len(preflight_stages)))
+                with ThreadPoolExecutor(max_workers=worker_count) as executor:
                     futures = {
                         executor.submit(
                             self._observe_github_run, repo, token, task["run_id"],
@@ -521,12 +542,28 @@ class AudiobookGUIApp:
                         ): task
                         for task in monitored
                     }
+                    preflight_futures = {
+                        executor.submit(
+                            self._observe_preflight_stage, repo, token, run_id, prefix,
+                        ): (task_id, stage_name, run_id)
+                        for task_id, stage_name, run_id, prefix in preflight_stages
+                    }
                     for future in as_completed(futures):
                         task = futures[future]
                         try:
                             observations[task["task_id"]] = future.result()
                         except Exception as error:
                             observations[task["task_id"]] = error_observation("network_error", detail=error)
+                    for future in as_completed(preflight_futures):
+                        task_id, stage_name, run_id = preflight_futures[future]
+                        try:
+                            result = future.result()
+                        except Exception as error:
+                            logging.warning("Could not reconcile %s %s Run %s: %s", task_id, stage_name, run_id, error)
+                            continue
+                        preflight_updates.setdefault(task_id, {})[stage_name] = {
+                            "run_id": run_id, **result,
+                        }
                 for task in monitored:
                     run_id = task["run_id"]
                     observation = observations[task["task_id"]]
@@ -589,6 +626,15 @@ class AudiobookGUIApp:
                         return latest
                     queue = store.mutate(apply_terminal_updates, "Reconcile completed audiobook runs")
                     self._dispatch_queue_workflow()
+                if preflight_updates:
+                    changed = self._apply_preflight_observations(queue, preflight_updates)
+                    if changed:
+                        queue = store.mutate(
+                            lambda latest: (
+                                self._apply_preflight_observations(latest, preflight_updates), latest
+                            )[1],
+                            "Reconcile completed preflight Runs from GUI",
+                        )
                 self.cloud_queue = queue
                 self.root.after(0, lambda: self._render_queue(queue))
             except Exception as error:
@@ -604,6 +650,111 @@ class AudiobookGUIApp:
                 self.queue_syncing = False
                 self.queue_sync_after = self.root.after(10000, self.sync_cloud_queue)
         threading.Thread(target=worker, daemon=True).start()
+
+    @staticmethod
+    def _apply_preflight_observations(queue, observations):
+        """Apply verified preflight Run states without overwriting a newer Run."""
+        changed = False
+        for task in queue.get("queue", []):
+            task_id = task.get("task_id")
+            if task.get("workflow_phase") != "preflight" or task_id not in observations:
+                continue
+            stages = task.setdefault("stages", {})
+            for stage_name, result in observations[task_id].items():
+                stage = stages.setdefault(stage_name, {})
+                run_id = int(result["run_id"])
+                bound_run_id = task.get(f"{stage_name}_run_id") or stage.get("run_id")
+                if bound_run_id and int(bound_run_id) != run_id:
+                    continue
+                next_status = result.get("status")
+                if not next_status or stage.get("status") == next_status:
+                    continue
+                stage.update({"run_id": run_id, "status": next_status})
+                task[f"{stage_name}_run_id"] = run_id
+                if next_status == "completed":
+                    stage.update({"reason": None, "completed_at": result.get("updated_at")})
+                elif next_status == "failed":
+                    stage["reason"] = result.get("conclusion") or "failure"
+                changed = True
+            if task.get("status") == "canceling":
+                continue
+            scrape = (stages.get("scrape") or {}).get("status")
+            cover = (stages.get("cover") or {}).get("status")
+            next_task_status = (
+                "needs_attention" if "failed" in {scrape, cover}
+                else "waiting_review" if {scrape, cover} == {"completed"}
+                else "preparing_assets"
+            )
+            if task.get("status") != next_task_status:
+                task["status"] = next_task_status
+                task["reason"] = None if next_task_status != "needs_attention" else "preflight_failed"
+                changed = True
+        return changed
+
+    @staticmethod
+    def _observe_preflight_stage(repo, token, run_id, artifact_prefix):
+        headers = {
+            "Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        response = requests.get(
+            f"https://api.github.com/repos/{repo}/actions/runs/{int(run_id)}",
+            headers=headers, timeout=15,
+        )
+        response.raise_for_status()
+        run = response.json()
+        if run.get("status") != "completed":
+            return {"status": "running", "conclusion": None, "updated_at": run.get("updated_at")}
+        conclusion = run.get("conclusion")
+        if conclusion != "success":
+            return {"status": "failed", "conclusion": conclusion, "updated_at": run.get("updated_at")}
+        artifacts = requests.get(
+            f"https://api.github.com/repos/{repo}/actions/runs/{int(run_id)}/artifacts",
+            headers=headers, params={"per_page": 100}, timeout=15,
+        )
+        artifacts.raise_for_status()
+        artifact_ready = any(
+            not item.get("expired") and str(item.get("name") or "").startswith(artifact_prefix)
+            for item in artifacts.json().get("artifacts", [])
+        )
+        return {
+            "status": "completed" if artifact_ready else "running",
+            "conclusion": conclusion,
+            "updated_at": run.get("updated_at"),
+        }
+
+    @staticmethod
+    def _discover_preflight_run(repo, token, workflow_file, task_id, dispatched_at=None):
+        """Recover a Run ID lost during workflow_dispatch indexing or a later re-run."""
+        headers = {
+            "Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        response = requests.get(
+            f"https://api.github.com/repos/{repo}/actions/workflows/{workflow_file}/runs",
+            headers=headers, params={"event": "workflow_dispatch", "per_page": 100}, timeout=15,
+        )
+        response.raise_for_status()
+        since = None
+        if dispatched_at:
+            try:
+                since = datetime.fromisoformat(str(dispatched_at).replace("Z", "+00:00"))
+            except ValueError:
+                pass
+        matches = []
+        for run in response.json().get("workflow_runs", []):
+            name = run.get("display_title") or run.get("name")
+            if task_id_from_run_name(name) != task_id:
+                continue
+            if since:
+                try:
+                    created = datetime.fromisoformat(str(run.get("created_at") or "").replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if created < since:
+                    continue
+            matches.append(run)
+        return max(matches, key=lambda item: (str(item.get("created_at") or ""), int(item.get("id") or 0)), default=None)
 
     def _selected_task(self):
         tasks = self._selected_tasks()
@@ -781,22 +932,34 @@ class AudiobookGUIApp:
         if not task or not task.get("cover_run_id"):
             messagebox.showinfo("封面審核", "封面 Run 完成後才能查看。")
             return
-        top = tk.Toplevel(self.root); top.title(f"封面圖與 Gemini Prompt｜《{task.get('book_title')}》"); top.geometry("1120x760")
+        top = tk.Toplevel(self.root); top.title(f"封面圖與小說介紹／HF Prompt｜《{task.get('book_title')}》")
+        top.geometry("1440x900"); top.minsize(1120, 720)
         status = tk.StringVar(value="正在下載封面審核資料…"); ttk.Label(top, textvariable=status, padding=8).pack(fill=tk.X)
         panes = ttk.Panedwindow(top, orient=tk.HORIZONTAL); panes.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        image_label = ttk.Label(panes, text="載入中…", anchor=tk.CENTER); prompt = scrolledtext.ScrolledText(panes, wrap=tk.WORD)
-        panes.add(image_label, weight=1); panes.add(prompt, weight=1)
+        image_frame = ttk.Frame(panes)
+        image_label = ttk.Label(image_frame, text="載入中…", anchor=tk.CENTER)
+        image_label.pack(fill=tk.BOTH, expand=True)
+        info_frame = ttk.Frame(panes)
+        info_tabs = ttk.Notebook(info_frame)
+        info_tabs.pack(fill=tk.BOTH, expand=True)
+        analysis_text = scrolledtext.ScrolledText(info_tabs, wrap=tk.WORD, font=("Microsoft JhengHei", 10))
+        prompt_text = scrolledtext.ScrolledText(info_tabs, wrap=tk.WORD, font=("Consolas", 10))
+        info_tabs.add(analysis_text, text="Gemini 小說介紹／視覺分析")
+        info_tabs.add(prompt_text, text="HF 生圖 Prompt")
+        panes.add(image_frame, weight=5); panes.add(info_frame, weight=7)
         def worker():
             try:
                 files = self._download_artifact_files(task["cover_run_id"], f"cover-review-{task['task_id']}")
                 image_data = next(data for name, data in files.items() if name.endswith("master_cover.jpg"))
                 prompt_data = next(data for name, data in files.items() if name.endswith("master_cover_prompt.json"))
-                record = json.loads(prompt_data.decode("utf-8")); pil = Image.open(io.BytesIO(image_data)); pil.thumbnail((530, 650)); preview_image = pil.copy()
-                analysis_prompt = next((data.decode("utf-8") for name, data in files.items() if name.endswith("gemini_analysis_prompt.txt")), "手動封面或沒有分析呼叫紀錄")
+                record = json.loads(prompt_data.decode("utf-8")); pil = Image.open(io.BytesIO(image_data)); pil.thumbnail((620, 820)); preview_image = pil.copy()
+                brief = record.get("brief") if isinstance(record.get("brief"), dict) else record
                 def render():
                     photo = ImageTk.PhotoImage(preview_image)
                     image_label.config(image=photo, text=""); image_label.image = photo
-                    prompt.insert("1.0", "【Gemini 小說介紹分析 Prompt】\n" + analysis_prompt + "\n\n【分析結果與生圖 Prompt】\n" + json.dumps(record, ensure_ascii=False, indent=2)); status.set("封面圖、小說介紹與封面 Prompt 已載入。")
+                    analysis_text.insert("1.0", self._format_cover_analysis(brief))
+                    prompt_text.insert("1.0", record.get("prompt") or brief.get("prompt", ""))
+                    status.set("封面圖、Gemini 小說介紹與 HF 生圖 Prompt 已分開載入。")
                 self.root.after(0, render)
             except Exception as error:
                 self.root.after(0, lambda detail=str(error): status.set(f"載入失敗：{detail}"))
