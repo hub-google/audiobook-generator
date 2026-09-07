@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 989,
-  "updated_at": "2026-09-07T09:50:01.288307+00:00",
+  "revision": 990,
+  "updated_at": "2026-09-07T09:50:32.188768+00:00",
   "queue": [
     {
       "task_id": "book-20260907-046571a3",
@@ -499,22 +499,24 @@
         480,
         481
       ],
-      "status": "queued",
-      "workflow_phase": "queued",
+      "status": "dispatching",
+      "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "pending",
+          "status": "dispatching",
           "run_id": null,
           "run_attempt": 0,
           "reason": null,
-          "completed_at": null
+          "completed_at": null,
+          "dispatched_at": "2026-09-07T09:50:32.180582+00:00"
         },
         "cover": {
-          "status": "pending",
+          "status": "dispatching",
           "run_id": null,
           "run_attempt": 0,
           "reason": null,
-          "completed_at": null
+          "completed_at": null,
+          "dispatched_at": "2026-09-07T09:50:32.180586+00:00"
         },
         "processing": {
           "status": "pending",
@@ -554,7 +556,7 @@
         "total": 0
       },
       "created_at": "2026-09-07T09:02:53.203089+00:00",
-      "updated_at": "2026-09-07T09:50:01.288307+00:00",
+      "updated_at": "2026-09-07T09:50:32.188748+00:00",
       "book_profile_id": "04b0036cb8c8839e",
       "profile_snapshot": {
         "book_profile_id": "04b0036cb8c8839e",
@@ -573,7 +575,7 @@
         "cleaner_fingerprint": "3652dfd9fe791a14d5285926c05405273728f9cb7ea81d261318f4a9efff79a8"
       },
       "artifact_source_run_id": null,
-      "dispatched_at": "2026-09-07T09:42:29.727496+00:00",
+      "dispatched_at": "2026-09-07T09:50:32.180588+00:00",
       "active_run_id": null,
       "run_conclusion": null,
       "run_completed_at": null
