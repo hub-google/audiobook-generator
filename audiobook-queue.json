@@ -1317,7 +1317,7 @@
         631,
         632
       ],
-      "status": "stopped",
+      "status": "needs_attention",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
@@ -1364,7 +1364,7 @@
       "retry_requested_at": null,
       "run_history": [],
       "retry_at": null,
-      "reason": "user_cancelled",
+      "reason": "preflight_failed",
       "hf_progress": {
         "completed": 0,
         "total": 0
