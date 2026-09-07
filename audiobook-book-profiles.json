@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
-  "revision": 72,
-  "updated_at": "2026-09-07T12:38:43.182507+00:00",
+  "revision": 73,
+  "updated_at": "2026-09-07T12:57:15.673934+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -634,10 +634,7 @@
     "04b0036cb8c8839e": {
       "catalog_url": "https://www.69shuba.com/book/90427/",
       "book_title": "凛冬领主：从每日情报开始",
-      "cleaner_remove_patterns": [
-        "【每日情报更新完成】",
-        "每日情报更新完成"
-      ],
+      "cleaner_remove_patterns": [],
       "duplicate_detection": {
         "use_normalized_number": true,
         "use_chapter_name": true,
@@ -647,8 +644,8 @@
         "3": "第3章 大人的恩情还不完啊!"
       },
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 2,
-      "updated_at": "2026-09-07T12:37:14.232586+00:00",
+      "profile_revision": 3,
+      "updated_at": "2026-09-07T12:57:15.673934+00:00",
       "manual_cover": {}
     },
     "5fd768a4c8c5e2f5": {
