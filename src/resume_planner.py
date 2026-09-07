@@ -383,20 +383,14 @@ def plan_resume(repo, current_run_id, config_path, matrix_path, output_dir, expl
         if "shared-config" not in artifacts:
             continue
         if any(name.startswith("scrape-review-") or name.startswith("scrape-raw-") for name in artifacts) and not any(name.startswith("video-worker-") for name in artifacts):
-            if explicit_source:
-                raise ArtifactValidationError("Scraper Run cannot be used as processing resume source")
             continue
         with tempfile.TemporaryDirectory() as temporary:
             shared = download_artifact(repo, artifacts["shared-config"], Path(temporary) / "shared")
             source_config_path = _find(shared, "config.yaml")
             if not source_config_path:
-                if explicit_source:
-                    raise ArtifactValidationError("explicit source Run shared-config is ambiguous or incomplete")
                 continue
             source_config = yaml.safe_load(source_config_path.read_text(encoding="utf-8")) or {}
             if config_fingerprint(source_config) != config_fingerprint(config):
-                if explicit_source:
-                    raise ArtifactValidationError("explicit source Run config fingerprint mismatch")
                 continue
         result["source_run_id"] = run_id
         result["artifacts"] = artifacts

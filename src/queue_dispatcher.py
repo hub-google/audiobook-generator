@@ -518,13 +518,6 @@ class Dispatcher:
         source_run_id = None
         if is_processing:
             source_run_id = task.get("processing_run_id") or None
-            if source_run_id:
-                try:
-                    names = self.run_artifact_names(source_run_id)
-                except Exception:
-                    names = set()
-                if "shared-config" not in names or not any(name.startswith("video-worker-") for name in names):
-                    source_run_id = None
             if not source_run_id and not task.get("scrape_run_id"):
                 source_run_id = self.select_artifact_source_run_id(
                     queue, profile_id, task_id, current_task=task,
