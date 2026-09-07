@@ -180,7 +180,8 @@ def fetch_book_summary_details(book_title, catalog_url=None):
 
     # The catalog selected by the user is the identity source for this exact
     # book. Prefer its own OpenGraph description over title-only web lookups.
-    book_url = _catalog_book_url(catalog_url or os.getenv("BOOK_CATALOG_URL", ""))
+    configured_catalog_url = catalog_url or os.getenv("BOOK_CATALOG_URL", "")
+    book_url = _catalog_book_url(configured_catalog_url)
     if book_url:
         try:
             try:
@@ -190,17 +191,27 @@ def fetch_book_summary_details(book_title, catalog_url=None):
                 from sources import resolve_source
                 from sources.http_client import fetch_page
             adapter = resolve_source(book_url)
-            details = adapter.parse_metadata(fetch_page(book_url, adapter).content, book_url)
-            page_title = details['title']
-            description = details['description']
-            author = details['author']
-            category = details['category']
-            if page_title and book_title not in page_title and page_title not in book_title:
-                raise ValueError(f"目錄書名是「{page_title}」，不是「{book_title}」")
-            identity = f"書名：《{page_title or book_title}》；作者：{author or '未標示'}；類型：{category or '未標示'}；原始簡介：{description}"
-            return _validate_plot_source(book_title, identity, book_url), book_url
-        except (requests.RequestException, ValueError) as exc:
-            raise RuntimeError(f"無法從目前小說目錄取得可靠封面簡介：{exc}") from exc
+            fallback_catalog_url = adapter.catalog_url(configured_catalog_url or book_url)
+            source_urls = list(dict.fromkeys((book_url, fallback_catalog_url)))
+            for source_url in source_urls:
+                try:
+                    details = adapter.parse_metadata(
+                        fetch_page(source_url, adapter).content, source_url
+                    )
+                    page_title = details['title']
+                    description = details['description']
+                    author = details['author']
+                    category = details['category']
+                    if page_title and book_title not in page_title and page_title not in book_title:
+                        raise ValueError(f"目錄書名是「{page_title}」，不是「{book_title}」")
+                    identity = f"書名：《{page_title or book_title}》；作者：{author or '未標示'}；類型：{category or '未標示'}；原始簡介：{description}"
+                    return _validate_plot_source(book_title, identity, source_url), source_url
+                except (requests.RequestException, ValueError, RuntimeError) as exc:
+                    logging.warning("小說來源簡介取得失敗 (%s): %s", source_url, exc)
+        except (requests.RequestException, ValueError, RuntimeError) as exc:
+            # Source setup itself can fail. Continue to the existing Wikipedia
+            # and search fallbacks instead of aborting cover preflight.
+            logging.warning("無法建立小說來源簡介查詢: %s", exc)
     
     # 嘗試 1: 中文維基百科 REST API
     try:
