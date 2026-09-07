@@ -162,7 +162,7 @@
       "retry_requested_at": "2026-09-07T22:40:53.847815+00:00",
       "run_history": [],
       "retry_at": null,
-      "reason": "preflight_failed:封面",
+      "reason": "preflight_failed:TXT,封面",
       "hf_progress": {
         "completed": 0,
         "total": 0
