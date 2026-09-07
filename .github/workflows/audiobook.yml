@@ -204,7 +204,7 @@ jobs:
           fi
 
   catalog_attempts:
-    name: "🔄 Catalog — Runner ${{ matrix.attempt }}/10"
+    name: "🔄 Catalog probe — Runner ${{ matrix.attempt }}/10"
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.resume_source_run_id == '' &&
@@ -215,6 +215,8 @@ jobs:
       fail-fast: true
       matrix:
         attempt: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    outputs:
+      winner: ${{ steps.existing.outputs.winner || steps.fetch.outputs.winner }}
 
     steps:
       - name: Check whether an earlier runner already succeeded
@@ -224,10 +226,15 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          if gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts" \
-            --jq '.artifacts[] | select(.name == "catalog-bootstrap") | .id' | grep -q .; then
+          winner=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts" \
+            --jq '.artifacts[] | select(.name | startswith("catalog-bootstrap-runner-")) | .name' \
+            | sed -nE 's/^catalog-bootstrap-runner-([0-9]+)$/\1/p' | head -n 1)
+          if [ -n "$winner" ]; then
             echo "found=true" >> "$GITHUB_OUTPUT"
-            echo "A previous catalog runner succeeded; this runner will not contact the source."
+            echo "winner=$winner" >> "$GITHUB_OUTPUT"
+            echo "⏭️ SKIPPED: Runner $winner/10 already fetched the catalog; Runner ${{ matrix.attempt }}/10 will not contact the source."
+            echo "### ⏭️ Catalog probe skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "Runner **$winner/10** already fetched the catalog successfully." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
@@ -272,11 +279,15 @@ jobs:
 
           if [ "$parser_status" -eq 0 ]; then
             echo "success=true" >> "$GITHUB_OUTPUT"
+            echo "winner=${{ matrix.attempt }}" >> "$GITHUB_OUTPUT"
+            echo "### ✅ Catalog fetched by Runner ${{ matrix.attempt }}/10" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           if grep -Eq 'SourceAccessError:.*HTTP (401|403|429)' catalog-fetch.log; then
             echo "success=false" >> "$GITHUB_OUTPUT"
             echo "::warning title=Catalog runner blocked::Runner ${{ matrix.attempt }}/10 was blocked; the next matrix job will use a new runner."
+            echo "### ⚠️ Catalog probe blocked" >> "$GITHUB_STEP_SUMMARY"
+            echo "Runner **${{ matrix.attempt }}/10** received an access-limit response and handed off to the next runner." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           echo "Catalog parsing failed for a non-access reason; refusing to hide the error by changing runners."
@@ -286,15 +297,35 @@ jobs:
         if: steps.existing.outputs.found != 'true' && steps.fetch.outputs.success == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: catalog-bootstrap
+          name: catalog-bootstrap-runner-${{ matrix.attempt }}
           path: |
             config.yaml
             matrix.json
           if-no-files-found: error
 
+  catalog_result:
+    name: "✅ Catalog fetched — Runner ${{ needs.catalog_attempts.outputs.winner }}/10"
+    needs: catalog_attempts
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.resume_source_run_id == '' &&
+      inputs.scrape_source_run_id == ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm and display the successful catalog runner
+        env:
+          WINNER: ${{ needs.catalog_attempts.outputs.winner }}
+        run: |
+          if ! [[ "$WINNER" =~ ^([1-9]|10)$ ]]; then
+            echo "No catalog runner produced a successful artifact."
+            exit 1
+          fi
+          echo "### ✅ Catalog fetched successfully" >> "$GITHUB_STEP_SUMMARY"
+          echo "The successful fetch was **Runner $WINNER/10**. Other green catalog-probe jobs either handed off after an access-limit response or skipped after this artifact appeared." >> "$GITHUB_STEP_SUMMARY"
+
   setup:
     name: "🔍 Setup — Parse Catalog & Build Matrix"
-    needs: catalog_attempts
+    needs: [catalog_attempts, catalog_result]
     if: always() && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
@@ -387,7 +418,8 @@ jobs:
         if: steps.restore_shared_config.outputs.restored != 'true' && inputs.scrape_source_run_id == ''
         uses: actions/download-artifact@v4
         with:
-          name: catalog-bootstrap
+          pattern: catalog-bootstrap-runner-*
+          merge-multiple: true
           path: .
 
       - name: Restore reviewed TXT catalog snapshot
