@@ -27,10 +27,9 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.11", cache: pip}
       - run: pip install -r requirements.txt
-      - run: sudo apt-get update && sudo apt-get install -y xvfb
       - name: Parse catalog identity
         run: |
-          xvfb-run -a python src/catalog_parser.py --url "${{ inputs.catalog_url }}" --start "${{ inputs.start_chap }}" --end "${{ inputs.end_chap }}" --output config.yaml --workers 10 --matrix-output matrix.json --exclude-chapters "${{ inputs.exclude_chapters }}" --renumber-selected "${{ inputs.renumber_selected }}" --chapter-title-overrides-b64 "${{ inputs.chapter_title_overrides_b64 }}" --chapter-order-b64 "${{ inputs.chapter_order_b64 }}" --book-profile-snapshot-b64 "${{ inputs.book_profile_snapshot_b64 }}"
+          python src/catalog_parser.py --url "${{ inputs.catalog_url }}" --start "${{ inputs.start_chap }}" --end "${{ inputs.end_chap }}" --output config.yaml --workers 10 --matrix-output matrix.json --exclude-chapters "${{ inputs.exclude_chapters }}" --renumber-selected "${{ inputs.renumber_selected }}" --chapter-title-overrides-b64 "${{ inputs.chapter_title_overrides_b64 }}" --chapter-order-b64 "${{ inputs.chapter_order_b64 }}" --book-profile-snapshot-b64 "${{ inputs.book_profile_snapshot_b64 }}"
       - name: Generate reviewable cover
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

@@ -9,7 +9,6 @@ class Shuba69Source(SourceAdapter):
     hosts = ("www.69shuba.com", "69shuba.com")
     encoding = "gb18030"
     min_interval = 0.5
-    requires_browser = True
 
     def book_id(self, url):
         match = re.search(r'/(?:book|txt)/(\d+)', urlsplit(url).path, re.I)

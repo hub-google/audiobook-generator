@@ -226,12 +226,12 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb jq
+          sudo apt-get install -y jq
 
       - name: Install Python Dependencies
         run: |
           pip install --upgrade pip
-          pip install seleniumbase beautifulsoup4 pyyaml requests curl_cffi
+          pip install beautifulsoup4 pyyaml requests curl_cffi
 
       - name: Restore authoritative shared-config on Resume
         if: github.event.inputs.resume_source_run_id != ''
@@ -292,7 +292,7 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             echo "Catalog parsing attempt $attempt/3"
-            if xvfb-run -a python src/catalog_parser.py \
+            if python src/catalog_parser.py \
               --url "${{ github.event.inputs.catalog_url }}" \
               --start ${{ github.event.inputs.start_chap }} \
               --end   ${{ github.event.inputs.end_chap }} \
@@ -484,14 +484,10 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb
       - name: Install Python Dependencies
         run: |
           pip install --upgrade pip
-          pip install seleniumbase beautifulsoup4 pyyaml requests curl_cffi
+          pip install beautifulsoup4 pyyaml requests curl_cffi
       - name: Download shared config
         uses: actions/download-artifact@v4
         with:
@@ -510,10 +506,10 @@ jobs:
             --artifact-dir "resume_bundle/workers/video-worker-${{ matrix.worker_id }}" \
             --source-config config.yaml \
             --source-run-id "${{ needs.resume_planner.outputs.source_run_id }}"
-      - name: Scrape Assigned Chapters via SeleniumBase UC
+      - name: Scrape Assigned Chapters via HTTP
         if: steps.artifact_restore.outputs.complete != 'true'
         run: |
-          xvfb-run -a python src/worker_pipeline.py --stage crawl --worker-id ${{ matrix.worker_id }}
+          python src/worker_pipeline.py --stage crawl --worker-id ${{ matrix.worker_id }}
       - name: Build per-chapter advertisement review report
         if: steps.artifact_restore.outputs.complete != 'true'
         run: |

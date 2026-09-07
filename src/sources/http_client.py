@@ -34,7 +34,16 @@ def fetch_page(url, source, timeout=20):
         _last[source.source_id] = time.monotonic()
 
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'zh-CN,zh;q=0.9,zh-TW;q=0.8,en;q=0.7',
+        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Upgrade-Insecure-Requests': '1',
     }
     referer = getattr(source, 'get_referer', lambda u: None)(url)
     if referer:
@@ -43,26 +52,6 @@ def fetch_page(url, source, timeout=20):
     # Allow mock patch of requests.get in tests
     if getattr(requests.get, '__module__', None) == 'unittest.mock':
         response = requests.get(url, headers=headers, timeout=timeout)
-    elif getattr(source, 'requires_browser', False):
-        response = None
-        if curl_requests is not None:
-            try:
-                session = get_session(source.source_id)
-                res = session.get(url, headers=headers, timeout=timeout)
-                content_lower = (res.content or b"").lower()
-                if res.status_code == 200 and not any(x in content_lower for x in (b"just a moment", b"captcha", b"cf-browser-verification")):
-                    response = res
-            except Exception as ce:
-                logging.debug(f"[HttpClient] Fast curl_cffi fetch skipped: {ce}")
-
-        if response is None:
-            try:
-                from .browser_fetcher import fetch_page_browser
-                response = fetch_page_browser(url, source, timeout=timeout)
-            except Exception as e:
-                logging.warning(f"[HttpClient] Browser fetch failed or not available ({e}), falling back to requests session...")
-                session = get_session(source.source_id)
-                response = session.get(url, headers=headers, timeout=timeout)
     else:
         session = get_session(source.source_id)
         response = session.get(url, headers=headers, timeout=timeout)
