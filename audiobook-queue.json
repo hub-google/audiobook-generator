@@ -650,7 +650,7 @@
         631,
         632
       ],
-      "status": "canceling",
+      "status": "stopped",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
