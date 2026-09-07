@@ -499,15 +499,15 @@
         480,
         481
       ],
-      "status": "preparing_assets",
+      "status": "waiting_review",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "dispatching",
-          "run_id": null,
+          "status": "completed",
+          "run_id": 34115699942,
           "run_attempt": 1,
           "reason": null,
-          "completed_at": null,
+          "completed_at": "2026-09-07T11:33:49Z",
           "dispatched_at": "2026-09-07T11:15:29.422765+00:00"
         },
         "cover": {
@@ -533,7 +533,7 @@
           "completed_at": null
         }
       },
-      "scrape_run_id": null,
+      "scrape_run_id": 34115699942,
       "cover_run_id": 34109117863,
       "processing_run_id": null,
       "scrape_snapshot_id": "",
