@@ -270,13 +270,13 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
             step for step in self.jobs["setup"]["steps"]
             if step.get("name") == "Parse Catalog & Generate config.yaml + matrix.json"
         )
-        self.assertIn("hashFiles('config.yaml') == ''", parse_step.get("if", ""))
+        self.assertIn("steps.restore_shared_config.outputs.restored != 'true'", parse_step.get("if", ""))
 
         restore_txt_step = next(
             step for step in self.jobs["setup"]["steps"]
             if step.get("name") == "Restore reviewed TXT catalog snapshot"
         )
-        self.assertIn("hashFiles('config.yaml') == ''", restore_txt_step.get("if", ""))
+        self.assertIn("steps.restore_shared_config.outputs.restored != 'true'", restore_txt_step.get("if", ""))
 
 
 if __name__ == "__main__":

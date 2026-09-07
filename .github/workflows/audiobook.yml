@@ -234,6 +234,7 @@ jobs:
           pip install beautifulsoup4 pyyaml requests curl_cffi
 
       - name: Restore authoritative shared-config on Resume
+        id: restore_shared_config
         if: github.event.inputs.resume_source_run_id != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -252,6 +253,7 @@ jobs:
             sleep 15
           done
           if [ ! -f restored_source/config.yaml ]; then
+            echo "restored=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           python src/catalog_parser.py \
@@ -289,9 +291,10 @@ jobs:
                   f"{supplied_title!r} does not match source config {expected_title!r}"
               )
           PY
+          echo "restored=true" >> "$GITHUB_OUTPUT"
 
       - name: Parse Catalog & Generate config.yaml + matrix.json
-        if: hashFiles('config.yaml') == '' && inputs.scrape_source_run_id == ''
+        if: steps.restore_shared_config.outputs.restored != 'true' && inputs.scrape_source_run_id == ''
         run: |
           for attempt in 1 2 3; do
             echo "Catalog parsing attempt $attempt/3"
@@ -314,7 +317,7 @@ jobs:
           done
 
       - name: Restore reviewed TXT catalog snapshot
-        if: hashFiles('config.yaml') == '' && inputs.scrape_source_run_id != ''
+        if: steps.restore_shared_config.outputs.restored != 'true' && inputs.scrape_source_run_id != ''
         uses: actions/download-artifact@v4
         with:
           name: shared-config
@@ -323,7 +326,7 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ inputs.scrape_source_run_id }}
       - name: Apply approved cleaner to reviewed catalog
-        if: hashFiles('config.yaml') == '' && inputs.scrape_source_run_id != ''
+        if: steps.restore_shared_config.outputs.restored != 'true' && inputs.scrape_source_run_id != ''
         env:
           PROFILE_SNAPSHOT: ${{ inputs.book_profile_snapshot_b64 }}
         run: python src/preflight_config.py
