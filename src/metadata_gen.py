@@ -178,6 +178,16 @@ def fetch_book_summary_details(book_title, catalog_url=None):
     raw_summary = ""
     source = ""
 
+    def validated_identity(details, source_url):
+        page_title = details['title']
+        description = details['description']
+        author = details['author']
+        category = details['category']
+        if page_title and book_title not in page_title and page_title not in book_title:
+            raise ValueError(f"目錄書名是「{page_title}」，不是「{book_title}」")
+        identity = f"書名：《{page_title or book_title}》；作者：{author or '未標示'}；類型：{category or '未標示'}；原始簡介：{description}"
+        return _validate_plot_source(book_title, identity, source_url), source_url
+
     # The catalog selected by the user is the identity source for this exact
     # book. Prefer its own OpenGraph description over title-only web lookups.
     configured_catalog_url = catalog_url or os.getenv("BOOK_CATALOG_URL", "")
@@ -198,16 +208,18 @@ def fetch_book_summary_details(book_title, catalog_url=None):
                     details = adapter.parse_metadata(
                         fetch_page(source_url, adapter).content, source_url
                     )
-                    page_title = details['title']
-                    description = details['description']
-                    author = details['author']
-                    category = details['category']
-                    if page_title and book_title not in page_title and page_title not in book_title:
-                        raise ValueError(f"目錄書名是「{page_title}」，不是「{book_title}」")
-                    identity = f"書名：《{page_title or book_title}》；作者：{author or '未標示'}；類型：{category or '未標示'}；原始簡介：{description}"
-                    return _validate_plot_source(book_title, identity, source_url), source_url
+                    return validated_identity(details, source_url)
                 except (requests.RequestException, ValueError, RuntimeError) as exc:
                     logging.warning("小說來源簡介取得失敗 (%s): %s", source_url, exc)
+
+            # catalog_parser has already fetched this exact page successfully.
+            # Reuse its small metadata snapshot if a second request is rate-limited.
+            cached_metadata = os.getenv("BOOK_CATALOG_METADATA", "")
+            if cached_metadata:
+                try:
+                    return validated_identity(json.loads(cached_metadata), fallback_catalog_url)
+                except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+                    logging.warning("目錄簡介快照無法使用: %s", exc)
         except (requests.RequestException, ValueError, RuntimeError) as exc:
             # Source setup itself can fail. Continue to the existing Wikipedia
             # and search fallbacks instead of aborting cover preflight.

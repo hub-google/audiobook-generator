@@ -15,7 +15,7 @@ from tools.download_novel_txt import download
 
 
 URL = 'https://www.69shuba.com/book/29590/'
-CATALOG = '''<div id="catalog"><h1>測試小說最新章节</h1>
+CATALOG = '''<head><meta property="og:description" content="這是目錄頁的完整小說簡介資料"></head><div id="catalog"><h1>測試小說最新章节</h1>
 <a href="/txt/29590/30">3.第3章 尾聲</a>
 <a href="/txt/29590/20">2.第2章 中間</a>
 <a href="/txt/29590/10">1.第1章 開始</a></div>'''
@@ -36,6 +36,7 @@ def test_shuba_catalog_order_ids_and_original_labels():
     assert result['chapter_titles'][0] == '第1章 開始'
     assert result['chapter_records'][0]['original_title'] == '1.第1章 開始'
     assert result['chapter_records'][0]['source_chapter_id'] == '10'
+    assert result['metadata']['description'] == '這是目錄頁的完整小說簡介資料'
 
 
 def test_hjwzw_keeps_full_url_query_and_relative_resolution():
@@ -140,4 +141,3 @@ def test_http_404_raises_source_parse_error():
     with patch('src.sources.http_client.requests.get', return_value=response), patch('src.sources.http_client.time.sleep'):
         with pytest.raises(SourceParseError, match='HTTP 404'):
             fetch_page(URL, resolve_source(URL))
-

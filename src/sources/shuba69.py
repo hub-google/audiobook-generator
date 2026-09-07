@@ -60,7 +60,7 @@ class Shuba69Source(SourceAdapter):
             entries.reverse()
         chapters = [Chapter(cid, href, label, self.clean_title(label), i)
                     for i, (cid, href, label) in enumerate(entries, 1)]
-        return self.catalog_result(url, title, chapters)
+        return self.catalog_result(url, title, chapters, metadata=self.parse_metadata(html, url))
 
     def parse_chapter(self, html, url):
         soup = self.soup(html)
@@ -147,4 +147,3 @@ class Shuba69Source(SourceAdapter):
 def fetch_69shuba_full_novels(url="https://www.69shuba.com/novels/full"):
     source = Shuba69Source()
     return source.fetch_full_novels(url)
-

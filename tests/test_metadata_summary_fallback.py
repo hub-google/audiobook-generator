@@ -31,7 +31,28 @@ def test_summary_retries_catalog_when_metadata_page_is_restricted():
     assert [call.args[0] for call in fetch.call_args_list] == [METADATA_URL, CATALOG_URL]
 
 
-def test_summary_uses_web_fallback_when_both_source_pages_are_restricted():
+def test_summary_reuses_catalog_snapshot_when_repeat_requests_are_restricted(monkeypatch):
+    cached = {
+        "title": BOOK_TITLE,
+        "author": "作者",
+        "category": "奇幻",
+        "description": "這是目錄解析階段已取得的完整小說簡介，內容描述主角利用每日情報經營凜冬領地、招募夥伴、化解危機並逐步成長的奇幻故事。",
+    }
+    monkeypatch.setenv("BOOK_CATALOG_METADATA", __import__("json").dumps(cached, ensure_ascii=False))
+
+    with patch(
+        "src.sources.http_client.fetch_page",
+        side_effect=SourceAccessError("HTTP 403"),
+    ), patch("src.metadata_gen.requests.get") as web:
+        summary, source = fetch_book_summary_details(BOOK_TITLE, CATALOG_URL)
+
+    assert source == CATALOG_URL
+    assert "凜冬領地" in summary
+    web.assert_not_called()
+
+
+def test_summary_uses_web_fallback_when_source_and_snapshot_are_unavailable(monkeypatch):
+    monkeypatch.delenv("BOOK_CATALOG_METADATA", raising=False)
     wiki = Mock(status_code=200)
     wiki.json.return_value = {
         "extract": "這是維基百科備援的足夠長簡介，其中含有小說的世界觀、主角成長、領地經營與主要衝突，可作為封面研究的可靠摘要資料。"

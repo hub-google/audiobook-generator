@@ -43,6 +43,9 @@ def main():
         shutil.copytree(folder, root / "Cover", dirs_exist_ok=True)
         return
     os.environ["BOOK_CATALOG_URL"] = config["catalog_url"]
+    catalog_metadata = (config.get("catalog_snapshot") or {}).get("metadata") or {}
+    if catalog_metadata:
+        os.environ["BOOK_CATALOG_METADATA"] = json.dumps(catalog_metadata, ensure_ascii=False)
     os.environ["COVER_REVIEW_OUTPUT"] = str(root / "Cover")
     if config.get("manual_cover"):
         from cover_assets import restore_from_config
