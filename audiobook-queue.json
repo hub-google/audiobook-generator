@@ -503,7 +503,7 @@
         480,
         481
       ],
-      "status": "processing",
+      "status": "running",
       "workflow_phase": "processing",
       "stages": {
         "scrape": {
@@ -1359,7 +1359,7 @@
       "retry_requested_at": null,
       "run_history": [],
       "retry_at": null,
-      "reason": "preflight_failed",
+      "reason": "preflight_failed:TXT,封面",
       "hf_progress": {
         "completed": 0,
         "total": 0
