@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 986,
-  "updated_at": "2026-09-07T09:03:15.472051+00:00",
+  "revision": 987,
+  "updated_at": "2026-09-07T09:41:58.845443+00:00",
   "queue": [
     {
       "task_id": "book-20260907-046571a3",
@@ -499,24 +499,22 @@
         480,
         481
       ],
-      "status": "needs_attention",
-      "workflow_phase": "preflight",
+      "status": "queued",
+      "workflow_phase": "queued",
       "stages": {
         "scrape": {
-          "status": "failed",
-          "run_id": 34103869649,
+          "status": "pending",
+          "run_id": null,
           "run_attempt": 0,
-          "reason": "failure",
-          "completed_at": null,
-          "dispatched_at": "2026-09-07T09:03:15.460032+00:00"
+          "reason": null,
+          "completed_at": null
         },
         "cover": {
-          "status": "failed",
-          "run_id": 34103871803,
+          "status": "pending",
+          "run_id": null,
           "run_attempt": 0,
-          "reason": "failure",
-          "completed_at": null,
-          "dispatched_at": "2026-09-07T09:03:15.460038+00:00"
+          "reason": null,
+          "completed_at": null
         },
         "processing": {
           "status": "pending",
@@ -546,7 +544,7 @@
       "retry_requested_at": null,
       "run_history": [],
       "retry_at": null,
-      "reason": "preflight_failed:TXT,封面",
+      "reason": null,
       "hf_progress": {
         "completed": 0,
         "total": 0
@@ -556,7 +554,7 @@
         "total": 0
       },
       "created_at": "2026-09-07T09:02:53.203089+00:00",
-      "updated_at": "2026-09-07T09:03:15.472021+00:00",
+      "updated_at": "2026-09-07T09:41:58.845443+00:00",
       "book_profile_id": "04b0036cb8c8839e",
       "profile_snapshot": {
         "book_profile_id": "04b0036cb8c8839e",
@@ -575,7 +573,8 @@
         "cleaner_fingerprint": "3652dfd9fe791a14d5285926c05405273728f9cb7ea81d261318f4a9efff79a8"
       },
       "artifact_source_run_id": null,
-      "dispatched_at": "2026-09-07T09:03:15.460040+00:00"
+      "dispatched_at": "2026-09-07T09:03:15.460040+00:00",
+      "active_run_id": null
     },
     {
       "task_id": "book-20260907-7542ded2",
