@@ -10,7 +10,7 @@ import requests
 import threading
 import tkinter as tk
 from decimal import Decimal, InvalidOperation
-from tkinter import ttk, messagebox, scrolledtext, filedialog
+from tkinter import ttk, messagebox, scrolledtext, filedialog, simpledialog
 from dotenv import load_dotenv
 import re
 import webbrowser
@@ -826,14 +826,66 @@ class AudiobookGUIApp:
         if not task or not task.get("scrape_run_id"):
             messagebox.showinfo("廣告分析", "TXT 抓取完成後才能查看。")
             return
-        top = tk.Toplevel(self.root); top.title(f"每個章節的廣告分析結果｜《{task.get('book_title')}》"); top.geometry("1180x760")
+        top = tk.Toplevel(self.root); top.title(f"每個章節的廣告分析結果｜《{task.get('book_title')}》"); top.geometry("1480x860"); top.minsize(1050, 650)
         status = tk.StringVar(value="正在下載廣告分析結果…"); ttk.Label(top, textvariable=status, padding=8).pack(fill=tk.X)
+
+        filter_bar = ttk.LabelFrame(top, text="篩選與批次編輯", padding=6); filter_bar.pack(fill=tk.X, padx=8)
+        search_text = tk.StringVar(); decision_filter = tk.StringVar(value="全部狀態")
+        ttk.Label(filter_bar, text="搜尋：").pack(side=tk.LEFT)
+        search_entry = ttk.Entry(filter_bar, textvariable=search_text, width=28); search_entry.pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(filter_bar, text="處理狀態：").pack(side=tk.LEFT)
+        decision_combo = ttk.Combobox(filter_bar, textvariable=decision_filter,
+                                      values=("全部狀態", "僅顯示待去除", "僅顯示已保留"),
+                                      state="readonly", width=14)
+        decision_combo.pack(side=tk.LEFT, padx=(0, 10))
+        count_label = ttk.Label(filter_bar, text="顯示：0 項｜去除：0 項｜保留：0 項")
+        count_label.pack(side=tk.RIGHT)
+
         panes = ttk.Panedwindow(top, orient=tk.HORIZONTAL); panes.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        tree = ttk.Treeview(panes, columns=("decision", "kind", "text", "count", "chapters"), show="headings")
-        for key, title, width in (("decision", "建議", 65), ("kind", "類型", 105), ("text", "疑似廣告", 390), ("count", "次數", 60), ("chapters", "影響章節", 150)):
+        tree_frame = ttk.Frame(panes)
+        tree = ttk.Treeview(tree_frame, columns=("decision", "kind", "text", "count", "chapters", "score", "reason"),
+                            show="headings", selectmode="extended")
+        for key, title, width in (("decision", "處理狀態", 85), ("kind", "類型", 105), ("text", "疑似廣告詞句／重複行", 390),
+                                  ("count", "次數", 55), ("chapters", "影響章節", 130), ("score", "可疑度", 65), ("reason", "判定理由", 190)):
             tree.heading(key, text=title); tree.column(key, width=width)
-        detail = scrolledtext.ScrolledText(panes, wrap=tk.WORD, font=("Microsoft JhengHei", 10))
-        panes.add(tree, weight=3); panes.add(detail, weight=2); rows = {}; review_identity = {}; chapter_texts = {}
+        tree.column("text", anchor=tk.W); tree.column("reason", anchor=tk.W)
+        tree.tag_configure("remove", foreground="#9b0000"); tree.tag_configure("keep", foreground="#777777")
+        tree_y = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
+        tree_x = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=tree.xview)
+        tree.configure(yscrollcommand=tree_y.set, xscrollcommand=tree_x.set)
+        tree.grid(row=0, column=0, sticky="nsew"); tree_y.grid(row=0, column=1, sticky="ns"); tree_x.grid(row=1, column=0, sticky="ew")
+        tree_frame.rowconfigure(0, weight=1); tree_frame.columnconfigure(0, weight=1)
+        detail_frame = ttk.LabelFrame(panes, text="選定詞句的判定與原文上下文", padding=4)
+        detail = scrolledtext.ScrolledText(detail_frame, wrap=tk.WORD, font=("Microsoft JhengHei", 10))
+        detail.pack(fill=tk.BOTH, expand=True)
+        panes.add(tree_frame, weight=3); panes.add(detail_frame, weight=2)
+        rows = {}; row_order = []; review_identity = {}; chapter_texts = {}
+
+        def row_values(item):
+            chapters = item.get("affected_chapters") or []
+            return ("☑ 去除" if item.get("approved_remove") else "☐ 保留", item.get("kind") or "", item.get("text") or "",
+                    item.get("count", "—"), ",".join(map(str, chapters[:15])) + ("…" if len(chapters) > 15 else ""),
+                    item.get("score", "—"), item.get("reason") or "")
+
+        def refresh_tree(*_args):
+            selected = set(tree.selection()); tree.delete(*tree.get_children())
+            keyword = search_text.get().strip().lower(); choice = decision_filter.get()
+            visible = 0
+            for iid in row_order:
+                item = rows.get(iid)
+                if not item: continue
+                remove = bool(item.get("approved_remove"))
+                haystack = " ".join(str(item.get(key) or "") for key in ("text", "kind", "reason")).lower()
+                if keyword and keyword not in haystack: continue
+                if choice == "僅顯示待去除" and not remove: continue
+                if choice == "僅顯示已保留" and remove: continue
+                tree.insert("", tk.END, iid=iid, values=row_values(item), tags=("remove" if remove else "keep",))
+                visible += 1
+                if iid in selected: tree.selection_add(iid)
+            remove_count = sum(bool(item.get("approved_remove")) for item in rows.values())
+            count_label.config(text=f"顯示：{visible}/{len(rows)} 項｜去除：{remove_count} 項｜保留：{len(rows) - remove_count} 項")
+
+        search_text.trace_add("write", refresh_tree); decision_combo.bind("<<ComboboxSelected>>", refresh_tree)
         chapter_bar = ttk.Frame(top, padding=8); chapter_bar.pack(fill=tk.X)
         ttk.Label(chapter_bar, text="查看章節 Raw／Clean：").pack(side=tk.LEFT)
         chapter_choice = ttk.Combobox(chapter_bar, state="readonly", width=15); chapter_choice.pack(side=tk.LEFT)
@@ -851,23 +903,61 @@ class AudiobookGUIApp:
             item = rows[tree.selection()[0]]; detail.delete("1.0", tk.END)
             detail.insert("1.0", f"判定原因：{item.get('reason')}\n\n影響章節：{item.get('affected_chapters')}\n\n" + "\n\n---\n\n".join(item.get("samples") or []))
         tree.bind("<<TreeviewSelect>>", select)
-        def toggle(_event=None):
+        def set_selected(value=None):
             for iid in tree.selection():
-                item = rows[iid]; item["approved_remove"] = not item.get("approved_remove", False)
-                tree.set(iid, "decision", "去除" if item["approved_remove"] else "保留")
-        tree.bind("<Double-1>", toggle)
+                item = rows[iid]; item["approved_remove"] = (not item.get("approved_remove", False)) if value is None else value
+            refresh_tree(); select()
+        def toggle(_event=None):
+            set_selected()
+            return "break"
+        def click_status(event):
+            if tree.identify("region", event.x, event.y) == "cell" and tree.identify_column(event.x) == "#1":
+                iid = tree.identify_row(event.y)
+                if iid:
+                    tree.selection_set(iid); set_selected()
+        def edit_selected():
+            selected = tree.selection()
+            if len(selected) != 1:
+                messagebox.showinfo("編輯廣告詞句", "請先選取一筆候選。", parent=top); return
+            iid = selected[0]; item = rows[iid]; old_text = str(item.get("text") or "")
+            value = simpledialog.askstring("編輯廣告詞句", "要比對並刪除的文字：", initialvalue=old_text, parent=top)
+            if value is None: return
+            patterns = validate_remove_patterns([value])
+            if not patterns:
+                messagebox.showerror("無法儲存", "詞句不可為空白或無效內容。", parent=top); return
+            item["text"] = patterns[0]
+            if patterns[0] != old_text:
+                item["reason"] = f"人工編輯（原詞句：{old_text}）"
+            refresh_tree(); tree.selection_set(iid); tree.see(iid); select()
+        def remove_selected():
+            selected = list(tree.selection())
+            for iid in selected:
+                rows.pop(iid, None)
+                if iid in row_order: row_order.remove(iid)
+            refresh_tree(); detail.delete("1.0", tk.END)
+        def double_click(event):
+            if tree.identify_column(event.x) == "#3": edit_selected()
+            else: toggle()
+            return "break"
+        tree.bind("<Button-1>", click_status, add="+")
+        tree.bind("<space>", toggle); tree.bind("<Delete>", lambda _event: (set_selected(False), "break")[1])
+        tree.bind("<Double-1>", double_click)
         manual_text = tk.StringVar()
         ttk.Entry(chapter_bar, textvariable=manual_text, width=35).pack(side=tk.LEFT, padx=8)
         def add_manual():
             patterns = validate_remove_patterns([manual_text.get()])
             if not patterns: return
-            iid = f"manual-{len(rows)}"
+            iid = f"manual-{time.time_ns()}"
             rows[iid] = {"text": patterns[0], "approved_remove": True, "reason": "人工新增", "samples": []}
-            tree.insert("", tk.END, iid=iid, values=("去除", "人工新增", patterns[0], "—", "—"))
-            manual_text.set("")
+            row_order.append(iid); manual_text.set(""); refresh_tree(); tree.selection_set(iid); tree.see(iid)
         ttk.Button(chapter_bar, text="新增刪除文字", command=add_manual).pack(side=tk.LEFT)
         actions = ttk.Frame(top, padding=(8, 0, 8, 8)); actions.pack(fill=tk.X)
-        ttk.Label(actions, text="雙擊候選可切換「去除／保留」。").pack(side=tk.LEFT)
+        ttk.Button(actions, text="☑ 設為去除", command=lambda: set_selected(True)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(actions, text="☐ 設為保留", command=lambda: set_selected(False)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(actions, text="反選", command=set_selected).pack(side=tk.LEFT, padx=2)
+        ttk.Button(actions, text="編輯詞句", command=edit_selected).pack(side=tk.LEFT, padx=(12, 2))
+        ttk.Button(actions, text="從名單移除", command=remove_selected).pack(side=tk.LEFT, padx=2)
+        ttk.Label(actions, text="點狀態欄或 Space 切換；雙擊詞句可編輯；Delete 設為保留。", foreground="#555").pack(side=tk.LEFT, padx=12)
         approve_button = ttk.Button(actions, text="確認廣告設定並開始後製", style="Accent.TButton", state=tk.DISABLED)
         approve_button.pack(side=tk.RIGHT)
 
@@ -918,8 +1008,8 @@ class AudiobookGUIApp:
                 def render():
                     chapter_choice.config(values=sorted(chapter_texts, key=int))
                     for index, item in enumerate(sorted(candidates, key=lambda x: -float(x.get("score") or 0))):
-                        iid = str(index); item["approved_remove"] = item["text"] in saved_patterns; rows[iid] = item; chapters = item.get("affected_chapters") or []
-                        tree.insert("", tk.END, iid=iid, values=("去除" if item["approved_remove"] else "保留", item.get("kind"), item.get("text"), item.get("count"), ",".join(map(str, chapters[:15])) + ("…" if len(chapters) > 15 else "")))
+                        iid = str(index); item["approved_remove"] = item["text"] in saved_patterns; rows[iid] = item; row_order.append(iid)
+                    refresh_tree()
                     approve_button.config(state=tk.NORMAL if task.get("status") == "waiting_review" else tk.DISABLED)
                     status.set(f"已載入 {len(reports)} 個 Worker，共 {len(candidates)} 項候選。")
                 self.root.after(0, render)
