@@ -1228,7 +1228,7 @@
         480,
         481
       ],
-      "status": "queued",
+      "status": "waiting_retry",
       "workflow_phase": "processing",
       "stages": {
         "scrape": {
@@ -1357,8 +1357,8 @@
           "ended_at": "2026-09-07T13:05:52Z"
         }
       ],
-      "retry_at": null,
-      "reason": null,
+      "retry_at": "2026-09-07T15:19:58.142005+00:00",
+      "reason": "otherError",
       "hf_progress": {
         "completed": 0,
         "total": 0
