@@ -315,11 +315,10 @@ def approve_preflight(queue, task_id, scrape_run_id, cover_run_id, review):
 
 
 def confirm_preflight_review(queue, task_id, scrape_run_id, cover_run_id, review):
-    """Persist a completed text-cleaning review without starting processing."""
+    """Persist text-cleaning rules without starting or changing task execution."""
     queue = normalize_queue(queue)
     task = next(t for t in queue["queue"] if t["task_id"] == task_id)
-    if (task.get("status") != "waiting_review" or
-            task.get("scrape_run_id") != scrape_run_id or
+    if (task.get("scrape_run_id") != scrape_run_id or
             task.get("cover_run_id") != cover_run_id or
             any(task["stages"][name]["status"] != "completed" for name in ("scrape", "cover"))):
         raise ValueError("TXT／封面尚未完成或雲端任務已變更，請重新同步並審核")

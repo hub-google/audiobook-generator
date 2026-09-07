@@ -75,6 +75,19 @@ def test_confirm_review_does_not_start_processing_until_explicit_action():
     assert started["queue"][0]["workflow_phase"] == "processing"
 
 
+@pytest.mark.parametrize("status", ["queued", "running", "interrupted", "processing", "waiting_review"])
+def test_confirm_review_is_allowed_regardless_of_task_status(status):
+    task = ready_task()
+    task["status"] = status
+    queue = add_tasks(empty_queue(), [task])
+    review = {"status": "approved", "remove_patterns": ["更新後的廣告詞"]}
+
+    confirmed = confirm_preflight_review(queue, task["task_id"], 100, 200, review)
+
+    assert confirmed["queue"][0]["status"] == status
+    assert confirmed["queue"][0]["ad_review"] == review
+
+
 def test_cover_retry_dispatches_only_cover():
     task = ready_task()
     task.update(status="queued")

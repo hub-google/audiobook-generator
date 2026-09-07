@@ -301,13 +301,6 @@ class ReviewMixin:
                 saved_patterns = set(profile.get("cleaner_remove_patterns") or [])
                 known = {item["text"] for item in candidates}
                 candidates.extend({"text": text, "kind": "已儲存規則", "score": 0, "count": 0} for text in saved_patterns - known)
-                progress("正在確認任務的最新狀態…")
-                latest_queue, _ = self._queue_store()[0].load()
-                latest_task = next(
-                    (item for item in latest_queue.get("queue", []) + latest_queue.get("completed", [])
-                     if item.get("task_id") == task["task_id"]),
-                    task,
-                )
                 def render():
                     if generation != load_generation["value"] or not top.winfo_exists():
                         return
@@ -322,11 +315,9 @@ class ReviewMixin:
                         iid = str(index); item["approved_remove"] = item["text"] in saved_patterns; rows[iid] = item; row_order.append(iid)
                     refresh_tree()
                     refresh_samples()
-                    can_approve = latest_task.get("status") == "waiting_review"
-                    approve_button.config(state=tk.NORMAL if can_approve else tk.DISABLED)
+                    approve_button.config(state=tk.NORMAL)
                     retry_button.config(state=tk.NORMAL)
-                    suffix = "" if can_approve else f"；任務目前為 {latest_task.get('status') or '未知狀態'}，暫時不能確認"
-                    status.set(f"已載入 {len(reports)} 份報告，共 {len(candidates)} 項候選{suffix}。")
+                    status.set(f"已載入 {len(reports)} 份報告，共 {len(candidates)} 項候選。")
                 self.root.after(0, render)
             except Exception as error:
                 def show_error(detail=str(error)):
