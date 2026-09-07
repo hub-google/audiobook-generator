@@ -9,10 +9,11 @@ _driver = None
 
 
 class BrowserResponse:
-    def __init__(self, content: bytes, url: str, status_code: int = 200):
+    def __init__(self, content: bytes, url: str, status_code: int = 200, encoding: str = "utf-8"):
         self.content = content
         self.url = url
         self.status_code = status_code
+        self.encoding = encoding
         self.text = content.decode("utf-8", errors="replace")
 
     def raise_for_status(self):
@@ -74,5 +75,12 @@ def fetch_page_browser(url: str, source=None, timeout: int = 25) -> BrowserRespo
 
     html = driver.page_source
     current_url = driver.current_url or url
-    encoding = getattr(source, "encoding", "utf-8") or "utf-8"
-    return BrowserResponse(html.encode(encoding, errors="replace"), current_url, status_code=200)
+    # Selenium page_source 已經是 Unicode；不要再用來源宣稱的 legacy
+    # encoding 重編碼，否則下游依該 encoding 解碼會產生亂碼。
+    encoding = "utf-8"
+    return BrowserResponse(
+        html.encode("utf-8", errors="replace"),
+        current_url,
+        status_code=200,
+        encoding=encoding,
+    )
