@@ -425,6 +425,15 @@ def parse_catalog(catalog_url, html=None):
     result.update(analyze_duplicate_chapters(result['chapter_titles'], result['chapters']))
     return result
 
+
+def fetch_69shuba_full_novels(url="https://www.69shuba.com/novels/full"):
+    try:
+        from .sources.shuba69 import fetch_69shuba_full_novels as _fetch
+    except ImportError:
+        from sources.shuba69 import fetch_69shuba_full_novels as _fetch
+    return _fetch(url)
+
+
 def generate_config_yaml(catalog_url, start_chap=1, end_chap=10, output_path="config.yaml",
                           exclude_chapters=None, chapters_per_worker=5,
                           parsed_result=None, renumber_selected=False, book_profile_snapshot=None,

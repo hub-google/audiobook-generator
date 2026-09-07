@@ -77,3 +77,75 @@ class Shuba69Source(SourceAdapter):
         if not text:
             raise SourceParseError('69 書吧正文空白')
         return title, text
+
+    def parse_full_novels(self, html, base_url="https://www.69shuba.com"):
+        soup = self.soup(html)
+        novels = []
+        seen_ids = set()
+        rank = 1
+        for li in soup.select('li'):
+            a_img = li.select_one('a.imgbox')
+            if not a_img:
+                continue
+            href = a_img.get('href', '')
+            match = re.search(r'/(?:book|txt)/(\d+)', href)
+            if not match:
+                continue
+            bid = match[1]
+            if bid in seen_ids:
+                continue
+            seen_ids.add(bid)
+
+            title_el = li.select_one('h3 a') or li.select_one('h3')
+            title = title_el.get_text(strip=True) if title_el else ''
+            if not title:
+                continue
+
+            labels = [lbl.get_text(strip=True) for lbl in li.select('.labelbox label')]
+            author = labels[0] if len(labels) > 0 else ''
+            category = labels[1] if len(labels) > 1 else ''
+            status = labels[2] if len(labels) > 2 else ''
+
+            zxzj_el = li.select_one('.zxzj')
+            latest_chapter = zxzj_el.get_text(' ', strip=True) if zxzj_el else ''
+            latest_chapter = re.sub(r'^最近章[節节]\s*', '', latest_chapter).strip()
+
+            desc_el = li.select_one('ol.ellipsis_2')
+            desc = desc_el.get_text(strip=True) if desc_el else ''
+
+            img = li.select_one('img')
+            cover = img.get('data-src') or img.get('src') if img else ''
+            if cover and cover.startswith('/'):
+                cover = self.absolute_url(base_url, cover)
+
+            # Strictly format as catalog URL ending in /
+            catalog_url = f"https://www.69shuba.com/book/{bid}/"
+
+            novels.append({
+                'rank': rank,
+                'book_id': bid,
+                'title': title,
+                'author': author,
+                'category': category,
+                'status': status,
+                'latest_chapter': latest_chapter,
+                'description': desc,
+                'cover': cover,
+                'catalog_url': catalog_url,
+            })
+            rank += 1
+        return novels
+
+    def fetch_full_novels(self, url="https://www.69shuba.com/novels/full"):
+        try:
+            from .http_client import fetch_page
+        except ImportError:
+            from http_client import fetch_page
+        response = fetch_page(url, self)
+        return self.parse_full_novels(response.content, base_url=url)
+
+
+def fetch_69shuba_full_novels(url="https://www.69shuba.com/novels/full"):
+    source = Shuba69Source()
+    return source.fetch_full_novels(url)
+

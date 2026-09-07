@@ -1,4 +1,5 @@
 """HTTP transport shared by preview, catalog and workers; supports TLS impersonation."""
+import logging
 import threading
 import time
 import requests
@@ -43,13 +44,25 @@ def fetch_page(url, source, timeout=20):
     if getattr(requests.get, '__module__', None) == 'unittest.mock':
         response = requests.get(url, headers=headers, timeout=timeout)
     elif getattr(source, 'requires_browser', False):
-        try:
-            from .browser_fetcher import fetch_page_browser
-            response = fetch_page_browser(url, source, timeout=timeout)
-        except Exception as e:
-            logging.warning(f"[HttpClient] Browser fetch failed or not available ({e}), falling back to requests session...")
-            session = get_session(source.source_id)
-            response = session.get(url, headers=headers, timeout=timeout)
+        response = None
+        if curl_requests is not None:
+            try:
+                session = get_session(source.source_id)
+                res = session.get(url, headers=headers, timeout=timeout)
+                content_lower = (res.content or b"").lower()
+                if res.status_code == 200 and not any(x in content_lower for x in (b"just a moment", b"captcha", b"cf-browser-verification")):
+                    response = res
+            except Exception as ce:
+                logging.debug(f"[HttpClient] Fast curl_cffi fetch skipped: {ce}")
+
+        if response is None:
+            try:
+                from .browser_fetcher import fetch_page_browser
+                response = fetch_page_browser(url, source, timeout=timeout)
+            except Exception as e:
+                logging.warning(f"[HttpClient] Browser fetch failed or not available ({e}), falling back to requests session...")
+                session = get_session(source.source_id)
+                response = session.get(url, headers=headers, timeout=timeout)
     else:
         session = get_session(source.source_id)
         response = session.get(url, headers=headers, timeout=timeout)
