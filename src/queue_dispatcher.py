@@ -348,12 +348,12 @@ class Dispatcher:
                     for run in (scrape_run, cover_run):
                         if run and run.get("status") != "completed":
                             response = requests.post(
-                                f"{self.api}/actions/runs/{int(run['id'])}/cancel",
+                                f"{self.api}/actions/runs/{int(run['id'])}/force-cancel",
                                 headers=self.headers, timeout=30,
                             )
                             if response.status_code not in (200, 202, 409):
                                 raise RuntimeError(
-                                    f"GitHub API POST /actions/runs/{run['id']}/cancel failed "
+                                    f"GitHub API POST /actions/runs/{run['id']}/force-cancel failed "
                                     f"({response.status_code}): {response.text}"
                                 )
                     cancel_pending = any(
@@ -407,11 +407,11 @@ class Dispatcher:
                 changed = True
             if task.get("requeue_after_edit") and status != "completed":
                 cancel_response = requests.post(
-                    f"{self.api}/actions/runs/{run_id}/cancel", headers=self.headers, timeout=30,
+                    f"{self.api}/actions/runs/{run_id}/force-cancel", headers=self.headers, timeout=30,
                 )
                 if cancel_response.status_code not in (200, 202, 409):
                     raise RuntimeError(
-                        f"GitHub API POST /actions/runs/{run_id}/cancel failed "
+                        f"GitHub API POST /actions/runs/{run_id}/force-cancel failed "
                         f"({cancel_response.status_code}): {cancel_response.text}"
                     )
                 if task.get("status") != "canceling":

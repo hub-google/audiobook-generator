@@ -1050,7 +1050,7 @@ class WorkflowMixin:
                     "Authorization": f"Bearer {self.current_token}",
                     "X-GitHub-Api-Version": "2022-11-28"
                 }
-                cancel_url = f"https://api.github.com/repos/{self.current_repo}/actions/runs/{self.current_run_id}/cancel"
+                cancel_url = f"https://api.github.com/repos/{self.current_repo}/actions/runs/{self.current_run_id}/force-cancel"
                 r = requests.post(cancel_url, headers=headers, timeout=10)
                 
                 if r.status_code in (202, 200, 204):

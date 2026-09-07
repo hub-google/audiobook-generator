@@ -447,7 +447,7 @@ class QueueOperationsMixin:
                 completed_steps.append("書籍清理設定")
                 if active and run_id:
                     response = requests.post(
-                        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel",
+                        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/force-cancel",
                         headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}, timeout=15,
                     )
                     if response.status_code not in (200, 202, 409):
@@ -897,7 +897,7 @@ class QueueOperationsMixin:
                     try:
                         _, repo, token = self._queue_store()
                         response = requests.post(
-                            f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel",
+                            f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/force-cancel",
                             headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
                             timeout=10,
                         )
@@ -966,7 +966,7 @@ class QueueOperationsMixin:
                         failures = []
                         for current_run_id in run_ids:
                             response = requests.post(
-                                f"https://api.github.com/repos/{repo}/actions/runs/{current_run_id}/cancel",
+                                f"https://api.github.com/repos/{repo}/actions/runs/{current_run_id}/force-cancel",
                                 headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}, timeout=15,
                             )
                             if response.status_code not in (200, 202, 409):
@@ -1010,7 +1010,7 @@ class QueueOperationsMixin:
                 for task in tasks:
                     run_id = task.get("run_id")
                     if run_id and task.get("status") in {"running", "dispatching", "waiting_retry", "canceling"}:
-                        requests.post(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel", headers={"Authorization": f"Bearer {token}"}, timeout=15)
+                        requests.post(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/force-cancel", headers={"Authorization": f"Bearer {token}"}, timeout=15)
 
                 def mutate(value):
                     for task_id in task_ids:

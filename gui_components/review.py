@@ -46,10 +46,12 @@ class ReviewMixin:
         sections.extend(f"【{key}】\n{value}" for key, value in analysis.items())
         return "\n\n".join(sections)
 
-    def _download_artifact_files(self, run_id, name_prefix):
+    def _download_artifact_files(self, run_id, name_prefix, progress=None):
         repo, token = self._github_settings()
         headers = {"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
                    "X-GitHub-Api-Version": "2022-11-28"}
+        if progress:
+            progress("正在查詢 GitHub artifact…")
         response = requests.get(f"https://api.github.com/repos/{repo}/actions/runs/{int(run_id)}/artifacts",
                                 headers=headers, params={"per_page": 100}, timeout=30)
         response.raise_for_status()
@@ -58,7 +60,9 @@ class ReviewMixin:
         if not artifacts:
             raise RuntimeError(f"Run {run_id} 找不到 {name_prefix} artifact，或 artifact 已過期。")
         files = {}
-        for artifact in artifacts:
+        for index, artifact in enumerate(artifacts, 1):
+            if progress:
+                progress(f"正在下載 artifact {index}/{len(artifacts)}：{artifact.get('name') or artifact.get('id')}")
             bundle = requests.get(artifact["archive_download_url"], headers=headers, timeout=90)
             bundle.raise_for_status()
             with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
@@ -77,7 +81,11 @@ class ReviewMixin:
         analysis_page = ttk.Frame(notebook); sample_page = ttk.Frame(notebook)
         notebook.add(analysis_page, text="候選詞句與排除設定")
         notebook.add(sample_page, text="Raw／Clean 文字抽查")
-        status = tk.StringVar(value="正在下載廣告分析結果…"); ttk.Label(analysis_page, textvariable=status, padding=8).pack(fill=tk.X)
+        status = tk.StringVar(value="正在下載廣告分析結果…")
+        status_bar = ttk.Frame(analysis_page, padding=8); status_bar.pack(fill=tk.X)
+        ttk.Label(status_bar, textvariable=status).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        retry_button = ttk.Button(status_bar, text="重新載入", state=tk.DISABLED)
+        retry_button.pack(side=tk.RIGHT)
 
         filter_bar = ttk.LabelFrame(analysis_page, text="篩選與批次編輯", padding=6); filter_bar.pack(fill=tk.X, padx=8)
         search_text = tk.StringVar(); decision_filter = tk.StringVar(value="全部狀態")
@@ -270,34 +278,76 @@ class ReviewMixin:
                     self.root.after(0, lambda detail=str(error): (status.set(f"儲存失敗：{detail}"), approve_button.config(state=tk.NORMAL)))
             threading.Thread(target=save_worker, daemon=True).start()
         approve_button.config(command=approve)
-        def worker():
+        load_generation = {"value": 0}
+
+        def set_load_status(message, generation):
+            if generation == load_generation["value"] and top.winfo_exists():
+                status.set(message)
+
+        def worker(generation):
             try:
-                files = self._download_artifact_files(task["scrape_run_id"], f"scrape-review-{task['task_id']}")
+                progress = lambda message: self.root.after(0, lambda value=message: set_load_status(value, generation))
+                files = self._download_artifact_files(
+                    task["scrape_run_id"], f"scrape-review-{task['task_id']}", progress=progress,
+                )
                 reports = [json.loads(data.decode("utf-8")) for name, data in files.items()
                            if name.endswith(".json") and "ad-candidates-" in name]
                 candidates = [item for report in reports for item in report.get("candidates", [])]
                 if len(reports) != 1 or reports[0].get("task_id") != task["task_id"]:
                     raise RuntimeError("廣告報告任務身分不一致或報告缺失")
-                review_identity.update(raw_fingerprint=reports[0]["raw_fingerprint"], scrape_run_id=task["scrape_run_id"], cover_run_id=task.get("cover_run_id"))
-                chapter_texts.update(reports[0].get("chapter_texts") or {})
+                progress("正在載入已儲存的文字清理規則…")
                 profiles, _ = self._profile_store()[0].load()
                 _, profile = get_book_profile(profiles, task.get("catalog_url") or "", task.get("book_title") or "")
                 saved_patterns = set(profile.get("cleaner_remove_patterns") or [])
                 known = {item["text"] for item in candidates}
                 candidates.extend({"text": text, "kind": "已儲存規則", "score": 0, "count": 0} for text in saved_patterns - known)
+                progress("正在確認任務的最新狀態…")
+                latest_queue, _ = self._queue_store()[0].load()
+                latest_task = next(
+                    (item for item in latest_queue.get("queue", []) + latest_queue.get("completed", [])
+                     if item.get("task_id") == task["task_id"]),
+                    task,
+                )
                 def render():
+                    if generation != load_generation["value"] or not top.winfo_exists():
+                        return
+                    review_identity.update(
+                        raw_fingerprint=reports[0]["raw_fingerprint"],
+                        scrape_run_id=task["scrape_run_id"], cover_run_id=task.get("cover_run_id"),
+                    )
+                    rows.clear(); row_order.clear(); chapter_texts.clear()
+                    chapter_texts.update(reports[0].get("chapter_texts") or {})
                     chapter_choice.config(values=sorted(chapter_texts, key=int))
                     for index, item in enumerate(sorted(candidates, key=lambda x: -float(x.get("score") or 0))):
                         iid = str(index); item["approved_remove"] = item["text"] in saved_patterns; rows[iid] = item; row_order.append(iid)
                     refresh_tree()
                     refresh_samples()
-                    approve_button.config(state=tk.NORMAL if task.get("status") == "waiting_review" else tk.DISABLED)
-                    status.set(f"已載入 {len(reports)} 個 Worker，共 {len(candidates)} 項候選。")
+                    can_approve = latest_task.get("status") == "waiting_review"
+                    approve_button.config(state=tk.NORMAL if can_approve else tk.DISABLED)
+                    retry_button.config(state=tk.NORMAL)
+                    suffix = "" if can_approve else f"；任務目前為 {latest_task.get('status') or '未知狀態'}，暫時不能確認"
+                    status.set(f"已載入 {len(reports)} 份報告，共 {len(candidates)} 項候選{suffix}。")
                 self.root.after(0, render)
             except Exception as error:
-                self.root.after(0, lambda detail=str(error): status.set(f"載入失敗：{detail}"))
+                def show_error(detail=str(error)):
+                    if generation != load_generation["value"] or not top.winfo_exists():
+                        return
+                    status.set(f"載入失敗：{detail}")
+                    retry_button.config(state=tk.NORMAL)
+                    approve_button.config(state=tk.DISABLED)
+                self.root.after(0, show_error)
+
+        def start_load():
+            load_generation["value"] += 1
+            generation = load_generation["value"]
+            retry_button.config(state=tk.DISABLED)
+            approve_button.config(state=tk.DISABLED)
+            status.set("正在下載廣告分析結果…")
+            threading.Thread(target=worker, args=(generation,), daemon=True).start()
+
+        retry_button.config(command=start_load)
         sample_refresh["callback"] = self.open_text_sample(parent=sample_page, task=task)
-        threading.Thread(target=worker, daemon=True).start()
+        start_load()
 
     @staticmethod
     def _ad_review_sort_value(item, column):

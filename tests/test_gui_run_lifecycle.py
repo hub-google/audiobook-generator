@@ -59,6 +59,24 @@ def test_queue_sync_checks_bound_run_against_github():
     assert "cover-review-" in source
 
 
+def test_every_gui_cancel_path_uses_force_cancel():
+    source = all_gui_source()
+
+    assert "/force-cancel" in source
+    assert 'actions/runs/{current_run_id}/cancel' not in source
+    assert 'actions/runs/{self.current_run_id}/cancel' not in source
+
+
+def test_ad_review_load_can_retry_and_uses_latest_task_status():
+    review_source = method_source("open_ad_analysis_results")
+
+    assert 'text="重新載入"' in review_source
+    assert "latest_queue" in review_source
+    assert 'latest_task.get("status") == "waiting_review"' in review_source
+    assert 'status.set(f"載入失敗：{detail}")' in review_source
+    assert "threading.Thread(target=worker, args=(generation,)" in review_source
+
+
 def test_cover_review_keeps_analysis_and_hf_prompt_separate():
     review_source = method_source("open_cover_preflight_review")
 
