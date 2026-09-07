@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1063,
-  "updated_at": "2026-09-07T14:50:56.198190+00:00",
+  "revision": 1064,
+  "updated_at": "2026-09-07T22:40:47.477764+00:00",
   "queue": [
     {
       "task_id": "book-20260907-7542ded2",
@@ -650,7 +650,7 @@
         631,
         632
       ],
-      "status": "paused",
+      "status": "queued",
       "workflow_phase": "queued",
       "stages": {
         "scrape": {
@@ -691,13 +691,19 @@
       "ad_review": {
         "status": "pending"
       },
-      "run_id": 34124152069,
-      "run_attempt": 1,
-      "execution_generation": 1,
-      "retry_requested_at": null,
-      "run_history": [],
+      "run_id": null,
+      "run_attempt": 0,
+      "execution_generation": 2,
+      "retry_requested_at": "2026-09-07T22:40:47.477764+00:00",
+      "run_history": [
+        {
+          "run_id": 34124152069,
+          "conclusion": "cancelled",
+          "ended_at": "2026-09-07T22:40:47.477764+00:00"
+        }
+      ],
       "retry_at": null,
-      "reason": "paused_for_manual_attention",
+      "reason": null,
       "hf_progress": {
         "completed": 0,
         "total": 0
@@ -726,7 +732,10 @@
         "cleaner_fingerprint": "3652dfd9fe791a14d5285926c05405273728f9cb7ea81d261318f4a9efff79a8"
       },
       "artifact_source_run_id": null,
-      "dispatched_at": "2026-09-07T12:51:18.954633+00:00"
+      "dispatched_at": "2026-09-07T12:51:18.954633+00:00",
+      "run_conclusion": null,
+      "run_completed_at": null,
+      "requeue_after_edit": false
     },
     {
       "task_id": "book-20260907-cf0585fb",
