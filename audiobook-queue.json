@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1024,
-  "updated_at": "2026-09-07T13:04:26.634225+00:00",
+  "revision": 1025,
+  "updated_at": "2026-09-07T13:04:33.333536+00:00",
   "queue": [
     {
       "task_id": "book-20260907-7542ded2",
@@ -1228,7 +1228,7 @@
         480,
         481
       ],
-      "status": "interrupted",
+      "status": "queued",
       "workflow_phase": "processing",
       "stages": {
         "scrape": {
@@ -1331,10 +1331,10 @@
           "然而。"
         ]
       },
-      "run_id": 34124753968,
-      "run_attempt": 1,
-      "execution_generation": 5,
-      "retry_requested_at": "2026-09-07T12:57:32.575912+00:00",
+      "run_id": null,
+      "run_attempt": 0,
+      "execution_generation": 6,
+      "retry_requested_at": "2026-09-07T13:04:33.333536+00:00",
       "run_history": [
         {
           "run_id": 34121060233,
@@ -1353,7 +1353,7 @@
         }
       ],
       "retry_at": null,
-      "reason": "run_not_found",
+      "reason": null,
       "hf_progress": {
         "completed": 0,
         "total": 0
@@ -1386,8 +1386,8 @@
       "artifact_source_run_id": 34124073422,
       "dispatched_at": "2026-09-07T12:58:01.870109+00:00",
       "active_run_id": null,
-      "run_conclusion": "missing",
-      "run_completed_at": "2026-09-07T13:04:26.607669+00:00",
+      "run_conclusion": null,
+      "run_completed_at": null,
       "requeue_after_edit": false
     },
     {
