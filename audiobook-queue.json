@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1015,
-  "updated_at": "2026-09-07T12:51:31.403267+00:00",
+  "revision": 1016,
+  "updated_at": "2026-09-07T12:57:19.230378+00:00",
   "queue": [
     {
       "task_id": "book-20260907-7542ded2",
@@ -1268,15 +1268,14 @@
       "scrape_snapshot_id": "",
       "ad_review": {
         "status": "approved",
-        "approved_at": "2026-09-07T20:16:52.592064+08:00",
+        "approved_at": "2026-09-07T20:57:17.675374+08:00",
         "raw_fingerprint": "a4aad0e515b33b244235b783af5c51e5c24ed18e91371d04a8c3bc2c70e4d233",
         "scrape_run_id": 34115699942,
         "cover_run_id": 34109117863,
-        "remove_patterns": [
-          "【每日情报更新完成】",
-          "每日情报更新完成"
-        ],
+        "remove_patterns": [],
         "keep_patterns": [
+          "【每日情报更新完成】",
+          "每日情报更新完成",
           "领主大人",
           "他顿了顿",
           "路易斯·卡尔文",
