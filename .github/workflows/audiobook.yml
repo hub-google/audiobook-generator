@@ -246,49 +246,51 @@ jobs:
               break
             fi
             if [ "$attempt" -eq 3 ]; then
-              echo "::error title=Failed to download shared-config::Could not download shared-config from source Run $SOURCE_RUN_ID after 3 attempts"
-              exit 1
+              echo "::warning title=Missing shared-config::Could not download shared-config from source Run $SOURCE_RUN_ID after 3 attempts. Falling back to clean catalog/snapshot generation."
+              break
             fi
             sleep 15
           done
-          python src/catalog_parser.py \
-            --restore-config restored_source/config.yaml \
-            --output config.yaml \
-            --matrix-output matrix.json
+          if [ -f restored_source/config.yaml ]; then
+            python src/catalog_parser.py \
+              --restore-config restored_source/config.yaml \
+              --output config.yaml \
+              --matrix-output matrix.json
 
-          DISPATCH_BOOK_TITLE="${{ github.event.inputs.book_title }}" \
-          DISPATCH_CHAPTER_LABEL="${{ github.event.inputs.chapter_label }}" \
-          DISPATCH_QUEUE_TASK_ID="${{ github.event.inputs.queue_task_id }}" \
-          python - <<'PY'
-          import os
-          import yaml
+            DISPATCH_BOOK_TITLE="${{ github.event.inputs.book_title }}" \
+            DISPATCH_CHAPTER_LABEL="${{ github.event.inputs.chapter_label }}" \
+            DISPATCH_QUEUE_TASK_ID="${{ github.event.inputs.queue_task_id }}" \
+            python - <<'PY'
+            import os
+            import yaml
 
-          with open("config.yaml", encoding="utf-8") as handle:
-              config = yaml.safe_load(handle) or {}
+            with open("config.yaml", encoding="utf-8") as handle:
+                config = yaml.safe_load(handle) or {}
 
-          expected_title = str(config.get("book_title") or "").strip()
-          supplied_title = os.environ.get("DISPATCH_BOOK_TITLE", "").strip()
-          chapter_label = os.environ.get("DISPATCH_CHAPTER_LABEL", "").strip()
-          queue_task_id = os.environ.get("DISPATCH_QUEUE_TASK_ID", "").strip()
-          missing = [name for name, value in (
-              ("book_title", supplied_title),
-              ("chapter_label", chapter_label),
-              ("queue_task_id", queue_task_id),
-          ) if not value]
-          if missing:
-              raise SystemExit(
-                  "Strict resume dispatch validation failed: missing original input(s): "
-                  + ", ".join(missing)
-              )
-          if supplied_title != expected_title:
-              raise SystemExit(
-                  "Strict resume dispatch validation failed: book_title "
-                  f"{supplied_title!r} does not match source config {expected_title!r}"
-              )
-          PY
+            expected_title = str(config.get("book_title") or "").strip()
+            supplied_title = os.environ.get("DISPATCH_BOOK_TITLE", "").strip()
+            chapter_label = os.environ.get("DISPATCH_CHAPTER_LABEL", "").strip()
+            queue_task_id = os.environ.get("DISPATCH_QUEUE_TASK_ID", "").strip()
+            missing = [name for name, value in (
+                ("book_title", supplied_title),
+                ("chapter_label", chapter_label),
+                ("queue_task_id", queue_task_id),
+            ) if not value]
+            if missing:
+                raise SystemExit(
+                    "Strict resume dispatch validation failed: missing original input(s): "
+                    + ", ".join(missing)
+                )
+            if supplied_title != expected_title:
+                raise SystemExit(
+                    "Strict resume dispatch validation failed: book_title "
+                    f"{supplied_title!r} does not match source config {expected_title!r}"
+                )
+            PY
+          fi
 
       - name: Parse Catalog & Generate config.yaml + matrix.json
-        if: github.event.inputs.resume_source_run_id == '' && inputs.scrape_source_run_id == ''
+        if: hashFiles('config.yaml') == '' && inputs.scrape_source_run_id == ''
         run: |
           for attempt in 1 2 3; do
             echo "Catalog parsing attempt $attempt/3"
@@ -311,7 +313,7 @@ jobs:
           done
 
       - name: Restore reviewed TXT catalog snapshot
-        if: inputs.resume_source_run_id == '' && inputs.scrape_source_run_id != ''
+        if: hashFiles('config.yaml') == '' && inputs.scrape_source_run_id != ''
         uses: actions/download-artifact@v4
         with:
           name: shared-config
@@ -320,7 +322,7 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ inputs.scrape_source_run_id }}
       - name: Apply approved cleaner to reviewed catalog
-        if: inputs.resume_source_run_id == '' && inputs.scrape_source_run_id != ''
+        if: hashFiles('config.yaml') == '' && inputs.scrape_source_run_id != ''
         env:
           PROFILE_SNAPSHOT: ${{ inputs.book_profile_snapshot_b64 }}
         run: python src/preflight_config.py

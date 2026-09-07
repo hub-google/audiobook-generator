@@ -258,6 +258,26 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         fetch = next(step for step in self.jobs["upload_to_youtube"]["steps"] if step.get("name") == "Fetch and verify merge-complete Parts from HF")
         self.assertIn("--sidecar-dir prepared_sidecars", fetch["run"])
 
+    def test_setup_falls_back_when_resume_shared_config_is_missing(self):
+        restore_step = next(
+            step for step in self.jobs["setup"]["steps"]
+            if step.get("name") == "Restore authoritative shared-config on Resume"
+        )
+        self.assertNotIn("exit 1", restore_step["run"])
+        self.assertIn("Missing shared-config", restore_step["run"])
+
+        parse_step = next(
+            step for step in self.jobs["setup"]["steps"]
+            if step.get("name") == "Parse Catalog & Generate config.yaml + matrix.json"
+        )
+        self.assertIn("hashFiles('config.yaml') == ''", parse_step.get("if", ""))
+
+        restore_txt_step = next(
+            step for step in self.jobs["setup"]["steps"]
+            if step.get("name") == "Restore reviewed TXT catalog snapshot"
+        )
+        self.assertIn("hashFiles('config.yaml') == ''", restore_txt_step.get("if", ""))
+
 
 if __name__ == "__main__":
     unittest.main()
