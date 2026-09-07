@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
-  "revision": 67,
-  "updated_at": "2026-09-07T12:16:50.523805+00:00",
+  "revision": 68,
+  "updated_at": "2026-09-07T12:37:14.232586+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -643,10 +643,12 @@
         "use_chapter_name": true,
         "use_number_and_name": false
       },
-      "chapter_title_overrides": {},
+      "chapter_title_overrides": {
+        "3": "第3章 大人的恩情还不完啊!"
+      },
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 1,
-      "updated_at": "2026-09-07T12:16:50.523805+00:00",
+      "profile_revision": 2,
+      "updated_at": "2026-09-07T12:37:14.232586+00:00",
       "manual_cover": {}
     }
   }
