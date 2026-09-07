@@ -8,6 +8,7 @@ import yaml
 
 from src.catalog_parser import (
     MAX_PARALLEL_WORKERS,
+    adopt_latest_catalog_identity,
     apply_chapter_title_overrides,
     analyze_duplicate_chapters,
     find_direct_duplicate_matches,
@@ -41,6 +42,16 @@ def parsed_catalog(chapter_count):
 
 
 class CatalogParserMatrixTests(unittest.TestCase):
+    def test_changed_catalog_is_adopted_as_latest_instead_of_rejected(self):
+        parsed = _parsed_catalog(3)
+        snapshot = {"catalog_identity": "stale-catalog-hash", "book_profile_id": "book-1"}
+
+        actual = adopt_latest_catalog_identity(parsed, snapshot)
+
+        self.assertEqual(snapshot["catalog_identity"], actual)
+        self.assertNotEqual(actual, "stale-catalog-hash")
+        self.assertEqual(snapshot["book_profile_id"], "book-1")
+
     def test_stable_uuid_title_override_survives_renumbering(self):
         parsed = _parsed_catalog(3)
         parsed["chapter_titles"] = ["第一章 甲", "地二章 錯字", "第三章 丙"]

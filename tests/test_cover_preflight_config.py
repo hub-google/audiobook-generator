@@ -1,11 +1,15 @@
 import base64
 import json
+from pathlib import Path
 
 import pytest
 
 from src.book_profiles import book_profile_id
 from src.cover_preflight import build_cover_config
 from src.source_identity import source_fingerprint
+
+
+WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "cover-preflight.yml"
 
 
 def encoded(value):
@@ -39,3 +43,13 @@ def test_cover_config_rejects_snapshot_from_another_book():
             "https://www.69shuba.com/book/90225/",
             encoded({"catalog_url": "https://www.69shuba.com/book/1/"}),
         )
+
+
+def test_cover_workflow_cannot_depend_on_catalog_scraping():
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert "src/cover_preflight.py" in workflow
+    assert "--book-profile-snapshot-b64" in workflow
+    assert "catalog_parser.py" not in workflow
+    assert "crawler.py" not in workflow
+    assert "matrix.json" not in workflow

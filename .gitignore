@@ -48,6 +48,7 @@ scratch/
 *.md
 *.MD
 *.markdown
+!/AGENTS.md
 !章節選擇與重複判斷需求書.md
 
 # YouTube backfill local-only data

@@ -406,6 +406,19 @@ def catalog_identity(result):
     return hashlib.sha256(json.dumps(data, ensure_ascii=False, sort_keys=True).encode('utf-8')).hexdigest()
 
 
+def adopt_latest_catalog_identity(result, snapshot):
+    """Keep book settings, but make the freshly fetched catalog authoritative."""
+    actual = catalog_identity(result)
+    previous = snapshot.get("catalog_identity")
+    if previous and previous != actual:
+        print(
+            "[CatalogParser] 警告：來源目錄已變更；"
+            f"改用最新目錄（舊 {previous}，新 {actual}）"
+        )
+    snapshot["catalog_identity"] = actual
+    return actual
+
+
 def parse_catalog(catalog_url, html=None):
     try:
         from .sources import resolve_source
@@ -772,10 +785,7 @@ if __name__ == "__main__":
             raise ValueError("書籍設定快照必須是 JSON 物件")
         validate_remove_patterns(snapshot.get("cleaner_remove_patterns") or [])
     parsed = parse_catalog(args.url)
-    if snapshot.get("catalog_identity"):
-        actual = catalog_identity(parsed)
-        if actual != snapshot["catalog_identity"]:
-            raise ValueError('目錄已變更，請重新解析並確認選章；不會按舊位置抓取另一章')
+    adopt_latest_catalog_identity(parsed, snapshot)
     overrides = snapshot.get("chapter_title_overrides") or decode_chapter_title_overrides(args.chapter_title_overrides_b64)
     apply_chapter_title_overrides(
         parsed, overrides, snapshot.get("chapter_normalized_number_overrides") or {},
