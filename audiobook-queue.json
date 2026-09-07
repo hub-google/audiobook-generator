@@ -654,10 +654,10 @@
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "running",
+          "status": "failed",
           "run_id": 34124152069,
           "run_attempt": 1,
-          "reason": null,
+          "reason": "failure",
           "completed_at": null,
           "dispatched_at": "2026-09-07T12:51:18.954625+00:00"
         },
