@@ -2,7 +2,10 @@ from unittest.mock import Mock
 from datetime import datetime, timezone, timedelta
 import copy
 import pytest
-from src.cloud_queue import new_task, add_tasks, empty_queue, approve_preflight
+from src.cloud_queue import (
+    new_task, add_tasks, empty_queue, approve_preflight,
+    confirm_preflight_review, start_reviewed_processing,
+)
 from src.queue_dispatcher import Dispatcher
 
 
@@ -54,6 +57,22 @@ def test_processing_dispatch_preserves_phase_and_never_selects_scrape_resume():
     assert payload["scrape_source_run_id"] == "100"
     assert payload["cover_source_run_id"] == "200"
     assert payload["execution_phase"] == "processing"
+
+
+def test_confirm_review_does_not_start_processing_until_explicit_action():
+    task = ready_task()
+    queue = add_tasks(empty_queue(), [task])
+    review = {"status": "approved", "remove_patterns": ["不是廣告也要排除"]}
+
+    confirmed = confirm_preflight_review(queue, task["task_id"], 100, 200, review)
+    waiting = confirmed["queue"][0]
+    assert waiting["status"] == "waiting_review"
+    assert waiting["workflow_phase"] == "preflight"
+    assert waiting["ad_review"] == review
+
+    started = start_reviewed_processing(confirmed, task["task_id"])
+    assert started["queue"][0]["status"] == "queued"
+    assert started["queue"][0]["workflow_phase"] == "processing"
 
 
 def test_cover_retry_dispatches_only_cover():

@@ -141,6 +141,15 @@ class GuiQueueControlTests(unittest.TestCase):
         self.assertEqual([item["source_index"] for item in samples], [1, 5, 8])
         self.assertEqual([item["output_index"] for item in samples], [1, 3, 6])
 
+    def test_ad_review_sort_values_are_numeric_and_natural(self):
+        rows = [
+            {"count": 10, "score": "2.5", "affected_chapters": [10, 11]},
+            {"count": 2, "score": "12.0", "affected_chapters": [2, 20]},
+        ]
+        self.assertEqual(sorted(rows, key=lambda row: AudiobookGUIApp._ad_review_sort_value(row, "count")), [rows[1], rows[0]])
+        self.assertEqual(sorted(rows, key=lambda row: AudiobookGUIApp._ad_review_sort_value(row, "score")), [rows[0], rows[1]])
+        self.assertEqual(sorted(rows, key=lambda row: AudiobookGUIApp._ad_review_sort_value(row, "chapters")), [rows[1], rows[0]])
+
     def test_2000_chapter_middle_is_1000(self):
         catalog = {
             "total_chapters": 2000, "base_url": "https://example.test",

@@ -3,10 +3,32 @@ from pathlib import Path
 
 
 GUI_SOURCE = Path(__file__).resolve().parents[1] / "gui_app.py"
+GUI_COMPONENTS = GUI_SOURCE.parent / "gui_components"
+
+
+def gui_sources():
+    return [GUI_SOURCE, *sorted(GUI_COMPONENTS.glob("*.py"))]
+
+
+def all_gui_source():
+    return "\n".join(path.read_text(encoding="utf-8") for path in gui_sources())
+
+
+def method_source(name):
+    for path in gui_sources():
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for child in node.body:
+                if isinstance(child, ast.FunctionDef) and child.name == name:
+                    return ast.get_source_segment(source, child)
+    raise AssertionError(f"GUI method not found: {name}")
 
 
 def test_gui_does_not_resume_a_run_from_a_previous_process():
-    source = GUI_SOURCE.read_text(encoding="utf-8")
+    source = all_gui_source()
 
     assert "_resume_saved_run" not in source
     assert "ACTIVE_RUN_PATH" not in source
@@ -14,7 +36,7 @@ def test_gui_does_not_resume_a_run_from_a_previous_process():
 
 
 def test_network_recovery_remains_in_the_current_run_monitor():
-    source = GUI_SOURCE.read_text(encoding="utf-8")
+    source = all_gui_source()
 
     assert "while True:" in source
     assert "網路已恢復，正在重新同步雲端 Run、Jobs 與執行紀錄" in source
@@ -22,7 +44,7 @@ def test_network_recovery_remains_in_the_current_run_monitor():
 
 
 def test_queue_sync_checks_bound_run_against_github():
-    source = GUI_SOURCE.read_text(encoding="utf-8")
+    source = all_gui_source()
 
     assert "actions/runs/{run_id}" in source
     assert "run_not_found" in source
@@ -38,15 +60,7 @@ def test_queue_sync_checks_bound_run_against_github():
 
 
 def test_cover_review_keeps_analysis_and_hf_prompt_separate():
-    source = GUI_SOURCE.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    review = next(
-        node for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "AudiobookGUIApp"
-        for node in node.body
-        if isinstance(node, ast.FunctionDef) and node.name == "open_cover_preflight_review"
-    )
-    review_source = ast.get_source_segment(source, review)
+    review_source = method_source("open_cover_preflight_review")
 
     assert 'text="Gemini 小說介紹／視覺分析"' in review_source
     assert 'text="HF 生圖 Prompt"' in review_source
@@ -60,40 +74,32 @@ def test_cover_review_keeps_analysis_and_hf_prompt_separate():
 
 def test_deferred_gui_callbacks_do_not_capture_exception_targets():
     """Exception targets are cleared when an except block exits (PEP 3110)."""
-    tree = ast.parse(GUI_SOURCE.read_text(encoding="utf-8"))
     unsafe = []
-    for handler in (node for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)):
-        if not handler.name:
-            continue
-        for child in ast.walk(handler):
-            if not isinstance(child, ast.Lambda):
+    for path in gui_sources():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for handler in (node for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)):
+            if not handler.name:
                 continue
-            bound = {arg.arg for arg in child.args.args}
-            referenced = {
-                node.id for node in ast.walk(child.body) if isinstance(node, ast.Name)
-            }
-            if handler.name in referenced and handler.name not in bound:
-                unsafe.append((child.lineno, handler.name))
+            for child in ast.walk(handler):
+                if not isinstance(child, ast.Lambda):
+                    continue
+                bound = {arg.arg for arg in child.args.args}
+                referenced = {node.id for node in ast.walk(child.body) if isinstance(node, ast.Name)}
+                if handler.name in referenced and handler.name not in bound:
+                    unsafe.append((path.name, child.lineno, handler.name))
 
     assert unsafe == []
 
 
 def test_run_discovery_callback_binds_the_discovered_run_id():
-    source = GUI_SOURCE.read_text(encoding="utf-8")
+    source = all_gui_source()
 
     assert "lambda rid=run_id, s=status" in source
     assert "Run ID #{rid}" in source
 
 
 def test_cleaner_pattern_dialog_only_applies_a_local_draft():
-    tree = ast.parse(GUI_SOURCE.read_text(encoding="utf-8"))
-    dialog = next(
-        node for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "AudiobookGUIApp"
-        for node in node.body
-        if isinstance(node, ast.FunctionDef) and node.name == "_open_cleaner_patterns_dialog"
-    )
-    dialog_source = ast.get_source_segment(GUI_SOURCE.read_text(encoding="utf-8"), dialog)
+    dialog_source = method_source("_open_cleaner_patterns_dialog")
 
     assert 'text="套用"' in dialog_source
     assert 'text="取消"' in dialog_source
@@ -109,14 +115,7 @@ def test_cleaner_pattern_dialog_only_applies_a_local_draft():
 
 
 def test_text_preview_uses_current_draft_and_ignores_stale_refreshes():
-    tree = ast.parse(GUI_SOURCE.read_text(encoding="utf-8"))
-    preview = next(
-        node for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "AudiobookGUIApp"
-        for node in node.body
-        if isinstance(node, ast.FunctionDef) and node.name == "open_text_sample"
-    )
-    preview_source = ast.get_source_segment(GUI_SOURCE.read_text(encoding="utf-8"), preview)
+    preview_source = method_source("open_text_sample")
 
     assert "refresh_preview(self.cleaner_remove_patterns)" in preview_source
     assert 'generation != preview_generation["value"]' in preview_source
@@ -129,14 +128,14 @@ def test_text_preview_uses_current_draft_and_ignores_stale_refreshes():
 
 
 def test_chapter_update_persists_the_cleaner_pattern_snapshot():
-    source = GUI_SOURCE.read_text(encoding="utf-8")
+    source = all_gui_source()
 
     assert "cleaner_patterns = validate_remove_patterns(self.cleaner_remove_patterns)" in source
     assert "cleaner_remove_patterns=cleaner_patterns" in source
 
 
 def test_chapter_order_shortcuts_return_tk_break_directly():
-    source = GUI_SOURCE.read_text(encoding="utf-8")
+    source = all_gui_source()
 
     assert 'return "break"' in source
     assert 'lambda _event: (_move_selected(-1), "break")' not in source
@@ -144,7 +143,7 @@ def test_chapter_order_shortcuts_return_tk_break_directly():
 
 
 def test_batch_add_uses_the_same_explicit_order_and_numbering_as_single_add():
-    source = GUI_SOURCE.read_text(encoding="utf-8")
+    source = all_gui_source()
     batch_start = source.index("def open_batch_queue_dialog")
     batch_end = source.index("def move_selected_task", batch_start)
     batch_source = source[batch_start:batch_end]
@@ -154,7 +153,7 @@ def test_batch_add_uses_the_same_explicit_order_and_numbering_as_single_add():
 
 
 def test_partial_chapter_update_reports_completed_cloud_writes():
-    source = GUI_SOURCE.read_text(encoding="utf-8")
+    source = all_gui_source()
 
     assert 'completed_steps.append("書籍清理設定")' in source
     assert 'completed_steps.append("章節範圍與順序")' in source
