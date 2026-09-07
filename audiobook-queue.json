@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 988,
-  "updated_at": "2026-09-07T09:42:29.740134+00:00",
+  "revision": 989,
+  "updated_at": "2026-09-07T09:50:01.288307+00:00",
   "queue": [
     {
       "task_id": "book-20260907-046571a3",
@@ -499,24 +499,22 @@
         480,
         481
       ],
-      "status": "needs_attention",
-      "workflow_phase": "preflight",
+      "status": "queued",
+      "workflow_phase": "queued",
       "stages": {
         "scrape": {
-          "status": "failed",
-          "run_id": 34107540786,
+          "status": "pending",
+          "run_id": null,
           "run_attempt": 0,
-          "reason": "failure",
-          "completed_at": null,
-          "dispatched_at": "2026-09-07T09:42:29.727489+00:00"
+          "reason": null,
+          "completed_at": null
         },
         "cover": {
-          "status": "failed",
-          "run_id": 34107542701,
+          "status": "pending",
+          "run_id": null,
           "run_attempt": 0,
-          "reason": "failure",
-          "completed_at": null,
-          "dispatched_at": "2026-09-07T09:42:29.727494+00:00"
+          "reason": null,
+          "completed_at": null
         },
         "processing": {
           "status": "pending",
@@ -533,8 +531,8 @@
           "completed_at": null
         }
       },
-      "scrape_run_id": 34107540786,
-      "cover_run_id": 34107542701,
+      "scrape_run_id": null,
+      "cover_run_id": null,
       "processing_run_id": null,
       "scrape_snapshot_id": "",
       "ad_review": {
@@ -542,11 +540,11 @@
       },
       "run_id": null,
       "run_attempt": 0,
-      "execution_generation": 1,
-      "retry_requested_at": null,
+      "execution_generation": 2,
+      "retry_requested_at": "2026-09-07T09:50:01.281001+00:00",
       "run_history": [],
       "retry_at": null,
-      "reason": "preflight_failed:TXT,封面",
+      "reason": null,
       "hf_progress": {
         "completed": 0,
         "total": 0
@@ -556,7 +554,7 @@
         "total": 0
       },
       "created_at": "2026-09-07T09:02:53.203089+00:00",
-      "updated_at": "2026-09-07T09:42:29.740111+00:00",
+      "updated_at": "2026-09-07T09:50:01.288307+00:00",
       "book_profile_id": "04b0036cb8c8839e",
       "profile_snapshot": {
         "book_profile_id": "04b0036cb8c8839e",
@@ -576,7 +574,9 @@
       },
       "artifact_source_run_id": null,
       "dispatched_at": "2026-09-07T09:42:29.727496+00:00",
-      "active_run_id": null
+      "active_run_id": null,
+      "run_conclusion": null,
+      "run_completed_at": null
     },
     {
       "task_id": "book-20260907-7542ded2",
