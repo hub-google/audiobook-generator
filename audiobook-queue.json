@@ -119,10 +119,10 @@
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "running",
+          "status": "failed",
           "run_id": 34167502692,
           "run_attempt": 1,
-          "reason": null,
+          "reason": "failure",
           "completed_at": null,
           "dispatched_at": "2026-09-07T22:41:03.311346+00:00"
         },
