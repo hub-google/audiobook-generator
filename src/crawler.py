@@ -66,8 +66,10 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
     from urllib.parse import urljoin
     try:
         from .sources import resolve_source, SourceParseError, SourceAccessError
+        from .sources.http_client import reset_session
     except ImportError:
         from sources import resolve_source, SourceParseError, SourceAccessError
+        from sources.http_client import reset_session
     source = resolve_source(config.get('catalog_url') or base_url, config.get('source_id'))
 
     workspace_dir = os.path.abspath(os.path.join(
@@ -136,6 +138,10 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
         max_retries = 3
         for attempt in range(max_retries):
             try:
+                if source.source_id == "shuba69":
+                    # The previously successful 69shuba runs did not burst
+                    # requests immediately when workers started.
+                    time.sleep(random.uniform(2, 5))
                 title, raw_text = fetch_chapter_text(url, source_id=source.source_id)
                 edited_titles = config.get("chapter_title_by_index") or {}
                 title = str(edited_titles.get(str(global_idx), edited_titles.get(global_idx, title)))
@@ -174,8 +180,22 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
                 os.replace(progress_tmp, progress_file)
                 break
 
-            except (SourceMissingError, SourceParseError, SourceAccessError):
+            except (SourceMissingError, SourceParseError):
                 raise
+            except SourceAccessError as e:
+                reset_session(source.source_id)
+                logging.error(
+                    "[Crawler Worker] Access attempt %d/%d failed for chapter %d: %s",
+                    attempt + 1, max_retries, global_idx, e,
+                )
+                if attempt < max_retries - 1:
+                    delay = (3 * (2 ** attempt)) + random.uniform(0.5, 1.5)
+                    logging.info("[Crawler Worker] Rebuilding HTTP session and retrying in %.1f seconds", delay)
+                    time.sleep(delay)
+                else:
+                    raise RuntimeError(
+                        f"[Crawler Worker] 章節 {global_idx} 存取受限，已重建 Session 並重試 {max_retries} 次: {e}"
+                    ) from e
             except Exception as e:
                 logging.error(f"[Crawler Worker] Attempt {attempt+1}/{max_retries} failed for chapter {global_idx}: {e}")
                 if attempt < max_retries - 1:

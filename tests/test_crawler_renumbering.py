@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from src.crawler import run_crawler_worker
+from src.sources import SourceAccessError
 
 
 class CrawlerRenumberingTests(unittest.TestCase):
@@ -44,6 +45,27 @@ class CrawlerRenumberingTests(unittest.TestCase):
                     "https://tw.hjwzw.com/read/5",
                 ],
             )
+
+    @patch("src.crawler.time.sleep", return_value=None)
+    @patch("src.sources.http_client.reset_session")
+    @patch("src.crawler.fetch_chapter_text")
+    def test_shuba_access_error_rebuilds_session_and_retries(self, fetch, reset, _sleep):
+        fetch.side_effect = [
+            SourceAccessError("來源存取受限 HTTP 403"),
+            ("第1章", "這是一段足夠長的小說正文，用來驗證重建 Session 後可以正常儲存章節內容。"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            config = {
+                "book_title": "book",
+                "base_url": "https://www.69shuba.com",
+                "catalog_url": "https://www.69shuba.com/book/1/",
+                "source_id": "shuba69",
+                "paths": {"workspace_base": directory},
+            }
+            run_crawler_worker(config, ["/txt/1/10"], exact_indices=[1])
+
+        self.assertEqual(fetch.call_count, 2)
+        reset.assert_called_once_with("shuba69")
 
 
 if __name__ == "__main__":

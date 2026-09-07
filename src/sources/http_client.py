@@ -1,5 +1,4 @@
 """HTTP transport shared by preview, catalog and workers; supports TLS impersonation."""
-import logging
 import threading
 import time
 import requests
@@ -25,6 +24,16 @@ def get_session(source_id=None):
     return _sessions[source_id]
 
 
+def reset_session(source_id=None):
+    """Discard a blocked HTTP session so a retry gets fresh cookies/state."""
+    session = _sessions.pop(source_id, None)
+    if session is not None:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+
 def fetch_page(url, source, timeout=20):
     # Process-wide pacing. Workflow max-parallel also honors source.max_parallel.
     with _lock:
@@ -34,16 +43,10 @@ def fetch_page(url, source, timeout=20):
         _last[source.source_id] = time.monotonic()
 
     headers = {
+        # Keep this identical to the proven 69shuba curl_cffi path. Client
+        # hints and Sec-Fetch headers must be generated consistently by the
+        # impersonation layer rather than manually forged on a fresh session.
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'Accept-Language': 'zh-CN,zh;q=0.9,zh-TW;q=0.8,en;q=0.7',
-        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"Windows"',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'same-origin',
-        'Upgrade-Insecure-Requests': '1',
     }
     referer = getattr(source, 'get_referer', lambda u: None)(url)
     if referer:
