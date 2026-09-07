@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1065,
-  "updated_at": "2026-09-07T22:40:53.847815+00:00",
+  "revision": 1066,
+  "updated_at": "2026-09-07T22:41:03.324154+00:00",
   "queue": [
     {
       "task_id": "book-20260907-cf0585fb",
@@ -115,22 +115,24 @@
         92,
         93
       ],
-      "status": "queued",
-      "workflow_phase": "queued",
+      "status": "dispatching",
+      "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "pending",
+          "status": "dispatching",
           "run_id": null,
           "run_attempt": 0,
           "reason": null,
-          "completed_at": null
+          "completed_at": null,
+          "dispatched_at": "2026-09-07T22:41:03.311346+00:00"
         },
         "cover": {
-          "status": "pending",
+          "status": "dispatching",
           "run_id": null,
           "run_attempt": 0,
           "reason": null,
-          "completed_at": null
+          "completed_at": null,
+          "dispatched_at": "2026-09-07T22:41:03.311351+00:00"
         },
         "processing": {
           "status": "pending",
@@ -170,10 +172,29 @@
         "total": 0
       },
       "created_at": "2026-09-07T09:02:53.965909+00:00",
-      "updated_at": "2026-09-07T13:06:33.370089+00:00",
+      "updated_at": "2026-09-07T22:41:03.324134+00:00",
       "run_conclusion": null,
       "run_completed_at": null,
-      "requeue_after_edit": false
+      "requeue_after_edit": false,
+      "book_profile_id": "c176d48228a6a913",
+      "profile_snapshot": {
+        "book_profile_id": "c176d48228a6a913",
+        "catalog_url": "https://www.69shuba.com/book/90225/",
+        "catalog_identity": "3ce11d976d8d5abe2866b733be1c181bcf737eaf2df8ed206d4a083c532f7b74",
+        "profile_revision": 1,
+        "cleaner_remove_patterns": [],
+        "duplicate_detection": {
+          "use_normalized_number": true,
+          "use_chapter_name": true,
+          "use_number_and_name": false
+        },
+        "chapter_title_overrides": {},
+        "manual_cover": {},
+        "chapter_normalized_number_overrides": {},
+        "cleaner_fingerprint": "3652dfd9fe791a14d5285926c05405273728f9cb7ea81d261318f4a9efff79a8"
+      },
+      "artifact_source_run_id": null,
+      "dispatched_at": "2026-09-07T22:41:03.311354+00:00"
     },
     {
       "task_id": "book-20260907-7542ded2",
