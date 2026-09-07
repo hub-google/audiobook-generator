@@ -499,23 +499,23 @@
         480,
         481
       ],
-      "status": "dispatching",
+      "status": "needs_attention",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "dispatching",
-          "run_id": null,
+          "status": "failed",
+          "run_id": 34108266479,
           "run_attempt": 0,
-          "reason": null,
+          "reason": "failure",
           "completed_at": null,
           "dispatched_at": "2026-09-07T09:50:32.180582+00:00"
         },
         "cover": {
-          "status": "dispatching",
-          "run_id": null,
+          "status": "completed",
+          "run_id": 34109117863,
           "run_attempt": 0,
           "reason": null,
-          "completed_at": null,
+          "completed_at": "2026-09-07T10:02:07Z",
           "dispatched_at": "2026-09-07T09:50:32.180586+00:00"
         },
         "processing": {
@@ -533,8 +533,8 @@
           "completed_at": null
         }
       },
-      "scrape_run_id": null,
-      "cover_run_id": null,
+      "scrape_run_id": 34108266479,
+      "cover_run_id": 34109117863,
       "processing_run_id": null,
       "scrape_snapshot_id": "",
       "ad_review": {
@@ -546,7 +546,7 @@
       "retry_requested_at": "2026-09-07T09:50:01.281001+00:00",
       "run_history": [],
       "retry_at": null,
-      "reason": null,
+      "reason": "preflight_failed:TXT",
       "hf_progress": {
         "completed": 0,
         "total": 0
