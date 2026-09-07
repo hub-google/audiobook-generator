@@ -650,7 +650,7 @@
         631,
         632
       ],
-      "status": "preparing_assets",
+      "status": "needs_attention",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
@@ -662,10 +662,10 @@
           "dispatched_at": "2026-09-07T12:51:18.954625+00:00"
         },
         "cover": {
-          "status": "running",
+          "status": "failed",
           "run_id": 34124154119,
           "run_attempt": 1,
-          "reason": null,
+          "reason": "failure",
           "completed_at": null,
           "dispatched_at": "2026-09-07T12:51:18.954630+00:00"
         },
@@ -697,7 +697,7 @@
       "retry_requested_at": null,
       "run_history": [],
       "retry_at": null,
-      "reason": null,
+      "reason": "preflight_failed",
       "hf_progress": {
         "completed": 0,
         "total": 0
