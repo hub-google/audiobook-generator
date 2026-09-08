@@ -91,6 +91,31 @@ def test_cover_review_keeps_analysis_and_hf_prompt_separate():
     assert 'top.geometry("1440x900")' in review_source
 
 
+def test_cover_review_left_preview_accepts_a_manual_override():
+    review_source = method_source("open_cover_preflight_review")
+
+    assert 'text="選擇圖片／更換封面"' in review_source
+    assert "filedialog.askopenfilename" in review_source
+    assert '(image_frame, upload_hint, image_label, upload_button)' in review_source
+    assert "self._register_file_drop" in review_source
+    assert "self._upload_manual_cover(" in review_source
+    assert "show_preview(image)" in review_source
+    assert "右側 Gemini 分析與 HF Prompt 保持不變" in review_source
+    assert "第二階段已經開始；這次執行的封面已鎖定" in review_source
+
+
+def test_cover_review_upload_does_not_clear_loaded_analysis_or_prompt():
+    review_source = method_source("open_cover_preflight_review")
+    upload_start = review_source.index("def process_upload")
+    upload_end = review_source.index("def choose_upload", upload_start)
+    upload_source = review_source[upload_start:upload_end]
+
+    assert 'analysis_text.delete(' not in upload_source
+    assert 'prompt_text.delete(' not in upload_source
+    assert 'analysis_text.insert(' not in upload_source
+    assert 'prompt_text.insert(' not in upload_source
+
+
 def test_deferred_gui_callbacks_do_not_capture_exception_targets():
     """Exception targets are cleared when an except block exits (PEP 3110)."""
     unsafe = []

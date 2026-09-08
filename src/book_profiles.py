@@ -21,7 +21,6 @@ except ImportError:
 
 PROFILE_PATH = "audiobook-book-profiles.json"
 PROFILE_SCHEMA_VERSION = 4
-MAX_PATTERNS = 100
 MAX_PATTERN_LENGTH = 10_000
 
 
@@ -55,8 +54,6 @@ def validate_remove_patterns(patterns):
         if len(pattern) > MAX_PATTERN_LENGTH:
             raise ValueError(f"刪除關鍵字不可超過 {MAX_PATTERN_LENGTH} 個字元")
         result.append(pattern)
-    if len(result) > MAX_PATTERNS:
-        raise ValueError(f"每本小說最多 {MAX_PATTERNS} 條刪除規則")
     return result
 
 

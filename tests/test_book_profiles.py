@@ -45,6 +45,16 @@ class BookProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "10000"):
             validate_remove_patterns(["文" * 10_001])
 
+    def test_cleaner_rules_have_no_per_book_count_limit(self):
+        patterns = [f"廣告-{index}" for index in range(250)]
+        data = update_book_profile(
+            empty_profiles(), "https://example.com/book/many-ads", "廣告較多的小說",
+            cleaner_remove_patterns=patterns,
+        )
+        _, profile = get_book_profile(data, "https://example.com/book/many-ads")
+        self.assertEqual(profile["cleaner_remove_patterns"], patterns)
+        self.assertEqual(profile_snapshot("book-id", profile)["cleaner_remove_patterns"], patterns)
+
     def test_snapshot_fingerprint_changes_only_with_cleaner_rules(self):
         profile = {
             "profile_revision": 1, "cleaner_remove_patterns": ["廣告"],

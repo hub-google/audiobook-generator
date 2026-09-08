@@ -1214,7 +1214,24 @@ jobs:
           print("Restored YouTube upload checkpoint validated successfully.")
           PY
 
-      - name: Restore verified manual cover when configured
+      - name: Download approved preflight cover
+        if: inputs.cover_source_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: cover-review-${{ inputs.queue_task_id }}
+          path: approved_cover
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.cover_source_run_id }}
+      - name: Restore and validate approved cover
+        if: inputs.cover_source_run_id != ''
+        run: python src/cover_preflight.py --restore approved_cover --config prepared_source/config.yaml --task-id "${{ inputs.queue_task_id }}"
+
+      # A cover uploaded from the review window is an explicit override made
+      # after the preflight artifact was created.  Apply it last so the old
+      # reviewed image cannot overwrite the user's newly selected image; the
+      # artifact's Gemini analysis and HF prompt remain available unchanged.
+      - name: Apply verified manual cover override when configured
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -1231,19 +1248,6 @@ jobs:
             fi
             sleep 10
           done
-
-      - name: Download approved preflight cover
-        if: inputs.cover_source_run_id != ''
-        uses: actions/download-artifact@v4
-        with:
-          name: cover-review-${{ inputs.queue_task_id }}
-          path: approved_cover
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.cover_source_run_id }}
-      - name: Restore and validate approved cover
-        if: inputs.cover_source_run_id != ''
-        run: python src/cover_preflight.py --restore approved_cover --config prepared_source/config.yaml --task-id "${{ inputs.queue_task_id }}"
 
       - name: Download Final Merge subtitles and verification sidecars
         uses: actions/download-artifact@v4

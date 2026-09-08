@@ -12,6 +12,7 @@ from src.source_identity import source_fingerprint
 
 
 WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "cover-preflight.yml"
+AUDIOBOOK_WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "audiobook.yml"
 
 
 def encoded(value):
@@ -55,6 +56,17 @@ def test_cover_workflow_cannot_depend_on_catalog_scraping():
     assert "catalog_parser.py" not in workflow
     assert "crawler.py" not in workflow
     assert "matrix.json" not in workflow
+
+
+def test_processing_applies_manual_cover_after_the_reviewed_artifact():
+    workflow = AUDIOBOOK_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    download = workflow.index("- name: Download approved preflight cover")
+    restore = workflow.index("- name: Restore and validate approved cover", download)
+    manual = workflow.index("- name: Apply verified manual cover override when configured", restore)
+
+    assert download < restore < manual
+    assert "python src/cover_assets.py --restore-config prepared_source/config.yaml" in workflow[manual:]
 
 
 def test_cover_preflight_reaches_gemini_without_fetching_a_synopsis(monkeypatch):
