@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1092,
-  "updated_at": "2026-09-08T02:46:54.924922+00:00",
+  "revision": 1093,
+  "updated_at": "2026-09-08T02:47:01.246867+00:00",
   "queue": [
     {
       "task_id": "book-20260907-7542ded2",
@@ -650,7 +650,7 @@
         631,
         632
       ],
-      "status": "queued",
+      "status": "dispatching",
       "workflow_phase": "processing",
       "stages": {
         "scrape": {
@@ -1512,12 +1512,12 @@
         "total": 0
       },
       "created_at": "2026-09-07T09:02:53.878993+00:00",
-      "updated_at": "2026-09-08T02:46:46.174973+00:00",
+      "updated_at": "2026-09-08T02:47:01.246845+00:00",
       "book_profile_id": "5fd768a4c8c5e2f5",
       "profile_snapshot": {
         "book_profile_id": "5fd768a4c8c5e2f5",
         "catalog_url": "https://www.69shuba.com/book/77731/",
-        "catalog_identity": "2b0dc4807bf03233af043468124c602e7187a1dab187afad3574b147713b22e5",
+        "catalog_identity": "a541ffa0fe0a481bd938c80f4a66e013c0ad1ae6e973c1eea306aee57e2f6df1",
         "profile_revision": 3,
         "cleaner_remove_patterns": [],
         "duplicate_detection": {
@@ -1531,7 +1531,7 @@
         "cleaner_fingerprint": "3652dfd9fe791a14d5285926c05405273728f9cb7ea81d261318f4a9efff79a8"
       },
       "artifact_source_run_id": null,
-      "dispatched_at": "2026-09-08T02:09:34.464127+00:00",
+      "dispatched_at": "2026-09-08T02:47:01.232085+00:00",
       "run_conclusion": null,
       "run_completed_at": null,
       "requeue_after_edit": false
