@@ -99,6 +99,10 @@ def main():
         os.environ["BOOK_CATALOG_URL"] = config["catalog_url"]
     else:
         os.environ.pop("BOOK_CATALOG_URL", None)
+    # This isolated workflow gives Gemini the book title directly.  It must not
+    # require a synopsis lookup (or contact the novel source) before Gemini can
+    # run.
+    os.environ["COVER_GEMINI_TITLE_ONLY"] = "1"
     catalog_metadata = (config.get("catalog_snapshot") or {}).get("metadata") or {}
     if catalog_metadata:
         os.environ["BOOK_CATALOG_METADATA"] = json.dumps(catalog_metadata, ensure_ascii=False)

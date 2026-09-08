@@ -635,7 +635,14 @@ def build_cover_information(book_title, catalog_url=None, progress_callback=None
 
 
 def auto_generate_prompt_from_summary(book_title, workspace_dir=None, analyzer=None):
-    pure_plot, source = fetch_book_summary_details(book_title)
+    if os.getenv("COVER_GEMINI_TITLE_ONLY") == "1":
+        pure_plot = (
+            f"指定小說書名：《{book_title}》。封面預檢未提供外部簡介；"
+            "請 Gemini 直接依此書名及模型內建的小說知識辨識作品、整理故事事實並設計封面。"
+        )
+        source = "Gemini model knowledge"
+    else:
+        pure_plot, source = fetch_book_summary_details(book_title)
     brief = analyze_cover_brief(book_title, pure_plot, source=source, workspace_dir=workspace_dir, analyzer=analyzer)
     if brief.get("visual_brief"):
         final_prompt = finalize_cover_prompt(brief["visual_brief"])
@@ -643,7 +650,11 @@ def auto_generate_prompt_from_summary(book_title, workspace_dir=None, analyzer=N
         return pure_plot, "", final_prompt, brief
     
     # GUI and production share the same strict Gemini response and validation.
-    research = collect_cover_research(book_title, pure_plot, source)
+    research = (
+        {"mode": "internal_knowledge_fallback", "sources": []}
+        if os.getenv("COVER_GEMINI_TITLE_ONLY") == "1"
+        else collect_cover_research(book_title, pure_plot, source)
+    )
     draft = generate_gemini_cover_information(book_title, pure_plot, research=research)
     information = review_cover_information(book_title, pure_plot, research, draft)
     final_prompt = information["prompt"]

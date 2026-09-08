@@ -3,9 +3,11 @@ import json
 from pathlib import Path
 
 import pytest
+from unittest.mock import patch
 
 from src.book_profiles import book_profile_id
 from src.cover_preflight import build_cover_config
+from src.metadata_gen import auto_generate_prompt_from_summary
 from src.source_identity import source_fingerprint
 
 
@@ -53,3 +55,40 @@ def test_cover_workflow_cannot_depend_on_catalog_scraping():
     assert "catalog_parser.py" not in workflow
     assert "crawler.py" not in workflow
     assert "matrix.json" not in workflow
+
+
+def test_cover_preflight_reaches_gemini_without_fetching_a_synopsis(monkeypatch):
+    monkeypatch.setenv("COVER_GEMINI_TITLE_ONLY", "1")
+    visual_brief = {
+        "genre": "cultivation fantasy",
+        "era_and_setting": "demonic cultivation world",
+        "core_conflict": "survival through strategic inaction",
+        "main_character_identity": "a reluctant cultivator",
+        "appearance": "handsome young man",
+        "clothing": "dark cultivation robes",
+        "expression_and_action": "calmly observing the conflict",
+        "supporting_characters": [],
+        "iconic_story_symbol": "a colossal demonic citadel",
+        "iconic_prop_or_power": "swirling demonic energy",
+        "genre_color_palette": "crimson and black",
+        "lighting_and_mood": "dramatic cinematic lighting",
+        "avoid_story_errors": ["modern technology"],
+    }
+    gemini_result = {
+        "analysis": {"世界觀": "天魔世界"},
+        "story_facts": [{"fact": "模型辨識出的故事事實", "source_ids": ["MODEL_KNOWLEDGE"]}] * 5,
+        "visual_brief": visual_brief,
+        "template_version": "test",
+        "prompt": "unused",
+    }
+
+    with patch("src.metadata_gen.fetch_book_summary_details") as fetch, \
+         patch("src.metadata_gen.collect_cover_research") as research, \
+         patch("src.metadata_gen.generate_gemini_cover_information", return_value=gemini_result) as gemini, \
+         patch("src.metadata_gen.review_cover_information", return_value=gemini_result):
+        synopsis, _, _, _ = auto_generate_prompt_from_summary("在天魔世界的摆烂生活")
+
+    fetch.assert_not_called()
+    research.assert_not_called()
+    assert "在天魔世界的摆烂生活" in synopsis
+    assert gemini.call_args.kwargs["research"] == {"mode": "internal_knowledge_fallback", "sources": []}
