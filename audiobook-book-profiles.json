@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
-  "revision": 87,
-  "updated_at": "2026-09-08T07:25:53.329645+00:00",
+  "revision": 88,
+  "updated_at": "2026-09-08T12:01:02.114685+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -873,7 +873,15 @@
     "2d5772b45787982a": {
       "catalog_url": "https://www.69shuba.com/book/51340/",
       "book_title": "神秘复苏",
-      "cleaner_remove_patterns": [],
+      "cleaner_remove_patterns": [
+        "第771章一切的起点之地",
+        "第1427章救回和追踪",
+        "没想到吧,我四更了。",
+        "第301章追踪信号",
+        "第24章登录网站",
+        "圣诞快乐",
+        "新年快乐"
+      ],
       "duplicate_detection": {
         "use_normalized_number": true,
         "use_chapter_name": false,
@@ -881,8 +889,8 @@
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 2,
-      "updated_at": "2026-09-08T07:25:09.213881+00:00",
+      "profile_revision": 3,
+      "updated_at": "2026-09-08T12:01:02.114685+00:00",
       "manual_cover": {}
     },
     "1012c930587485d4": {
