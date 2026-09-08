@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1132,
-  "updated_at": "2026-09-08T12:01:15.524458+00:00",
+  "revision": 1133,
+  "updated_at": "2026-09-08T12:01:44.628176+00:00",
   "queue": [
     {
       "task_id": "book-20260908-293d9597",
@@ -1634,7 +1634,7 @@
         1613,
         1614
       ],
-      "status": "queued",
+      "status": "dispatching",
       "workflow_phase": "processing",
       "stages": {
         "scrape": {
@@ -2552,14 +2552,22 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:29.981158+00:00",
-      "updated_at": "2026-09-08T11:18:52.728627+00:00",
+      "updated_at": "2026-09-08T12:01:44.628153+00:00",
       "book_profile_id": "2d5772b45787982a",
       "profile_snapshot": {
         "book_profile_id": "2d5772b45787982a",
         "catalog_url": "https://www.69shuba.com/book/51340/",
         "catalog_identity": "71da092f044c79e8b0bb948d720127760b0c23ff7ccfd13ddcafa626253ebc3b",
-        "profile_revision": 2,
-        "cleaner_remove_patterns": [],
+        "profile_revision": 3,
+        "cleaner_remove_patterns": [
+          "第771章一切的起点之地",
+          "第1427章救回和追踪",
+          "没想到吧,我四更了。",
+          "第301章追踪信号",
+          "第24章登录网站",
+          "圣诞快乐",
+          "新年快乐"
+        ],
         "duplicate_detection": {
           "use_normalized_number": true,
           "use_chapter_name": false,
@@ -2568,10 +2576,10 @@
         "chapter_title_overrides": {},
         "manual_cover": {},
         "chapter_normalized_number_overrides": {},
-        "cleaner_fingerprint": "3652dfd9fe791a14d5285926c05405273728f9cb7ea81d261318f4a9efff79a8"
+        "cleaner_fingerprint": "e66f89aed573b1b5f10e07ecb1a1fc704581cff1b8a36ac10f68279cd8859e17"
       },
       "artifact_source_run_id": null,
-      "dispatched_at": "2026-09-08T11:18:45.186561+00:00"
+      "dispatched_at": "2026-09-08T12:01:44.611460+00:00"
     },
     {
       "task_id": "book-20260908-0dac5b25",
