@@ -90,6 +90,28 @@ class GuiQueueControlTests(unittest.TestCase):
         self.assertEqual(queue["queue"][0]["scrape_run_id"], 101)
         self.assertEqual(queue["queue"][0]["stages"]["scrape"]["status"], "running")
 
+    def test_newer_manual_retry_replaces_failed_bound_preflight_run(self):
+        queue = {"queue": [{
+            "task_id": "book-1", "workflow_phase": "preflight", "status": "needs_attention",
+            "scrape_run_id": 100, "cover_run_id": 200,
+            "stages": {
+                "scrape": {"run_id": 100, "status": "failed"},
+                "cover": {"run_id": 200, "status": "failed"},
+            },
+        }]}
+
+        changed = AudiobookGUIApp._apply_preflight_observations(queue, {
+            "book-1": {
+                "cover": {"run_id": 250, "status": "completed", "updated_at": "2026-09-08T00:47:00Z"},
+            },
+        })
+
+        task = queue["queue"][0]
+        self.assertTrue(changed)
+        self.assertEqual(task["cover_run_id"], 250)
+        self.assertEqual(task["stages"]["cover"]["status"], "completed")
+        self.assertEqual(task["status"], "needs_attention")
+
     def test_queue_buttons_only_enable_for_supported_states(self):
         app = make_app()
 

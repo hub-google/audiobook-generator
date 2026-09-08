@@ -532,13 +532,18 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin):
                     ):
                         run_id = task.get(f"{stage_name}_run_id") or \
                             ((task.get("stages") or {}).get(stage_name) or {}).get("run_id")
-                        if not run_id:
-                            stage = ((task.get("stages") or {}).get(stage_name) or {})
+                        stage = ((task.get("stages") or {}).get(stage_name) or {})
+                        # A manual retry may create a newer Run without updating
+                        # the durable queue record.  Once the bound Run failed,
+                        # discover and adopt the newest matching retry.
+                        if not run_id or stage.get("status") == "failed":
                             discovered = self._discover_preflight_run(
                                 repo, token, workflow_file, task["task_id"],
                                 stage.get("dispatched_at") or task.get("dispatched_at"),
                             )
-                            run_id = discovered.get("id") if discovered else None
+                            discovered_id = int(discovered.get("id")) if discovered else None
+                            if discovered_id and (not run_id or discovered_id > int(run_id)):
+                                run_id = discovered_id
                         if run_id:
                             preflight_stages.append((task["task_id"], stage_name, int(run_id), prefix))
                 worker_count = min(8, max(1, len(monitored) + len(preflight_stages)))
@@ -673,7 +678,8 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin):
                 run_id = int(result["run_id"])
                 bound_run_id = task.get(f"{stage_name}_run_id") or stage.get("run_id")
                 if bound_run_id and int(bound_run_id) != run_id:
-                    continue
+                    if stage.get("status") != "failed" or run_id <= int(bound_run_id):
+                        continue
                 next_status = result.get("status")
                 if not next_status or stage.get("status") == next_status:
                     continue
