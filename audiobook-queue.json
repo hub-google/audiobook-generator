@@ -641,7 +641,7 @@
         622,
         623
       ],
-      "status": "needs_attention",
+      "status": "preparing_assets",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
@@ -653,7 +653,7 @@
           "dispatched_at": "2026-09-08T15:03:02.501322+00:00"
         },
         "cover": {
-          "status": "failed",
+          "status": "running",
           "run_id": 34242248069,
           "run_attempt": 1,
           "reason": "failure",
@@ -688,7 +688,7 @@
       "retry_requested_at": null,
       "run_history": [],
       "retry_at": null,
-      "reason": "preflight_failed",
+      "reason": null,
       "hf_progress": {
         "completed": 0,
         "total": 0
