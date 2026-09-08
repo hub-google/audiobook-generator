@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1075,
-  "updated_at": "2026-09-08T00:55:07.377083+00:00",
+  "revision": 1076,
+  "updated_at": "2026-09-08T00:55:21.955009+00:00",
   "queue": [
     {
       "task_id": "book-20260907-cf0585fb",
@@ -115,8 +115,8 @@
         92,
         93
       ],
-      "status": "waiting_review",
-      "workflow_phase": "preflight",
+      "status": "queued",
+      "workflow_phase": "processing",
       "stages": {
         "scrape": {
           "status": "completed",
