@@ -136,12 +136,24 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
                           if step.get("name") == "Reuse or create the complete Final Merge manifest")
         self.assertIn("HF_TOKEN", final_step["env"])
 
-    def test_run_names_are_readable_and_dispatcher_history_is_pruned(self):
+    def test_run_names_are_readable_and_dispatcher_history_keeps_diagnostics(self):
         self.assertIn("有聲小說製作", self.text)
         self.assertIn("inputs.book_title", self.text)
         self.assertIn("有聲小說佇列調度", self.dispatcher_text)
-        self.assertIn("Delete older dispatcher run records", self.dispatcher_text)
+        self.assertIn("Prune old successful dispatcher run records", self.dispatcher_text)
         self.assertIn('actions/runs/$old_run_id', self.dispatcher_text)
+        self.assertIn("select(.key >= 20)", self.dispatcher_text)
+        self.assertIn('old_conclusion" != "success"', self.dispatcher_text)
+
+    def test_dispatcher_receives_authoritative_workflow_run_completion(self):
+        for name in ("TRIGGER_RUN_ID", "TRIGGER_WORKFLOW_NAME", "TRIGGER_CONCLUSION", "TRIGGER_COMPLETED_AT"):
+            self.assertIn(name, self.dispatcher_text)
+        self.assertIn("github.event.workflow_run.id", self.dispatcher_text)
+        self.assertIn("github.event.workflow_run.conclusion", self.dispatcher_text)
+
+    def test_dispatcher_recovery_schedule_runs_every_five_minutes_off_the_hour(self):
+        self.assertIn('cron: "3,8,13,18,23,28,33,38,43,48,53,58 * * * *"', self.dispatcher_text)
+        self.assertNotIn('cron: "*/15 * * * *"', self.dispatcher_text)
 
     def test_resume_dispatch_requires_original_identity_inputs(self):
         restore = next(

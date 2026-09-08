@@ -204,3 +204,37 @@ def test_dispatch_polls_until_both_preflight_run_ids_are_attached():
     assert attached["cover_run_id"] == 200
     assert attached["stages"]["scrape"]["run_id"] == 100
     assert attached["stages"]["cover"]["run_id"] == 200
+
+
+def test_completed_book_event_releases_only_the_next_books_preflight_workflows():
+    first = new_task("https://example.com/first", "First", 1, 2)
+    first.update(workflow_phase="processing", status="running", run_id=300,
+                 processing_run_id=300)
+    second = new_task("https://example.com/second", "Second", 1, 2)
+    queue = add_tasks(empty_queue(), [first, second])
+    dispatcher = Dispatcher(
+        "owner/repo", "token", trigger_run_id=300,
+        trigger_workflow_name="Audiobook Automation Pipeline (Parallel)",
+        trigger_conclusion="success",
+    )
+    dispatcher.dispatch_discovery_delays = (0,)
+    dispatcher.store = Mock()
+    dispatcher.store.load.return_value = (queue, "sha")
+    dispatcher.store.save.return_value = "next-sha"
+    dispatcher.profile_store.load = Mock(return_value=({"books": {}}, None))
+    stale = {"id": 300, "status": "in_progress", "conclusion": None,
+             "display_title": f"First｜{first['task_id']}"}
+    dispatcher.runs = Mock(return_value=[stale])
+    dispatcher.cover_runs = Mock(return_value=[])
+    dispatcher.request = Mock()
+
+    reconciled, _ = dispatcher.reconcile(queue)
+    dispatcher.store.load.return_value = (reconciled, "next-sha")
+    dispatcher.dispatch_next(reconciled)
+
+    posts = [call.args[1] for call in dispatcher.request.call_args_list
+             if call.args[0] == "POST"]
+    assert posts == [
+        "/actions/workflows/audiobook.yml/dispatches",
+        "/actions/workflows/cover-preflight.yml/dispatches",
+    ]

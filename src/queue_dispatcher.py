@@ -119,12 +119,18 @@ def parse_time(value):
 
 
 class Dispatcher:
-    def __init__(self, repo, token, branch="automation-state", force=False):
+    def __init__(self, repo, token, branch="automation-state", force=False,
+                 trigger_run_id=None, trigger_workflow_name="",
+                 trigger_conclusion="", trigger_completed_at=""):
         self.repo = repo
         self.token = token
         self.store = GitHubQueueStore(repo, token, branch=branch)
         self.profile_store = GitHubBookProfileStore(repo, token, branch=branch)
         self.force = bool(force)
+        self.trigger_run_id = int(trigger_run_id) if str(trigger_run_id or "").isdigit() else None
+        self.trigger_workflow_name = str(trigger_workflow_name or "")
+        self.trigger_conclusion = str(trigger_conclusion or "")
+        self.trigger_completed_at = str(trigger_completed_at or "")
         # workflow_dispatch returns no Run ID. Poll briefly until GitHub indexes
         # every requested Run; GUI reconciliation remains the durable fallback.
         self.dispatch_discovery_delays = (0, 1, 2, 3, 4)
@@ -134,6 +140,31 @@ class Dispatcher:
             "X-GitHub-Api-Version": "2022-11-28",
         }
         self.api = f"https://api.github.com/repos/{repo}"
+
+    def triggered_run(self, workflow_name):
+        """Return the authoritative completed workflow_run event, when applicable.
+
+        GitHub may briefly return an older ``in_progress`` value from the Runs
+        API after emitting ``workflow_run: completed``.  The event is the
+        authoritative edge that releases the queue; synthetic data is used only
+        for the exact bound Run ID and never for an unrelated active Run.
+        """
+        if (not self.trigger_run_id or not self.trigger_conclusion
+                or self.trigger_workflow_name != workflow_name):
+            return None
+        return {
+            "id": self.trigger_run_id,
+            "status": "completed",
+            "conclusion": self.trigger_conclusion,
+            "updated_at": self.trigger_completed_at or datetime.now(timezone.utc).isoformat(),
+        }
+
+    def is_authoritatively_completed_run(self, run):
+        return bool(
+            self.trigger_run_id
+            and self.trigger_conclusion
+            and int(run.get("id") or 0) == self.trigger_run_id
+        )
 
     def request(self, method, path, **kwargs):
         response = requests.request(method, self.api + path, headers=self.headers, timeout=30, **kwargs)
@@ -296,6 +327,8 @@ class Dispatcher:
 
     def reconcile(self, queue):
         runs = self.runs()
+        triggered_audiobook = self.triggered_run("Audiobook Automation Pipeline (Parallel)")
+        triggered_cover = self.triggered_run("Cover preflight")
         cover_runs = self.cover_runs() if any(
             task.get("workflow_phase") == "preflight" for task in queue.get("queue", [])
         ) else []
@@ -318,14 +351,16 @@ class Dispatcher:
                 stages = task.setdefault("stages", {})
                 scrape = stages.setdefault("scrape", {})
                 cover = stages.setdefault("cover", {})
-                def stage_run(state, candidates):
+                def stage_run(state, candidates, trigger=None):
+                    if trigger and int(state.get("run_id") or 0) == int(trigger["id"]):
+                        return trigger
                     if state.get("run_id"):
                         return next((r for r in candidates if int(r["id"]) == int(state["run_id"])), None) or self.run_by_id(state["run_id"])
                     since = parse_time(state.get("dispatched_at") or task.get("dispatched_at"))
                     return next((r for r in candidates if not since or
                                  (parse_time(r.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc)) >= since), None)
-                scrape_run = stage_run(scrape, by_task.get(task_id) or [])
-                cover_run = stage_run(cover, covers_by_task.get(task_id) or [])
+                scrape_run = stage_run(scrape, by_task.get(task_id) or [], triggered_audiobook)
+                cover_run = stage_run(cover, covers_by_task.get(task_id) or [], triggered_cover)
                 for name, state, run in (("scrape", scrape, scrape_run), ("cover", cover, cover_run)):
                     if not run:
                         continue
@@ -404,6 +439,9 @@ class Dispatcher:
             if retry_requested_at:
                 candidates = [run for run in candidates if (parse_time(run.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc)) >= retry_requested_at]
             run = candidates[0] if candidates else None
+            if (triggered_audiobook
+                    and int(task.get("run_id") or 0) == int(triggered_audiobook["id"])):
+                run = triggered_audiobook
             if not run:
                 bound_run_id = task.get("run_id")
                 if bound_run_id and task.get("status") in BLOCKING_STATES:
@@ -452,6 +490,7 @@ class Dispatcher:
                 queue = update_task(
                     queue, task["task_id"], status="completed", reason=None,
                     retry_at=None, completed_at=run.get("updated_at"),
+                    run_completed_at=run.get("updated_at"), run_conclusion="success",
                 )
                 changed = True
             elif status == "completed" and conclusion == "failure" and task.get("status") not in {"stopped", "paused"}:
@@ -493,8 +532,12 @@ class Dispatcher:
         return queue, changed
 
     def dispatch_next(self, queue):
-        active_runs = [r for r in self.runs() if r.get("status") != "completed"]
-        active_cover_runs = [r for r in self.cover_runs() if r.get("status") != "completed"]
+        active_runs = [r for r in self.runs()
+                       if r.get("status") != "completed"
+                       and not self.is_authoritatively_completed_run(r)]
+        active_cover_runs = [r for r in self.cover_runs()
+                             if r.get("status") != "completed"
+                             and not self.is_authoritatively_completed_run(r)]
         if active_runs or active_cover_runs:
             first_run = (active_runs or active_cover_runs)[0]
             return queue, f"GitHub Run {first_run.get('id')} ({first_run.get('display_title') or first_run.get('name')}) is already active. Will not dispatch another task."
@@ -813,11 +856,21 @@ def main():
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
     parser.add_argument("--branch", default=os.environ.get("QUEUE_STATE_BRANCH", "automation-state"))
     parser.add_argument("--force", action="store_true", help="Force immediate dispatch ignoring retry_at")
+    parser.add_argument("--trigger-run-id", default=os.environ.get("TRIGGER_RUN_ID"))
+    parser.add_argument("--trigger-workflow-name", default=os.environ.get("TRIGGER_WORKFLOW_NAME", ""))
+    parser.add_argument("--trigger-conclusion", default=os.environ.get("TRIGGER_CONCLUSION", ""))
+    parser.add_argument("--trigger-completed-at", default=os.environ.get("TRIGGER_COMPLETED_AT", ""))
     args = parser.parse_args()
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if not args.repo or not token:
         raise SystemExit("GITHUB_REPOSITORY and GH_TOKEN are required")
-    print(Dispatcher(args.repo, token, args.branch, force=args.force).run())
+    print(Dispatcher(
+        args.repo, token, args.branch, force=args.force,
+        trigger_run_id=args.trigger_run_id,
+        trigger_workflow_name=args.trigger_workflow_name,
+        trigger_conclusion=args.trigger_conclusion,
+        trigger_completed_at=args.trigger_completed_at,
+    ).run())
 
 
 if __name__ == "__main__":

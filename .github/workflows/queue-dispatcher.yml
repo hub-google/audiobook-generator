@@ -13,7 +13,9 @@ on:
     workflows: ["Audiobook Automation Pipeline (Parallel)", "Cover preflight"]
     types: [completed]
   schedule:
-    - cron: "*/15 * * * *"
+    # GitHub documents that schedules at the start of the hour are more likely
+    # to be delayed.  This is only a recovery sweep; workflow_run is primary.
+    - cron: "3,8,13,18,23,28,33,38,43,48,53,58 * * * *"
 
 permissions:
   actions: write
@@ -27,22 +29,21 @@ jobs:
   dispatch_once:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete older dispatcher run records
+      - name: Prune old successful dispatcher run records
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CURRENT_RUN_ID: ${{ github.run_id }}
           REPOSITORY: ${{ github.repository }}
         run: |
           gh api --paginate "repos/$REPOSITORY/actions/workflows/queue-dispatcher.yml/runs?per_page=100" \
-            --jq ".workflow_runs[] | select(.id < ($CURRENT_RUN_ID | tonumber)) | [.id, .status] | @tsv" |
-          while IFS=$'\t' read -r old_run_id old_status; do
+            --jq "[.workflow_runs[] | select(.id != ($CURRENT_RUN_ID | tonumber))] | to_entries[] | select(.key >= 20) | [.value.id, .value.status, (.value.conclusion // \"\")] | @tsv" |
+          while IFS=$'\t' read -r old_run_id old_status old_conclusion; do
             [ -n "$old_run_id" ] || continue
-            if [ "$old_status" != "completed" ]; then
-              gh api --method POST "repos/$REPOSITORY/actions/runs/$old_run_id/cancel" || true
+            if [ "$old_status" != "completed" ] || [ "$old_conclusion" != "success" ]; then
               continue
             fi
             gh api --method DELETE "repos/$REPOSITORY/actions/runs/$old_run_id"
-            echo "Deleted older dispatcher run $old_run_id."
+            echo "Deleted old successful dispatcher run $old_run_id."
           done
 
       - uses: actions/checkout@v4
@@ -60,6 +61,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           QUEUE_STATE_BRANCH: automation-state
           FORCE_RETRY: ${{ github.event_name == 'workflow_dispatch' && inputs.force_retry && 'true' || 'false' }}
+          TRIGGER_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || '' }}
+          TRIGGER_WORKFLOW_NAME: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name || '' }}
+          TRIGGER_CONCLUSION: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion || '' }}
+          TRIGGER_COMPLETED_AT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.updated_at || '' }}
         shell: bash
         run: |
           set -o pipefail

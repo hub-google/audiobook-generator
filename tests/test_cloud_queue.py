@@ -75,6 +75,70 @@ class CloudQueueTests(unittest.TestCase):
         )
         dispatcher.request.assert_not_called()
 
+    def test_completed_workflow_event_overrides_stale_in_progress_api_state(self):
+        first = new_task("https://example/first", "First")
+        first.update(workflow_phase="processing", status="running", run_id=100,
+                     processing_run_id=100)
+        second = new_task("https://example/second", "Second")
+        queue = add_tasks(empty_queue(), [first, second])
+        dispatcher = Dispatcher(
+            "owner/repo", "token", trigger_run_id=100,
+            trigger_workflow_name="Audiobook Automation Pipeline (Parallel)",
+            trigger_conclusion="success", trigger_completed_at="2026-09-08T03:52:20Z",
+        )
+        dispatcher.runs = Mock(return_value=[{
+            "id": 100, "status": "in_progress", "conclusion": None,
+            "display_title": f"First｜{first['task_id']}",
+        }])
+
+        reconciled, changed = dispatcher.reconcile(queue)
+
+        self.assertTrue(changed)
+        self.assertEqual([item["task_id"] for item in reconciled["queue"]], [second["task_id"]])
+        self.assertEqual(reconciled["completed"][-1]["task_id"], first["task_id"])
+        self.assertEqual(reconciled["completed"][-1]["run_completed_at"], "2026-09-08T03:52:20Z")
+
+    def test_completed_event_releases_queue_and_calls_dispatch_next_in_same_run(self):
+        first = new_task("https://example/first", "First")
+        first.update(workflow_phase="processing", status="running", run_id=100,
+                     processing_run_id=100)
+        second = new_task("https://example/second", "Second")
+        queue = add_tasks(empty_queue(), [first, second])
+        dispatcher = Dispatcher(
+            "owner/repo", "token", trigger_run_id=100,
+            trigger_workflow_name="Audiobook Automation Pipeline (Parallel)",
+            trigger_conclusion="success",
+        )
+        dispatcher.store.load = Mock(return_value=(queue, "sha-1"))
+        dispatcher.store.save = Mock(return_value="sha-2")
+        dispatcher.runs = Mock(return_value=[{
+            "id": 100, "status": "in_progress", "conclusion": None,
+            "display_title": f"First｜{first['task_id']}",
+        }])
+        dispatcher.dispatch_next = Mock(side_effect=lambda value: (value, "dispatched"))
+
+        dispatcher.run()
+
+        dispatched_queue = dispatcher.dispatch_next.call_args.args[0]
+        self.assertEqual(dispatched_queue["queue"][0]["task_id"], second["task_id"])
+        self.assertEqual(dispatched_queue["queue"][0]["status"], "queued")
+
+    def test_repeated_completed_event_is_idempotent(self):
+        completed = new_task("https://example/first", "First")
+        completed.update(status="completed", run_id=100, run_conclusion="success")
+        queue = {"queue": [], "completed": [completed]}
+        dispatcher = Dispatcher(
+            "owner/repo", "token", trigger_run_id=100,
+            trigger_workflow_name="Audiobook Automation Pipeline (Parallel)",
+            trigger_conclusion="success",
+        )
+        dispatcher.runs = Mock(return_value=[])
+
+        reconciled, changed = dispatcher.reconcile(queue)
+
+        self.assertFalse(changed)
+        self.assertEqual(len(reconciled["completed"]), 1)
+
     def test_artifact_source_is_latest_failed_run_with_same_stable_book_fingerprint(self):
         queue = {
             "queue": [
