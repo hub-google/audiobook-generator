@@ -122,6 +122,25 @@ def test_preflight_retry_detaches_failed_runs_and_preserves_successful_stage():
     dispatcher.dispatch_next(queue)
     posts = [c.args[1] for c in dispatcher.request.call_args_list if c.args[0] == "POST"]
     assert posts == ["/actions/workflows/audiobook.yml/dispatches"]
+    payload = dispatcher.request.call_args_list[0].kwargs["json"]["inputs"]
+    assert payload["execution_phase"] == "scrape_only"
+    assert payload["scrape_source_run_id"] == ""
+    assert payload["cover_source_run_id"] == "200"
+
+
+def test_preflight_scrape_retry_never_reuses_stale_top_level_run_id():
+    task = ready_task()
+    task.update(status="queued", scrape_run_id=100)
+    task["stages"]["scrape"].update(status="pending", run_id=None)
+    queue = add_tasks(empty_queue(), [task])
+    dispatcher = fake_dispatcher(queue)
+    dispatcher.runs = Mock(return_value=[])
+
+    dispatcher.dispatch_next(queue)
+
+    payload = dispatcher.request.call_args_list[0].kwargs["json"]["inputs"]
+    assert payload["execution_phase"] == "scrape_only"
+    assert payload["scrape_source_run_id"] == ""
 
 
 def test_processing_reconcile_ignores_scraper_success():

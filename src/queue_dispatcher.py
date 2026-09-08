@@ -602,7 +602,9 @@ class Dispatcher:
             "zip_password": "",
         }
         inputs = dict(common_inputs, execution_phase=("resume_processing" if source_run_id else "processing") if is_processing else "scrape_only",
-                      scrape_source_run_id=str(task.get("scrape_run_id") or ""),
+                      # A failed/pending TXT stage is being regenerated and cannot
+                      # also be used as the reviewed snapshot source for that run.
+                      scrape_source_run_id=str(task.get("scrape_run_id") or "") if not need_scrape else "",
                       cover_source_run_id=str(task.get("cover_run_id") or ""))
         cover_inputs = {key: value for key, value in common_inputs.items() if key not in {
             "chapter_label", "resume_source_run_id", "zip_password",
