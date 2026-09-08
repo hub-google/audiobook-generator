@@ -1634,15 +1634,15 @@
         1613,
         1614
       ],
-      "status": "preparing_assets",
+      "status": "waiting_review",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "running",
+          "status": "completed",
           "run_id": 34220023617,
           "run_attempt": 1,
           "reason": null,
-          "completed_at": null,
+          "completed_at": "2026-09-08T11:47:56Z",
           "dispatched_at": "2026-09-08T11:18:45.186550+00:00"
         },
         "cover": {
