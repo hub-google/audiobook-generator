@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1107,
-  "updated_at": "2026-09-08T06:22:01.478588+00:00",
+  "revision": 1108,
+  "updated_at": "2026-09-08T06:22:04.527748+00:00",
   "queue": [
     {
       "task_id": "book-20260908-4e32a5c9",
@@ -399,7 +399,7 @@
         380,
         381
       ],
-      "status": "preparing_assets",
+      "status": "paused",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
@@ -456,7 +456,7 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:27.476668+00:00",
-      "updated_at": "2026-09-08T06:22:01.478553+00:00",
+      "updated_at": "2026-09-08T06:22:04.527748+00:00",
       "book_profile_id": "94478f2cc90d4bd5",
       "profile_snapshot": {
         "book_profile_id": "94478f2cc90d4bd5",
