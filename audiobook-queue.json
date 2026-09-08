@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1112,
-  "updated_at": "2026-09-08T07:14:44.674779+00:00",
+  "revision": 1113,
+  "updated_at": "2026-09-08T07:18:30.341476+00:00",
   "queue": [
     {
       "task_id": "book-20260908-4e32a5c9",
@@ -399,8 +399,8 @@
         380,
         381
       ],
-      "status": "waiting_review",
-      "workflow_phase": "preflight",
+      "status": "queued",
+      "workflow_phase": "processing",
       "stages": {
         "scrape": {
           "status": "completed",
@@ -490,7 +490,7 @@
           "嗯?"
         ]
       },
-      "run_id": 34194337028,
+      "run_id": null,
       "run_attempt": 1,
       "execution_generation": 1,
       "retry_requested_at": null,
