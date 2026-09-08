@@ -115,7 +115,7 @@
         92,
         93
       ],
-      "status": "needs_attention",
+      "status": "waiting_review",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
@@ -127,11 +127,11 @@
           "dispatched_at": "2026-09-08T00:05:34.220840+00:00"
         },
         "cover": {
-          "status": "failed",
-          "run_id": 34172189957,
+          "status": "completed",
+          "run_id": 34174267381,
           "run_attempt": 1,
-          "reason": "failure",
-          "completed_at": null,
+          "reason": null,
+          "completed_at": "2026-09-08T00:47:02Z",
           "dispatched_at": "2026-09-08T00:05:34.220847+00:00"
         },
         "processing": {
@@ -150,7 +150,7 @@
         }
       },
       "scrape_run_id": 34172188876,
-      "cover_run_id": 34172189957,
+      "cover_run_id": 34174267381,
       "processing_run_id": null,
       "scrape_snapshot_id": "",
       "ad_review": {
@@ -162,7 +162,7 @@
       "retry_requested_at": "2026-09-08T00:05:17.505817+00:00",
       "run_history": [],
       "retry_at": null,
-      "reason": "preflight_failed:TXT,封面",
+      "reason": null,
       "hf_progress": {
         "completed": 0,
         "total": 0
