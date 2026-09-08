@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
-  "revision": 86,
-  "updated_at": "2026-09-08T07:25:38.644356+00:00",
+  "revision": 87,
+  "updated_at": "2026-09-08T07:25:53.329645+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -898,6 +898,21 @@
       "chapter_normalized_number_overrides": {},
       "profile_revision": 1,
       "updated_at": "2026-09-08T07:25:38.644356+00:00",
+      "manual_cover": {}
+    },
+    "dd705942c2d6877d": {
+      "catalog_url": "https://www.69shuba.com/book/37684/",
+      "book_title": "退下，让朕来",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "updated_at": "2026-09-08T07:25:53.329645+00:00",
       "manual_cover": {}
     }
   }
