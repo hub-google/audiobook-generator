@@ -1053,12 +1053,12 @@
       "retry_at": "2026-09-08T12:44:36.966982+00:00",
       "reason": "run_failure",
       "hf_progress": {
-        "completed": 0,
-        "total": 0
+        "completed": 8,
+        "total": 8
       },
       "youtube_progress": {
         "completed": 0,
-        "total": 0
+        "total": 8
       },
       "created_at": "2026-09-08T06:21:27.962245+00:00",
       "updated_at": "2026-09-08T10:44:36.966982+00:00",
