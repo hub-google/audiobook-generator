@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
-  "revision": 83,
-  "updated_at": "2026-09-08T07:14:39.306599+00:00",
+  "revision": 84,
+  "updated_at": "2026-09-08T07:24:46.573235+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -868,6 +868,21 @@
       "chapter_normalized_number_overrides": {},
       "profile_revision": 1,
       "updated_at": "2026-09-08T06:25:47.296217+00:00",
+      "manual_cover": {}
+    },
+    "2d5772b45787982a": {
+      "catalog_url": "https://www.69shuba.com/book/51340/",
+      "book_title": "神秘复苏",
+      "cleaner_remove_patterns": [],
+      "duplicate_detection": {
+        "use_normalized_number": true,
+        "use_chapter_name": true,
+        "use_number_and_name": false
+      },
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "profile_revision": 1,
+      "updated_at": "2026-09-08T07:24:46.573235+00:00",
       "manual_cover": {}
     }
   }
