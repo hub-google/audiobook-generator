@@ -863,15 +863,15 @@
         844,
         845
       ],
-      "status": "preparing_assets",
+      "status": "waiting_review",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "running",
+          "status": "completed",
           "run_id": 34208504670,
           "run_attempt": 1,
-          "reason": "failure",
-          "completed_at": null,
+          "reason": null,
+          "completed_at": "2026-09-08T09:33:39Z",
           "dispatched_at": "2026-09-08T09:10:10.842024+00:00"
         },
         "cover": {
