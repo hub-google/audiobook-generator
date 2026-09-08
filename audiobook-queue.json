@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1128,
-  "updated_at": "2026-09-08T11:18:29.568720+00:00",
+  "revision": 1129,
+  "updated_at": "2026-09-08T11:18:45.205974+00:00",
   "queue": [
     {
       "task_id": "book-20260908-293d9597",
@@ -1634,22 +1634,24 @@
         1613,
         1614
       ],
-      "status": "queued",
-      "workflow_phase": "queued",
+      "status": "dispatching",
+      "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "pending",
+          "status": "dispatching",
           "run_id": null,
           "run_attempt": 0,
           "reason": null,
-          "completed_at": null
+          "completed_at": null,
+          "dispatched_at": "2026-09-08T11:18:45.186550+00:00"
         },
         "cover": {
-          "status": "pending",
+          "status": "dispatching",
           "run_id": null,
           "run_attempt": 0,
           "reason": null,
-          "completed_at": null
+          "completed_at": null,
+          "dispatched_at": "2026-09-08T11:18:45.186558+00:00"
         },
         "processing": {
           "status": "pending",
@@ -1689,7 +1691,26 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:29.981158+00:00",
-      "updated_at": "2026-09-08T07:25:19.410988+00:00"
+      "updated_at": "2026-09-08T11:18:45.205953+00:00",
+      "book_profile_id": "2d5772b45787982a",
+      "profile_snapshot": {
+        "book_profile_id": "2d5772b45787982a",
+        "catalog_url": "https://www.69shuba.com/book/51340/",
+        "catalog_identity": "71da092f044c79e8b0bb948d720127760b0c23ff7ccfd13ddcafa626253ebc3b",
+        "profile_revision": 2,
+        "cleaner_remove_patterns": [],
+        "duplicate_detection": {
+          "use_normalized_number": true,
+          "use_chapter_name": false,
+          "use_number_and_name": false
+        },
+        "chapter_title_overrides": {},
+        "manual_cover": {},
+        "chapter_normalized_number_overrides": {},
+        "cleaner_fingerprint": "3652dfd9fe791a14d5285926c05405273728f9cb7ea81d261318f4a9efff79a8"
+      },
+      "artifact_source_run_id": null,
+      "dispatched_at": "2026-09-08T11:18:45.186561+00:00"
     },
     {
       "task_id": "book-20260908-0dac5b25",
