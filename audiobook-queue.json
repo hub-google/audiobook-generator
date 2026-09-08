@@ -863,7 +863,7 @@
         844,
         845
       ],
-      "status": "waiting_retry",
+      "status": "running",
       "workflow_phase": "processing",
       "stages": {
         "scrape": {
@@ -1039,7 +1039,7 @@
           "靠!"
         ]
       },
-      "run_id": 34211498932,
+      "run_id": 34218677321,
       "run_attempt": 1,
       "execution_generation": 1,
       "retry_requested_at": null,
@@ -1051,7 +1051,7 @@
         }
       ],
       "retry_at": "2026-09-08T12:44:36.966982+00:00",
-      "reason": "run_failure",
+      "reason": null,
       "hf_progress": {
         "completed": 8,
         "total": 8
@@ -1081,7 +1081,7 @@
       },
       "artifact_source_run_id": null,
       "dispatched_at": "2026-09-08T09:42:37.484402+00:00",
-      "run_conclusion": "failure",
+      "run_conclusion": null,
       "run_completed_at": "2026-09-08T10:44:31Z"
     },
     {
