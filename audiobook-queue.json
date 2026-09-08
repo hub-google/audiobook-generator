@@ -399,15 +399,15 @@
         380,
         381
       ],
-      "status": "preparing_assets",
+      "status": "waiting_review",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "running",
+          "status": "completed",
           "run_id": 34194337028,
           "run_attempt": 1,
-          "reason": "failure",
-          "completed_at": null,
+          "reason": null,
+          "completed_at": "2026-09-08T06:33:31Z",
           "dispatched_at": "2026-09-08T06:21:51.970229+00:00"
         },
         "cover": {
