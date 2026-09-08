@@ -1646,11 +1646,11 @@
           "dispatched_at": "2026-09-08T11:18:45.186550+00:00"
         },
         "cover": {
-          "status": "running",
+          "status": "completed",
           "run_id": 34220025428,
           "run_attempt": 1,
           "reason": null,
-          "completed_at": null,
+          "completed_at": "2026-09-08T11:23:16Z",
           "dispatched_at": "2026-09-08T11:18:45.186558+00:00"
         },
         "processing": {
