@@ -106,6 +106,7 @@ STATUS_LABELS = {
 # A scrape rerun gets a fresh GitHub-hosted runner.  This is intentionally
 # separate from in-process HTTP retries, which keep the same blocked egress IP.
 MAX_IMMEDIATE_SCRAPE_RERUNS = 20
+MAX_IMMEDIATE_COVER_RERUNS = 20
 _AUTO_TASK = object()
 
 
@@ -413,6 +414,19 @@ class Dispatcher:
                         new_status, reason = (
                             "needs_attention",
                             f"scrape_failed_after_{MAX_IMMEDIATE_SCRAPE_RERUNS}_reruns",
+                        )
+                elif cover.get("status") == "failed" and cover_run:
+                    # Cover preflight has its own native rerun controller. Keep
+                    # the task non-actionable while that controller owns retry,
+                    # preventing a competing manual/new workflow dispatch.
+                    run_attempt = int(cover_run.get("run_attempt") or cover.get("run_attempt") or 1)
+                    cover["run_attempt"] = run_attempt
+                    if run_attempt <= MAX_IMMEDIATE_COVER_RERUNS:
+                        new_status, reason = "preparing_assets", "cover_rerun_pending"
+                    else:
+                        new_status, reason = (
+                            "needs_attention",
+                            f"cover_failed_after_{MAX_IMMEDIATE_COVER_RERUNS}_reruns",
                         )
                 elif "failed" in statuses:
                     failed_names = [name for name, state in (("TXT", scrape), ("封面", cover)) if state.get("status") == "failed"]

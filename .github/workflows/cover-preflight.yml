@@ -16,6 +16,7 @@ on:
       book_profile_snapshot_b64: {required: false, type: string}
 
 permissions:
+  actions: write
   contents: read
 
 jobs:
@@ -143,3 +144,26 @@ jobs:
             config.yaml
           if-no-files-found: error
           retention-days: 30
+
+  # A workflow cannot rerun itself while it is still in progress. Dispatch a
+  # small controller after every cover stage has settled. The controller waits
+  # for this Run to complete, then owns up to 20 native failed-job reruns.
+  trigger_cover_rerun:
+    name: "🔁 Start immediate native cover rerun controller"
+    needs:
+      - generate_book_introduction
+      - generate_cover_information
+      - review_cover_information
+      - generate_cover
+    if: failure() && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch controller for this completed cover Run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_ID: ${{ github.run_id }}
+        run: |
+          gh workflow run cover-rerun.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$GITHUB_REF_NAME" \
+            --field source_run_id="$SOURCE_RUN_ID"

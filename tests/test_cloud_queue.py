@@ -9,7 +9,7 @@ from src.cloud_queue import (
     update_task_chapters, normalize_chapter_order, normalize_queue,
 )
 from src.queue_dispatcher import (
-    Dispatcher, MAX_IMMEDIATE_SCRAPE_RERUNS, artifact_source_run_id,
+    Dispatcher, MAX_IMMEDIATE_COVER_RERUNS, MAX_IMMEDIATE_SCRAPE_RERUNS, artifact_source_run_id,
     failed_artifact_source_candidates,
 )
 
@@ -72,6 +72,57 @@ class CloudQueueTests(unittest.TestCase):
         self.assertEqual(reconciled["queue"][0]["status"], "needs_attention")
         self.assertEqual(
             reconciled["queue"][0]["reason"], "scrape_failed_after_20_reruns",
+        )
+        dispatcher.request.assert_not_called()
+
+    def test_failed_cover_is_marked_for_dedicated_native_rerun_controller(self):
+        queue = self._preflight_queue()
+        queue["queue"][0]["stages"]["scrape"].update(status="completed")
+        dispatcher = Dispatcher("owner/repo", "token")
+        cover = {
+            "id": 200, "status": "completed", "conclusion": "failure", "run_attempt": 1,
+            "display_title": "【封面與Gemini】book｜book-20260908-deadbeef",
+        }
+        dispatcher.runs = Mock(return_value=[])
+        dispatcher.cover_runs = Mock(return_value=[cover])
+        dispatcher.run_by_id = Mock(side_effect=lambda run_id: {
+            100: {"id": 100, "status": "completed", "conclusion": "success"},
+            200: cover,
+        }[run_id])
+        dispatcher.request = Mock()
+
+        reconciled, changed = dispatcher.reconcile(queue)
+
+        self.assertTrue(changed)
+        task = reconciled["queue"][0]
+        self.assertEqual(task["status"], "preparing_assets")
+        self.assertEqual(task["stages"]["cover"]["status"], "failed")
+        self.assertEqual(task["reason"], "cover_rerun_pending")
+        dispatcher.request.assert_not_called()
+
+    def test_failed_cover_stops_after_twenty_immediate_reruns(self):
+        queue = self._preflight_queue()
+        queue["queue"][0]["stages"]["scrape"].update(status="completed")
+        cover = {
+            "id": 200, "status": "completed", "conclusion": "failure",
+            "run_attempt": MAX_IMMEDIATE_COVER_RERUNS + 1,
+            "display_title": "【封面與Gemini】book｜book-20260908-deadbeef",
+        }
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.runs = Mock(return_value=[])
+        dispatcher.cover_runs = Mock(return_value=[cover])
+        dispatcher.run_by_id = Mock(side_effect=lambda run_id: {
+            100: {"id": 100, "status": "completed", "conclusion": "success"},
+            200: cover,
+        }[run_id])
+        dispatcher.request = Mock()
+
+        reconciled, changed = dispatcher.reconcile(queue)
+
+        self.assertTrue(changed)
+        self.assertEqual(reconciled["queue"][0]["status"], "needs_attention")
+        self.assertEqual(
+            reconciled["queue"][0]["reason"], "cover_failed_after_20_reruns",
         )
         dispatcher.request.assert_not_called()
 

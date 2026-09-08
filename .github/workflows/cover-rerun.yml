@@ -1,0 +1,38 @@
+name: Immediate Cover Native Rerun Controller
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Completed cover preflight Run ID"
+        required: true
+        type: string
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: cover-rerun-${{ inputs.source_run_id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  rerun_failed_cover:
+    name: "🔄 Re-run failed cover jobs"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install controller dependencies
+        run: pip install requests
+
+      - name: Re-run failed cover jobs immediately
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          REPOSITORY: ${{ github.repository }}
+        run: python src/cover_rerun_controller.py
