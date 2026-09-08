@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1110,
-  "updated_at": "2026-09-08T06:21:48.606286+00:00",
+  "revision": 1105,
+  "updated_at": "2026-09-08T06:21:51.985941+00:00",
   "queue": [
     {
       "task_id": "book-20260908-4e32a5c9",
@@ -399,22 +399,24 @@
         380,
         381
       ],
-      "status": "queued",
-      "workflow_phase": "queued",
+      "status": "dispatching",
+      "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "pending",
+          "status": "dispatching",
           "run_id": null,
           "run_attempt": 0,
           "reason": null,
-          "completed_at": null
+          "completed_at": null,
+          "dispatched_at": "2026-09-08T06:21:51.970229+00:00"
         },
         "cover": {
-          "status": "pending",
+          "status": "dispatching",
           "run_id": null,
           "run_attempt": 0,
           "reason": null,
-          "completed_at": null
+          "completed_at": null,
+          "dispatched_at": "2026-09-08T06:21:51.970235+00:00"
         },
         "processing": {
           "status": "pending",
@@ -454,7 +456,26 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:27.476668+00:00",
-      "updated_at": "2026-09-08T06:21:27.476668+00:00"
+      "updated_at": "2026-09-08T06:21:51.985917+00:00",
+      "book_profile_id": "94478f2cc90d4bd5",
+      "profile_snapshot": {
+        "book_profile_id": "94478f2cc90d4bd5",
+        "catalog_url": "https://www.69shuba.com/book/58831/",
+        "catalog_identity": "848ec6e0534e3ae8a05012a4cd9f4f119820a4253094be62adba19a8fd799416",
+        "profile_revision": 0,
+        "cleaner_remove_patterns": [],
+        "duplicate_detection": {
+          "use_normalized_number": true,
+          "use_chapter_name": true,
+          "use_number_and_name": false
+        },
+        "chapter_title_overrides": {},
+        "manual_cover": {},
+        "chapter_normalized_number_overrides": {},
+        "cleaner_fingerprint": "3652dfd9fe791a14d5285926c05405273728f9cb7ea81d261318f4a9efff79a8"
+      },
+      "artifact_source_run_id": null,
+      "dispatched_at": "2026-09-08T06:21:51.970238+00:00"
     },
     {
       "task_id": "book-20260908-ae3e49d0",
@@ -1316,7 +1337,7 @@
         844,
         845
       ],
-      "status": "paused",
+      "status": "queued",
       "workflow_phase": "queued",
       "stages": {
         "scrape": {
@@ -1371,7 +1392,7 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:27.962245+00:00",
-      "updated_at": "2026-09-08T06:21:45.086994+00:00"
+      "updated_at": "2026-09-08T06:21:27.962245+00:00"
     },
     {
       "task_id": "book-20260908-7f2a3663",
@@ -1701,7 +1722,7 @@
         312,
         313
       ],
-      "status": "paused",
+      "status": "queued",
       "workflow_phase": "queued",
       "stages": {
         "scrape": {
@@ -1756,7 +1777,7 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:28.533513+00:00",
-      "updated_at": "2026-09-08T06:21:45.099769+00:00"
+      "updated_at": "2026-09-08T06:21:28.533513+00:00"
     },
     {
       "task_id": "book-20260908-52da8955",
@@ -2870,7 +2891,7 @@
         1096,
         1097
       ],
-      "status": "paused",
+      "status": "queued",
       "workflow_phase": "queued",
       "stages": {
         "scrape": {
@@ -2925,7 +2946,7 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:29.486342+00:00",
-      "updated_at": "2026-09-08T06:21:45.110325+00:00"
+      "updated_at": "2026-09-08T06:21:29.486342+00:00"
     },
     {
       "task_id": "book-20260908-293d9597",
@@ -4556,7 +4577,7 @@
         1613,
         1614
       ],
-      "status": "paused",
+      "status": "queued",
       "workflow_phase": "queued",
       "stages": {
         "scrape": {
@@ -4611,7 +4632,7 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:29.981158+00:00",
-      "updated_at": "2026-09-08T06:21:45.123192+00:00"
+      "updated_at": "2026-09-08T06:21:29.981158+00:00"
     },
     {
       "task_id": "book-20260908-0dac5b25",
@@ -5251,7 +5272,7 @@
         622,
         623
       ],
-      "status": "paused",
+      "status": "queued",
       "workflow_phase": "queued",
       "stages": {
         "scrape": {
@@ -5306,7 +5327,7 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:30.156520+00:00",
-      "updated_at": "2026-09-08T06:21:45.135521+00:00"
+      "updated_at": "2026-09-08T06:21:30.156520+00:00"
     },
     {
       "task_id": "book-20260908-edc73f4e",
@@ -6953,7 +6974,7 @@
         1629,
         1630
       ],
-      "status": "paused",
+      "status": "queued",
       "workflow_phase": "queued",
       "stages": {
         "scrape": {
@@ -7008,7 +7029,7 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:30.773244+00:00",
-      "updated_at": "2026-09-08T06:21:48.606286+00:00"
+      "updated_at": "2026-09-08T06:21:30.773244+00:00"
     }
   ],
   "completed": [
