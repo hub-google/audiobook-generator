@@ -516,6 +516,7 @@ jobs:
   resume_planner:
     name: "🧭 Global Resume Planner (Publication → Final → Merge → Worker)"
     needs: setup
+    if: always() && needs.setup.result == 'success'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
