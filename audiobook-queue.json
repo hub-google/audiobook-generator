@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1077,
-  "updated_at": "2026-09-08T00:55:29.216407+00:00",
+  "revision": 1078,
+  "updated_at": "2026-09-08T00:55:40.399678+00:00",
   "queue": [
     {
       "task_id": "book-20260907-cf0585fb",
@@ -115,7 +115,7 @@
         92,
         93
       ],
-      "status": "dispatching",
+      "status": "processing",
       "workflow_phase": "processing",
       "stages": {
         "scrape": {
@@ -135,9 +135,9 @@
           "dispatched_at": "2026-09-08T00:05:34.220847+00:00"
         },
         "processing": {
-          "status": "pending",
-          "run_id": null,
-          "run_attempt": 0,
+          "status": "running",
+          "run_id": 34174914992,
+          "run_attempt": 1,
           "reason": null,
           "completed_at": null
         },
@@ -151,7 +151,7 @@
       },
       "scrape_run_id": 34172188876,
       "cover_run_id": 34174267381,
-      "processing_run_id": null,
+      "processing_run_id": 34174914992,
       "scrape_snapshot_id": "",
       "ad_review": {
         "status": "approved",
@@ -300,7 +300,7 @@
           "冬夜"
         ]
       },
-      "run_id": null,
+      "run_id": 34174914992,
       "run_attempt": 1,
       "execution_generation": 3,
       "retry_requested_at": "2026-09-08T00:05:17.505817+00:00",
@@ -316,7 +316,7 @@
         "total": 0
       },
       "created_at": "2026-09-07T09:02:53.965909+00:00",
-      "updated_at": "2026-09-08T00:55:29.216389+00:00",
+      "updated_at": "2026-09-08T00:55:40.399651+00:00",
       "run_conclusion": null,
       "run_completed_at": null,
       "requeue_after_edit": false,
