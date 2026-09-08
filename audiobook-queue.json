@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1104,
-  "updated_at": "2026-09-08T06:21:32.861214+00:00",
+  "revision": 1109,
+  "updated_at": "2026-09-08T06:21:45.135521+00:00",
   "queue": [
     {
       "task_id": "book-20260908-4e32a5c9",
@@ -1316,7 +1316,7 @@
         844,
         845
       ],
-      "status": "queued",
+      "status": "paused",
       "workflow_phase": "queued",
       "stages": {
         "scrape": {
@@ -1371,7 +1371,7 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:27.962245+00:00",
-      "updated_at": "2026-09-08T06:21:27.962245+00:00"
+      "updated_at": "2026-09-08T06:21:45.086994+00:00"
     },
     {
       "task_id": "book-20260908-7f2a3663",
@@ -1701,7 +1701,7 @@
         312,
         313
       ],
-      "status": "queued",
+      "status": "paused",
       "workflow_phase": "queued",
       "stages": {
         "scrape": {
@@ -1756,7 +1756,7 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:28.533513+00:00",
-      "updated_at": "2026-09-08T06:21:28.533513+00:00"
+      "updated_at": "2026-09-08T06:21:45.099769+00:00"
     },
     {
       "task_id": "book-20260908-52da8955",
@@ -2870,7 +2870,7 @@
         1096,
         1097
       ],
-      "status": "queued",
+      "status": "paused",
       "workflow_phase": "queued",
       "stages": {
         "scrape": {
@@ -2925,7 +2925,7 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:29.486342+00:00",
-      "updated_at": "2026-09-08T06:21:29.486342+00:00"
+      "updated_at": "2026-09-08T06:21:45.110325+00:00"
     },
     {
       "task_id": "book-20260908-293d9597",
@@ -4556,7 +4556,7 @@
         1613,
         1614
       ],
-      "status": "queued",
+      "status": "paused",
       "workflow_phase": "queued",
       "stages": {
         "scrape": {
@@ -4611,7 +4611,7 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:29.981158+00:00",
-      "updated_at": "2026-09-08T06:21:29.981158+00:00"
+      "updated_at": "2026-09-08T06:21:45.123192+00:00"
     },
     {
       "task_id": "book-20260908-0dac5b25",
@@ -5251,7 +5251,7 @@
         622,
         623
       ],
-      "status": "queued",
+      "status": "paused",
       "workflow_phase": "queued",
       "stages": {
         "scrape": {
@@ -5306,7 +5306,7 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:30.156520+00:00",
-      "updated_at": "2026-09-08T06:21:30.156520+00:00"
+      "updated_at": "2026-09-08T06:21:45.135521+00:00"
     },
     {
       "task_id": "book-20260908-edc73f4e",
