@@ -66,6 +66,23 @@ class CoverInformationQualityTests(unittest.TestCase):
         self.assertIn("動畫、漫畫、遊戲、影視改編", sent_instruction)
         self.assertNotIn('"identity"', sent_instruction)
 
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key", "COVER_GEMINI_TITLE_ONLY": "1"})
+    @patch("src.metadata_gen.requests.post")
+    def test_title_only_cover_preserves_schema_and_uses_model_knowledge(self, post):
+        post.return_value = Mock(status_code=200, json=lambda: response_payload(), text="")
+
+        generate_gemini_cover_information(
+            "在天魔世界的摆烂生活",
+            "指定小說書名：《在天魔世界的摆烂生活》。請 Gemini 直接依模型內建知識辨識作品並整理故事事實與封面。",
+        )
+
+        payload = post.call_args.kwargs["json"]
+        self.assertNotIn("tools", payload)
+        instruction = payload["contents"][0]["parts"][0]["text"]
+        self.assertIn("直接使用你的模型內建知識", instruction)
+        self.assertIn('"story_facts"', instruction)
+        self.assertIn('"visual_brief"', instruction)
+
     @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key"})
     @patch("src.metadata_gen.requests.post")
     def test_internal_fallback_accepts_catalog_and_model_knowledge_together(self, post):

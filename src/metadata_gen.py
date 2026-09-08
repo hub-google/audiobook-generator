@@ -492,7 +492,13 @@ def generate_gemini_cover_information(book_title, pure_plot, research=None, max_
     _validate_plot_source(book_title, pure_plot, "送交 Gemini 的簡介")
     research = research or {"mode": "internal_knowledge_fallback", "sources": []}
     research_json = json.dumps(research, ensure_ascii=False)
+    title_only_instruction = (
+        "本次封面預檢只提供書名；請直接使用你的模型內建知識辨識該小說並完成下列固定 JSON。"
+        "不得僅因呼叫端未附外部簡介而回 insufficient_source；只有你確實無法辨識這部作品時才能拒絕。"
+        if os.getenv("COVER_GEMINI_TITLE_ONLY") == "1" else ""
+    )
     instruction = f"""你是熟悉中文網路小說的考據編輯。請依提供的聯網資料與目錄頁身分，嚴格分析《{book_title}》。你只負責填入故事變數，無權改變固定的熱門短劇縮圖構圖。
+{title_only_instruction}
 目錄頁身分與簡介：{pure_plot}
 資料模式與來源：{research_json}
 只分析指定小說的原著版本。不得混入動畫、漫畫、遊戲、影視改編或其他同名作品新增、修改或特有的角色造型、場景、武器與設定；若改編內容與小說原著不同，一律以小說原著為準。不確定時必須回 insufficient_source，不得猜測。
