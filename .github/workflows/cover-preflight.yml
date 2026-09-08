@@ -19,26 +19,121 @@ permissions:
   contents: read
 
 jobs:
-  generate_cover:
-    name: "🎨 Generate cover and Gemini review data"
+  generate_book_introduction:
+    name: "📚 Generate Gemini book introduction"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.11", cache: pip}
       - run: pip install -r requirements.txt
-      - name: Generate reviewable cover
+      - name: Generate book introduction
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           python src/cover_preflight.py \
+            --stage introduction \
             --config config.yaml \
             --task-id "${{ inputs.queue_task_id }}" \
             --book-title "${{ inputs.book_title }}" \
             --catalog-url "${{ inputs.catalog_url }}" \
             --book-profile-snapshot-b64 "${{ inputs.book_profile_snapshot_b64 }}"
+      - name: Upload book introduction artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cover-introduction-${{ inputs.queue_task_id }}
+          path: |
+            Workspace/*/Cover/
+            config.yaml
+          if-no-files-found: error
+          retention-days: 30
+
+  generate_cover_information:
+    name: "🧠 Generate Gemini cover information"
+    needs: generate_book_introduction
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: cover-introduction-${{ inputs.queue_task_id }}
+          path: .
+      - name: Generate cover information
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python src/cover_preflight.py \
+            --stage cover-information \
+            --config config.yaml \
+            --task-id "${{ inputs.queue_task_id }}"
+      - name: Upload cover information artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cover-information-${{ inputs.queue_task_id }}
+          path: |
+            Workspace/*/Cover/
+            config.yaml
+          if-no-files-found: error
+          retention-days: 30
+
+  review_cover_information:
+    name: "🔎 Review Gemini cover information"
+    needs: generate_cover_information
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: cover-information-${{ inputs.queue_task_id }}
+          path: .
+      - name: Review cover information and build HF prompt
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python src/cover_preflight.py \
+            --stage review \
+            --config config.yaml \
+            --task-id "${{ inputs.queue_task_id }}"
+      - name: Upload reviewed prompt artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cover-prompt-${{ inputs.queue_task_id }}
+          path: |
+            Workspace/*/Cover/
+            config.yaml
+          if-no-files-found: error
+          retention-days: 30
+
+  generate_cover:
+    name: "🎨 Generate HF cover"
+    needs: review_cover_information
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: cover-prompt-${{ inputs.queue_task_id }}
+          path: .
+      - name: Generate reviewable cover
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python src/cover_preflight.py \
+            --stage cover \
+            --config config.yaml \
+            --task-id "${{ inputs.queue_task_id }}"
       - name: Upload cover review artifact
         uses: actions/upload-artifact@v4
         with:
