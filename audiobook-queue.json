@@ -1759,11 +1759,11 @@
           "dispatched_at": "2026-09-08T04:29:47.032388+00:00"
         },
         "cover": {
-          "status": "running",
+          "status": "completed",
           "run_id": 34187189558,
           "run_attempt": 1,
           "reason": null,
-          "completed_at": null,
+          "completed_at": "2026-09-08T04:30:12Z",
           "dispatched_at": "2026-09-08T04:29:47.032393+00:00"
         },
         "processing": {
