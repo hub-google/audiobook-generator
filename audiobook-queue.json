@@ -399,7 +399,7 @@
         380,
         381
       ],
-      "status": "paused",
+      "status": "preparing_assets",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
