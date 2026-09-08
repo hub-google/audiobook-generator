@@ -1,19 +1,19 @@
 {
   "schema_version": 3,
-  "revision": 1090,
-  "updated_at": "2026-09-08T02:46:22.737470+00:00",
+  "revision": 1091,
+  "updated_at": "2026-09-08T02:46:46.174973+00:00",
   "queue": [
     {
       "task_id": "book-20260907-7542ded2",
       "position": 1,
       "book_title": "现代世界的武道人仙",
       "catalog_url": "https://www.69shuba.com/book/77731/",
-      "catalog_identity": "2b0dc4807bf03233af043468124c602e7187a1dab187afad3574b147713b22e5",
+      "catalog_identity": "a541ffa0fe0a481bd938c80f4a66e013c0ad1ae6e973c1eea306aee57e2f6df1",
       "start_chapter": 1,
       "end_chapter": 632,
       "excluded_chapters": [],
       "renumber_selected": true,
-      "duplicate_chapter_count": 0,
+      "duplicate_chapter_count": 131,
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
       "chapter_order": [
@@ -1512,7 +1512,7 @@
         "total": 0
       },
       "created_at": "2026-09-07T09:02:53.878993+00:00",
-      "updated_at": "2026-09-08T02:09:34.476053+00:00",
+      "updated_at": "2026-09-08T02:46:46.174973+00:00",
       "book_profile_id": "5fd768a4c8c5e2f5",
       "profile_snapshot": {
         "book_profile_id": "5fd768a4c8c5e2f5",
