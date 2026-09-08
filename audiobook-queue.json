@@ -863,11 +863,11 @@
         844,
         845
       ],
-      "status": "preparing_assets",
+      "status": "needs_attention",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "running",
+          "status": "failed",
           "run_id": 34208504670,
           "run_attempt": 1,
           "reason": "failure",
@@ -910,7 +910,7 @@
       "retry_requested_at": null,
       "run_history": [],
       "retry_at": null,
-      "reason": null,
+      "reason": "preflight_failed",
       "hf_progress": {
         "completed": 0,
         "total": 0
