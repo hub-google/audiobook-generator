@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1139,
-  "updated_at": "2026-09-08T16:04:12.526313+00:00",
+  "revision": 1140,
+  "updated_at": "2026-09-08T16:04:28.360214+00:00",
   "queue": [
     {
       "task_id": "book-20260908-0dac5b25",
@@ -641,8 +641,8 @@
         622,
         623
       ],
-      "status": "waiting_review",
-      "workflow_phase": "preflight",
+      "status": "queued",
+      "workflow_phase": "processing",
       "stages": {
         "scrape": {
           "status": "completed",
@@ -709,7 +709,7 @@
           "“啪!“"
         ]
       },
-      "run_id": 34242245116,
+      "run_id": null,
       "run_attempt": 1,
       "execution_generation": 1,
       "retry_requested_at": null,
