@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1080,
-  "updated_at": "2026-09-08T00:56:24.800832+00:00",
+  "revision": 1081,
+  "updated_at": "2026-09-08T01:10:05.490181+00:00",
   "queue": [
     {
       "task_id": "book-20260907-cf0585fb",
@@ -115,7 +115,7 @@
         92,
         93
       ],
-      "status": "waiting_retry",
+      "status": "queued",
       "workflow_phase": "processing",
       "stages": {
         "scrape": {
@@ -311,8 +311,8 @@
           "ended_at": "2026-09-08T00:56:03Z"
         }
       ],
-      "retry_at": "2026-09-08T02:56:24.800832+00:00",
-      "reason": "run_failure",
+      "retry_at": null,
+      "reason": null,
       "hf_progress": {
         "completed": 0,
         "total": 0
@@ -322,7 +322,7 @@
         "total": 0
       },
       "created_at": "2026-09-07T09:02:53.965909+00:00",
-      "updated_at": "2026-09-08T00:56:24.800832+00:00",
+      "updated_at": "2026-09-08T01:10:05.490133+00:00",
       "run_conclusion": "failure",
       "run_completed_at": "2026-09-08T00:56:03Z",
       "requeue_after_edit": false,
