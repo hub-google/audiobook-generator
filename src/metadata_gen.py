@@ -484,6 +484,63 @@ def generate_gemini_art_prompt(book_title, pure_plot, max_attempts=4, retry_base
     )
 
 
+def generate_gemini_book_introduction(book_title, max_attempts=4, retry_base_seconds=15):
+    """Ask ordinary Gemini to introduce a book before the strict cover passes."""
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("缺少 GEMINI_API_KEY")
+    instruction = f"""你是熟悉中文網路小說的編輯。請直接使用模型內建知識介紹指定小說《{book_title}》，供後續封面分析使用。
+這一步沒有外部簡介；不要要求呼叫端補資料，也不要使用任何搜尋工具。請辨識這部作品並提供具體內容，禁止只依書名寫通用玄幻描述。
+只回傳有效 JSON，固定格式：
+{{"book_title":"{book_title}","author":"作者或未確定","genre":"具體類型","synopsis":"完整故事介紹","protagonist":"主角姓名、身分與處境","world_setting":"世界觀與時代","core_plot":"核心劇情與主要衝突","iconic_elements":["代表場景、能力、物件或人物"],"avoid_errors":["容易與其他作品混淆或不應畫入的內容"]}}
+synopsis 必須具體說明主角、世界觀、故事開端與核心衝突；iconic_elements 至少三項。不得加入 markdown。"""
+    errors = []
+    models = ("gemini-flash-latest", "gemini-3.5-flash")
+    for attempt in range(1, max_attempts + 1):
+        model = models[(attempt - 1) % len(models)]
+        try:
+            response = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
+                json={
+                    "contents": [{"parts": [{"text": instruction}]}],
+                    "generationConfig": {"responseMimeType": "application/json"},
+                },
+                timeout=60,
+            )
+            if response.status_code != 200:
+                try:
+                    message = (response.json().get("error") or {}).get("message") or response.text[:300]
+                except ValueError:
+                    message = response.text[:300]
+                raise RuntimeError(f"Gemini HTTP {response.status_code}: {message}")
+            text = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            result = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE))
+            required = ("synopsis", "protagonist", "world_setting", "core_plot")
+            if any(len(str(result.get(key) or "").strip()) < 12 for key in required):
+                raise ValueError("Gemini 書本介紹缺少具體故事欄位")
+            if len(result.get("iconic_elements") or []) < 3:
+                raise ValueError("Gemini 書本介紹缺少三項代表元素")
+            introduction = (
+                f"書名：《{book_title}》；作者：{result.get('author') or '未確定'}；"
+                f"類型：{result.get('genre') or '未確定'}；故事簡介：{result['synopsis']}；"
+                f"主角：{result['protagonist']}；世界觀：{result['world_setting']}；"
+                f"核心劇情：{result['core_plot']}；代表元素："
+                f"{'、'.join(map(str, result['iconic_elements']))}；"
+                f"避免畫錯：{'、'.join(map(str, result.get('avoid_errors') or []))}"
+            )
+            return _validate_plot_source(book_title, introduction, "Gemini 書本介紹")
+        except Exception as exc:
+            errors.append(f"{model}: {exc}")
+            if attempt < max_attempts:
+                delay = retry_base_seconds * (2 ** ((attempt - 1) // len(models)))
+                logging.warning(
+                    "Gemini 書本介紹失敗（第 %d/%d 次，%s）：%s；%d 秒後重試",
+                    attempt, max_attempts, model, exc, delay,
+                )
+                time.sleep(delay)
+    raise RuntimeError("Gemini 書本介紹失敗：" + " | ".join(errors))
+
+
 def generate_gemini_cover_information(book_title, pure_plot, research=None, max_attempts=4, retry_base_seconds=15):
     """One on-demand Gemini call returning both the readable brief and HF prompt."""
     api_key = os.getenv("GEMINI_API_KEY")
@@ -492,13 +549,7 @@ def generate_gemini_cover_information(book_title, pure_plot, research=None, max_
     _validate_plot_source(book_title, pure_plot, "送交 Gemini 的簡介")
     research = research or {"mode": "internal_knowledge_fallback", "sources": []}
     research_json = json.dumps(research, ensure_ascii=False)
-    title_only_instruction = (
-        "本次封面預檢只提供書名；請直接使用你的模型內建知識辨識該小說並完成下列固定 JSON。"
-        "不得僅因呼叫端未附外部簡介而回 insufficient_source；只有你確實無法辨識這部作品時才能拒絕。"
-        if os.getenv("COVER_GEMINI_TITLE_ONLY") == "1" else ""
-    )
     instruction = f"""你是熟悉中文網路小說的考據編輯。請依提供的聯網資料與目錄頁身分，嚴格分析《{book_title}》。你只負責填入故事變數，無權改變固定的熱門短劇縮圖構圖。
-{title_only_instruction}
 目錄頁身分與簡介：{pure_plot}
 資料模式與來源：{research_json}
 只分析指定小說的原著版本。不得混入動畫、漫畫、遊戲、影視改編或其他同名作品新增、修改或特有的角色造型、場景、武器與設定；若改編內容與小說原著不同，一律以小說原著為準。不確定時必須回 insufficient_source，不得猜測。
@@ -642,11 +693,8 @@ def build_cover_information(book_title, catalog_url=None, progress_callback=None
 
 def auto_generate_prompt_from_summary(book_title, workspace_dir=None, analyzer=None):
     if os.getenv("COVER_GEMINI_TITLE_ONLY") == "1":
-        pure_plot = (
-            f"指定小說書名：《{book_title}》。封面預檢未提供外部簡介；"
-            "請 Gemini 直接依此書名及模型內建的小說知識辨識作品、整理故事事實並設計封面。"
-        )
-        source = "Gemini model knowledge"
+        pure_plot = generate_gemini_book_introduction(book_title)
+        source = "Gemini book introduction"
     else:
         pure_plot, source = fetch_book_summary_details(book_title)
     brief = analyze_cover_brief(book_title, pure_plot, source=source, workspace_dir=workspace_dir, analyzer=analyzer)

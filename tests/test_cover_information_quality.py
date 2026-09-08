@@ -66,22 +66,28 @@ class CoverInformationQualityTests(unittest.TestCase):
         self.assertIn("動畫、漫畫、遊戲、影視改編", sent_instruction)
         self.assertNotIn('"identity"', sent_instruction)
 
-    @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key", "COVER_GEMINI_TITLE_ONLY": "1"})
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key"})
     @patch("src.metadata_gen.requests.post")
-    def test_title_only_cover_preserves_schema_and_uses_model_knowledge(self, post):
-        post.return_value = Mock(status_code=200, json=lambda: response_payload(), text="")
+    def test_book_introduction_uses_ordinary_gemini_without_search(self, post):
+        from src.metadata_gen import generate_gemini_book_introduction
+        result = {
+            "book_title": "在天魔世界的摆烂生活", "author": "某作者", "genre": "玄幻",
+            "synopsis": "主角來到危機四伏的天魔世界，在宗門勢力與生存壓力之間以低調擺爛的方式化解衝突並逐步成長。",
+            "protagonist": "一名試圖低調求生卻被捲入爭端的年輕修士",
+            "world_setting": "宗門林立、魔道力量橫行的修行世界",
+            "core_plot": "主角以看似消極的選擇避開危機，卻持續影響身邊勢力與自身命運",
+            "iconic_elements": ["天魔宗門", "魔氣異象", "修行洞府"],
+            "avoid_errors": ["現代科技"],
+        }
+        post.return_value = Mock(status_code=200, json=lambda: {"candidates": [{"content": {"parts": [{"text": json.dumps(result, ensure_ascii=False)}]}}]}, text="")
 
-        generate_gemini_cover_information(
-            "在天魔世界的摆烂生活",
-            "指定小說書名：《在天魔世界的摆烂生活》。請 Gemini 直接依模型內建知識辨識作品並整理故事事實與封面。",
-        )
+        introduction = generate_gemini_book_introduction("在天魔世界的摆烂生活")
 
         payload = post.call_args.kwargs["json"]
         self.assertNotIn("tools", payload)
         instruction = payload["contents"][0]["parts"][0]["text"]
-        self.assertIn("直接使用你的模型內建知識", instruction)
-        self.assertIn('"story_facts"', instruction)
-        self.assertIn('"visual_brief"', instruction)
+        self.assertIn("介紹指定小說", instruction)
+        self.assertIn("故事簡介", introduction)
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key"})
     @patch("src.metadata_gen.requests.post")

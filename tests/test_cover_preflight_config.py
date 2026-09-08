@@ -82,13 +82,16 @@ def test_cover_preflight_reaches_gemini_without_fetching_a_synopsis(monkeypatch)
         "prompt": "unused",
     }
 
+    introduction = "書名：《在天魔世界的摆烂生活》；故事簡介：主角身處天魔世界，面對宗門與生存衝突，以看似擺爛的方式周旋並逐步改變命運。"
     with patch("src.metadata_gen.fetch_book_summary_details") as fetch, \
          patch("src.metadata_gen.collect_cover_research") as research, \
+         patch("src.metadata_gen.generate_gemini_book_introduction", return_value=introduction) as introduce, \
          patch("src.metadata_gen.generate_gemini_cover_information", return_value=gemini_result) as gemini, \
          patch("src.metadata_gen.review_cover_information", return_value=gemini_result):
         synopsis, _, _, _ = auto_generate_prompt_from_summary("在天魔世界的摆烂生活")
 
     fetch.assert_not_called()
     research.assert_not_called()
+    introduce.assert_called_once_with("在天魔世界的摆烂生活")
     assert "在天魔世界的摆烂生活" in synopsis
     assert gemini.call_args.kwargs["research"] == {"mode": "internal_knowledge_fallback", "sources": []}
