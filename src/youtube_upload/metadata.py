@@ -21,9 +21,14 @@ def build_chapter_timeline(chapter_items):
     previous_second = -1
     for position, item in enumerate(items):
         duration = float(item.get("dur") or 0.0)
-        if duration < 10.0:
-            raise ValueError(f"第 {item.get('chap_num')} 章長度少於 YouTube 規定的 10 秒")
         display_second = 0 if position == 0 else int(exact_start + 0.5)
+        # YouTube requires every displayed chapter to last at least 10 seconds.
+        # Keep short chapters in the media timeline, but do not expose their
+        # starts as standalone markers.  The first marker must remain at 00:00;
+        # later markers are held back until at least 10 seconds have elapsed.
+        if position and (duration < 10.0 or display_second - previous_second < 10):
+            exact_start += duration
+            continue
         if display_second <= previous_second:
             raise ValueError("chapter timestamps are not strictly increasing")
         if abs(display_second - exact_start) >= 1.0:
@@ -33,6 +38,8 @@ def build_chapter_timeline(chapter_items):
         lines.append(f"{hours:02d}:{minutes:02d}:{seconds:02d} {_chapter_title(item)}")
         previous_second = display_second
         exact_start += duration
+    if len(lines) < 3:
+        raise ValueError("YouTube chapter timeline requires at least three valid chapters")
     return "⏳ 影片章節時間軸：\n" + "\n".join(lines)
 
 

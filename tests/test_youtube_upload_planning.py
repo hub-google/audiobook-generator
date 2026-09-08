@@ -289,6 +289,36 @@ class YouTubeUploadPlanningTests(unittest.TestCase):
             "00:10:33 第3章 骨文",
         )
 
+    def test_chapter_timeline_omits_short_middle_chapter_without_losing_its_duration(self):
+        items = [
+            {"chap_num": 31, "chapter_title": "第31章 教导", "dur": 362.0},
+            {"chap_num": 32, "chapter_title": "第32章 请个假", "dur": 6.0},
+            {"chap_num": 33, "chapter_title": "第33章 化缘", "dur": 343.0},
+            {"chap_num": 34, "chapter_title": "第34章 搞钱", "dur": 371.0},
+        ]
+        self.assertEqual(
+            build_chapter_timeline(items),
+            "⏳ 影片章節時間軸：\n"
+            "00:00:00 第31章 教导\n"
+            "00:06:08 第33章 化缘\n"
+            "00:11:51 第34章 搞钱",
+        )
+
+    def test_chapter_timeline_keeps_zero_marker_and_coalesces_short_opening_chapter(self):
+        items = [
+            {"chap_num": 1, "chapter_title": "第1章 短序", "dur": 6.0},
+            {"chap_num": 2, "chapter_title": "第2章 正文", "dur": 20.0},
+            {"chap_num": 3, "chapter_title": "第3章 續篇", "dur": 20.0},
+            {"chap_num": 4, "chapter_title": "第4章 終章", "dur": 20.0},
+        ]
+        self.assertEqual(
+            build_chapter_timeline(items),
+            "⏳ 影片章節時間軸：\n"
+            "00:00:00 第1章 短序\n"
+            "00:00:26 第3章 續篇\n"
+            "00:00:46 第4章 終章",
+        )
+
     def test_video_description_contains_playlist_and_clickable_timeline_only(self):
         items = [
             {"chap_num": 1, "chapter_title": "第1章 甲", "dur": 30.2},
