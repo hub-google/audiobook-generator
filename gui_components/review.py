@@ -89,6 +89,7 @@ class ReviewMixin:
 
         filter_bar = ttk.LabelFrame(analysis_page, text="篩選與批次編輯", padding=6); filter_bar.pack(fill=tk.X, padx=8)
         search_text = tk.StringVar(); decision_filter = tk.StringVar(value="全部狀態")
+        kind_filter = tk.StringVar(value="全部類型")
         ttk.Label(filter_bar, text="搜尋：").pack(side=tk.LEFT)
         search_entry = ttk.Entry(filter_bar, textvariable=search_text, width=28); search_entry.pack(side=tk.LEFT, padx=(0, 10))
         ttk.Label(filter_bar, text="處理狀態：").pack(side=tk.LEFT)
@@ -96,6 +97,12 @@ class ReviewMixin:
                                       values=("全部狀態", "僅顯示待去除", "僅顯示已保留"),
                                       state="readonly", width=14)
         decision_combo.pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(filter_bar, text="類型：").pack(side=tk.LEFT)
+        kind_combo = ttk.Combobox(
+            filter_bar, textvariable=kind_filter, values=("全部類型",),
+            state="readonly", width=16,
+        )
+        kind_combo.pack(side=tk.LEFT, padx=(0, 10))
         count_label = ttk.Label(filter_bar, text="顯示：0 項｜去除：0 項｜保留：0 項")
         count_label.pack(side=tk.RIGHT)
 
@@ -138,6 +145,7 @@ class ReviewMixin:
         def refresh_tree(*_args):
             selected = set(tree.selection()); tree.delete(*tree.get_children())
             keyword = search_text.get().strip().lower(); choice = decision_filter.get()
+            selected_kind = kind_filter.get()
             visible = 0
             visible_ids = list(row_order)
             column = sort_state["column"]
@@ -154,6 +162,7 @@ class ReviewMixin:
                 if keyword and keyword not in haystack: continue
                 if choice == "僅顯示待去除" and not remove: continue
                 if choice == "僅顯示已保留" and remove: continue
+                if selected_kind != "全部類型" and item.get("kind") != selected_kind: continue
                 tree.insert("", tk.END, iid=iid, values=row_values(item), tags=("remove" if remove else "keep",))
                 visible += 1
                 if iid in selected: tree.selection_add(iid)
@@ -174,19 +183,9 @@ class ReviewMixin:
         for key, title in column_titles.items():
             tree.heading(key, text=title, command=lambda value=key: sort_by(value))
 
-        search_text.trace_add("write", refresh_tree); decision_combo.bind("<<ComboboxSelected>>", refresh_tree)
-        chapter_bar = ttk.Frame(analysis_page, padding=8); chapter_bar.pack(fill=tk.X)
-        ttk.Label(chapter_bar, text="查看章節 Raw／Clean：").pack(side=tk.LEFT)
-        chapter_choice = ttk.Combobox(chapter_bar, state="readonly", width=15); chapter_choice.pack(side=tk.LEFT)
-        def preview_chapter(_event=None):
-            raw = chapter_texts.get(chapter_choice.get(), "")
-            if not raw: return
-            title, _, body = raw.partition("\n")
-            patterns = [item["text"] for item in rows.values() if item.get("approved_remove")]
-            cleaned = clean_text_content(body, title, task.get("book_title") or "", patterns)
-            detail.delete("1.0", tk.END)
-            detail.insert("1.0", f"【正規化 Raw】\n{raw}\n\n【套用目前規則後 Clean】\n{chunk_text(cleaned)}")
-        chapter_choice.bind("<<ComboboxSelected>>", preview_chapter)
+        search_text.trace_add("write", refresh_tree)
+        decision_combo.bind("<<ComboboxSelected>>", refresh_tree)
+        kind_combo.bind("<<ComboboxSelected>>", refresh_tree)
         def select(_event=None):
             if not tree.selection(): return
             item = rows[tree.selection()[0]]; detail.delete("1.0", tk.END)
@@ -231,19 +230,26 @@ class ReviewMixin:
         tree.bind("<Button-1>", click_status, add="+")
         tree.bind("<space>", toggle); tree.bind("<Delete>", lambda _event: (set_selected(False), "break")[1])
         tree.bind("<Double-1>", double_click)
+        manual_bar = ttk.Frame(analysis_page, padding=8); manual_bar.pack(fill=tk.X)
         manual_text = tk.StringVar()
-        ttk.Entry(chapter_bar, textvariable=manual_text, width=35).pack(side=tk.LEFT, padx=8)
+        ttk.Entry(manual_bar, textvariable=manual_text, width=35).pack(side=tk.LEFT, padx=(0, 8))
         def add_manual():
             patterns = validate_remove_patterns([manual_text.get()])
             if not patterns: return
             iid = f"manual-{time.time_ns()}"
             rows[iid] = {"text": patterns[0], "approved_remove": True, "reason": "人工新增", "samples": []}
             row_order.append(iid); manual_text.set(""); refresh_tree(); tree.selection_set(iid); tree.see(iid); refresh_samples()
-        ttk.Button(chapter_bar, text="新增刪除文字", command=add_manual).pack(side=tk.LEFT)
+        ttk.Button(manual_bar, text="新增刪除文字", command=add_manual).pack(side=tk.LEFT)
         actions = ttk.Frame(analysis_page, padding=(8, 0, 8, 8)); actions.pack(fill=tk.X)
         ttk.Button(actions, text="☑ 設為去除", command=lambda: set_selected(True)).pack(side=tk.LEFT, padx=2)
         ttk.Button(actions, text="☐ 設為保留", command=lambda: set_selected(False)).pack(side=tk.LEFT, padx=2)
         ttk.Button(actions, text="反選", command=set_selected).pack(side=tk.LEFT, padx=2)
+        def set_visible(value):
+            for iid in tree.get_children():
+                rows[iid]["approved_remove"] = value
+            refresh_tree(); refresh_samples()
+        ttk.Button(actions, text="全選目前篩選", command=lambda: set_visible(True)).pack(side=tk.LEFT, padx=(12, 2))
+        ttk.Button(actions, text="全不選目前篩選", command=lambda: set_visible(False)).pack(side=tk.LEFT, padx=2)
         ttk.Button(actions, text="編輯詞句", command=edit_selected).pack(side=tk.LEFT, padx=(12, 2))
         ttk.Button(actions, text="從名單移除", command=remove_selected).pack(side=tk.LEFT, padx=2)
         ttk.Label(actions, text="點狀態欄或 Space 切換；雙擊詞句可編輯；Delete 設為保留。", foreground="#555").pack(side=tk.LEFT, padx=12)
@@ -310,7 +316,10 @@ class ReviewMixin:
                     )
                     rows.clear(); row_order.clear(); chapter_texts.clear()
                     chapter_texts.update(reports[0].get("chapter_texts") or {})
-                    chapter_choice.config(values=sorted(chapter_texts, key=int))
+                    kinds = sorted({str(item.get("kind") or "") for item in candidates if item.get("kind")})
+                    kind_combo.config(values=("全部類型", *kinds))
+                    if kind_filter.get() not in kind_combo.cget("values"):
+                        kind_filter.set("全部類型")
                     for index, item in enumerate(sorted(candidates, key=lambda x: -float(x.get("score") or 0))):
                         iid = str(index); item["approved_remove"] = item["text"] in saved_patterns; rows[iid] = item; row_order.append(iid)
                     refresh_tree()
@@ -337,7 +346,9 @@ class ReviewMixin:
             threading.Thread(target=worker, args=(generation,), daemon=True).start()
 
         retry_button.config(command=start_load)
-        sample_refresh["callback"] = self.open_text_sample(parent=sample_page, task=task)
+        sample_refresh["callback"] = self.open_text_sample(
+            parent=sample_page, task=task, chapter_texts=chapter_texts,
+        )
         start_load()
 
     @staticmethod
@@ -885,38 +896,6 @@ class ReviewMixin:
         threading.Thread(target=worker, daemon=True).start()
 
     @staticmethod
-    def _text_sample_chapters(task, catalog):
-        """Return first/lower-middle/last chapters after applying task filters."""
-        total = int(catalog.get("total_chapters") or len(catalog.get("chapters") or []))
-        start = max(1, int(task.get("start_chapter") or 1))
-        end = min(total, int(task.get("end_chapter") or total))
-        excluded = {int(value) for value in task.get("excluded_chapters") or []}
-        requested = [int(value) for value in task.get("chapter_order") or []]
-        ordered = []
-        seen = set()
-        for value in requested + list(range(start, end + 1)):
-            if start <= value <= end and value not in seen:
-                ordered.append(value)
-                seen.add(value)
-        source_indices = [value for value in ordered if value not in excluded]
-        if not source_indices:
-            raise ValueError("這項任務的章節範圍已全部排除，沒有可抽查的章節。")
-        positions = [0, (len(source_indices) - 1) // 2, len(source_indices) - 1]
-        labels = ["第一章", "中間章", "最後一章"]
-        samples = []
-        for label, position in zip(labels, positions):
-            source_index = source_indices[position]
-            output_index = position + 1 if task.get("renumber_selected") or requested else source_index
-            samples.append({
-                "label": label,
-                "source_index": source_index,
-                "output_index": output_index,
-                "url": urljoin(catalog["base_url"], catalog["chapters"][source_index - 1]),
-                "catalog_title": catalog["chapter_titles"][source_index - 1],
-            })
-        return samples
-
-    @staticmethod
     def _build_text_sample(raw_title, raw_body, book_title, remove_patterns=None):
         raw_text = raw_title + "\n\n" + raw_body
         cleaned = clean_text_content(raw_body, raw_title, book_title, remove_patterns=remove_patterns)
@@ -1006,7 +985,8 @@ class ReviewMixin:
         dialog.geometry(f"{width}x{height}+{x}+{y}")
         entry.focus_set()
 
-    def open_text_sample(self, parent=None, task=None):
+    def open_text_sample(self, parent=None, task=None, chapter_texts=None):
+        """Build an artifact-only Raw/Clean viewer and return its rule refresh callback."""
         task = task or self._selected_task()
         if not task:
             messagebox.showinfo("抽查文字", "請先單選一本小說。")
@@ -1020,110 +1000,108 @@ class ReviewMixin:
             parent = top
         else:
             top = parent.winfo_toplevel()
+        chapter_texts = chapter_texts if chapter_texts is not None else {}
+        current_patterns = {"value": list(self.cleaner_remove_patterns)}
         frame = ttk.Frame(parent, padding=10)
         frame.pack(fill=tk.BOTH, expand=True)
-        status_var = tk.StringVar(value="正在解析目錄並取得三個取樣章節…")
+        status_var = tk.StringVar(value="正在等待 artifact 章節文字…")
         ttk.Label(frame, textvariable=status_var, style="Header.TLabel").pack(anchor=tk.W, pady=(0, 8))
-        notebook = ttk.Notebook(frame)
-        notebook.pack(fill=tk.BOTH, expand=True)
-        views = {}
-        preview_generation = {"value": 0}
-        for label in ("第一章", "中間章", "最後一章"):
-            page = ttk.Frame(notebook, padding=6)
-            notebook.add(page, text=label)
-            info_var = tk.StringVar(value="等待載入…")
-            ttk.Label(page, textvariable=info_var).pack(anchor=tk.W, pady=(0, 5))
-            panes = ttk.Panedwindow(page, orient=tk.HORIZONTAL)
-            panes.pack(fill=tk.BOTH, expand=True)
-            raw_frame = ttk.LabelFrame(panes, text="Raw TXT（爬蟲原始輸出）")
-            clean_frame = ttk.LabelFrame(panes, text="Clean TXT（TTS 實際輸入）")
-            raw_box = scrolledtext.ScrolledText(raw_frame, wrap=tk.WORD, font=("Microsoft JhengHei", 11))
-            clean_box = scrolledtext.ScrolledText(clean_frame, wrap=tk.WORD, font=("Microsoft JhengHei", 11))
-            raw_box.pack(fill=tk.BOTH, expand=True)
-            clean_box.pack(fill=tk.BOTH, expand=True)
-            panes.add(raw_frame, weight=1)
-            panes.add(clean_frame, weight=1)
-            views[label] = (info_var, raw_box, clean_box)
 
+        controls = ttk.Frame(frame)
+        controls.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(controls, text="查看章節：").pack(side=tk.LEFT)
+        chapter_choice = ttk.Combobox(controls, state="readonly", width=18)
+        chapter_choice.pack(side=tk.LEFT, padx=(0, 8))
+        info_var = tk.StringVar(value="等待載入…")
+        ttk.Label(frame, textvariable=info_var).pack(anchor=tk.W, pady=(0, 5))
+
+        panes = ttk.Panedwindow(frame, orient=tk.HORIZONTAL)
+        panes.pack(fill=tk.BOTH, expand=True)
+        raw_frame = ttk.LabelFrame(panes, text="Raw TXT（artifact 爬蟲輸出）")
+        clean_frame = ttk.LabelFrame(panes, text="Clean TXT（TTS 實際輸入）")
+        raw_box = scrolledtext.ScrolledText(raw_frame, wrap=tk.WORD, font=("Microsoft JhengHei", 11))
+        clean_box = scrolledtext.ScrolledText(clean_frame, wrap=tk.WORD, font=("Microsoft JhengHei", 11))
+        raw_box.pack(fill=tk.BOTH, expand=True)
+        clean_box.pack(fill=tk.BOTH, expand=True)
+        panes.add(raw_frame, weight=1)
+        panes.add(clean_frame, weight=1)
+
+        def ordered_chapters():
+            def sort_key(value):
+                try:
+                    return (0, int(value))
+                except (TypeError, ValueError):
+                    return (1, str(value))
+            return sorted(chapter_texts, key=sort_key)
+
+        def render_selected(_event=None):
+            selected = chapter_choice.get()
+            raw_text = chapter_texts.get(selected)
+            if raw_text is None:
+                raw_text = chapter_texts.get(int(selected)) if selected.isdigit() else None
+            if raw_text is None:
+                return
+            title, separator, body = raw_text.partition("\n")
+            if not separator:
+                body = ""
+            cleaned = clean_text_content(
+                body, title, task.get("book_title") or "",
+                remove_patterns=current_patterns["value"],
+            )
+            clean_text = chunk_text(cleaned)
+            raw_chars = len(raw_text.strip())
+            clean_chars = len(clean_text.replace("\n", "").strip())
+            removed = max(0, raw_chars - clean_chars)
+            ratio = (removed / raw_chars * 100) if raw_chars else 0
+            warning = ""
+            if not clean_text.strip():
+                warning = "　⚠ Clean 為空"
+            elif ratio >= 50:
+                warning = "　⚠ 清除比例偏高"
+            suspicious = [word for word in ("本站", "域名", "最新地址", "手機閱讀", "廣告") if word in clean_text]
+            if suspicious:
+                warning += f"　⚠ 疑似殘留：{'、'.join(suspicious)}"
+            info_var.set(
+                f"artifact 第 {selected} 章｜{title}｜Raw {raw_chars:,} 字｜"
+                f"Clean {clean_chars:,} 字｜約清除 {ratio:.1f}%{warning}"
+            )
+            for box, content in ((raw_box, raw_text), (clean_box, clean_text)):
+                box.config(state=tk.NORMAL)
+                box.delete("1.0", tk.END)
+                box.insert("1.0", content)
+                box.config(state=tk.DISABLED)
+            status_var.set(
+                f"已從 artifact 載入 {len(chapter_texts):,} 章；切換章節與重新清理都不會連線小說網站。"
+            )
+
+        def choose_position(position):
+            chapters = ordered_chapters()
+            if not chapters:
+                return
+            chapter_choice.set(str(chapters[position]))
+            render_selected()
+
+        ttk.Button(controls, text="第一章", command=lambda: choose_position(0)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(controls, text="中間章", command=lambda: choose_position((len(ordered_chapters()) - 1) // 2)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(controls, text="最後一章", command=lambda: choose_position(-1)).pack(side=tk.LEFT, padx=2)
         embedded_review = parent is not top and isinstance(parent.master, ttk.Notebook)
-        manage_button = ttk.Button(
-            frame, text="管理排除關鍵字",
+        ttk.Button(
+            controls, text="管理排除關鍵字",
             command=(lambda: parent.master.select(0)) if embedded_review else
                     (lambda: self._open_cleaner_patterns_dialog(task, top, refresh_preview)),
-        )
-        manage_button.place(relx=1.0, y=34, anchor=tk.NE)
+        ).pack(side=tk.RIGHT)
+        chapter_choice.bind("<<ComboboxSelected>>", render_selected)
 
-        def show_error(detail):
-            status_var.set("抽查失敗")
-            messagebox.showerror("抽查文字失敗", detail, parent=top)
-
-        def render(results, generation):
-            if generation != preview_generation["value"]:
-                return
-            warnings = 0
-            for sample, raw_text, clean_text in results:
-                info_var, raw_box, clean_box = views[sample["label"]]
-                raw_chars = len(raw_text.strip())
-                clean_chars = len(clean_text.replace("\n", "").strip())
-                removed = max(0, raw_chars - clean_chars)
-                ratio = (removed / raw_chars * 100) if raw_chars else 0
-                warning = ""
-                if not clean_text.strip():
-                    warning = "　⚠ Clean 為空"
-                elif ratio >= 50:
-                    warning = "　⚠ 清除比例偏高"
-                suspicious = [word for word in ("本站", "域名", "最新地址", "手機閱讀", "廣告") if word in clean_text]
-                if suspicious:
-                    warning += f"　⚠ 疑似殘留：{'、'.join(suspicious)}"
-                warnings += bool(warning)
-                mapping = f"來源第 {sample['source_index']} 章"
-                if sample["output_index"] != sample["source_index"]:
-                    mapping += f" → 輸出第 {sample['output_index']} 章"
-                info_var.set(
-                    f"{mapping}｜{sample['catalog_title']}｜Raw {raw_chars:,} 字｜Clean {clean_chars:,} 字｜約清除 {ratio:.1f}%{warning}"
-                )
-                for box, content in ((raw_box, raw_text), (clean_box, clean_text)):
-                    # ScrolledText ignores delete/insert while disabled. Re-enable it
-                    # before every preview refresh, then return it to read-only mode.
-                    box.config(state=tk.NORMAL)
-                    box.delete("1.0", tk.END)
-                    box.insert("1.0", content)
-                    box.config(state=tk.DISABLED)
-            status_var.set(f"抽查完成：3 個位置，{warnings} 個需要留意。左右內容可直接捲動比對。")
-
-        def worker(remove_patterns, generation):
-            try:
-                catalog = parse_catalog(task.get("catalog_url") or "")
-                profiles, _ = self._profile_store()[0].load()
-                _, profile = get_book_profile(profiles, task.get("catalog_url") or "", task.get("book_title") or "")
-                apply_chapter_title_overrides(
-                    catalog, profile.get("chapter_title_overrides") or task.get("chapter_title_overrides") or {},
-                    profile.get("chapter_normalized_number_overrides") or
-                    task.get("chapter_normalized_number_overrides") or {},
-                )
-                samples = self._text_sample_chapters(task, catalog)
-                results = []
-                for sample in samples:
-                    title, body = fetch_chapter_text(sample["url"])
-                    raw_text, clean_text = self._build_text_sample(
-                        title, body, task.get("book_title") or catalog.get("book_title") or "",
-                        remove_patterns=remove_patterns,
-                    )
-                    results.append((sample, raw_text, clean_text))
-                self.root.after(
-                    0, lambda: render(results, generation) if top.winfo_exists() else None,
-                )
-            except Exception as error:
-                self.root.after(
-                    0,
-                    lambda detail=str(error): show_error(detail)
-                    if top.winfo_exists() and generation == preview_generation["value"] else None,
-                )
         def refresh_preview(patterns):
-            preview_generation["value"] += 1
-            generation = preview_generation["value"]
-            status_var.set("關鍵字草稿已套用；正在重新取得三個取樣章節…（按下更新章節設定後才會儲存）")
-            threading.Thread(target=worker, args=(list(patterns), generation), daemon=True).start()
+            current_patterns["value"] = list(patterns)
+            chapters = ordered_chapters()
+            chapter_choice.config(values=tuple(str(value) for value in chapters))
+            if not chapters:
+                status_var.set("artifact 尚未載入，或報告缺少 chapter_texts；不會改用網路爬取。")
+                return
+            if chapter_choice.get() not in {str(value) for value in chapters}:
+                chapter_choice.set(str(chapters[0]))
+            render_selected()
 
         refresh_preview(self.cleaner_remove_patterns)
         return refresh_preview

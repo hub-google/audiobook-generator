@@ -158,17 +158,30 @@ def test_cleaner_pattern_dialog_only_applies_a_local_draft():
     assert "特殊符號視為普通文字" in dialog_source
 
 
-def test_text_preview_uses_current_draft_and_ignores_stale_refreshes():
+def test_text_preview_uses_artifact_chapters_without_crawling():
     preview_source = method_source("open_text_sample")
 
     assert "refresh_preview(self.cleaner_remove_patterns)" in preview_source
-    assert 'generation != preview_generation["value"]' in preview_source
-    assert 'profile.get("cleaner_remove_patterns")' not in preview_source
+    assert "chapter_texts" in preview_source
+    assert "parse_catalog(" not in preview_source
+    assert "fetch_chapter_text(" not in preview_source
+    assert "threading.Thread" not in preview_source
+    assert "不會改用網路爬取" in preview_source
     normal = preview_source.index("box.config(state=tk.NORMAL)")
     delete = preview_source.index('box.delete("1.0", tk.END)')
     insert = preview_source.index('box.insert("1.0", content)')
     disabled = preview_source.index("box.config(state=tk.DISABLED)", insert)
     assert normal < delete < insert < disabled
+
+
+def test_ad_review_has_kind_filter_and_filtered_bulk_selection():
+    review_source = method_source("open_ad_analysis_results")
+
+    assert 'kind_filter = tk.StringVar(value="全部類型")' in review_source
+    assert 'selected_kind != "全部類型"' in review_source
+    assert 'text="全選目前篩選"' in review_source
+    assert 'text="全不選目前篩選"' in review_source
+    assert "for iid in tree.get_children()" in review_source
 
 
 def test_chapter_update_persists_the_cleaner_pattern_snapshot():
