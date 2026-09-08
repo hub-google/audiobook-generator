@@ -91,12 +91,44 @@ def _clean_opening_lines(text, title, book_title, scan_nonempty=12, source_label
     return "\n".join(kept)
 
 
+def _remove_literal_patterns(text, patterns):
+    """Remove every literal match simultaneously until none remain."""
+    while True:
+        matched_ranges = []
+        for pattern in patterns:
+            start = 0
+            while True:
+                index = text.find(pattern, start)
+                if index < 0:
+                    break
+                matched_ranges.append((index, index + len(pattern)))
+                start = index + 1
+
+        if not matched_ranges:
+            return text
+
+        matched_ranges.sort()
+        merged_ranges = []
+        for start, end in matched_ranges:
+            if merged_ranges and start <= merged_ranges[-1][1]:
+                merged_ranges[-1] = (merged_ranges[-1][0], max(merged_ranges[-1][1], end))
+            else:
+                merged_ranges.append((start, end))
+
+        parts = []
+        previous_end = 0
+        for start, end in merged_ranges:
+            parts.append(text[previous_end:start])
+            previous_end = end
+        parts.append(text[previous_end:])
+        text = "".join(parts)
+
+
 def clean_text_content(text, title, book_title, remove_patterns=None, source_labels=None):
     text = normalize_scraped_text(text)
     title = normalize_scraped_text(title)
     book_title = normalize_scraped_text(book_title)
-    for unwanted_text in validate_remove_patterns(remove_patterns):
-        text = text.replace(unwanted_text, '')
+    text = _remove_literal_patterns(text, validate_remove_patterns(remove_patterns))
     text = text.replace('\xa0', ' ').replace('\u3000', ' ')
     text = _clean_opening_lines(text, title, book_title, source_labels=source_labels)
     text = re.sub(r'\n[ \t]*\n+', '\n', text)

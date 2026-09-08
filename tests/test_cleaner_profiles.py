@@ -36,6 +36,34 @@ class CleanerProfileTests(unittest.TestCase):
     def test_repeated_literal_is_removed_everywhere(self):
         self.assertEqual(clean_text_content("廣告正文廣告", "", "", ["廣告"]), "正文")
 
+    def test_contained_patterns_remove_the_whole_phrase_without_a_fragment(self):
+        patterns = ["藍蝴蝶", "起點藍蝴蝶出品"]
+        self.assertEqual(clean_text_content("正文。起點藍蝴蝶出品下一句。", "", "", patterns), "正文。下一句。")
+
+    def test_pattern_order_does_not_change_contained_pattern_result(self):
+        text = "正文。起點藍蝴蝶出品下一句。"
+        short_first = clean_text_content(text, "", "", ["藍蝴蝶", "起點藍蝴蝶出品"])
+        long_first = clean_text_content(text, "", "", ["起點藍蝴蝶出品", "藍蝴蝶"])
+        self.assertEqual(short_first, "正文。下一句。")
+        self.assertEqual(short_first, long_first)
+
+    def test_partially_overlapping_patterns_are_removed_as_one_range(self):
+        self.assertEqual(clean_text_content("ABCD", "", "", ["ABC", "BCD"]), "")
+
+    def test_new_pattern_created_by_removal_is_removed_on_the_next_pass(self):
+        self.assertEqual(clean_text_content("正文。廣X告下一句。", "", "", ["X", "廣告"]), "正文。下一句。")
+
+    def test_no_configured_pattern_remains_after_cleaning(self):
+        patterns = ["藍蝴蝶", "起點藍蝴蝶出品", "廣告"]
+        cleaned = clean_text_content("廣告正文。起點藍蝴蝶出品廣告", "", "", patterns)
+        self.assertEqual(cleaned, "正文。")
+        for pattern in patterns:
+            self.assertNotIn(pattern, cleaned)
+
+    def test_unmatched_text_is_unchanged(self):
+        text = "這是一段普通正文。"
+        self.assertEqual(clean_text_content(text, "", "", ["藍蝴蝶"]), text)
+
     def test_fanren_opening_labels_are_removed_without_global_word_deletion(self):
         text = (
             "\n請記住本站域名:\n黃金屋\n凡人修仙傳\n\u00a0第一章 山邊小村\n"
