@@ -1,4 +1,5 @@
-name: Immediate Scraper Native Rerun Controller
+name: TXT Scrape Native Rerun Controller
+run-name: "【TXT抓取】原生失敗重跑控制｜來源 Run #${{ inputs.source_run_id }}"
 
 on:
   workflow_dispatch:
@@ -13,14 +14,40 @@ permissions:
   contents: read
 
 concurrency:
-  group: scrape-rerun-${{ inputs.source_run_id || github.run_id }}
-  cancel-in-progress: false
+  group: txt-scrape-native-rerun-controller
+  cancel-in-progress: true
 
 jobs:
   rerun_failed_scrape:
     name: "🔄 Re-run failed scraper jobs"
     runs-on: ubuntu-latest
     steps:
+      - name: Delete older TXT rerun controller records
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh api --paginate "repos/$REPOSITORY/actions/workflows/scrape-rerun.yml/runs?per_page=100" \
+            --jq ".workflow_runs[] | select(.id != ($CURRENT_RUN_ID | tonumber)) | [.id, .status] | @tsv" |
+          while IFS=$'\t' read -r old_run_id old_status; do
+            [ -n "$old_run_id" ] || continue
+            if [ "$old_status" != "completed" ]; then
+              gh api --method POST "repos/$REPOSITORY/actions/runs/$old_run_id/cancel" || true
+              for attempt in $(seq 1 15); do
+                old_status="$(gh api "repos/$REPOSITORY/actions/runs/$old_run_id" --jq .status)"
+                [ "$old_status" = "completed" ] && break
+                sleep 2
+              done
+            fi
+            if [ "$old_status" != "completed" ]; then
+              echo "Older TXT controller run $old_run_id is still stopping; it cannot be deleted yet."
+              continue
+            fi
+            gh api --method DELETE "repos/$REPOSITORY/actions/runs/$old_run_id"
+            echo "Deleted older TXT rerun controller run $old_run_id."
+          done
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5

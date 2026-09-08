@@ -6,6 +6,8 @@ import yaml
 
 WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "audiobook.yml"
 DISPATCHER_WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "queue-dispatcher.yml"
+SCRAPE_RERUN_WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "scrape-rerun.yml"
+COVER_RERUN_WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "cover-rerun.yml"
 PREPARE_PARTS_PATH = Path(__file__).parents[1] / "src" / "prepare_parts.py"
 UPLOADER_PATH = Path(__file__).parents[1] / "src" / "youtube_api_uploader.py"
 
@@ -45,6 +47,8 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         cls.jobs = parsed["jobs"]
         cls.dispatcher_text = DISPATCHER_WORKFLOW_PATH.read_text(encoding="utf-8")
         cls.dispatcher_jobs = yaml.safe_load(cls.dispatcher_text)["jobs"]
+        cls.scrape_rerun_text = SCRAPE_RERUN_WORKFLOW_PATH.read_text(encoding="utf-8")
+        cls.cover_rerun_text = COVER_RERUN_WORKFLOW_PATH.read_text(encoding="utf-8")
         cls.prepare_parts_text = PREPARE_PARTS_PATH.read_text(encoding="utf-8")
 
     def test_final_gate_depends_on_every_production_job(self):
@@ -136,14 +140,35 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
                           if step.get("name") == "Reuse or create the complete Final Merge manifest")
         self.assertIn("HF_TOKEN", final_step["env"])
 
-    def test_run_names_are_readable_and_dispatcher_history_keeps_diagnostics(self):
+    def test_run_names_are_readable_and_dispatcher_deletes_older_runs(self):
         self.assertIn("有聲小說製作", self.text)
         self.assertIn("inputs.book_title", self.text)
         self.assertIn("有聲小說佇列調度", self.dispatcher_text)
-        self.assertIn("Prune old successful dispatcher run records", self.dispatcher_text)
+        self.assertIn("Delete older dispatcher run records", self.dispatcher_text)
         self.assertIn('actions/runs/$old_run_id', self.dispatcher_text)
-        self.assertIn("select(.key >= 20)", self.dispatcher_text)
-        self.assertIn('old_conclusion" != "success"', self.dispatcher_text)
+        self.assertIn("cancel-in-progress: true", self.dispatcher_text)
+        self.assertIn('old_status="$(gh api', self.dispatcher_text)
+        self.assertNotIn("select(.key >= 20)", self.dispatcher_text)
+        self.assertNotIn("old_conclusion", self.dispatcher_text)
+
+    def test_native_rerun_controllers_are_labeled_and_keep_only_the_latest_run(self):
+        expectations = (
+            (self.scrape_rerun_text, "【TXT抓取】", "txt-scrape-native-rerun-controller", "scrape-rerun.yml", "scrape_rerun_controller.py"),
+            (self.cover_rerun_text, "【封面產生】", "cover-native-rerun-controller", "cover-rerun.yml", "cover_rerun_controller.py"),
+        )
+        for workflow, label, group, filename, controller in expectations:
+            self.assertIn(label, workflow)
+            self.assertIn(f"group: {group}", workflow)
+            self.assertIn("cancel-in-progress: true", workflow)
+            self.assertIn(f"actions/workflows/{filename}/runs", workflow)
+            self.assertIn('select(.id != ($CURRENT_RUN_ID | tonumber))', workflow)
+            self.assertIn('actions/runs/$old_run_id/cancel', workflow)
+            self.assertIn('old_status="$(gh api', workflow)
+            self.assertIn('actions/runs/$old_run_id"', workflow)
+            self.assertIn(controller, workflow)
+
+        self.assertNotIn("cover_rerun_controller.py", self.scrape_rerun_text)
+        self.assertNotIn("scrape_rerun_controller.py", self.cover_rerun_text)
 
     def test_dispatcher_receives_authoritative_workflow_run_completion(self):
         for name in ("TRIGGER_RUN_ID", "TRIGGER_WORKFLOW_NAME", "TRIGGER_CONCLUSION", "TRIGGER_COMPLETED_AT"):
