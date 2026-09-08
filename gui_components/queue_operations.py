@@ -880,7 +880,7 @@ class QueueOperationsMixin:
                 messagebox.showinfo("重新排程", "請等待目前 TXT／封面 Run 結束後再重試失敗階段。")
                 return
             self._mutate_queue_async(
-                lambda value: update_task(value, task["task_id"], status="queued", reason=None),
+                lambda value: retry_failed_preflight_stages(value, task["task_id"]),
                 f"Retry failed preflight stages for {task['task_id']}",
                 "已排程重試未完成階段，已完成的 TXT／封面會保留。",
             )

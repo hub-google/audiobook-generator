@@ -4,7 +4,7 @@ import copy
 import pytest
 from src.cloud_queue import (
     new_task, add_tasks, empty_queue, approve_preflight,
-    confirm_preflight_review, start_reviewed_processing,
+    confirm_preflight_review, retry_failed_preflight_stages, start_reviewed_processing,
 )
 from src.queue_dispatcher import Dispatcher
 
@@ -98,6 +98,30 @@ def test_cover_retry_dispatches_only_cover():
     dispatcher.dispatch_next(queue)
     posts = [c.args[1] for c in dispatcher.request.call_args_list if c.args[0] == "POST"]
     assert posts == ["/actions/workflows/cover-preflight.yml/dispatches"]
+
+
+def test_preflight_retry_detaches_failed_runs_and_preserves_successful_stage():
+    task = ready_task()
+    task.update(status="needs_attention", run_id=100, reason="preflight_failed:TXT")
+    task["stages"]["scrape"].update(status="failed", reason="failure")
+    queue = retry_failed_preflight_stages(
+        add_tasks(empty_queue(), [task]), task["task_id"],
+    )
+
+    retried = queue["queue"][0]
+    assert retried["status"] == "queued"
+    assert retried["run_id"] is None
+    assert retried["scrape_run_id"] is None
+    assert retried["stages"]["scrape"]["status"] == "pending"
+    assert retried["stages"]["scrape"]["run_id"] is None
+    assert retried["cover_run_id"] == 200
+    assert retried["stages"]["cover"]["status"] == "completed"
+
+    dispatcher = fake_dispatcher(queue)
+    dispatcher.runs = Mock(return_value=[])
+    dispatcher.dispatch_next(queue)
+    posts = [c.args[1] for c in dispatcher.request.call_args_list if c.args[0] == "POST"]
+    assert posts == ["/actions/workflows/audiobook.yml/dispatches"]
 
 
 def test_processing_reconcile_ignores_scraper_success():

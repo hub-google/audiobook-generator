@@ -40,7 +40,7 @@ try:
         confirm_preflight_review, start_reviewed_processing,
         format_chapter_label, is_task_active, mark_task_completed, mark_task_interrupted, mark_task_waiting_retry,
         mark_tasks_completed, move_chapter_order, move_tasks, move_tasks_to_pending,
-        new_task, normalize_chapter_order, requeue_task_after_active, settle_interrupted_task,
+        new_task, normalize_chapter_order, requeue_task_after_active, retry_failed_preflight_stages, settle_interrupted_task,
         task_id_from_run_name, update_task, update_task_chapters,
     )
     from github_run_status import (

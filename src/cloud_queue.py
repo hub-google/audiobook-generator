@@ -558,6 +558,47 @@ def requeue_task_after_active(queue, task_id, active_id=None):
     return touch(queue)
 
 
+def retry_failed_preflight_stages(queue, task_id):
+    """Make failed preflight stages eligible for a fresh dispatch.
+
+    Successful TXT or cover work is retained, while stale failed Run IDs are
+    detached so a queued task cannot be mistaken for an active execution.
+    """
+    queue = normalize_queue(queue)
+    task = next((item for item in queue["queue"] if item.get("task_id") == task_id), None)
+    if task is None:
+        raise KeyError(task_id)
+    if task.get("workflow_phase") != "preflight":
+        raise ValueError("task is not in preflight")
+
+    stages = task.setdefault("stages", {})
+    failed_names = []
+    for name in ("scrape", "cover"):
+        stage = stages.setdefault(name, empty_stage_state())
+        if stage.get("status") != "completed":
+            failed_names.append(name)
+            stage.update(empty_stage_state())
+            stage.pop("dispatched_at", None)
+
+    if not failed_names:
+        raise ValueError("preflight has no failed stage to retry")
+    if "scrape" in failed_names:
+        task["scrape_run_id"] = None
+    if "cover" in failed_names:
+        task["cover_run_id"] = None
+    task.update({
+        "status": "queued",
+        "run_id": None,
+        "run_conclusion": None,
+        "run_completed_at": None,
+        "reason": None,
+        "retry_at": None,
+        "retry_requested_at": utc_now(),
+        "execution_generation": int(task.get("execution_generation") or 1) + 1,
+    })
+    return touch(queue)
+
+
 def settle_interrupted_task(queue, task_id, reason="run_cancelled",
                             conclusion="cancelled", ended_at=None):
     """Record a stopped execution and honor a pending edit-triggered restart.
