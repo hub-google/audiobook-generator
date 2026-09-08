@@ -28,7 +28,7 @@ class CloudQueueTests(unittest.TestCase):
             },
         }], "completed": []}
 
-    def test_failed_scraper_immediately_reruns_failed_jobs_on_fresh_runner(self):
+    def test_failed_scraper_is_marked_for_dedicated_native_rerun_controller(self):
         queue = self._preflight_queue()
         dispatcher = Dispatcher("owner/repo", "token")
         dispatcher.runs = Mock(return_value=[{
@@ -47,10 +47,9 @@ class CloudQueueTests(unittest.TestCase):
         self.assertTrue(changed)
         task = reconciled["queue"][0]
         self.assertEqual(task["status"], "preparing_assets")
-        self.assertEqual(task["stages"]["scrape"]["status"], "running")
-        dispatcher.request.assert_called_once_with(
-            "POST", "/actions/runs/100/rerun-failed-jobs",
-        )
+        self.assertEqual(task["stages"]["scrape"]["status"], "failed")
+        self.assertEqual(task["reason"], "scrape_rerun_pending")
+        dispatcher.request.assert_not_called()
 
     def test_failed_scraper_stops_after_twenty_immediate_reruns(self):
         queue = self._preflight_queue()

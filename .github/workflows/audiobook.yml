@@ -636,6 +636,34 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  # A workflow cannot rerun itself while it is still in progress.  Dispatch a
+  # small controller immediately after the scrape matrix finishes; the
+  # controller waits for this Run to become completed, then uses GitHub's
+  # native rerun-failed-jobs endpoint on this same Run.  It is only launched
+  # for the initial attempt because the controller owns all later retries.
+  trigger_scrape_rerun:
+    name: "🔁 Start immediate native scraper rerun controller"
+    needs: [scrape_chapters]
+    if: >-
+      always() &&
+      inputs.execution_phase == 'scrape_only' &&
+      github.run_attempt == 1 &&
+      needs.scrape_chapters.result == 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch controller for this completed scrape Run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_ID: ${{ github.run_id }}
+        run: |
+          gh workflow run scrape-rerun.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$GITHUB_REF_NAME" \
+            --field source_run_id="$SOURCE_RUN_ID"
+
   finalize_scrape_review:
     name: "🧠 Finalize full-book advertisement analysis"
     needs: [setup, resume_planner, scrape_chapters]

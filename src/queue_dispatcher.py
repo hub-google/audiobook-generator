@@ -366,27 +366,14 @@ class Dispatcher:
                     )
                     new_status, reason = ("canceling" if cancel_pending else "stopped"), "user_cancelled"
                 elif scrape.get("status") == "failed" and scrape_run:
-                    # TXT scraping failures must switch GitHub-hosted runners
-                    # immediately. Rebuilding an HTTP session inside the same
-                    # job does not change its egress IP and cannot clear an
-                    # IP-based 403. workflow_run wakes this dispatcher as soon
-                    # as the failed attempt completes.
+                    # The dedicated scrape-rerun controller owns native
+                    # rerun-failed-jobs calls. This dispatcher only reconciles
+                    # durable queue state, so two controllers cannot request
+                    # duplicate reruns for the same completed Run.
                     run_attempt = int(scrape_run.get("run_attempt") or scrape.get("run_attempt") or 1)
                     scrape["run_attempt"] = run_attempt
                     if run_attempt <= MAX_IMMEDIATE_SCRAPE_RERUNS:
-                        self.request(
-                            "POST", f"/actions/runs/{int(scrape_run['id'])}/rerun-failed-jobs",
-                        )
-                        scrape.update({
-                            "status": "running",
-                            "reason": None,
-                            "run_attempt": run_attempt + 1,
-                        })
-                        new_status, reason = "preparing_assets", None
-                        logging.info(
-                            "Immediately requested scrape rerun %d/%d for Run %s on a fresh runner",
-                            run_attempt, MAX_IMMEDIATE_SCRAPE_RERUNS, scrape_run["id"],
-                        )
+                        new_status, reason = "preparing_assets", "scrape_rerun_pending"
                     else:
                         new_status, reason = (
                             "needs_attention",
