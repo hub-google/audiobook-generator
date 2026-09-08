@@ -102,6 +102,10 @@ STATUS_LABELS = {
     "needs_attention": "需要人工處理",
     "canceling": "正在取消",
 }
+
+# A scrape rerun gets a fresh GitHub-hosted runner.  This is intentionally
+# separate from in-process HTTP retries, which keep the same blocked egress IP.
+MAX_IMMEDIATE_SCRAPE_RERUNS = 20
 _AUTO_TASK = object()
 
 
@@ -361,6 +365,33 @@ class Dispatcher:
                         for state in (scrape, cover)
                     )
                     new_status, reason = ("canceling" if cancel_pending else "stopped"), "user_cancelled"
+                elif scrape.get("status") == "failed" and scrape_run:
+                    # TXT scraping failures must switch GitHub-hosted runners
+                    # immediately. Rebuilding an HTTP session inside the same
+                    # job does not change its egress IP and cannot clear an
+                    # IP-based 403. workflow_run wakes this dispatcher as soon
+                    # as the failed attempt completes.
+                    run_attempt = int(scrape_run.get("run_attempt") or scrape.get("run_attempt") or 1)
+                    scrape["run_attempt"] = run_attempt
+                    if run_attempt <= MAX_IMMEDIATE_SCRAPE_RERUNS:
+                        self.request(
+                            "POST", f"/actions/runs/{int(scrape_run['id'])}/rerun-failed-jobs",
+                        )
+                        scrape.update({
+                            "status": "running",
+                            "reason": None,
+                            "run_attempt": run_attempt + 1,
+                        })
+                        new_status, reason = "preparing_assets", None
+                        logging.info(
+                            "Immediately requested scrape rerun %d/%d for Run %s on a fresh runner",
+                            run_attempt, MAX_IMMEDIATE_SCRAPE_RERUNS, scrape_run["id"],
+                        )
+                    else:
+                        new_status, reason = (
+                            "needs_attention",
+                            f"scrape_failed_after_{MAX_IMMEDIATE_SCRAPE_RERUNS}_reruns",
+                        )
                 elif "failed" in statuses:
                     failed_names = [name for name, state in (("TXT", scrape), ("封面", cover)) if state.get("status") == "failed"]
                     new_status, reason = "needs_attention", "preflight_failed:" + ",".join(failed_names)

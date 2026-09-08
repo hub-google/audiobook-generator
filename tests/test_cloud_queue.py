@@ -8,10 +8,74 @@ from src.cloud_queue import (
     requeue_task_after_active, settle_interrupted_task, update_task,
     update_task_chapters, normalize_chapter_order, normalize_queue,
 )
-from src.queue_dispatcher import Dispatcher, artifact_source_run_id, failed_artifact_source_candidates
+from src.queue_dispatcher import (
+    Dispatcher, MAX_IMMEDIATE_SCRAPE_RERUNS, artifact_source_run_id,
+    failed_artifact_source_candidates,
+)
 
 
 class CloudQueueTests(unittest.TestCase):
+    def _preflight_queue(self):
+        return {"queue": [{
+            "task_id": "book-20260908-deadbeef",
+            "workflow_phase": "preflight",
+            "status": "preparing_assets",
+            "scrape_run_id": 100,
+            "cover_run_id": 200,
+            "stages": {
+                "scrape": {"run_id": 100, "status": "running"},
+                "cover": {"run_id": 200, "status": "completed"},
+            },
+        }], "completed": []}
+
+    def test_failed_scraper_immediately_reruns_failed_jobs_on_fresh_runner(self):
+        queue = self._preflight_queue()
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.runs = Mock(return_value=[{
+            "id": 100, "status": "completed", "conclusion": "failure", "run_attempt": 1,
+            "display_title": "【TXT抓取】book | book-20260908-deadbeef",
+        }])
+        dispatcher.cover_runs = Mock(return_value=[])
+        dispatcher.run_by_id = Mock(side_effect=lambda run_id: {
+            100: dispatcher.runs.return_value[0],
+            200: {"id": 200, "status": "completed", "conclusion": "success"},
+        }[run_id])
+        dispatcher.request = Mock(return_value=Mock(status_code=201))
+
+        reconciled, changed = dispatcher.reconcile(queue)
+
+        self.assertTrue(changed)
+        task = reconciled["queue"][0]
+        self.assertEqual(task["status"], "preparing_assets")
+        self.assertEqual(task["stages"]["scrape"]["status"], "running")
+        dispatcher.request.assert_called_once_with(
+            "POST", "/actions/runs/100/rerun-failed-jobs",
+        )
+
+    def test_failed_scraper_stops_after_twenty_immediate_reruns(self):
+        queue = self._preflight_queue()
+        dispatcher = Dispatcher("owner/repo", "token")
+        failed = {
+            "id": 100, "status": "completed", "conclusion": "failure",
+            "run_attempt": MAX_IMMEDIATE_SCRAPE_RERUNS + 1,
+            "display_title": "【TXT抓取】book | book-20260908-deadbeef",
+        }
+        dispatcher.runs = Mock(return_value=[failed])
+        dispatcher.cover_runs = Mock(return_value=[])
+        dispatcher.run_by_id = Mock(side_effect=lambda run_id: failed if run_id == 100 else {
+            "id": 200, "status": "completed", "conclusion": "success",
+        })
+        dispatcher.request = Mock()
+
+        reconciled, changed = dispatcher.reconcile(queue)
+
+        self.assertTrue(changed)
+        self.assertEqual(reconciled["queue"][0]["status"], "needs_attention")
+        self.assertEqual(
+            reconciled["queue"][0]["reason"], "scrape_failed_after_20_reruns",
+        )
+        dispatcher.request.assert_not_called()
+
     def test_artifact_source_is_latest_failed_run_with_same_stable_book_fingerprint(self):
         queue = {
             "queue": [
