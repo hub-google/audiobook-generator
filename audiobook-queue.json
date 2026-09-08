@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1076,
-  "updated_at": "2026-09-08T00:55:21.955009+00:00",
+  "revision": 1077,
+  "updated_at": "2026-09-08T00:55:29.216407+00:00",
   "queue": [
     {
       "task_id": "book-20260907-cf0585fb",
@@ -115,7 +115,7 @@
         92,
         93
       ],
-      "status": "queued",
+      "status": "dispatching",
       "workflow_phase": "processing",
       "stages": {
         "scrape": {
@@ -316,7 +316,7 @@
         "total": 0
       },
       "created_at": "2026-09-07T09:02:53.965909+00:00",
-      "updated_at": "2026-09-08T00:55:07.377083+00:00",
+      "updated_at": "2026-09-08T00:55:29.216389+00:00",
       "run_conclusion": null,
       "run_completed_at": null,
       "requeue_after_edit": false,
@@ -324,9 +324,20 @@
       "profile_snapshot": {
         "book_profile_id": "c176d48228a6a913",
         "catalog_url": "https://www.69shuba.com/book/90225/",
-        "catalog_identity": "3ce11d976d8d5abe2866b733be1c181bcf737eaf2df8ed206d4a083c532f7b74",
-        "profile_revision": 1,
-        "cleaner_remove_patterns": [],
+        "catalog_identity": "2b0dc4807bf03233af043468124c602e7187a1dab187afad3574b147713b22e5",
+        "profile_revision": 2,
+        "cleaner_remove_patterns": [
+          "5.0K字-大章求订阅",
+          "8.4K字-大章求订阅",
+          "8.1K字-大章求订阅",
+          "8.3K字-大章求订阅",
+          "9.1K字-大章求订阅",
+          "5.1K字-大章求订阅",
+          "51K字大章求订阅",
+          "50K字大章求订阅",
+          "6.0K字-大章",
+          "5.4K字-大章"
+        ],
         "duplicate_detection": {
           "use_normalized_number": true,
           "use_chapter_name": true,
@@ -335,10 +346,10 @@
         "chapter_title_overrides": {},
         "manual_cover": {},
         "chapter_normalized_number_overrides": {},
-        "cleaner_fingerprint": "3652dfd9fe791a14d5285926c05405273728f9cb7ea81d261318f4a9efff79a8"
+        "cleaner_fingerprint": "8c73a863cce5ea16820c5b7828e3d5a23153a28a0fcde14a658ea7610f694bd0"
       },
       "artifact_source_run_id": null,
-      "dispatched_at": "2026-09-08T00:05:34.220849+00:00"
+      "dispatched_at": "2026-09-08T00:55:29.204187+00:00"
     },
     {
       "task_id": "book-20260907-7542ded2",
