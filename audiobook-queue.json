@@ -115,7 +115,7 @@
         92,
         93
       ],
-      "status": "processing",
+      "status": "running",
       "workflow_phase": "processing",
       "stages": {
         "scrape": {
