@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1106,
-  "updated_at": "2026-09-08T06:21:56.545207+00:00",
+  "revision": 1107,
+  "updated_at": "2026-09-08T06:22:01.478588+00:00",
   "queue": [
     {
       "task_id": "book-20260908-4e32a5c9",
@@ -399,21 +399,21 @@
         380,
         381
       ],
-      "status": "paused",
+      "status": "preparing_assets",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "dispatching",
-          "run_id": null,
-          "run_attempt": 0,
+          "status": "running",
+          "run_id": 34194337028,
+          "run_attempt": 1,
           "reason": null,
           "completed_at": null,
           "dispatched_at": "2026-09-08T06:21:51.970229+00:00"
         },
         "cover": {
-          "status": "dispatching",
-          "run_id": null,
-          "run_attempt": 0,
+          "status": "running",
+          "run_id": 34194338092,
+          "run_attempt": 1,
           "reason": null,
           "completed_at": null,
           "dispatched_at": "2026-09-08T06:21:51.970235+00:00"
@@ -433,15 +433,15 @@
           "completed_at": null
         }
       },
-      "scrape_run_id": null,
-      "cover_run_id": null,
+      "scrape_run_id": 34194337028,
+      "cover_run_id": 34194338092,
       "processing_run_id": null,
       "scrape_snapshot_id": "",
       "ad_review": {
         "status": "pending"
       },
-      "run_id": null,
-      "run_attempt": 0,
+      "run_id": 34194337028,
+      "run_attempt": 1,
       "execution_generation": 1,
       "retry_requested_at": null,
       "run_history": [],
@@ -456,7 +456,7 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:27.476668+00:00",
-      "updated_at": "2026-09-08T06:21:56.545207+00:00",
+      "updated_at": "2026-09-08T06:22:01.478553+00:00",
       "book_profile_id": "94478f2cc90d4bd5",
       "profile_snapshot": {
         "book_profile_id": "94478f2cc90d4bd5",
