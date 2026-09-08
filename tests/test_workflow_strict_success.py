@@ -176,9 +176,10 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("github.event.workflow_run.id", self.dispatcher_text)
         self.assertIn("github.event.workflow_run.conclusion", self.dispatcher_text)
 
-    def test_dispatcher_recovery_schedule_runs_every_five_minutes_off_the_hour(self):
-        self.assertIn('cron: "3,8,13,18,23,28,33,38,43,48,53,58 * * * *"', self.dispatcher_text)
-        self.assertNotIn('cron: "*/15 * * * *"', self.dispatcher_text)
+    def test_dispatcher_recovery_schedule_runs_every_fifteen_minutes_off_the_hour(self):
+        self.assertIn('cron: "7,22,37,52 * * * *"', self.dispatcher_text)
+        self.assertNotIn('cron: "3,8,13,18,23,28,33,38,43,48,53,58 * * * *"', self.dispatcher_text)
+
 
     def test_resume_dispatch_requires_original_identity_inputs(self):
         restore = next(
