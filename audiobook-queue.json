@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1140,
-  "updated_at": "2026-09-08T16:04:28.360214+00:00",
+  "revision": 1141,
+  "updated_at": "2026-09-08T16:04:52.657420+00:00",
   "queue": [
     {
       "task_id": "book-20260908-0dac5b25",
@@ -641,7 +641,7 @@
         622,
         623
       ],
-      "status": "queued",
+      "status": "dispatching",
       "workflow_phase": "processing",
       "stages": {
         "scrape": {
@@ -725,14 +725,18 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:30.156520+00:00",
-      "updated_at": "2026-09-08T15:03:14.143251+00:00",
+      "updated_at": "2026-09-08T16:04:52.657393+00:00",
       "book_profile_id": "1012c930587485d4",
       "profile_snapshot": {
         "book_profile_id": "1012c930587485d4",
         "catalog_url": "https://www.69shuba.com/book/70319/",
         "catalog_identity": "9c3b1d1a6ba97264b894976b5917c92fb3a029c61a0e9e4ad6b16e1d897e76d1",
-        "profile_revision": 1,
-        "cleaner_remove_patterns": [],
+        "profile_revision": 2,
+        "cleaner_remove_patterns": [
+          "上架后每天两更,时间还是早上6点,若是可能,作者依旧贪心的希望能得到宝宝们的支持,各种票票作者都很喜欢,鞠躬啦。",
+          "亲爱的宝子们,躬身感谢大家的喜爱的支持,文要上架了,能上架是对一本书的肯定和认可,得到消息的时候作者欣喜又感动。",
+          "#^.^#"
+        ],
         "duplicate_detection": {
           "use_normalized_number": true,
           "use_chapter_name": true,
@@ -741,10 +745,10 @@
         "chapter_title_overrides": {},
         "manual_cover": {},
         "chapter_normalized_number_overrides": {},
-        "cleaner_fingerprint": "3652dfd9fe791a14d5285926c05405273728f9cb7ea81d261318f4a9efff79a8"
+        "cleaner_fingerprint": "55e4e80af7f33adf550517a72a71c6edf74fa582acba70a4bc1b900f98d63f58"
       },
       "artifact_source_run_id": null,
-      "dispatched_at": "2026-09-08T15:03:02.501329+00:00"
+      "dispatched_at": "2026-09-08T16:04:52.640506+00:00"
     },
     {
       "task_id": "book-20260908-edc73f4e",
