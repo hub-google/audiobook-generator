@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
-  "revision": 82,
-  "updated_at": "2026-09-08T06:25:47.296217+00:00",
+  "revision": 83,
+  "updated_at": "2026-09-08T07:14:39.306599+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -803,7 +803,17 @@
     "94478f2cc90d4bd5": {
       "catalog_url": "https://www.69shuba.com/book/58831/",
       "book_title": "七零，我成了年代文里的恶毒女配",
-      "cleaner_remove_patterns": [],
+      "cleaner_remove_patterns": [
+        "感谢小伙伴点读我的作品,每天晚上十点准时更新,求推荐票,求收藏,求月票,求月票,求月票嘞!!!",
+        "感谢小伙伴点读我的作品,每天晚上十点准时更新,求推荐票,求月票,求收藏,求催更嘞!!!",
+        "感谢小伙伴点读我的作品,每天晚上十点准时更新,求月票,求收藏,求催更嘞!!!",
+        "第250章关注女性力量",
+        "感谢小伙伴点读我的作品",
+        "每天晚上十点准时更新",
+        "求催更嘞",
+        "求推荐票",
+        "求月票嘞"
+      ],
       "duplicate_detection": {
         "use_normalized_number": true,
         "use_chapter_name": true,
@@ -811,8 +821,8 @@
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 1,
-      "updated_at": "2026-09-08T06:22:30.984091+00:00",
+      "profile_revision": 2,
+      "updated_at": "2026-09-08T07:14:39.306599+00:00",
       "manual_cover": {}
     },
     "762e24d85de1b2c9": {
