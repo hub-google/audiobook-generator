@@ -650,15 +650,15 @@
         631,
         632
       ],
-      "status": "preparing_assets",
+      "status": "waiting_review",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "running",
+          "status": "completed",
           "run_id": 34179089537,
           "run_attempt": 2,
-          "reason": "failure",
-          "completed_at": null,
+          "reason": null,
+          "completed_at": "2026-09-08T02:45:00Z",
           "dispatched_at": "2026-09-08T02:09:34.464121+00:00"
         },
         "cover": {
