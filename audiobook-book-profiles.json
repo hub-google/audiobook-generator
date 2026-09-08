@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
-  "revision": 73,
-  "updated_at": "2026-09-07T12:57:15.673934+00:00",
+  "revision": 74,
+  "updated_at": "2026-09-08T00:54:53.941619+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -666,7 +666,18 @@
     "c176d48228a6a913": {
       "catalog_url": "https://www.69shuba.com/book/90225/",
       "book_title": "在天魔世界的摆烂生活",
-      "cleaner_remove_patterns": [],
+      "cleaner_remove_patterns": [
+        "5.0K字-大章求订阅",
+        "8.4K字-大章求订阅",
+        "8.1K字-大章求订阅",
+        "8.3K字-大章求订阅",
+        "9.1K字-大章求订阅",
+        "5.1K字-大章求订阅",
+        "51K字大章求订阅",
+        "50K字大章求订阅",
+        "6.0K字-大章",
+        "5.4K字-大章"
+      ],
       "duplicate_detection": {
         "use_normalized_number": true,
         "use_chapter_name": true,
@@ -674,8 +685,8 @@
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 1,
-      "updated_at": "2026-09-07T12:38:43.182507+00:00",
+      "profile_revision": 2,
+      "updated_at": "2026-09-08T00:54:53.941619+00:00",
       "manual_cover": {}
     }
   }
