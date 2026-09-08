@@ -66,6 +66,21 @@ class CoverInformationQualityTests(unittest.TestCase):
         self.assertIn("動畫、漫畫、遊戲、影視改編", sent_instruction)
         self.assertNotIn('"identity"', sent_instruction)
 
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key", "COVER_GEMINI_TITLE_ONLY": "1"})
+    @patch("src.metadata_gen.requests.post")
+    def test_title_only_cover_lets_gemini_search_before_answering(self, post):
+        post.return_value = Mock(status_code=200, json=lambda: response_payload(), text="")
+
+        generate_gemini_cover_information(
+            "在天魔世界的摆烂生活",
+            "指定小說書名：《在天魔世界的摆烂生活》。請 Gemini 直接研究並整理這本小說的故事內容與封面資訊。",
+        )
+
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["tools"], [{"google_search": {}}])
+        instruction = payload["contents"][0]["parts"][0]["text"]
+        self.assertIn("不得因呼叫端沒有先提供簡介而直接回 insufficient_source", instruction)
+
     @patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test-key"})
     @patch("src.metadata_gen.requests.post")
     def test_internal_fallback_accepts_catalog_and_model_knowledge_together(self, post):
