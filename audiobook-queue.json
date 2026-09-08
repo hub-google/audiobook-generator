@@ -115,22 +115,22 @@
         92,
         93
       ],
-      "status": "preparing_assets",
+      "status": "needs_attention",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "dispatching",
-          "run_id": null,
+          "status": "failed",
+          "run_id": 34172188876,
           "run_attempt": 1,
-          "reason": null,
+          "reason": "failure",
           "completed_at": null,
           "dispatched_at": "2026-09-08T00:05:34.220840+00:00"
         },
         "cover": {
-          "status": "running",
+          "status": "failed",
           "run_id": 34172189957,
           "run_attempt": 1,
-          "reason": null,
+          "reason": "failure",
           "completed_at": null,
           "dispatched_at": "2026-09-08T00:05:34.220847+00:00"
         },
@@ -149,7 +149,7 @@
           "completed_at": null
         }
       },
-      "scrape_run_id": null,
+      "scrape_run_id": 34172188876,
       "cover_run_id": 34172189957,
       "processing_run_id": null,
       "scrape_snapshot_id": "",
@@ -162,7 +162,7 @@
       "retry_requested_at": "2026-09-08T00:05:17.505817+00:00",
       "run_history": [],
       "retry_at": null,
-      "reason": null,
+      "reason": "preflight_failed:TXT,封面",
       "hf_progress": {
         "completed": 0,
         "total": 0
