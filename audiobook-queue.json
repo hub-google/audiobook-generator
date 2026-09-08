@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1126,
-  "updated_at": "2026-09-08T09:42:57.236510+00:00",
+  "revision": 1127,
+  "updated_at": "2026-09-08T10:44:36.967983+00:00",
   "queue": [
     {
       "task_id": "book-20260908-ae3e49d0",
@@ -863,7 +863,7 @@
         844,
         845
       ],
-      "status": "running",
+      "status": "waiting_retry",
       "workflow_phase": "processing",
       "stages": {
         "scrape": {
@@ -1043,9 +1043,15 @@
       "run_attempt": 1,
       "execution_generation": 1,
       "retry_requested_at": null,
-      "run_history": [],
-      "retry_at": null,
-      "reason": null,
+      "run_history": [
+        {
+          "run_id": 34211498932,
+          "conclusion": "failure",
+          "ended_at": "2026-09-08T10:44:31Z"
+        }
+      ],
+      "retry_at": "2026-09-08T12:44:36.966982+00:00",
+      "reason": "run_failure",
       "hf_progress": {
         "completed": 0,
         "total": 0
@@ -1055,7 +1061,7 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:27.962245+00:00",
-      "updated_at": "2026-09-08T09:42:57.236510+00:00",
+      "updated_at": "2026-09-08T10:44:36.966982+00:00",
       "book_profile_id": "762e24d85de1b2c9",
       "profile_snapshot": {
         "book_profile_id": "762e24d85de1b2c9",
@@ -1075,7 +1081,8 @@
       },
       "artifact_source_run_id": null,
       "dispatched_at": "2026-09-08T09:42:37.484402+00:00",
-      "run_conclusion": null
+      "run_conclusion": "failure",
+      "run_completed_at": "2026-09-08T10:44:31Z"
     },
     {
       "task_id": "book-20260908-293d9597",
