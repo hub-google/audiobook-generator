@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
-  "revision": 88,
-  "updated_at": "2026-09-08T12:01:02.114685+00:00",
+  "revision": 89,
+  "updated_at": "2026-09-08T16:04:08.331325+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -896,7 +896,11 @@
     "1012c930587485d4": {
       "catalog_url": "https://www.69shuba.com/book/70319/",
       "book_title": "重生另嫁小叔，夫妻联手虐渣",
-      "cleaner_remove_patterns": [],
+      "cleaner_remove_patterns": [
+        "上架后每天两更,时间还是早上6点,若是可能,作者依旧贪心的希望能得到宝宝们的支持,各种票票作者都很喜欢,鞠躬啦。",
+        "亲爱的宝子们,躬身感谢大家的喜爱的支持,文要上架了,能上架是对一本书的肯定和认可,得到消息的时候作者欣喜又感动。",
+        "#^.^#"
+      ],
       "duplicate_detection": {
         "use_normalized_number": true,
         "use_chapter_name": true,
@@ -904,8 +908,8 @@
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 1,
-      "updated_at": "2026-09-08T07:25:38.644356+00:00",
+      "profile_revision": 2,
+      "updated_at": "2026-09-08T16:04:08.331325+00:00",
       "manual_cover": {}
     },
     "dd705942c2d6877d": {
