@@ -875,11 +875,11 @@
           "dispatched_at": "2026-09-08T09:10:10.842024+00:00"
         },
         "cover": {
-          "status": "running",
+          "status": "completed",
           "run_id": 34208506247,
           "run_attempt": 1,
           "reason": null,
-          "completed_at": null,
+          "completed_at": "2026-09-08T09:14:52Z",
           "dispatched_at": "2026-09-08T09:10:10.842029+00:00"
         },
         "processing": {
