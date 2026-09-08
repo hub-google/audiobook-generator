@@ -399,22 +399,22 @@
         380,
         381
       ],
-      "status": "preparing_assets",
+      "status": "needs_attention",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "running",
+          "status": "failed",
           "run_id": 34194337028,
           "run_attempt": 1,
-          "reason": null,
+          "reason": "failure",
           "completed_at": null,
           "dispatched_at": "2026-09-08T06:21:51.970229+00:00"
         },
         "cover": {
-          "status": "running",
+          "status": "failed",
           "run_id": 34194338092,
           "run_attempt": 1,
-          "reason": null,
+          "reason": "failure",
           "completed_at": null,
           "dispatched_at": "2026-09-08T06:21:51.970235+00:00"
         },
@@ -446,7 +446,7 @@
       "retry_requested_at": null,
       "run_history": [],
       "retry_at": null,
-      "reason": null,
+      "reason": "preflight_failed",
       "hf_progress": {
         "completed": 0,
         "total": 0
