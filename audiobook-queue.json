@@ -1,14 +1,14 @@
 {
   "schema_version": 3,
-  "revision": 1074,
-  "updated_at": "2026-09-08T00:54:57.749364+00:00",
+  "revision": 1075,
+  "updated_at": "2026-09-08T00:55:07.377083+00:00",
   "queue": [
     {
       "task_id": "book-20260907-cf0585fb",
       "position": 1,
       "book_title": "在天魔世界的摆烂生活",
       "catalog_url": "https://www.69shuba.com/book/90225/",
-      "catalog_identity": "3ce11d976d8d5abe2866b733be1c181bcf737eaf2df8ed206d4a083c532f7b74",
+      "catalog_identity": "2b0dc4807bf03233af043468124c602e7187a1dab187afad3574b147713b22e5",
       "start_chapter": 1,
       "end_chapter": 93,
       "excluded_chapters": [
@@ -17,7 +17,7 @@
         93
       ],
       "renumber_selected": true,
-      "duplicate_chapter_count": 18,
+      "duplicate_chapter_count": 0,
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
       "chapter_order": [
@@ -316,7 +316,7 @@
         "total": 0
       },
       "created_at": "2026-09-07T09:02:53.965909+00:00",
-      "updated_at": "2026-09-08T00:05:51.261993+00:00",
+      "updated_at": "2026-09-08T00:55:07.377083+00:00",
       "run_conclusion": null,
       "run_completed_at": null,
       "requeue_after_edit": false,
