@@ -492,14 +492,7 @@ def generate_gemini_cover_information(book_title, pure_plot, research=None, max_
     _validate_plot_source(book_title, pure_plot, "送交 Gemini 的簡介")
     research = research or {"mode": "internal_knowledge_fallback", "sources": []}
     research_json = json.dumps(research, ensure_ascii=False)
-    title_only = os.getenv("COVER_GEMINI_TITLE_ONLY") == "1"
-    title_only_instruction = (
-        "這是封面預檢，只提供書名。請先使用你可用的 Google Search grounding 查明這本小說，"
-        "再以搜尋結果與模型知識整理故事；不得因呼叫端沒有先提供簡介而直接回 insufficient_source。"
-        if title_only else ""
-    )
     instruction = f"""你是熟悉中文網路小說的考據編輯。請依提供的聯網資料與目錄頁身分，嚴格分析《{book_title}》。你只負責填入故事變數，無權改變固定的熱門短劇縮圖構圖。
-{title_only_instruction}
 目錄頁身分與簡介：{pure_plot}
 資料模式與來源：{research_json}
 只分析指定小說的原著版本。不得混入動畫、漫畫、遊戲、影視改編或其他同名作品新增、修改或特有的角色造型、場景、武器與設定；若改編內容與小說原著不同，一律以小說原著為準。不確定時必須回 insufficient_source，不得猜測。
@@ -517,15 +510,9 @@ status=ok 時，各分析欄位及 visual_brief 不得填未知、未提供、�
     for attempt in range(1, max_attempts + 1):
         model = models[(attempt - 1) % len(models)]
         try:
-            payload = {
-                "contents": [{"parts": [{"text": instruction}]}],
-                "generationConfig": {"responseMimeType": "application/json"},
-            }
-            if title_only:
-                payload["tools"] = [{"google_search": {}}]
             response = requests.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
-                json=payload,
+                json={"contents": [{"parts": [{"text": instruction}]}], "generationConfig": {"responseMimeType": "application/json"}},
                 timeout=60,
             )
             if response.status_code != 200:
