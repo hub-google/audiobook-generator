@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1113,
-  "updated_at": "2026-09-08T07:18:30.341476+00:00",
+  "revision": 1114,
+  "updated_at": "2026-09-08T07:18:57.718662+00:00",
   "queue": [
     {
       "task_id": "book-20260908-4e32a5c9",
@@ -399,7 +399,7 @@
         380,
         381
       ],
-      "status": "queued",
+      "status": "dispatching",
       "workflow_phase": "processing",
       "stages": {
         "scrape": {
@@ -506,14 +506,24 @@
         "total": 0
       },
       "created_at": "2026-09-08T06:21:27.476668+00:00",
-      "updated_at": "2026-09-08T06:22:58.192576+00:00",
+      "updated_at": "2026-09-08T07:18:57.718639+00:00",
       "book_profile_id": "94478f2cc90d4bd5",
       "profile_snapshot": {
         "book_profile_id": "94478f2cc90d4bd5",
         "catalog_url": "https://www.69shuba.com/book/58831/",
         "catalog_identity": "848ec6e0534e3ae8a05012a4cd9f4f119820a4253094be62adba19a8fd799416",
-        "profile_revision": 0,
-        "cleaner_remove_patterns": [],
+        "profile_revision": 2,
+        "cleaner_remove_patterns": [
+          "感谢小伙伴点读我的作品,每天晚上十点准时更新,求推荐票,求收藏,求月票,求月票,求月票嘞!!!",
+          "感谢小伙伴点读我的作品,每天晚上十点准时更新,求推荐票,求月票,求收藏,求催更嘞!!!",
+          "感谢小伙伴点读我的作品,每天晚上十点准时更新,求月票,求收藏,求催更嘞!!!",
+          "第250章关注女性力量",
+          "感谢小伙伴点读我的作品",
+          "每天晚上十点准时更新",
+          "求催更嘞",
+          "求推荐票",
+          "求月票嘞"
+        ],
         "duplicate_detection": {
           "use_normalized_number": true,
           "use_chapter_name": true,
@@ -522,10 +532,10 @@
         "chapter_title_overrides": {},
         "manual_cover": {},
         "chapter_normalized_number_overrides": {},
-        "cleaner_fingerprint": "3652dfd9fe791a14d5285926c05405273728f9cb7ea81d261318f4a9efff79a8"
+        "cleaner_fingerprint": "39db64c6cd9cdaca2c63c378a802e3ee43650573074d51773be9d7f933a41ce2"
       },
       "artifact_source_run_id": null,
-      "dispatched_at": "2026-09-08T06:21:51.970238+00:00"
+      "dispatched_at": "2026-09-08T07:18:57.702216+00:00"
     },
     {
       "task_id": "book-20260908-ae3e49d0",
