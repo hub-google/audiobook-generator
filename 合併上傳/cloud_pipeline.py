@@ -10,8 +10,10 @@ from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent))
 from hf_catalog import HfCatalog
 from merge_plan import build_plan
+from src.artifact_validation import validate_video
 
 CHUNK = 8 * 1024 * 1024
 YOUTUBE_DESCRIPTION_LIMIT = 5000
@@ -49,6 +51,50 @@ def upload_json(path, value, message):
     client, repo, _ = api(); client.upload_file(path_or_fileobj=(json.dumps(value,ensure_ascii=False,indent=2)+"\n").encode(),path_in_repo=path,repo_id=repo,repo_type="dataset",commit_message=message)
 def output_root(plan_id, number): return f"_system/full_merges/{plan_id}/output-{number:03d}"
 
+def ffconcat_text(urls, token):
+    return "ffconcat version 1.0\n" + "".join(
+        "file '" + url.replace("'", "%27") + "'\n"
+        "option headers 'Authorization: Bearer " + token + "'\n"
+        for url in urls
+    )
+
+def verify_complete_video(path, expected_duration):
+    """Reject incomplete/corrupt merges before they can be published or uploaded."""
+    validation = validate_video(path, audio_duration=expected_duration)
+    duration_delta = abs(float(validation["duration_seconds"]) - float(expected_duration))
+    duration_tolerance = max(2.0, float(expected_duration) * 0.0001)
+    if duration_delta > duration_tolerance:
+        raise RuntimeError(
+            f"merged video duration mismatch: expected {expected_duration:.3f}s, "
+            f"got {validation['duration_seconds']:.3f}s"
+        )
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-xerror", "-i", str(path),
+        "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-f", "null", "-",
+    ], check=True)
+    return validation
+
+def verified_hf_source(manifest):
+    """Read the immutable HF object completely and verify it before contacting YouTube."""
+    if manifest.get("status") != "merge_complete":
+        raise RuntimeError("merge manifest is not complete")
+    expected_size = int(manifest.get("bytes") or 0)
+    expected_sha256 = str(manifest.get("sha256") or "").lower()
+    if expected_size <= 0 or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+        raise RuntimeError("merge manifest has no valid size/checksum")
+    source = resolve_url(manifest["video_path"])
+    digest = hashlib.sha256(); received = 0
+    with requests.get(source, headers={"Authorization":f"Bearer {repo_token()[1]}"}, stream=True, timeout=(30, 300)) as response:
+        response.raise_for_status()
+        for block in response.iter_content(CHUNK):
+            if block:
+                digest.update(block); received += len(block)
+    if received != expected_size:
+        raise RuntimeError(f"HF merged video size mismatch: expected {expected_size}, got {received}")
+    if digest.hexdigest() != expected_sha256:
+        raise RuntimeError("HF merged video checksum mismatch")
+    return source
+
 def make_plan(args):
     repo, token = repo_token(); books=HfCatalog(repo,token).list_books(); book=next((b for b in books if b.key==args.book_key),None)
     if not book or not book.mergeable: raise RuntimeError(f"book is not mergeable: {args.book_key}")
@@ -67,13 +113,11 @@ def merge_output(args):
         encoded=urllib.parse.quote(part["video_path"],safe="/")
         urls.append(f"https://huggingface.co/datasets/{repo}/resolve/{plan['repo_revision']}/{encoded}")
     with tempfile.TemporaryDirectory() as tmp:
-        concat=Path(tmp)/"parts.ffconcat"; concat.write_text("ffconcat version 1.0\n"+"".join("file '"+u.replace("'","%27")+"'\n" for u in urls),encoding="utf-8")
-        subprocess.run(["ffmpeg","-hide_banner","-y","-headers",f"Authorization: Bearer {token}\r\n","-protocol_whitelist","file,http,https,tcp,tls,crypto","-f","concat","-safe","0","-i",str(concat),"-map","0:v:0","-map","0:a:0","-c","copy",str(target)],check=True)
-    probe=json.loads(subprocess.run(["ffprobe","-v","error","-show_format","-show_streams","-of","json",str(target)],capture_output=True,text=True,check=True).stdout)
-    digest=hashlib.sha256()
-    with target.open("rb") as f:
-        for block in iter(lambda:f.read(CHUNK),b""): digest.update(block)
-    manifest={"status":"merge_complete","plan_id":plan["plan_id"],"output":item,"book_title":plan["book_title"],"youtube_title":item["youtube_title"],"youtube_description":output_chapter_timeline(item),"cover_path":f"{plan['book_root']}/master_cover.jpg","video_path":f"{root}/audiobook.mp4","bytes":target.stat().st_size,"sha256":digest.hexdigest(),"media_info":probe}
+        concat=Path(tmp)/"parts.ffconcat"
+        concat.write_text(ffconcat_text(urls, token),encoding="utf-8")
+        subprocess.run(["ffmpeg","-hide_banner","-y","-protocol_whitelist","file,http,https,tcp,tls,crypto","-f","concat","-safe","0","-i",str(concat),"-map","0:v:0","-map","0:a:0","-c","copy",str(target)],check=True)
+    validation=verify_complete_video(target,item["duration_seconds"])
+    manifest={"status":"merge_complete","plan_id":plan["plan_id"],"output":item,"book_title":plan["book_title"],"youtube_title":item["youtube_title"],"youtube_description":output_chapter_timeline(item),"cover_path":f"{plan['book_root']}/master_cover.jpg","video_path":f"{root}/audiobook.mp4","bytes":validation["bytes"],"sha256":validation["sha256"],"media_info":validation}
     manifest_file=Path(args.bucket_mount,root,"merge_manifest.json"); manifest_file.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
     client, repo, _ = api()
     client.create_commit(repo_id=repo,repo_type="dataset",commit_message=f"Publish full merge {plan['plan_id']} output {args.output_number}",operations=[CommitOperationAdd(path_in_repo=manifest["video_path"],path_or_fileobj=str(target)),CommitOperationAdd(path_in_repo=f"{root}/merge_manifest.json",path_or_fileobj=str(manifest_file))])
@@ -103,7 +147,7 @@ def query(url,total,cred):
     value=response.headers.get("Range",""); return (int(value.rsplit("-",1)[1])+1 if "-" in value else 0),None
 
 def phase1(args):
-    manifest=remote_json(args.manifest); total=int(manifest["bytes"]); source=resolve_url(manifest["video_path"]); cred=credentials()
+    manifest=remote_json(args.manifest); total=int(manifest["bytes"]); source=verified_hf_source(manifest); cred=credentials()
     headers={"Authorization":f"Bearer {cred.token}","Content-Type":"application/json; charset=UTF-8","X-Upload-Content-Length":str(total),"X-Upload-Content-Type":"video/mp4"}
     title = str(args.title or manifest.get("youtube_title") or "").strip()
     description = str(manifest.get("youtube_description") or "").strip()
