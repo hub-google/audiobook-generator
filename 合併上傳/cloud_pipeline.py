@@ -20,26 +20,76 @@ CHUNK = 8 * 1024 * 1024
 TRANSFER_RETRIES = 5
 SOURCE_DOWNLOAD_RETRIES = 8
 YOUTUBE_DESCRIPTION_LIMIT = 5000
+YOUTUBE_TIMELINE_BUDGET = 4400
+TIMELINE_GROUP_SIZES = (2, 5, 10, 20, 50, 100)
+
+
+def _output_chapters(item):
+    return [chapter for part in item["parts"] for chapter in part.get("chapter_timeline") or []]
+
+
+def _timestamp(seconds):
+    rounded = int(float(seconds) + 0.5)
+    hours, remainder = divmod(rounded, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _chapter_starts(chapters):
+    starts, elapsed = [], 0.0
+    for chapter in chapters:
+        starts.append(elapsed)
+        elapsed += float(chapter.get("dur") or 0.0)
+    return starts
+
+
+def _chapter_number(chapter):
+    return int(chapter.get("chap_num") or chapter.get("chapter") or 0)
+
+
+def _grouped_chapter_timeline(chapters, group_size):
+    starts = _chapter_starts(chapters)
+    lines = ["⏳ 影片章節時間軸："]
+    for offset in range(0, len(chapters), group_size):
+        group = chapters[offset:offset + group_size]
+        first, last = _chapter_number(group[0]), _chapter_number(group[-1])
+        label = f"第{first}章" if first == last else f"第{first}–{last}章"
+        lines.append(f"{_timestamp(starts[offset])} {label}")
+    return "\n".join(lines)
 
 
 def output_chapter_timeline(item):
-    chapters = [chapter for part in item["parts"] for chapter in part.get("chapter_timeline") or []]
+    chapters = _output_chapters(item)
     if not chapters:
         raise RuntimeError("merge output has no chapter timeline")
     from src.youtube_upload.metadata import build_chapter_timeline
     timeline = build_chapter_timeline(chapters)
-    if len(timeline) <= YOUTUBE_DESCRIPTION_LIMIT:
+    if len(timeline) <= YOUTUBE_TIMELINE_BUDGET:
         return timeline
-    # Very long compilations still retain every timestamp. Compact only the
-    # labels when YouTube's 5,000-character description limit requires it.
+    # Keep every displayed timestamp first, while shortening only its label.
     compact = [timeline.splitlines()[0]]
     for line in timeline.splitlines()[1:]:
         timestamp, _, label = line.partition(" ")
         number = re.search(r"\d+", label)
-        compact.append(f"{timestamp} {number.group(0) if number else label}")
+        compact.append(f"{timestamp} 第{number.group(0)}章" if number else line)
     result = "\n".join(compact)
-    if len(result) > YOUTUBE_DESCRIPTION_LIMIT:
-        raise RuntimeError("complete chapter timeline exceeds YouTube's 5,000-character description limit")
+    if len(result) <= YOUTUBE_TIMELINE_BUDGET:
+        return result
+    for group_size in TIMELINE_GROUP_SIZES:
+        result = _grouped_chapter_timeline(chapters, group_size)
+        if len(result) <= YOUTUBE_TIMELINE_BUDGET:
+            return result
+    # Pathological chapter counts may need a coarser group than the normal
+    # presets. Keep increasing it until a legal, non-empty description exists.
+    group_size = TIMELINE_GROUP_SIZES[-1] * 2
+    while group_size < len(chapters):
+        result = _grouped_chapter_timeline(chapters, group_size)
+        if len(result) <= YOUTUBE_TIMELINE_BUDGET:
+            return result
+        group_size *= 2
+    result = _grouped_chapter_timeline(chapters, len(chapters))
+    if not result or len(result) > YOUTUBE_TIMELINE_BUDGET:
+        raise RuntimeError("cannot build a legal YouTube chapter description")
     return result
 
 def repo_token():
@@ -206,7 +256,7 @@ def merge_output(args):
         concat.write_text(local_ffconcat_text(local_parts),encoding="utf-8")
         subprocess.run(["ffmpeg","-hide_banner","-y","-f","concat","-safe","0","-i",str(concat),"-map","0:v:0","-map","0:a:0","-c","copy",str(target)],check=True)
     validation=verify_complete_video(target,item["duration_seconds"])
-    manifest={"status":"merge_complete","plan_id":plan["plan_id"],"parts_revision":plan["repo_revision"],"output":item,"book_title":plan["book_title"],"youtube_title":item["youtube_title"],"youtube_description":output_chapter_timeline(item),"cover_path":f"{plan['book_root']}/master_cover.jpg","video_path":f"{root}/audiobook.mp4","bytes":validation["bytes"],"sha256":validation["sha256"],"media_info":validation}
+    manifest={"status":"merge_complete","plan_id":plan["plan_id"],"parts_revision":plan["repo_revision"],"output":item,"full_chapter_timeline":_output_chapters(item),"book_title":plan["book_title"],"youtube_title":item["youtube_title"],"youtube_description":output_chapter_timeline(item),"cover_path":f"{plan['book_root']}/master_cover.jpg","video_path":f"{root}/audiobook.mp4","bytes":validation["bytes"],"sha256":validation["sha256"],"media_info":validation}
     manifest_file=Path(args.bucket_mount,root,"merge_manifest.json"); manifest_file.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
     client, repo, _ = api()
     commit=client.create_commit(repo_id=repo,repo_type="dataset",commit_message=f"Publish full merge {plan['plan_id']} output {args.output_number}",operations=[CommitOperationAdd(path_in_repo=manifest["video_path"],path_or_fileobj=str(target)),CommitOperationAdd(path_in_repo=f"{root}/merge_manifest.json",path_or_fileobj=str(manifest_file))])
@@ -237,6 +287,10 @@ def phase1(args):
     description = str(manifest.get("youtube_description") or "").strip()
     if not title or not description:
         raise RuntimeError("merge manifest is missing YouTube title or chapter timeline")
+    if len(description) > YOUTUBE_DESCRIPTION_LIMIT:
+        description = output_chapter_timeline(manifest["output"])
+    if len(description) > YOUTUBE_DESCRIPTION_LIMIT:
+        raise RuntimeError("cannot build a legal YouTube description")
     if len(title) > 100:
         raise RuntimeError("YouTube title exceeds 100 characters")
     body={"snippet":{"title":title,"description":description},"status":{"privacyStatus":args.privacy}}
