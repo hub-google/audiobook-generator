@@ -99,6 +99,13 @@ def test_phase_one_refuses_bad_hf_checksum_before_contacting_youtube():
     youtube_post.assert_not_called()
 
 
+def test_phase_one_state_carries_book_identity_for_gui_progress():
+    source = (ROOT / "合併上傳" / "cloud_pipeline.py").read_text(encoding="utf-8")
+    assert '"book_title":manifest.get("book_title")' in source
+    assert '"plan_id":manifest.get("plan_id")' in source
+    assert '"output_number":(manifest.get("output") or {}).get("output_number")' in source
+
+
 def test_hf_verification_accepts_only_exact_size_and_checksum():
     module = cloud_pipeline_module()
     payload = b"complete merged video"
