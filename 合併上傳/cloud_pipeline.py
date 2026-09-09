@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse, hashlib, json, os, re, subprocess, sys, tempfile, time, urllib.parse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
@@ -51,6 +52,35 @@ def remote_json(path, revision="main"):
 def upload_json(path, value, message):
     client, repo, _ = api(); client.upload_file(path_or_fileobj=(json.dumps(value,ensure_ascii=False,indent=2)+"\n").encode(),path_in_repo=path,repo_id=repo,repo_type="dataset",commit_message=message)
 def output_root(plan_id, number): return f"_system/full_merges/{plan_id}/output-{number:03d}"
+
+def next_hourly_scan(target, minute=17):
+    candidate = target.replace(minute=minute, second=0, microsecond=0)
+    if candidate < target:
+        candidate += timedelta(hours=1)
+    return candidate
+
+def write_phase1_summary(state, title):
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "").strip()
+    if not summary_path:
+        return
+    taipei = ZoneInfo("Asia/Taipei")
+    paused = datetime.fromisoformat(state["paused_at"]).astimezone(taipei)
+    target = datetime.fromisoformat(state["target_resume_at"]).astimezone(taipei)
+    scan = next_hourly_scan(target)
+    confirmed_percent = (int(state["confirmed_bytes"]) / int(state["total_size"]) * 100)
+    text = (
+        "## YouTube 兩階段上傳狀態\n\n"
+        "✅ 本次流程成功：影片已合併並暫停在 YouTube 續傳工作階段。\n\n"
+        f"- 影片：{title}\n"
+        f"- 目前進度：{confirmed_percent:.2f}%（尚未完成發布）\n"
+        f"- 暫停時間（台北）：{paused:%Y-%m-%d %H:%M:%S}\n"
+        f"- 可開始續傳（台北）：{target:%Y-%m-%d %H:%M:%S}\n"
+        f"- 預計排程啟動 Phase 2（台北）：{scan:%Y-%m-%d %H:%M:%S}\n"
+        "- 下一步：`hf-upload-resume-scheduler.yml` 將自動觸發 `resume-hf-upload.yml`，補完最後 2%、設定封面並完成 YouTube 發布。\n"
+        "- 注意：此 run 顯示 Success 只代表 Phase 1 成功，不代表 YouTube 影片已完整發布。\n"
+    )
+    with open(summary_path, "a", encoding="utf-8") as handle:
+        handle.write(text)
 
 def ffconcat_text(urls, token):
     return "ffconcat version 1.0\n" + "".join(
@@ -188,6 +218,7 @@ def phase1(args):
     confirmed,video_id=query(session,total,cred); now=datetime.now(timezone.utc)
     state={"status":"paused_at_98","session_url":session,"session_id":hashlib.sha256(session.encode()).hexdigest()[:20],"manifest_path":args.manifest,"source_revision":source_revision(manifest),"total_size":total,"confirmed_bytes":confirmed,"paused_at":now.isoformat(),"target_resume_at":(now+timedelta(hours=24)).isoformat(),"privacy":args.privacy,"video_id":video_id,"credential_slot":int(getattr(args,"credential_slot",None) or 1)}
     upload_json(args.state_path,state,"Save two-phase YouTube session")
+    write_phase1_summary(state, title)
 
 def phase2(args):
     state=remote_json(args.state_path); manifest=remote_json(state["manifest_path"]); total=int(manifest["bytes"])

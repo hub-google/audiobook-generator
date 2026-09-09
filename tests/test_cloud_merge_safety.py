@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import threading
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -125,6 +126,24 @@ def test_hf_range_download_retries_an_interrupted_chunk():
          patch.object(module.requests, "get", side_effect=[broken, good]), \
          patch.object(module.time, "sleep"):
         assert module.read_range("https://hf/video", 0, 3) == b"abcd"
+
+
+def test_phase_one_summary_explains_success_means_paused_and_shows_resume_schedule(tmp_path, monkeypatch):
+    module = cloud_pipeline_module()
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    state = {
+        "paused_at": "2026-09-09T07:35:00+00:00",
+        "target_resume_at": "2026-09-10T07:35:00+00:00",
+        "confirmed_bytes": 98,
+        "total_size": 100,
+    }
+    module.write_phase1_summary(state, "測試小說")
+    text = summary.read_text(encoding="utf-8")
+    assert "目前進度：98.00%（尚未完成發布）" in text
+    assert "可開始續傳（台北）：2026-09-10 15:35:00" in text
+    assert "預計排程啟動 Phase 2（台北）：2026-09-10 16:17:00" in text
+    assert "Success 只代表 Phase 1 成功" in text
 
 
 def test_complete_video_validation_reads_all_packets_after_probe():
