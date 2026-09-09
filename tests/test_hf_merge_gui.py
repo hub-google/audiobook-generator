@@ -26,6 +26,27 @@ def test_book_sort_values_use_raw_numeric_metadata(monkeypatch):
     assert gui.book_sort_value(book, "size") == 2_000
 
 
+def test_delete_token_is_separate_from_regular_hf_token(monkeypatch):
+    monkeypatch.syspath_prepend(str(MERGE_DIR))
+    gui = load_module("gui")
+    monkeypatch.setenv("HF_TOKEN", "regular-token")
+    monkeypatch.setenv("HF_DELETE_TOKEN", "delete-token")
+    assert gui.resolve_hf_delete_token() == "delete-token"
+
+
+def test_delete_token_does_not_fall_back_to_regular_token(monkeypatch):
+    monkeypatch.syspath_prepend(str(MERGE_DIR))
+    gui = load_module("gui")
+    monkeypatch.setenv("HF_TOKEN", "regular-token")
+    monkeypatch.delenv("HF_DELETE_TOKEN", raising=False)
+    try:
+        gui.resolve_hf_delete_token()
+    except ValueError as exc:
+        assert "HF_DELETE_TOKEN" in str(exc)
+    else:
+        raise AssertionError("regular HF_TOKEN was incorrectly accepted for deletion")
+
+
 def test_delete_book_removes_only_exact_book_folder_and_invalidates_cache(tmp_path):
     catalog = load_module("hf_catalog")
     instance = catalog.HfCatalog.__new__(catalog.HfCatalog)

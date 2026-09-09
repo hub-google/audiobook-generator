@@ -34,6 +34,13 @@ def resolve_hf_repo():
     from huggingface_hub import HfApi
     return f"{HfApi(token=os.getenv('HF_TOKEN')).whoami()['name']}/audiobook-archive"
 
+def resolve_hf_delete_token():
+    """Keep destructive HF access separate from the regular workflow token."""
+    token = os.getenv("HF_DELETE_TOKEN", "").strip()
+    if not token:
+        raise ValueError("HF_DELETE_TOKEN 尚未設定；刪除資料夾必須使用獨立的寫入 Token")
+    return token
+
 BOOK_COLUMNS = {
     "title": "小說", "parts": "MP4 部數", "chapters": "章節",
     "duration": "MP4 總時長", "size": "總容量", "status": "完整性",
@@ -177,7 +184,7 @@ class MergeUploadGUI(tk.Tk):
         threading.Thread(target=self._delete_book,args=(book,),daemon=True).start()
     def _delete_book(self,book):
         try:
-            token=os.getenv("HF_TOKEN","").strip(); repo=resolve_hf_repo(); HfCatalog(repo,token).delete_book(book)
+            token=resolve_hf_delete_token(); repo=resolve_hf_repo(); HfCatalog(repo,token).delete_book(book)
             self.after(0,self._book_deleted,book)
         except Exception as exc:
             self.after(0,self._delete_book_error,f"HF 資料夾刪除失敗：{type(exc).__name__}: {exc}")
