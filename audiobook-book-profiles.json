@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
-  "revision": 90,
-  "updated_at": "2026-09-09T01:00:47.780522+00:00",
+  "revision": 91,
+  "updated_at": "2026-09-09T01:09:42.627835+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -299,14 +299,14 @@
         "《之王旗飛揚》完。"
       ],
       "duplicate_detection": {
-        "use_normalized_number": false,
-        "use_chapter_name": true,
+        "use_normalized_number": true,
+        "use_chapter_name": false,
         "use_number_and_name": false
       },
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 3,
-      "updated_at": "2026-08-24T07:54:38.830458+00:00",
+      "profile_revision": 4,
+      "updated_at": "2026-09-09T01:09:42.627835+00:00",
       "manual_cover": {
         "source": "manual_upload",
         "provider": "github",
