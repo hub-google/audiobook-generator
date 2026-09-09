@@ -63,3 +63,14 @@ def test_merge_upload_uses_manifest_title_and_chapter_timeline():
 def test_scheduler_and_resume_workflows_parse():
     assert workflow("hf-upload-resume-scheduler.yml")
     assert workflow("resume-hf-upload.yml")
+
+
+def test_resume_scheduler_runs_hourly_and_keeps_only_latest_run_record():
+    text = (ROOT / ".github" / "workflows" / "hf-upload-resume-scheduler.yml").read_text(encoding="utf-8")
+    parsed = workflow("hf-upload-resume-scheduler.yml")
+    assert parsed[True]["schedule"] == [{"cron": "17 * * * *"}]
+    assert "Delete older resume scheduler run records" in text
+    assert "actions/workflows/hf-upload-resume-scheduler.yml/runs?per_page=100" in text
+    assert 'select(.id != ($CURRENT_RUN_ID | tonumber))' in text
+    assert 'actions/runs/$old_run_id/cancel' in text
+    assert '--method DELETE "repos/$REPOSITORY/actions/runs/$old_run_id"' in text

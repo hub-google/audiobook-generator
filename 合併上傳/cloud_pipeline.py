@@ -16,6 +16,7 @@ from merge_plan import build_plan
 from src.artifact_validation import validate_video
 
 CHUNK = 8 * 1024 * 1024
+TRANSFER_RETRIES = 5
 YOUTUBE_DESCRIPTION_LIMIT = 5000
 
 
@@ -74,6 +75,34 @@ def verify_complete_video(path, expected_duration):
     ], check=True)
     return validation
 
+def source_revision(manifest):
+    revision = str(manifest.get("output_revision") or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise RuntimeError("merge manifest has no immutable source revision")
+    return revision
+
+
+def resolve_url(path, revision):
+    repo,_=repo_token()
+    return f"https://huggingface.co/datasets/{repo}/resolve/{revision}/{urllib.parse.quote(path,safe='/')}"
+
+
+def read_range(url,start,end, retries=TRANSFER_RETRIES):
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            with requests.get(url,headers={"Authorization":f"Bearer {repo_token()[1]}","Range":f"bytes={start}-{end}"},stream=True,timeout=(30,180)) as response:
+                if response.status_code!=206: raise RuntimeError(f"HF did not honor byte range: HTTP {response.status_code}")
+                data=response.raw.read(end-start+1)
+            if len(data)!=end-start+1: raise RuntimeError("HF range response was truncated")
+            return data
+        except (requests.RequestException, OSError, RuntimeError) as error:
+            last_error = error
+            if attempt < retries:
+                time.sleep(min(2 ** (attempt - 1), 8))
+    raise RuntimeError(f"HF range download failed after {retries} attempts: {last_error}") from last_error
+
+
 def verified_hf_source(manifest):
     """Read the immutable HF object completely and verify it before contacting YouTube."""
     if manifest.get("status") != "merge_complete":
@@ -82,13 +111,11 @@ def verified_hf_source(manifest):
     expected_sha256 = str(manifest.get("sha256") or "").lower()
     if expected_size <= 0 or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
         raise RuntimeError("merge manifest has no valid size/checksum")
-    source = resolve_url(manifest["video_path"])
+    source = resolve_url(manifest["video_path"], source_revision(manifest))
     digest = hashlib.sha256(); received = 0
-    with requests.get(source, headers={"Authorization":f"Bearer {repo_token()[1]}"}, stream=True, timeout=(30, 300)) as response:
-        response.raise_for_status()
-        for block in response.iter_content(CHUNK):
-            if block:
-                digest.update(block); received += len(block)
+    while received < expected_size:
+        block = read_range(source, received, min(expected_size - 1, received + CHUNK - 1))
+        digest.update(block); received += len(block)
     if received != expected_size:
         raise RuntimeError(f"HF merged video size mismatch: expected {expected_size}, got {received}")
     if digest.hexdigest() != expected_sha256:
@@ -117,29 +144,24 @@ def merge_output(args):
         concat.write_text(ffconcat_text(urls, token),encoding="utf-8")
         subprocess.run(["ffmpeg","-hide_banner","-y","-protocol_whitelist","file,http,https,tcp,tls,crypto","-f","concat","-safe","0","-i",str(concat),"-map","0:v:0","-map","0:a:0","-c","copy",str(target)],check=True)
     validation=verify_complete_video(target,item["duration_seconds"])
-    manifest={"status":"merge_complete","plan_id":plan["plan_id"],"output":item,"book_title":plan["book_title"],"youtube_title":item["youtube_title"],"youtube_description":output_chapter_timeline(item),"cover_path":f"{plan['book_root']}/master_cover.jpg","video_path":f"{root}/audiobook.mp4","bytes":validation["bytes"],"sha256":validation["sha256"],"media_info":validation}
+    manifest={"status":"merge_complete","plan_id":plan["plan_id"],"parts_revision":plan["repo_revision"],"output":item,"book_title":plan["book_title"],"youtube_title":item["youtube_title"],"youtube_description":output_chapter_timeline(item),"cover_path":f"{plan['book_root']}/master_cover.jpg","video_path":f"{root}/audiobook.mp4","bytes":validation["bytes"],"sha256":validation["sha256"],"media_info":validation}
     manifest_file=Path(args.bucket_mount,root,"merge_manifest.json"); manifest_file.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
     client, repo, _ = api()
-    client.create_commit(repo_id=repo,repo_type="dataset",commit_message=f"Publish full merge {plan['plan_id']} output {args.output_number}",operations=[CommitOperationAdd(path_in_repo=manifest["video_path"],path_or_fileobj=str(target)),CommitOperationAdd(path_in_repo=f"{root}/merge_manifest.json",path_or_fileobj=str(manifest_file))])
+    commit=client.create_commit(repo_id=repo,repo_type="dataset",commit_message=f"Publish full merge {plan['plan_id']} output {args.output_number}",operations=[CommitOperationAdd(path_in_repo=manifest["video_path"],path_or_fileobj=str(target)),CommitOperationAdd(path_in_repo=f"{root}/merge_manifest.json",path_or_fileobj=str(manifest_file))])
+    manifest["output_revision"] = str(commit.oid)
+    upload_json(f"{root}/merge_manifest.json", manifest, f"Pin full merge {plan['plan_id']} output {args.output_number}")
 
-def credentials():
+def credentials(slot=None):
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
-    for n in range(1,11):
+    slots = [int(slot)] if slot else range(1,11)
+    for n in slots:
         values=[os.getenv(f"YOUTUBE_{key}_{n}","") for key in ("CLIENT_ID","CLIENT_SECRET","REFRESH_TOKEN")]
         if all(values):
             cred=Credentials(None,refresh_token=values[2],token_uri="https://oauth2.googleapis.com/token",client_id=values[0],client_secret=values[1]); cred.refresh(Request()); return cred
     raise RuntimeError("No YouTube credentials")
 
-def resolve_url(path):
-    repo,_=repo_token(); return f"https://huggingface.co/datasets/{repo}/resolve/main/{urllib.parse.quote(path,safe='/')}"
 def put_chunk(url,start,total,data): return requests.put(url,headers={"Content-Length":str(len(data)),"Content-Range":f"bytes {start}-{start+len(data)-1}/{total}"},data=data,timeout=180)
-def read_range(url,start,end):
-    with requests.get(url,headers={"Authorization":f"Bearer {repo_token()[1]}","Range":f"bytes={start}-{end}"},stream=True,timeout=180) as response:
-        if response.status_code!=206: raise RuntimeError(f"HF did not honor byte range: HTTP {response.status_code}")
-        data=response.raw.read(end-start+1)
-    if len(data)!=end-start+1: raise RuntimeError("HF range response was truncated")
-    return data
 def query(url,total,cred):
     response=requests.put(url,headers={"Authorization":f"Bearer {cred.token}","Content-Length":"0","Content-Range":f"bytes */{total}"},timeout=60)
     if response.status_code in (200,201): return total,(response.json() or {}).get("id")
@@ -147,7 +169,7 @@ def query(url,total,cred):
     value=response.headers.get("Range",""); return (int(value.rsplit("-",1)[1])+1 if "-" in value else 0),None
 
 def phase1(args):
-    manifest=remote_json(args.manifest); total=int(manifest["bytes"]); source=verified_hf_source(manifest); cred=credentials()
+    manifest=remote_json(args.manifest); total=int(manifest["bytes"]); source=verified_hf_source(manifest); cred=credentials(getattr(args,"credential_slot",None))
     headers={"Authorization":f"Bearer {cred.token}","Content-Type":"application/json; charset=UTF-8","X-Upload-Content-Length":str(total),"X-Upload-Content-Type":"video/mp4"}
     title = str(args.title or manifest.get("youtube_title") or "").strip()
     description = str(manifest.get("youtube_description") or "").strip()
@@ -164,13 +186,13 @@ def phase1(args):
         if result.status_code not in (200,201,308): raise RuntimeError(f"YouTube chunk failed: {result.status_code}")
         sent += len(data)
     confirmed,video_id=query(session,total,cred); now=datetime.now(timezone.utc)
-    state={"status":"paused_at_98","session_url":session,"session_id":hashlib.sha256(session.encode()).hexdigest()[:20],"manifest_path":args.manifest,"total_size":total,"confirmed_bytes":confirmed,"paused_at":now.isoformat(),"target_resume_at":(now+timedelta(hours=24)).isoformat(),"privacy":args.privacy,"video_id":video_id}
+    state={"status":"paused_at_98","session_url":session,"session_id":hashlib.sha256(session.encode()).hexdigest()[:20],"manifest_path":args.manifest,"source_revision":source_revision(manifest),"total_size":total,"confirmed_bytes":confirmed,"paused_at":now.isoformat(),"target_resume_at":(now+timedelta(hours=24)).isoformat(),"privacy":args.privacy,"video_id":video_id,"credential_slot":int(getattr(args,"credential_slot",None) or 1)}
     upload_json(args.state_path,state,"Save two-phase YouTube session")
 
 def phase2(args):
     state=remote_json(args.state_path); manifest=remote_json(state["manifest_path"]); total=int(manifest["bytes"])
-    if total!=int(state["total_size"]): raise RuntimeError("HF merged video changed")
-    cred=credentials(); sent,video_id=query(state["session_url"],total,cred); source=resolve_url(manifest["video_path"])
+    if total!=int(state["total_size"]) or source_revision(manifest)!=state.get("source_revision"): raise RuntimeError("HF merged video changed")
+    cred=credentials(state.get("credential_slot")); sent,video_id=query(state["session_url"],total,cred); source=resolve_url(manifest["video_path"],source_revision(manifest))
     while sent<total:
         end=min(total-1,sent+CHUNK-1); data=read_range(source,sent,end)
         response=put_chunk(state["session_url"],sent,total,data)
@@ -191,9 +213,11 @@ def scan_due(_args):
         if not path.startswith("_system/full_merges/") or not path.endswith("/upload_state.json"): continue
         state=remote_json(path)
         if state.get("status")!="paused_at_98" or datetime.fromisoformat(state["target_resume_at"])>now: continue
-        response=requests.post(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/resume-hf-upload.yml/dispatches",headers={"Authorization":f"Bearer {os.environ['GITHUB_TOKEN']}","Accept":"application/vnd.github+json"},json={"ref":os.environ.get("GITHUB_REF_NAME","main"),"inputs":{"state_path":path}},timeout=30)
-        if response.status_code not in (204,): raise RuntimeError(f"resume dispatch failed: {response.status_code} {response.text}")
         state["status"]="resume_dispatched"; state["resume_attempts"]=int(state.get("resume_attempts") or 0)+1; state["resume_dispatched_at"]=now.isoformat(); upload_json(path,state,"Dispatch phase 2")
+        response=requests.post(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/resume-hf-upload.yml/dispatches",headers={"Authorization":f"Bearer {os.environ['GITHUB_TOKEN']}","Accept":"application/vnd.github+json"},json={"ref":os.environ.get("GITHUB_REF_NAME","main"),"inputs":{"state_path":path}},timeout=30)
+        if response.status_code not in (204,):
+            state["status"]="paused_at_98"; state["dispatch_error"]=f"HTTP {response.status_code}: {response.text[:300]}"; upload_json(path,state,"Restore failed phase 2 dispatch")
+            raise RuntimeError(f"resume dispatch failed: {response.status_code} {response.text}")
 
 def reset_resume(args):
     state=remote_json(args.state_path); attempts=int(state.get("resume_attempts") or 0)
@@ -202,6 +226,6 @@ def reset_resume(args):
     upload_json(args.state_path,state,"Record failed phase 2 attempt")
 
 def main():
-    p=argparse.ArgumentParser(); p.add_argument("command",choices=("plan","merge","phase1","phase2","scan","reset")); p.add_argument("--book-key"); p.add_argument("--revision",default=""); p.add_argument("--mode",choices=("all","max_hours")); p.add_argument("--max-hours",type=float); p.add_argument("--expected-plan-id",default=""); p.add_argument("--plan",default="plan.json"); p.add_argument("--output-number",type=int); p.add_argument("--bucket-mount"); p.add_argument("--manifest"); p.add_argument("--state-path"); p.add_argument("--privacy",default="public"); p.add_argument("--title",default=""); a=p.parse_args()
+    p=argparse.ArgumentParser(); p.add_argument("command",choices=("plan","merge","phase1","phase2","scan","reset")); p.add_argument("--book-key"); p.add_argument("--revision",default=""); p.add_argument("--mode",choices=("all","max_hours")); p.add_argument("--max-hours",type=float); p.add_argument("--expected-plan-id",default=""); p.add_argument("--plan",default="plan.json"); p.add_argument("--output-number",type=int); p.add_argument("--bucket-mount"); p.add_argument("--manifest"); p.add_argument("--state-path"); p.add_argument("--privacy",choices=("private","unlisted","public"),default="public"); p.add_argument("--title",default=""); p.add_argument("--credential-slot",type=int,choices=range(1,11)); a=p.parse_args()
     {"plan":make_plan,"merge":merge_output,"phase1":phase1,"phase2":phase2,"scan":scan_due,"reset":reset_resume}[a.command](a)
 if __name__=="__main__": main()

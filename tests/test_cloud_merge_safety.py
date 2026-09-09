@@ -77,11 +77,12 @@ def test_phase_one_refuses_bad_hf_checksum_before_contacting_youtube():
     response = Mock()
     response.__enter__ = Mock(return_value=response)
     response.__exit__ = Mock(return_value=False)
-    response.iter_content.return_value = [payload]
-    response.raise_for_status.return_value = None
+    response.status_code = 206
+    response.raw.read.return_value = payload
     manifest = {
         "status": "merge_complete", "bytes": len(payload),
         "sha256": "0" * 64, "video_path": "merged/audiobook.mp4",
+        "output_revision": "a" * 40,
         "youtube_title": "title", "youtube_description": "00:00 chapter",
     }
     args = SimpleNamespace(manifest="manifest.json", title="", privacy="public", state_path="state.json")
@@ -103,14 +104,27 @@ def test_hf_verification_accepts_only_exact_size_and_checksum():
     response = Mock()
     response.__enter__ = Mock(return_value=response)
     response.__exit__ = Mock(return_value=False)
-    response.iter_content.return_value = [payload[:5], payload[5:]]
-    response.raise_for_status.return_value = None
+    response.status_code = 206
+    response.raw.read.return_value = payload
     manifest = {"status": "merge_complete", "bytes": len(payload),
-                "sha256": hashlib.sha256(payload).hexdigest(), "video_path": "merged/audiobook.mp4"}
+                "sha256": hashlib.sha256(payload).hexdigest(), "video_path": "merged/audiobook.mp4",
+                "output_revision": "a" * 40}
     with patch.object(module, "resolve_url", return_value="https://hf/video"), \
          patch.object(module, "repo_token", return_value=("repo", "token")), \
          patch.object(module.requests, "get", return_value=response):
         assert module.verified_hf_source(manifest) == "https://hf/video"
+
+
+def test_hf_range_download_retries_an_interrupted_chunk():
+    module = cloud_pipeline_module()
+    broken = Mock(); broken.__enter__ = Mock(return_value=broken); broken.__exit__ = Mock(return_value=False)
+    broken.status_code = 206; broken.raw.read.side_effect = module.requests.ConnectionError("broken")
+    good = Mock(); good.__enter__ = Mock(return_value=good); good.__exit__ = Mock(return_value=False)
+    good.status_code = 206; good.raw.read.return_value = b"abcd"
+    with patch.object(module, "repo_token", return_value=("repo", "token")), \
+         patch.object(module.requests, "get", side_effect=[broken, good]), \
+         patch.object(module.time, "sleep"):
+        assert module.read_range("https://hf/video", 0, 3) == b"abcd"
 
 
 def test_complete_video_validation_reads_all_packets_after_probe():

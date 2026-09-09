@@ -466,6 +466,11 @@ def run_finalize(args):
             merge(chunks, output, temp / "final.ffconcat")
             if not output.is_file() or output.stat().st_size <= 0:
                 raise RuntimeError("FFmpeg did not produce the final HF audiobook")
+            import subprocess
+            subprocess.run([
+                "ffmpeg", "-v", "error", "-xerror", "-i", str(output),
+                "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-f", "null", "-",
+            ], check=True)
             report.update({
                 "stage": "uploading_hf_file", "merged_chapters": planned,
                 "output_bytes": output.stat().st_size,

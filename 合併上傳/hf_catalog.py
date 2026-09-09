@@ -150,6 +150,11 @@ class HfCatalog:
                                   timeline)
                 with ThreadPoolExecutor(max_workers=min(12, max(1, len(raw_parts)))) as pool:
                     parts = list(pool.map(read_part, enumerate(raw_parts, 1)))
+                for position, part in enumerate(parts):
+                    if part.start_chapter <= 0 or part.end_chapter < part.start_chapter:
+                        raise ValueError(f"Part {part.number} 章節範圍無效")
+                    if position and part.start_chapter != parts[position - 1].end_chapter + 1:
+                        raise ValueError(f"Part {parts[position - 1].number} 與 Part {part.number} 章節不連續")
                 return HfBook(key, str(index.get("book_title") or key), root, revision, parts)
             except Exception as exc:
                 return HfBook(key, key, root, revision, error=str(exc))

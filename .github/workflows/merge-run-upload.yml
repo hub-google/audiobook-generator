@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: "Source Actions run URL or numeric ID"
+        description: "Source Actions numeric run ID"
         required: true
         type: string
       privacy:
@@ -62,7 +62,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
         run: |
-          run_id=$(printf '%s' "$SOURCE_RUN_ID" | sed -E 's#^.*/actions/runs/([0-9]+)/?.*$#\1#')
+          run_id=$(printf '%s' "$SOURCE_RUN_ID")
           [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "Invalid source run: $SOURCE_RUN_ID" >&2; exit 1; }
           names=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false) | .name' | grep -E '^mp4-worker-[0-9]+$' | sort -t- -k3,3n)
           [[ -n "$names" ]] || { echo "No live mp4-worker artifacts" >&2; exit 1; }
