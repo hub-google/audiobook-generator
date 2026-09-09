@@ -14,7 +14,9 @@ on:
 
 permissions: {contents: read}
 concurrency:
-  group: hf-book-merge-${{ inputs.expected_plan_id }}
+  # HF throttles concurrent range/download traffic across separate books.
+  # Queue every full-book run behind one shared lock instead of failing with 429.
+  group: hf-book-merge-global
   cancel-in-progress: false
 
 jobs:
@@ -55,6 +57,8 @@ jobs:
     needs: plan
     strategy:
       fail-fast: false
+      # A single book may produce several outputs; keep their HF reads serial too.
+      max-parallel: 1
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ubuntu-latest
     timeout-minutes: 360

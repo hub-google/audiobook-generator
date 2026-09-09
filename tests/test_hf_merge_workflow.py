@@ -38,6 +38,26 @@ def test_cloud_workflow_only_artifacts_the_small_plan():
     assert "cloud_pipeline.py\" merge" in text
 
 
+def test_merge_downloads_pinned_parts_before_local_ffmpeg_concat():
+    text = (ROOT / "合併上傳" / "cloud_pipeline.py").read_text(encoding="utf-8")
+    merge = text.split("def merge_output", 1)[1].split("def credentials", 1)[0]
+    assert "download_pinned_part" in merge
+    assert "local_ffconcat_text" in merge
+    assert "https://huggingface.co" not in merge
+    assert "-protocol_whitelist" not in merge
+
+
+def test_full_book_merges_are_globally_serialized_including_split_outputs():
+    parsed = workflow("merge-hf-book.yml")
+    assert parsed["concurrency"] == {
+        "group": "hf-book-merge-global",
+        "cancel-in-progress": False,
+    }
+    strategy = parsed["jobs"]["merge_and_pause"]["strategy"]
+    assert strategy["fail-fast"] is False
+    assert strategy["max-parallel"] == 1
+
+
 def test_phase_one_records_24_hours_and_98_percent():
     text = (ROOT / "合併上傳" / "cloud_pipeline.py").read_text(encoding="utf-8")
     assert "int(total*.98)" in text
@@ -52,6 +72,14 @@ def test_gui_previews_exact_youtube_title_and_removes_old_heading():
     assert 'self.title("HF 有聲小說' not in text
 
 
+def test_gui_exposes_clickable_links_for_both_action_phases():
+    text = (ROOT / "合併上傳" / "gui.py").read_text(encoding="utf-8")
+    assert '"🔗 開啟合併 Run"' in text
+    assert '"🔗 開啟續傳 Run"' in text
+    assert 'column not in {"#2", "#4"}' in text
+    assert 'cursor="hand2" if linked else ""' in text
+
+
 def test_merge_upload_uses_manifest_title_and_chapter_timeline():
     text = (ROOT / "合併上傳" / "cloud_pipeline.py").read_text(encoding="utf-8")
     assert '"youtube_title":item["youtube_title"]' in text
@@ -63,6 +91,14 @@ def test_merge_upload_uses_manifest_title_and_chapter_timeline():
 def test_scheduler_and_resume_workflows_parse():
     assert workflow("hf-upload-resume-scheduler.yml")
     assert workflow("resume-hf-upload.yml")
+
+
+def test_resume_run_is_identifiable_by_book_and_scheduler_passes_title():
+    resume = (ROOT / ".github" / "workflows" / "resume-hf-upload.yml").read_text(encoding="utf-8")
+    pipeline = (ROOT / "合併上傳" / "cloud_pipeline.py").read_text(encoding="utf-8")
+    assert 'run-name: "【HF 續傳】${{ inputs.book_title || inputs.state_path }}"' in resume
+    assert 'book_title: {description: "Human-readable audiobook title for progress tracking"' in resume
+    assert '"book_title":str(state.get("book_title") or "")' in pipeline
 
 
 def test_resume_scheduler_runs_hourly_and_keeps_only_latest_run_record():

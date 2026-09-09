@@ -18,6 +18,7 @@ from src.artifact_validation import validate_video
 
 CHUNK = 8 * 1024 * 1024
 TRANSFER_RETRIES = 5
+SOURCE_DOWNLOAD_RETRIES = 8
 YOUTUBE_DESCRIPTION_LIMIT = 5000
 
 
@@ -88,6 +89,36 @@ def ffconcat_text(urls, token):
         "option headers 'Authorization: Bearer " + token + "'\n"
         for url in urls
     )
+
+def local_ffconcat_text(paths):
+    """Build a concat list from fully downloaded files, never remote URLs."""
+    return "ffconcat version 1.0\n" + "".join(
+        "file '" + Path(path).resolve().as_posix().replace("'", "'\\''") + "'\n"
+        for path in paths
+    )
+
+def download_pinned_part(repo, path, revision, token, local_dir, retries=SOURCE_DOWNLOAD_RETRIES):
+    """Download one immutable source Part with bounded exponential backoff."""
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            return Path(hf_hub_download(
+                repo, path, repo_type="dataset", token=token, revision=revision,
+                local_dir=local_dir,
+            ))
+        except Exception as error:
+            last_error = error
+            if attempt < retries:
+                delay = min(2 ** (attempt - 1), 60)
+                print(
+                    f"HF source download failed ({attempt}/{retries}) for {path}; "
+                    f"retrying in {delay}s: {error}",
+                    file=sys.stderr, flush=True,
+                )
+                time.sleep(delay)
+    raise RuntimeError(
+        f"HF source download failed after {retries} attempts for {path}: {last_error}"
+    ) from last_error
 
 def verify_complete_video(path, expected_duration):
     """Reject incomplete/corrupt merges before they can be published or uploaded."""
@@ -165,14 +196,15 @@ def make_plan(args):
 def merge_output(args):
     plan=json.loads(Path(args.plan).read_text(encoding="utf-8")); item=next(x for x in plan["outputs"] if x["output_number"]==args.output_number)
     _, repo, token=api(); root=output_root(plan["plan_id"],args.output_number); target=Path(args.bucket_mount)/root/"audiobook.mp4"; target.parent.mkdir(parents=True,exist_ok=True)
-    urls=[]
-    for part in item["parts"]:
-        encoded=urllib.parse.quote(part["video_path"],safe="/")
-        urls.append(f"https://huggingface.co/datasets/{repo}/resolve/{plan['repo_revision']}/{encoded}")
     with tempfile.TemporaryDirectory() as tmp:
+        source_dir=Path(tmp)/"source-parts"
+        local_parts=[
+            download_pinned_part(repo,part["video_path"],plan["repo_revision"],token,source_dir)
+            for part in item["parts"]
+        ]
         concat=Path(tmp)/"parts.ffconcat"
-        concat.write_text(ffconcat_text(urls, token),encoding="utf-8")
-        subprocess.run(["ffmpeg","-hide_banner","-y","-protocol_whitelist","file,http,https,tcp,tls,crypto","-f","concat","-safe","0","-i",str(concat),"-map","0:v:0","-map","0:a:0","-c","copy",str(target)],check=True)
+        concat.write_text(local_ffconcat_text(local_parts),encoding="utf-8")
+        subprocess.run(["ffmpeg","-hide_banner","-y","-f","concat","-safe","0","-i",str(concat),"-map","0:v:0","-map","0:a:0","-c","copy",str(target)],check=True)
     validation=verify_complete_video(target,item["duration_seconds"])
     manifest={"status":"merge_complete","plan_id":plan["plan_id"],"parts_revision":plan["repo_revision"],"output":item,"book_title":plan["book_title"],"youtube_title":item["youtube_title"],"youtube_description":output_chapter_timeline(item),"cover_path":f"{plan['book_root']}/master_cover.jpg","video_path":f"{root}/audiobook.mp4","bytes":validation["bytes"],"sha256":validation["sha256"],"media_info":validation}
     manifest_file=Path(args.bucket_mount,root,"merge_manifest.json"); manifest_file.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
@@ -245,7 +277,7 @@ def scan_due(_args):
         state=remote_json(path)
         if state.get("status")!="paused_at_98" or datetime.fromisoformat(state["target_resume_at"])>now: continue
         state["status"]="resume_dispatched"; state["resume_attempts"]=int(state.get("resume_attempts") or 0)+1; state["resume_dispatched_at"]=now.isoformat(); upload_json(path,state,"Dispatch phase 2")
-        response=requests.post(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/resume-hf-upload.yml/dispatches",headers={"Authorization":f"Bearer {os.environ['GITHUB_TOKEN']}","Accept":"application/vnd.github+json"},json={"ref":os.environ.get("GITHUB_REF_NAME","main"),"inputs":{"state_path":path}},timeout=30)
+        response=requests.post(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/resume-hf-upload.yml/dispatches",headers={"Authorization":f"Bearer {os.environ['GITHUB_TOKEN']}","Accept":"application/vnd.github+json"},json={"ref":os.environ.get("GITHUB_REF_NAME","main"),"inputs":{"state_path":path,"book_title":str(state.get("book_title") or "")}},timeout=30)
         if response.status_code not in (204,):
             state["status"]="paused_at_98"; state["dispatch_error"]=f"HTTP {response.status_code}: {response.text[:300]}"; upload_json(path,state,"Restore failed phase 2 dispatch")
             raise RuntimeError(f"resume dispatch failed: {response.status_code} {response.text}")

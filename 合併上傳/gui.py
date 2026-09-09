@@ -34,12 +34,32 @@ def resolve_hf_repo():
     from huggingface_hub import HfApi
     return f"{HfApi(token=os.getenv('HF_TOKEN')).whoami()['name']}/audiobook-archive"
 
+BOOK_COLUMNS = {
+    "title": "小說", "parts": "MP4 部數", "chapters": "章節",
+    "duration": "MP4 總時長", "size": "總容量", "status": "完整性",
+}
+
+def book_sort_value(book: HfBook, column: str):
+    """Return typed values so displayed units never cause lexical sorting."""
+    first = book.parts[0].start_chapter if book.parts else -1
+    last = book.parts[-1].end_chapter if book.parts else -1
+    values = {
+        "title": book.title.casefold(),
+        "parts": len(book.parts),
+        "chapters": (first, last),
+        "duration": book.total_duration,
+        "size": book.total_bytes,
+        "status": (0 if book.mergeable else 1, book.error.casefold()),
+    }
+    return values[column]
+
 class MergeUploadGUI(tk.Tk):
     def __init__(self):
         super().__init__(); load_local_env(ROOT)
         self.title("全集合併與兩階段上傳"); self.geometry("1380x920"); self.minsize(1080, 780)
         self.books, self.selected_book, self.current_plan, self.run_url = {}, None, None, ""
         self.status_rows, self._refresh_after = {}, None
+        self.book_sort_column, self.book_sort_reverse = "title", False
         self._build(); self.after(250, self.refresh_books)
 
     def _build(self):
@@ -47,15 +67,23 @@ class MergeUploadGUI(tk.Tk):
         self.repo_var=tk.StringVar(value="正在讀取 HF_ARCHIVE_REPO…"); ttk.Label(top,textvariable=self.repo_var).pack(side="left")
         self.refresh_btn=ttk.Button(top,text="重新整理清單與進度",command=lambda:self.refresh_books(True)); self.refresh_btn.pack(side="right")
         progress=ttk.LabelFrame(self,text="已發動合併的書（第一階段：合併＋上傳至 98%；第二階段：24 小時後續傳＋發布）",padding=8); progress.pack(fill="x",padx=14,pady=(0,8))
-        scols=("book","run","phase1","phase2","resume"); self.status_tree=ttk.Treeview(progress,columns=scols,show="headings",height=5)
-        for key,label,width in (("book","小說",280),("run","Actions Run",105),("phase1","第一階段",260),("phase2","第二階段",210),("resume","什麼時候會續做（台北時間）",300)):
+        scols=("book","phase1_run","phase1","phase2_run","phase2","resume"); self.status_tree=ttk.Treeview(progress,columns=scols,show="headings",height=5)
+        for key,label,width in (("book","小說",255),("phase1_run","第一階段 Run",120),("phase1","第一階段",220),("phase2_run","第二階段 Run",120),("phase2","第二階段",190),("resume","什麼時候會續做（台北時間）",285)):
             self.status_tree.heading(key,text=label); self.status_tree.column(key,width=width,anchor="w" if key in {"book","phase1","phase2","resume"} else "center")
-        self.status_tree.pack(fill="x"); self.status_tree.bind("<Double-1>",self.open_status_run)
+        self.status_tree.pack(fill="x")
+        self.status_tree.bind("<ButtonRelease-1>",self.open_status_run)
+        self.status_tree.bind("<Motion>",self.status_link_cursor)
         box=ttk.LabelFrame(self,text="1. 選擇 HF 上可合併的小說",padding=10); box.pack(fill="both",expand=True,padx=14,pady=(0,10))
-        cols=("title","parts","chapters","duration","size","status"); self.book_tree=ttk.Treeview(box,columns=cols,show="headings",height=9)
-        labels=("小說","MP4 部數","章節","MP4 總時長","總容量","完整性"); widths=(280,80,130,130,100,250)
-        for key,label,width in zip(cols,labels,widths): self.book_tree.heading(key,text=label); self.book_tree.column(key,width=width,anchor="center")
-        self.book_tree.column("title",anchor="w"); scroll=ttk.Scrollbar(box,orient="vertical",command=self.book_tree.yview)
+        book_actions=ttk.Frame(box); book_actions.pack(side="bottom",fill="x",pady=(8,0))
+        self.delete_book_btn=ttk.Button(book_actions,text="刪除選取小說的 HF 資料夾",command=self.delete_selected_book,state="disabled")
+        self.delete_book_btn.pack(side="right")
+        book_table=ttk.Frame(box); book_table.pack(fill="both",expand=True)
+        cols=tuple(BOOK_COLUMNS); self.book_tree=ttk.Treeview(book_table,columns=cols,show="headings",height=9)
+        widths=(280,80,130,130,100,250)
+        for key,width in zip(cols,widths):
+            self.book_tree.heading(key,text=BOOK_COLUMNS[key],command=lambda column=key:self.sort_books(column)); self.book_tree.column(key,width=width,anchor="center")
+        self._update_book_headings()
+        self.book_tree.column("title",anchor="w"); scroll=ttk.Scrollbar(book_table,orient="vertical",command=self.book_tree.yview)
         self.book_tree.configure(yscrollcommand=scroll.set); self.book_tree.pack(side="left",fill="both",expand=True); scroll.pack(side="right",fill="y")
         self.book_tree.bind("<<TreeviewSelect>>",self.on_select_book)
         opts=ttk.LabelFrame(self,text="2. 選擇合併方式",padding=10); opts.pack(fill="x",padx=14,pady=(0,10))
@@ -96,23 +124,70 @@ class MergeUploadGUI(tk.Tk):
         except Exception as exc: self.after(0,self._show_error,f"HF 清單讀取失敗：{type(exc).__name__}: {exc}")
     def _show_books(self,repo,books,statuses=None):
         self.repo_var.set(repo); self.books={b.key:b for b in books}; self.book_tree.delete(*self.book_tree.get_children())
-        for book in books:
+        ordered=sorted(books,key=lambda book:book_sort_value(book,self.book_sort_column),reverse=self.book_sort_reverse)
+        for book in ordered:
             chapters=f"{book.parts[0].start_chapter}–{book.parts[-1].end_chapter}" if book.parts else "—"
             self.book_tree.insert("","end",iid=book.key,values=(book.title,len(book.parts),chapters,format_duration(book.total_duration),format_size(book.total_bytes),"可合併" if book.mergeable else f"不可合併：{book.error}"))
         self.status_tree.delete(*self.status_tree.get_children()); self.status_rows={}
         for index,row in enumerate(statuses or []):
             iid=f"status-{index}"; self.status_rows[iid]=row
-            self.status_tree.insert("","end",iid=iid,values=(row["title"],f"#{row['run_id']}" if row.get("run_id") else "—",row["phase1"],row["phase2"],row["resume"]))
+            self.status_tree.insert("","end",iid=iid,values=(row["title"],"🔗 開啟合併 Run" if row.get("phase1_run_url") else "—",row["phase1"],"🔗 開啟續傳 Run" if row.get("phase2_run_url") else "尚未派送",row["phase2"],row["resume"]))
         self.status_var.set(f"共 {len(books)} 本；{len(statuses or [])} 本有合併紀錄"); self.refresh_btn.configure(state="normal")
         self._schedule_refresh()
+    def _update_book_headings(self):
+        for key,label in BOOK_COLUMNS.items():
+            arrow=(" ▼" if self.book_sort_reverse else " ▲") if key==self.book_sort_column else ""
+            self.book_tree.heading(key,text=label+arrow)
+    def sort_books(self,column):
+        if self.book_sort_column==column: self.book_sort_reverse=not self.book_sort_reverse
+        else: self.book_sort_column,self.book_sort_reverse=column,False
+        self._update_book_headings()
+        selected=set(self.book_tree.selection())
+        ordered=sorted(self.books.values(),key=lambda book:book_sort_value(book,column),reverse=self.book_sort_reverse)
+        for index,book in enumerate(ordered): self.book_tree.move(book.key,"",index)
+        if selected: self.book_tree.selection_set([key for key in selected if key in self.books])
     def open_status_run(self,_event=None):
-        selected=self.status_tree.selection()
-        if selected and self.status_rows.get(selected[0],{}).get("run_url"):
-            webbrowser.open(self.status_rows[selected[0]]["run_url"])
+        item=self.status_tree.identify_row(_event.y) if _event else ""
+        column=self.status_tree.identify_column(_event.x) if _event else ""
+        if not item or column not in {"#2", "#4"}:
+            return
+        row=self.status_rows.get(item,{}); url=row.get("phase2_run_url") if column == "#4" else row.get("phase1_run_url")
+        if url:
+            webbrowser.open(url)
+    def status_link_cursor(self,event):
+        item=self.status_tree.identify_row(event.y); column=self.status_tree.identify_column(event.x)
+        row=self.status_rows.get(item,{})
+        linked=(column == "#2" and row.get("phase1_run_url")) or (column == "#4" and row.get("phase2_run_url"))
+        self.status_tree.configure(cursor="hand2" if linked else "")
     def _show_error(self,message):
         self.status_var.set(message); self.refresh_btn.configure(state="normal"); self._schedule_refresh(); messagebox.showerror("錯誤",message)
     def on_select_book(self,_event=None):
-        selected=self.book_tree.selection(); self.selected_book=self.books.get(selected[0]) if selected else None; self.update_preview()
+        selected=self.book_tree.selection(); self.selected_book=self.books.get(selected[0]) if selected else None
+        self.delete_book_btn.configure(state="normal" if self.selected_book else "disabled"); self.update_preview()
+    def delete_selected_book(self):
+        book=self.selected_book
+        if not book: return
+        message=(f"將永久刪除 Hugging Face 上的整本小說資料夾：\n\n《{book.title}》\n{book.root}\n\n"
+                 "其中所有 MP4、JSON 與其他檔案都會刪除。此動作無法由本程式復原，確定繼續？")
+        if not messagebox.askyesno("確認刪除 HF 小說資料夾",message,icon="warning"): return
+        if self._refresh_after:
+            self.after_cancel(self._refresh_after); self._refresh_after=None
+        self.delete_book_btn.configure(state="disabled"); self.refresh_btn.configure(state="disabled")
+        self.status_var.set(f"正在刪除《{book.title}》的 HF 資料夾…")
+        threading.Thread(target=self._delete_book,args=(book,),daemon=True).start()
+    def _delete_book(self,book):
+        try:
+            token=os.getenv("HF_TOKEN","").strip(); repo=resolve_hf_repo(); HfCatalog(repo,token).delete_book(book)
+            self.after(0,self._book_deleted,book)
+        except Exception as exc:
+            self.after(0,self._delete_book_error,f"HF 資料夾刪除失敗：{type(exc).__name__}: {exc}")
+    def _delete_book_error(self,message):
+        self.delete_book_btn.configure(state="normal" if self.selected_book else "disabled")
+        self._show_error(message)
+    def _book_deleted(self,book):
+        self.selected_book=None; self.current_plan=None; self.delete_book_btn.configure(state="disabled")
+        self.status_var.set(f"已刪除《{book.title}》，正在重新掃描 HF 書庫…")
+        self.refresh_books(True)
     def update_preview(self,_event=None):
         self.preview_tree.delete(*self.preview_tree.get_children()); self.current_plan=None; book=self.selected_book
         if not book: self.detail_var.set("請先選擇一本小說。"); self.start_btn.configure(state="disabled"); return

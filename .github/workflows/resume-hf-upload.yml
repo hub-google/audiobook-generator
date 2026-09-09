@@ -1,8 +1,10 @@
 name: Resume HF audiobook YouTube upload
+run-name: "【HF 續傳】${{ inputs.book_title || inputs.state_path }}"
 on:
   workflow_dispatch:
     inputs:
       state_path: {description: "Protected HF upload state path", required: true, type: string}
+      book_title: {description: "Human-readable audiobook title for progress tracking", required: false, type: string}
 permissions: {contents: read}
 concurrency:
   group: hf-phase2-${{ inputs.state_path }}

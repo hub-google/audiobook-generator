@@ -29,6 +29,13 @@ def run_book_title(display_title):
     return text.split("｜", 1)[0].strip() or "（無法識別書名）"
 
 
+def resume_run_book_title(display_title):
+    text = str(display_title or "")
+    if not text.startswith("【HF 續傳】"):
+        return ""
+    return text[len("【HF 續傳】"):].strip()
+
+
 def phase1_text(run, jobs):
     status, conclusion = run.get("status"), run.get("conclusion")
     merge_jobs = [job for job in jobs if str(job.get("name", "")).startswith("merge_and_pause")]
@@ -97,8 +104,25 @@ def collect_status(repo_id, token, run_gh, limit=50):
                 jobs = json.loads(run_gh("run", "view", str(run["databaseId"]), "--repo", "hub-google/audiobook-generator", "--json", "jobs")).get("jobs") or []
             except Exception:
                 jobs = []
-        rows[title] = {"title": title, "run_id": run["databaseId"], "run_url": run.get("url", ""),
+        rows[title] = {"title": title, "phase1_run_id": run["databaseId"], "phase1_run_url": run.get("url", ""),
+                       "phase2_run_id": None, "phase2_run_url": "",
                        "phase1": phase1_text(run, jobs), "states": [], "updated_at": run.get("updatedAt", "")}
+
+    resume_runs = json.loads(run_gh(
+        "run", "list", "--repo", "hub-google/audiobook-generator", "--workflow", "resume-hf-upload.yml",
+        "--event", "workflow_dispatch", "--limit", str(limit),
+        "--json", "databaseId,displayTitle,status,conclusion,createdAt,updatedAt,url",
+    ))
+    for run in resume_runs:
+        title = resume_run_book_title(run.get("displayTitle"))
+        if not title:
+            continue
+        row = rows.setdefault(title, {"title": title, "phase1_run_id": None, "phase1_run_url": "",
+                                      "phase2_run_id": None, "phase2_run_url": "", "phase1": "已完成",
+                                      "states": [], "updated_at": ""})
+        if row.get("phase2_run_id") is None:
+            row["phase2_run_id"], row["phase2_run_url"] = run["databaseId"], run.get("url", "")
+        row["updated_at"] = max(row.get("updated_at") or "", run.get("updatedAt") or "")
 
     api = HfApi(token=token)
     files = api.list_repo_files(repo_id, repo_type="dataset")
@@ -114,7 +138,9 @@ def collect_status(repo_id, token, run_gh, limit=50):
                 title = str(json.loads(open(manifest, encoding="utf-8").read()).get("book_title") or "").strip()
             if not title:
                 continue
-            row = rows.setdefault(title, {"title": title, "run_id": None, "run_url": "", "phase1": "已完成", "states": [], "updated_at": ""})
+            row = rows.setdefault(title, {"title": title, "phase1_run_id": None, "phase1_run_url": "",
+                                           "phase2_run_id": None, "phase2_run_url": "", "phase1": "已完成",
+                                           "states": [], "updated_at": ""})
             row["states"].append(state)
             if row["phase1"].startswith("失敗") and state.get("status") in {"paused_at_98", "resume_dispatched", "complete"}:
                 row["phase1"] = "已完成"

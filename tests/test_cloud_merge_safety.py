@@ -72,6 +72,57 @@ def test_ffmpeg_really_reads_authenticated_concat_parts(tmp_path):
     assert seen_authorization and set(seen_authorization) == {"Bearer test-token"}
 
 
+def test_pinned_source_download_retries_rate_limit_and_keeps_revision(tmp_path):
+    module = cloud_pipeline_module()
+    downloaded = tmp_path / "part.mp4"
+    with patch.object(module, "hf_hub_download", side_effect=[RuntimeError("429 Too Many Requests"), str(downloaded)]) as download, \
+         patch.object(module.time, "sleep") as sleep:
+        result = module.download_pinned_part(
+            "owner/archive", "book/part.mp4", "a" * 40, "token", tmp_path, retries=2,
+        )
+    assert result == downloaded
+    assert download.call_count == 2
+    assert download.call_args.kwargs["revision"] == "a" * 40
+    assert download.call_args.kwargs["local_dir"] == tmp_path
+    sleep.assert_called_once_with(1)
+
+
+def test_local_concat_contains_no_remote_protocol_or_credentials(tmp_path):
+    module = cloud_pipeline_module()
+    content = module.local_ffconcat_text([tmp_path / "one.mp4", tmp_path / "two.mp4"])
+    assert "https://" not in content
+    assert "Authorization" not in content
+    assert content.count("file '") == 2
+
+
+def test_merge_downloads_every_part_before_running_ffmpeg(tmp_path):
+    module = cloud_pipeline_module()
+    plan = {
+        "plan_id": "plan", "repo_revision": "b" * 40, "book_title": "book",
+        "book_root": "books/book", "outputs": [{
+            "output_number": 1, "duration_seconds": 10, "youtube_title": "book",
+            "parts": [{"video_path": "one.mp4", "chapter_timeline": [{"chapter": 1, "start_seconds": 0, "title": "one"}]},
+                      {"video_path": "two.mp4", "chapter_timeline": [{"chapter": 2, "start_seconds": 5, "title": "two"}]}],
+        }],
+    }
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(__import__("json").dumps(plan), encoding="utf-8")
+    args = SimpleNamespace(plan=str(plan_path), output_number=1, bucket_mount=str(tmp_path / "bucket"))
+    local_parts = [tmp_path / "cached-one.mp4", tmp_path / "cached-two.mp4"]
+    with patch.object(module, "api", return_value=(Mock(), "owner/archive", "token")), \
+         patch.object(module, "download_pinned_part", side_effect=local_parts) as download, \
+         patch.object(module.subprocess, "run", side_effect=RuntimeError("stop after concat")) as run:
+        with pytest.raises(RuntimeError, match="stop after concat"):
+            module.merge_output(args)
+    assert download.call_count == 2
+    assert [call.args[1] for call in download.call_args_list] == ["one.mp4", "two.mp4"]
+    concat_path = Path(run.call_args.args[0][8])
+    # The temporary file is gone, so assert through the invoked command: it is local-only.
+    command = run.call_args.args[0]
+    assert "-protocol_whitelist" not in command
+    assert command[command.index("-i") + 1].endswith("parts.ffconcat")
+
+
 def test_phase_one_refuses_bad_hf_checksum_before_contacting_youtube():
     module = cloud_pipeline_module()
     payload = b"complete merged video"

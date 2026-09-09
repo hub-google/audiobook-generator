@@ -108,6 +108,23 @@ class HfCatalog:
                                         ensure_ascii=False), encoding="utf-8")
         os.replace(temporary, self.cache_path)
 
+    def delete_book(self, book: HfBook) -> None:
+        """Delete exactly one archived book folder from the HF dataset."""
+        expected_root = f"有聲小說/{book.key}"
+        if not book.key or book.root != expected_root or "/" in book.key or "\\" in book.key:
+            raise ValueError(f"拒絕刪除不安全的 HF 路徑：{book.root!r}")
+        self.api.delete_folder(
+            path_in_repo=book.root,
+            repo_id=self.repo_id,
+            repo_type="dataset",
+            commit_message=f"Remove completed audiobook archive: {book.title}",
+        )
+        try:
+            self.cache_path.unlink(missing_ok=True)
+        except OSError:
+            # A forced refresh still bypasses an undeletable local cache.
+            pass
+
     def list_books(self, force_refresh=False, revision: str | None = None) -> list[HfBook]:
         pinned_revision = bool(revision)
         if not force_refresh and not revision:

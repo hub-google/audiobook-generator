@@ -35,3 +35,9 @@ def test_phase_two_reports_earliest_resume_and_hourly_scan_in_taipei():
 
 def test_run_title_extracts_book_name():
     assert module().run_book_title("【HF 合併】七零，我成了年代文里的惡毒女配｜全部合併") == "七零，我成了年代文里的惡毒女配"
+
+
+def test_resume_run_title_extracts_book_name_and_rejects_legacy_unmapped_run():
+    status = module()
+    assert status.resume_run_book_title("【HF 續傳】七零，我成了年代文里的惡毒女配") == "七零，我成了年代文里的惡毒女配"
+    assert status.resume_run_book_title("Resume HF audiobook YouTube upload") == ""
