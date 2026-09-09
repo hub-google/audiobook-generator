@@ -14,8 +14,20 @@ def test_gui_dispatches_hf_identity_not_source_run_artifacts():
     text = (ROOT / "合併上傳" / "gui.py").read_text(encoding="utf-8")
     assert '"merge-hf-book.yml"' in text
     assert '"book_key"' in text
+    assert '("book_title",p["book_title"])' in text
     assert "source_run_id" not in text
     assert "mp4-worker" not in text
+
+
+def test_merge_run_name_is_human_readable_and_describes_grouping():
+    text = (ROOT / ".github" / "workflows" / "merge-hf-book.yml").read_text(encoding="utf-8")
+    parsed = workflow("merge-hf-book.yml")
+    inputs = parsed[True]["workflow_dispatch"]["inputs"]
+    assert inputs["book_title"]["required"] is True
+    assert "inputs.book_title" in text.splitlines()[1]
+    assert "inputs.book_key" not in text.splitlines()[1]
+    assert "全部合併" in text.splitlines()[1]
+    assert "每支最多 {0} 小時" in text.splitlines()[1]
 
 
 def test_cloud_workflow_only_artifacts_the_small_plan():

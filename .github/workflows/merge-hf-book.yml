@@ -1,10 +1,11 @@
 name: Merge HF audiobook and pause YouTube at 98%
-run-name: "【HF 合併】${{ inputs.book_key }}｜${{ inputs.merge_mode }}"
+run-name: "【HF 合併】${{ inputs.book_title }}｜${{ inputs.merge_mode == 'all' && '全部合併' || format('每支最多 {0} 小時', inputs.max_hours) }}"
 
 on:
   workflow_dispatch:
     inputs:
       book_key: {description: "HF source_fingerprint", required: true, type: string}
+      book_title: {description: "Human-readable audiobook title", required: true, type: string}
       repo_revision: {description: "Pinned HF revision", required: true, type: string}
       merge_mode: {description: "all or max_hours", required: true, type: choice, options: [max_hours, all]}
       max_hours: {description: "Maximum hours per output", required: false, type: string}

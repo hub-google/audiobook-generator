@@ -105,7 +105,7 @@ class MergeUploadGUI(tk.Tk):
     def _dispatch(self):
         try:
             p=self.current_plan; before=datetime.now(timezone.utc); fields=[]
-            for key,value in (("book_key",p["book_key"]),("repo_revision",p["repo_revision"]),("merge_mode",p["mode"]),("max_hours",p.get("max_hours") or ""),("expected_plan_id",p["plan_id"]),("privacy",self.privacy_var.get())): fields += ["-f",f"{key}={value}"]
+            for key,value in (("book_key",p["book_key"]),("book_title",p["book_title"]),("repo_revision",p["repo_revision"]),("merge_mode",p["mode"]),("max_hours",p.get("max_hours") or ""),("expected_plan_id",p["plan_id"]),("privacy",self.privacy_var.get())): fields += ["-f",f"{key}={value}"]
             run_gh("workflow","run",WORKFLOW,"--repo",REPOSITORY,*fields); run=self._find_run(before); self.run_url=run["url"]
             self.after(0,lambda:self.open_btn.configure(state="normal")); self.after(0,self.status_var.set,f"已送出 Run #{run['databaseId']}")
         except Exception as exc: self.after(0,self._show_error,f"送出失敗：{type(exc).__name__}: {exc}")
