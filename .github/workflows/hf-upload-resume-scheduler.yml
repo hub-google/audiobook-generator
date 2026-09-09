@@ -1,0 +1,25 @@
+name: HF audiobook 24-hour upload resume scheduler
+on:
+  schedule:
+    - cron: "2-57/5 * * * *"
+  workflow_dispatch:
+permissions:
+  actions: write
+  contents: read
+concurrency:
+  group: hf-audiobook-resume-scheduler
+  cancel-in-progress: false
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python "合併上傳/cloud_pipeline.py" scan

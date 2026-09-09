@@ -1,207 +1,121 @@
-"""Local control-panel GUI for the cloud merge/upload workflow."""
+"""HF audiobook grouping and cloud merge/upload control panel."""
 from __future__ import annotations
 
-import argparse
-import json
-import os
-import shutil
-import subprocess
-import threading
-import time
-import tkinter as tk
-import webbrowser
+import json, os, shutil, subprocess, sys, threading, time, tkinter as tk, webbrowser
 from datetime import datetime, timezone
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from merge_upload import normalize_run_id
+HERE = Path(__file__).resolve().parent; ROOT = HERE.parent
+sys.path.insert(0, str(HERE))
+from hf_catalog import HfBook, HfCatalog, load_local_env
+from merge_plan import build_plan, format_duration, format_size
 
-REPOSITORY = "hub-google/audiobook-generator"
-WORKFLOW = "merge-run-upload.yml"
+REPOSITORY, WORKFLOW = "hub-google/audiobook-generator", "merge-hf-book.yml"
 
-def find_gh() -> str:
-    found = shutil.which("gh")
-    if found:
-        return found
-    installed = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "GitHub CLI" / "gh.exe"
-    if installed.exists():
-        return str(installed)
-    raise FileNotFoundError("找不到 GitHub CLI。請先安裝 gh 並執行 gh auth login。")
+def find_gh():
+    fixed = Path(r"C:\Program Files\GitHub CLI\gh.exe")
+    return str(fixed if fixed.exists() else shutil.which("gh") or fixed)
 
-def run_gh(*args: str, check: bool = True) -> str:
-    result = subprocess.run(
-        [find_gh(), *args], capture_output=True, text=True, encoding="utf-8",
-        errors="replace", check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    if check and result.returncode:
-        raise RuntimeError((result.stderr or result.stdout).strip())
+def run_gh(*args):
+    result = subprocess.run([find_gh(), *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if result.returncode: raise RuntimeError((result.stderr or result.stdout).strip())
     return result.stdout
 
-def run_gh_json(*args: str, attempts: int = 4, retry_delay: float = 1.0):
-    """Run a gh command and tolerate short-lived empty/invalid API responses."""
-    last_error = None
-    for attempt in range(attempts):
-        try:
-            output = run_gh(*args)
-            if not output.strip():
-                raise RuntimeError("GitHub CLI 回傳空白內容")
-            return json.loads(output)
-        except (RuntimeError, json.JSONDecodeError) as error:
-            last_error = error
-            if attempt + 1 < attempts:
-                time.sleep(retry_delay)
-    command = "gh " + " ".join(args)
-    raise RuntimeError(f"{command} 連續 {attempts} 次未回傳有效 JSON：{last_error}") from last_error
+def resolve_hf_repo():
+    if os.getenv("HF_ARCHIVE_REPO", "").strip(): return os.environ["HF_ARCHIVE_REPO"].strip()
+    try:
+        value = str(json.loads(run_gh("api", f"repos/{REPOSITORY}/actions/variables/HF_ARCHIVE_REPO")).get("value") or "").strip()
+        if value: return value
+    except Exception:
+        pass
+    from huggingface_hub import HfApi
+    return f"{HfApi(token=os.getenv('HF_TOKEN')).whoami()['name']}/audiobook-archive"
 
 class MergeUploadGUI(tk.Tk):
     def __init__(self):
-        super().__init__()
-        self.title("有聲書 Run Artifacts 合併上傳")
-        self.geometry("900x680")
-        self.minsize(760, 560)
-        self.run_url = ""
-        self.pending_dispatch_after = None
-        self.active_run_id = ""
-        self.stop_event = threading.Event()
-        self._build()
+        super().__init__(); load_local_env(ROOT)
+        self.title("全集合併與兩階段上傳"); self.geometry("1380x790"); self.minsize(1080, 680)
+        self.books, self.selected_book, self.current_plan, self.run_url = {}, None, None, ""
+        self._build(); self.after(250, self.refresh_books)
 
     def _build(self):
-        form = ttk.Frame(self, padding=16); form.pack(fill="x")
-        self.vars = {
-            "source_run_id": tk.StringVar(), "privacy": tk.StringVar(value="public"),
-            "checkpoint_repo": tk.StringVar(),
-        }
-        labels = [("來源 Run ID", "source_run_id"),
-                  ("HF checkpoint repo（可留空）", "checkpoint_repo")]
-        for row, (label, key) in enumerate(labels):
-            ttk.Label(form, text=label).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=6)
-            ttk.Entry(form, textvariable=self.vars[key]).grid(row=row, column=1, sticky="ew", pady=6)
-        ttk.Label(form, text="YouTube 隱私").grid(row=2, column=0, sticky="w", padx=(0, 12), pady=6)
-        ttk.Combobox(form, textvariable=self.vars["privacy"], values=("private", "unlisted", "public"), state="readonly").grid(row=2, column=1, sticky="w", pady=6)
-        form.columnconfigure(1, weight=1)
+        top=ttk.Frame(self,padding=14); top.pack(fill="x")
+        self.repo_var=tk.StringVar(value="正在讀取 HF_ARCHIVE_REPO…"); ttk.Label(top,textvariable=self.repo_var).pack(side="left")
+        self.refresh_btn=ttk.Button(top,text="重新整理 HF 清單",command=lambda:self.refresh_books(True)); self.refresh_btn.pack(side="right")
+        box=ttk.LabelFrame(self,text="1. 選擇 HF 上可合併的小說",padding=10); box.pack(fill="both",expand=True,padx=14,pady=(0,10))
+        cols=("title","parts","chapters","duration","size","status"); self.book_tree=ttk.Treeview(box,columns=cols,show="headings",height=9)
+        labels=("小說","MP4 部數","章節","MP4 總時長","總容量","完整性"); widths=(280,80,130,130,100,250)
+        for key,label,width in zip(cols,labels,widths): self.book_tree.heading(key,text=label); self.book_tree.column(key,width=width,anchor="center")
+        self.book_tree.column("title",anchor="w"); scroll=ttk.Scrollbar(box,orient="vertical",command=self.book_tree.yview)
+        self.book_tree.configure(yscrollcommand=scroll.set); self.book_tree.pack(side="left",fill="both",expand=True); scroll.pack(side="right",fill="y")
+        self.book_tree.bind("<<TreeviewSelect>>",self.on_select_book)
+        opts=ttk.LabelFrame(self,text="2. 選擇合併方式",padding=10); opts.pack(fill="x",padx=14,pady=(0,10))
+        self.mode_var=tk.StringVar(value="hours"); ttk.Radiobutton(opts,text="每支影片最多",variable=self.mode_var,value="hours",command=self.update_preview).pack(side="left")
+        self.hours_var=tk.StringVar(value="48"); entry=ttk.Entry(opts,textvariable=self.hours_var,width=8); entry.pack(side="left",padx=(8,4)); entry.bind("<KeyRelease>",self.update_preview)
+        ttk.Label(opts,text="小時（依序放入最多 HF Parts，絕不超過）").pack(side="left")
+        ttk.Radiobutton(opts,text="全部合併成一部",variable=self.mode_var,value="all",command=self.update_preview).pack(side="left",padx=(30,0))
+        ttk.Label(opts,text="YouTube 隱私：").pack(side="left",padx=(30,4)); self.privacy_var=tk.StringVar(value="public")
+        ttk.Combobox(opts,textvariable=self.privacy_var,values=("private","unlisted","public"),state="readonly",width=10).pack(side="left")
+        preview=ttk.LabelFrame(self,text="3. 合併計畫預覽（每列會成為一支 YouTube 影片）",padding=10); preview.pack(fill="both",expand=True,padx=14,pady=(0,10))
+        pcols=("output","youtube_title","parts","chapters","duration","size"); self.preview_tree=ttk.Treeview(preview,columns=pcols,show="headings",height=8)
+        for key,label,width in (("output","輸出",70),("youtube_title","YouTube 影片名稱",520),("parts","HF Part 範圍",140),("chapters","章節範圍",130),("duration","精確時長",110),("size","來源總容量",110)):
+            self.preview_tree.heading(key,text=label); self.preview_tree.column(key,width=width,anchor="center")
+        self.preview_tree.column("youtube_title",anchor="w")
+        preview_scroll=ttk.Scrollbar(preview,orient="horizontal",command=self.preview_tree.xview)
+        self.preview_tree.configure(xscrollcommand=preview_scroll.set)
+        self.preview_tree.pack(fill="both",expand=True); preview_scroll.pack(fill="x")
+        bottom=ttk.Frame(self,padding=(14,0,14,12)); bottom.pack(fill="x")
+        self.start_btn=ttk.Button(bottom,text="送出 GitHub Actions 合併＋98% 上傳",command=self.start,state="disabled"); self.start_btn.pack(side="left")
+        self.open_btn=ttk.Button(bottom,text="開啟 Actions Run",command=lambda:webbrowser.open(self.run_url),state="disabled"); self.open_btn.pack(side="left",padx=8)
+        self.status_var=tk.StringVar(value="正在載入…"); ttk.Label(bottom,textvariable=self.status_var).pack(side="right")
+        self.detail_var=tk.StringVar(); ttk.Label(self,textvariable=self.detail_var,padding=(14,0,14,12),foreground="#555").pack(fill="x")
 
-        buttons = ttk.Frame(self, padding=(16, 0, 16, 10)); buttons.pack(fill="x")
-        self.start_button = ttk.Button(buttons, text="開始雲端合併上傳", command=self.start); self.start_button.pack(side="left")
-        ttk.Button(buttons, text="停止監看", command=self.stop_monitor).pack(side="left", padx=8)
-        self.open_button = ttk.Button(buttons, text="開啟 Actions Run", command=self.open_run, state="disabled"); self.open_button.pack(side="left")
-        self.status_var = tk.StringVar(value="就緒")
-        ttk.Label(buttons, textvariable=self.status_var).pack(side="right")
-        self.progress = ttk.Progressbar(self, mode="indeterminate"); self.progress.pack(fill="x", padx=16)
-        self.log = tk.Text(self, wrap="word", font=("Consolas", 10)); self.log.pack(fill="both", expand=True, padx=16, pady=12)
-        self.log.insert("end", "貼上完整的 GitHub Actions Run 網址或純數字 Run ID；書名與原始封面會從該 Run 自動讀取。影片處理在雲端進行，本機不下載 MP4。\n")
-
-    def append(self, message: str):
-        self.after(0, lambda: (self.log.insert("end", message.rstrip() + "\n"), self.log.see("end")))
-
-    def set_status(self, value: str): self.after(0, self.status_var.set, value)
-
+    def refresh_books(self,force=False):
+        self.refresh_btn.configure(state="disabled"); self.status_var.set("正在掃描 HF 書庫…" if force else "正在載入 HF 書庫快取…")
+        threading.Thread(target=self._load_books,args=(force,),daemon=True).start()
+    def _load_books(self,force=False):
+        try:
+            repo=resolve_hf_repo(); books=HfCatalog(repo,os.getenv("HF_TOKEN","").strip()).list_books(force_refresh=force)
+            self.after(0,self._show_books,repo,books)
+        except Exception as exc: self.after(0,self._show_error,f"HF 清單讀取失敗：{type(exc).__name__}: {exc}")
+    def _show_books(self,repo,books):
+        self.repo_var.set(repo); self.books={b.key:b for b in books}; self.book_tree.delete(*self.book_tree.get_children())
+        for book in books:
+            chapters=f"{book.parts[0].start_chapter}–{book.parts[-1].end_chapter}" if book.parts else "—"
+            self.book_tree.insert("","end",iid=book.key,values=(book.title,len(book.parts),chapters,format_duration(book.total_duration),format_size(book.total_bytes),"可合併" if book.mergeable else f"不可合併：{book.error}"))
+        self.status_var.set(f"共找到 {len(books)} 本小說"); self.refresh_btn.configure(state="normal")
+    def _show_error(self,message):
+        self.status_var.set(message); self.refresh_btn.configure(state="normal"); messagebox.showerror("錯誤",message)
+    def on_select_book(self,_event=None):
+        selected=self.book_tree.selection(); self.selected_book=self.books.get(selected[0]) if selected else None; self.update_preview()
+    def update_preview(self,_event=None):
+        self.preview_tree.delete(*self.preview_tree.get_children()); self.current_plan=None; book=self.selected_book
+        if not book: self.detail_var.set("請先選擇一本小說。"); self.start_btn.configure(state="disabled"); return
+        if not book.mergeable: self.detail_var.set(book.error); self.start_btn.configure(state="disabled"); return
+        try:
+            plan=build_plan(book,None if self.mode_var.get()=="all" else float(self.hours_var.get()))
+            for item in plan["outputs"]: self.preview_tree.insert("","end",values=(f"第 {item['output_number']} 支",item["youtube_title"],f"Part {item['part_start']:02d}–{item['part_end']:02d}",f"Ch {item['start_chapter']}–{item['end_chapter']}",format_duration(item["duration_seconds"]),format_size(item["bytes"])))
+            self.current_plan=plan; self.detail_var.set(f"計畫 {plan['plan_id']}｜{len(book.parts)} 個 HF MP4 → {len(plan['outputs'])} 支影片｜總時長 {format_duration(book.total_duration)}"); self.start_btn.configure(state="normal")
+        except (ValueError,TypeError) as exc: self.detail_var.set(str(exc)); self.start_btn.configure(state="disabled")
     def start(self):
-        if self.pending_dispatch_after is not None or self.active_run_id:
-            self.stop_event.clear(); self.start_button.configure(state="disabled"); self.progress.start(12)
-            self.append("\n重新連接已送出的 Actions run；不會再次送出 workflow。")
-            threading.Thread(target=self._resume_monitoring, daemon=True).start()
-            return
+        if not self.current_plan or not messagebox.askyesno("確認送出",f"將建立 {len(self.current_plan['outputs'])} 支影片。\n合併及兩階段上傳均在 GitHub Actions 執行，確定送出？"): return
+        self.start_btn.configure(state="disabled"); self.status_var.set("正在送出 GitHub Actions…"); threading.Thread(target=self._dispatch,daemon=True).start()
+    def _dispatch(self):
         try:
-            run_id = normalize_run_id(self.vars["source_run_id"].get())
-        except (argparse.ArgumentTypeError, TypeError, ValueError):
-            messagebox.showerror(
-                "輸入錯誤",
-                "請貼上 Run ID 數字，或完整的 GitHub Actions Run 網址。",
-            )
-            return
-        self.payload = {key: variable.get().strip() for key, variable in self.vars.items()}
-        self.payload["source_run_id"] = run_id
-        self.stop_event.clear(); self.start_button.configure(state="disabled"); self.progress.start(12)
-        self.log.delete("1.0", "end")
-        threading.Thread(target=self._dispatch_and_monitor, daemon=True).start()
-
-    def _dispatch_and_monitor(self):
-        try:
-            run_gh("auth", "status")
-            before = datetime.now(timezone.utc)
-            fields = []
-            for key in ("source_run_id", "privacy", "checkpoint_repo"):
-                fields.extend(("-f", f"{key}={self.payload[key]}"))
-            self.set_status("正在送出 workflow…"); self.append("正在送出 GitHub Actions workflow…")
-            run_gh("workflow", "run", WORKFLOW, "--repo", REPOSITORY, *fields)
-            self.pending_dispatch_after = before
-            self.set_status("已送出，正在尋找 Run…")
-            self.append("workflow 已成功送出；正在取得新 Run，請勿重複送出。")
-            self._connect_and_monitor()
-        except Exception as error:
-            if self.pending_dispatch_after is not None or self.active_run_id:
-                self.set_status("已送出；監看暫時中斷")
-                self.append(
-                    f"\nworkflow 已送出，但目前無法取得或監看 Run：{type(error).__name__}: {error}\n"
-                    "可按「重新連接已送出的 Run」繼續；不會建立重複 Run。"
-                )
-            else:
-                self.set_status("送出失敗"); self.append(f"\n送出失敗：{type(error).__name__}: {error}")
-        finally:
-            self.after(0, self._finish_background_work)
-
-    def _finish_background_work(self):
-        self.progress.stop()
-        self.start_button.configure(
-            state="normal",
-            text=("重新連接已送出的 Run" if self.pending_dispatch_after is not None or self.active_run_id
-                  else "開始雲端合併上傳"),
-        )
-
-    def _resume_monitoring(self):
-        try:
-            run_gh("auth", "status")
-            self._connect_and_monitor()
-        except Exception as error:
-            self.set_status("已送出；監看暫時中斷")
-            self.append(f"\n重新連接失敗：{type(error).__name__}: {error}")
-        finally:
-            self.after(0, self._finish_background_work)
-
-    def _connect_and_monitor(self):
-        if not self.active_run_id:
-            action_run = self._find_new_run(self.pending_dispatch_after)
-            self.active_run_id = str(action_run["databaseId"])
-            self.run_url = action_run["url"]
-            self.pending_dispatch_after = None
-            self.after(0, lambda: self.open_button.configure(state="normal"))
-            self.append(f"已建立 Actions run #{self.active_run_id}\n{self.run_url}")
-        self._monitor(self.active_run_id)
-
-    def _find_new_run(self, before):
+            p=self.current_plan; before=datetime.now(timezone.utc); fields=[]
+            for key,value in (("book_key",p["book_key"]),("repo_revision",p["repo_revision"]),("merge_mode",p["mode"]),("max_hours",p.get("max_hours") or ""),("expected_plan_id",p["plan_id"]),("privacy",self.privacy_var.get())): fields += ["-f",f"{key}={value}"]
+            run_gh("workflow","run",WORKFLOW,"--repo",REPOSITORY,*fields); run=self._find_run(before); self.run_url=run["url"]
+            self.after(0,lambda:self.open_btn.configure(state="normal")); self.after(0,self.status_var.set,f"已送出 Run #{run['databaseId']}")
+        except Exception as exc: self.after(0,self._show_error,f"送出失敗：{type(exc).__name__}: {exc}")
+        finally: self.after(0,lambda:self.start_btn.configure(state="normal" if self.current_plan else "disabled"))
+    def _find_run(self,after):
         for _ in range(30):
-            runs = run_gh_json("run", "list", "--repo", REPOSITORY, "--workflow", WORKFLOW, "--event", "workflow_dispatch", "--limit", "10", "--json", "databaseId,createdAt,status,conclusion,url")
+            runs=json.loads(run_gh("run","list","--repo",REPOSITORY,"--workflow",WORKFLOW,"--event","workflow_dispatch","--limit","10","--json","databaseId,createdAt,url"))
             for item in runs:
-                created = datetime.fromisoformat(item["createdAt"].replace("Z", "+00:00"))
-                if created >= before:
-                    return item
+                if datetime.fromisoformat(item["createdAt"].replace("Z","+00:00"))>=after:return item
             time.sleep(2)
-        raise RuntimeError("已送出 workflow，但 60 秒內找不到對應的 Actions run。")
+        raise RuntimeError("workflow 已送出，但 60 秒內找不到新 Run")
 
-    def _monitor(self, database_id: str):
-        previous = ""
-        while not self.stop_event.is_set():
-            data = run_gh_json("run", "view", database_id, "--repo", REPOSITORY, "--json", "status,conclusion,url,jobs")
-            jobs = data.get("jobs") or []
-            active = []
-            for job in jobs:
-                for step in job.get("steps") or []:
-                    if step.get("status") == "in_progress": active.append(step.get("name", ""))
-            snapshot = f"狀態: {data['status']} / {data.get('conclusion') or '-'}" + (f" | 目前步驟: {', '.join(active)}" if active else "")
-            if snapshot != previous: self.append(snapshot); previous = snapshot
-            self.set_status(snapshot)
-            if data["status"] == "completed":
-                if data.get("conclusion") == "success": self.append(f"\n執行成功。\n{data['url']}")
-                else:
-                    failed = run_gh("run", "view", database_id, "--repo", REPOSITORY, "--log-failed", check=False)
-                    self.append(f"\n執行失敗，以下是 failed step log：\n{failed or '沒有取得 failed log，請開啟 Actions run 查看 Summary。'}")
-                self.active_run_id = ""
-                return
-            time.sleep(15)
-        self.set_status("已停止監看（雲端作業仍繼續）")
-
-    def stop_monitor(self): self.stop_event.set()
-    def open_run(self):
-        if self.run_url: webbrowser.open(self.run_url)
-
-if __name__ == "__main__": MergeUploadGUI().mainloop()
+if __name__=="__main__": MergeUploadGUI().mainloop()

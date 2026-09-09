@@ -1,0 +1,53 @@
+from pathlib import Path
+
+import yaml
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def workflow(name):
+    return yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8"))
+
+
+def test_gui_dispatches_hf_identity_not_source_run_artifacts():
+    text = (ROOT / "合併上傳" / "gui.py").read_text(encoding="utf-8")
+    assert '"merge-hf-book.yml"' in text
+    assert '"book_key"' in text
+    assert "source_run_id" not in text
+    assert "mp4-worker" not in text
+
+
+def test_cloud_workflow_only_artifacts_the_small_plan():
+    text = (ROOT / ".github" / "workflows" / "merge-hf-book.yml").read_text(encoding="utf-8")
+    assert "hf-merge-plan" in text
+    assert "audiobook.mp4" not in text
+    assert "mp4-worker" not in text
+    assert "cloud_pipeline.py\" merge" in text
+
+
+def test_phase_one_records_24_hours_and_98_percent():
+    text = (ROOT / "合併上傳" / "cloud_pipeline.py").read_text(encoding="utf-8")
+    assert "int(total*.98)" in text
+    assert "timedelta(hours=24)" in text
+    assert 'response.status_code!=308' in text
+
+
+def test_gui_previews_exact_youtube_title_and_removes_old_heading():
+    text = (ROOT / "合併上傳" / "gui.py").read_text(encoding="utf-8")
+    assert '"youtube_title","YouTube 影片名稱"' in text
+    assert 'text="HF 有聲小說"' not in text
+    assert 'self.title("HF 有聲小說' not in text
+
+
+def test_merge_upload_uses_manifest_title_and_chapter_timeline():
+    text = (ROOT / "合併上傳" / "cloud_pipeline.py").read_text(encoding="utf-8")
+    assert '"youtube_title":item["youtube_title"]' in text
+    assert '"youtube_description":output_chapter_timeline(item)' in text
+    assert 'manifest.get("youtube_title")' in text
+    assert 'manifest.get("youtube_description")' in text
+
+
+def test_scheduler_and_resume_workflows_parse():
+    assert workflow("hf-upload-resume-scheduler.yml")
+    assert workflow("resume-hf-upload.yml")

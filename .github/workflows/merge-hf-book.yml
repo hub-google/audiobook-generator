@@ -1,0 +1,96 @@
+name: Merge HF audiobook and pause YouTube at 98%
+run-name: "【HF 合併】${{ inputs.book_key }}｜${{ inputs.merge_mode }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      book_key: {description: "HF source_fingerprint", required: true, type: string}
+      repo_revision: {description: "Pinned HF revision", required: true, type: string}
+      merge_mode: {description: "all or max_hours", required: true, type: choice, options: [max_hours, all]}
+      max_hours: {description: "Maximum hours per output", required: false, type: string}
+      expected_plan_id: {description: "GUI preview plan id", required: true, type: string}
+      privacy: {description: "YouTube privacy", required: true, type: choice, options: [private, unlisted, public]}
+
+permissions: {contents: read}
+concurrency:
+  group: hf-book-merge-${{ inputs.expected_plan_id }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      plan_id: ${{ steps.plan.outputs.plan_id }}
+      bucket: ${{ steps.bucket.outputs.bucket }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - id: bucket
+        env: {HF_TOKEN: "${{ secrets.HF_TOKEN }}"}
+        run: |
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi, create_bucket
+          name=f"{HfApi(token=os.environ['HF_TOKEN']).whoami()['name']}/audiobook-full-merge"
+          create_bucket(name,exist_ok=True)
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write(f"bucket={name}\n")
+          PY
+      - id: plan
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
+        run: >-
+          python "合併上傳/cloud_pipeline.py" plan
+          --book-key "${{ inputs.book_key }}" --revision "${{ inputs.repo_revision }}"
+          --mode "${{ inputs.merge_mode }}" ${{ inputs.merge_mode == 'max_hours' && format('--max-hours {0}', inputs.max_hours) || '' }}
+          --expected-plan-id "${{ inputs.expected_plan_id }}" --plan plan.json
+      - uses: actions/upload-artifact@v4
+        with: {name: hf-merge-plan, path: plan.json, retention-days: 2}
+
+  merge_and_pause:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/download-artifact@v4
+        with: {name: hf-merge-plan}
+      - name: Install FFmpeg, NFS, Python and hf-mount
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg nfs-common
+          pip install -r requirements.txt
+          curl --fail --location --retry 5 https://github.com/huggingface/hf-mount/releases/download/v0.9.2/hf-mount-x86_64-linux -o "$RUNNER_TEMP/hf-mount"
+          curl --fail --location --retry 5 https://github.com/huggingface/hf-mount/releases/download/v0.9.2/hf-mount-nfs-x86_64-linux -o "$RUNNER_TEMP/hf-mount-nfs"
+          chmod +x "$RUNNER_TEMP/hf-mount" "$RUNNER_TEMP/hf-mount-nfs"
+      - name: Mount persistent HF bucket
+        env: {HF_TOKEN: "${{ secrets.HF_TOKEN }}"}
+        run: |
+          mkdir -p "$RUNNER_TEMP/hf-bucket"
+          "$RUNNER_TEMP/hf-mount" start --hf-token "$HF_TOKEN" --no-disk-cache bucket "${{ needs.plan.outputs.bucket }}" "$RUNNER_TEMP/hf-bucket"
+      - name: Merge pinned HF Parts and publish immutable output
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
+        run: python "合併上傳/cloud_pipeline.py" merge --plan plan.json --output-number "${{ matrix.output_number }}" --bucket-mount "$RUNNER_TEMP/hf-bucket"
+      - name: Phase 1 — upload to 98 percent
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
+          YOUTUBE_CLIENT_ID_1: ${{ secrets.YOUTUBE_CLIENT_ID_1 }}
+          YOUTUBE_CLIENT_SECRET_1: ${{ secrets.YOUTUBE_CLIENT_SECRET_1 }}
+          YOUTUBE_REFRESH_TOKEN_1: ${{ secrets.YOUTUBE_REFRESH_TOKEN_1 }}
+        run: |
+          NUMBER=$(printf '%03d' '${{ matrix.output_number }}')
+          ROOT="_system/full_merges/${{ needs.plan.outputs.plan_id }}/output-$NUMBER"
+          python "合併上傳/cloud_pipeline.py" phase1 --manifest "$ROOT/merge_manifest.json" --state-path "$ROOT/upload_state.json" --privacy "${{ inputs.privacy }}"
+      - if: always()
+        run: "$RUNNER_TEMP/hf-mount stop $RUNNER_TEMP/hf-bucket || true"

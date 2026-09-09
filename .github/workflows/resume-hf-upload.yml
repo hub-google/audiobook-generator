@@ -1,0 +1,31 @@
+name: Resume HF audiobook YouTube upload
+on:
+  workflow_dispatch:
+    inputs:
+      state_path: {description: "Protected HF upload state path", required: true, type: string}
+permissions: {contents: read}
+concurrency:
+  group: hf-phase2-${{ inputs.state_path }}
+  cancel-in-progress: false
+jobs:
+  resume:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
+          YOUTUBE_CLIENT_ID_1: ${{ secrets.YOUTUBE_CLIENT_ID_1 }}
+          YOUTUBE_CLIENT_SECRET_1: ${{ secrets.YOUTUBE_CLIENT_SECRET_1 }}
+          YOUTUBE_REFRESH_TOKEN_1: ${{ secrets.YOUTUBE_REFRESH_TOKEN_1 }}
+        run: python "合併上傳/cloud_pipeline.py" phase2 --state-path "${{ inputs.state_path }}"
+      - name: Return failed session to scheduler or mark needs attention
+        if: failure()
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
+        run: python "合併上傳/cloud_pipeline.py" reset --state-path "${{ inputs.state_path }}"
