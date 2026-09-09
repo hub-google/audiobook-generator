@@ -108,13 +108,15 @@ class HfCatalog:
                                         ensure_ascii=False), encoding="utf-8")
         os.replace(temporary, self.cache_path)
 
-    def list_books(self, force_refresh=False) -> list[HfBook]:
-        if not force_refresh:
+    def list_books(self, force_refresh=False, revision: str | None = None) -> list[HfBook]:
+        pinned_revision = bool(revision)
+        if not force_refresh and not revision:
             cached = self._cached_books()
             if cached is not None:
                 return cached
-        info = self.api.repo_info(self.repo_id, repo_type="dataset")
-        revision = str(getattr(info, "sha", None) or "main")
+        if not revision:
+            info = self.api.repo_info(self.repo_id, repo_type="dataset")
+            revision = str(getattr(info, "sha", None) or "main")
         files = set(self.api.list_repo_files(self.repo_id, repo_type="dataset", revision=revision))
         indexes = sorted(path for path in files if path.startswith("有聲小說/") and path.endswith("/part_index.json"))
         def read_book(index_path):
@@ -161,5 +163,6 @@ class HfCatalog:
         with ThreadPoolExecutor(max_workers=min(8, max(1, len(indexes)))) as pool:
             books = list(pool.map(read_book, indexes))
         books = sorted(books, key=lambda book: book.title)
-        self._save_cache(books)
+        if not force_refresh and not pinned_revision:
+            self._save_cache(books)
         return books

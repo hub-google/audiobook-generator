@@ -123,7 +123,7 @@ def verified_hf_source(manifest):
     return source
 
 def make_plan(args):
-    repo, token = repo_token(); books=HfCatalog(repo,token).list_books(); book=next((b for b in books if b.key==args.book_key),None)
+    repo, token = repo_token(); books=HfCatalog(repo,token).list_books(revision=args.revision or None); book=next((b for b in books if b.key==args.book_key),None)
     if not book or not book.mergeable: raise RuntimeError(f"book is not mergeable: {args.book_key}")
     if args.revision and book.revision != args.revision: raise RuntimeError("HF revision changed after GUI preview; refresh the GUI")
     plan=build_plan(book,None if args.mode=="all" else args.max_hours)
