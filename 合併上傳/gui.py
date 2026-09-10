@@ -73,6 +73,7 @@ class MergeUploadGUI(tk.Tk):
         top=ttk.Frame(self,padding=14); top.pack(fill="x")
         self.repo_var=tk.StringVar(value="正在讀取 HF_ARCHIVE_REPO…"); ttk.Label(top,textvariable=self.repo_var).pack(side="left")
         self.refresh_btn=ttk.Button(top,text="重新整理清單與進度",command=lambda:self.refresh_books(True)); self.refresh_btn.pack(side="right")
+        self.scan_resume_btn=ttk.Button(top,text="立即掃描續傳排程",command=self.dispatch_resume_scheduler); self.scan_resume_btn.pack(side="right",padx=(0,8))
         progress=ttk.LabelFrame(self,text="已發動合併的書（第一階段：合併＋上傳至 98%；第二階段：24 小時後續傳＋發布）",padding=8); progress.pack(fill="x",padx=14,pady=(0,8))
         scols=("book","phase1_run","phase1","phase2_run","phase2","resume"); self.status_tree=ttk.Treeview(progress,columns=scols,show="headings",height=5)
         for key,label,width in (("book","小說",255),("phase1_run","第一階段 Run",120),("phase1","第一階段",220),("phase2_run","第二階段 Run",120),("phase2","第二階段",190),("resume","什麼時候會續做（台北時間）",285)):
@@ -113,6 +114,20 @@ class MergeUploadGUI(tk.Tk):
         self.open_btn=ttk.Button(bottom,text="開啟 Actions Run",command=lambda:webbrowser.open(self.run_url),state="disabled"); self.open_btn.pack(side="left",padx=8)
         self.status_var=tk.StringVar(value="正在載入…"); ttk.Label(bottom,textvariable=self.status_var).pack(side="right")
         self.detail_var=tk.StringVar(); ttk.Label(self,textvariable=self.detail_var,padding=(14,0,14,12),foreground="#555").pack(fill="x")
+
+    def dispatch_resume_scheduler(self):
+        self.scan_resume_btn.configure(state="disabled")
+        self.status_var.set("正在觸發二階段續傳掃描排程…")
+        def _run():
+            try:
+                run_gh("workflow", "run", "hf-upload-resume-scheduler.yml")
+                self.after(0, lambda: self.status_var.set("已發動續傳排程掃描！稍後點擊重新整理可查看進度。"))
+                self.after(3000, lambda: self.refresh_books(True))
+            except Exception as exc:
+                self.after(0, self._show_error, f"觸發續傳排程失敗：{type(exc).__name__}: {exc}")
+            finally:
+                self.after(4000, lambda: self.scan_resume_btn.configure(state="normal"))
+        threading.Thread(target=_run, daemon=True).start()
 
     def refresh_books(self,force=False):
         if self._refresh_after:

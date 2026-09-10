@@ -110,3 +110,11 @@ def test_resume_scheduler_runs_hourly_and_keeps_only_latest_run_record():
     assert 'select(.id != ($CURRENT_RUN_ID | tonumber))' in text
     assert 'actions/runs/$old_run_id/cancel' in text
     assert '--method DELETE "repos/$REPOSITORY/actions/runs/$old_run_id"' in text
+
+
+def test_scan_due_falls_back_to_manifest_title_and_defaults_master():
+    pipeline = (ROOT / "合併上傳" / "cloud_pipeline.py").read_text(encoding="utf-8")
+    assert 'manifest_path' in pipeline
+    assert 'remote_json(state["manifest_path"]).get("book_title")' in pipeline
+    assert 'os.environ.get("GITHUB_REF_NAME","master")' in pipeline
+

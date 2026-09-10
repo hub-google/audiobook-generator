@@ -113,9 +113,13 @@ def collect_status(repo_id, token, run_gh, limit=50):
         "--event", "workflow_dispatch", "--limit", str(limit),
         "--json", "databaseId,displayTitle,status,conclusion,createdAt,updatedAt,url",
     ))
+    resume_runs_by_path = {}
     for run in resume_runs:
         title = resume_run_book_title(run.get("displayTitle"))
         if not title:
+            continue
+        if title.startswith("_system/full_merges/") or title.endswith("upload_state.json"):
+            resume_runs_by_path.setdefault(title, run)
             continue
         row = rows.setdefault(title, {"title": title, "phase1_run_id": None, "phase1_run_url": "",
                                       "phase2_run_id": None, "phase2_run_url": "", "phase1": "已完成",
@@ -141,6 +145,10 @@ def collect_status(repo_id, token, run_gh, limit=50):
             row = rows.setdefault(title, {"title": title, "phase1_run_id": None, "phase1_run_url": "",
                                            "phase2_run_id": None, "phase2_run_url": "", "phase1": "已完成",
                                            "states": [], "updated_at": ""})
+            if row.get("phase2_run_id") is None and path in resume_runs_by_path:
+                run = resume_runs_by_path[path]
+                row["phase2_run_id"], row["phase2_run_url"] = run["databaseId"], run.get("url", "")
+                row["updated_at"] = max(row.get("updated_at") or "", run.get("updatedAt") or "")
             row["states"].append(state)
             if row["phase1"].startswith("失敗") and state.get("status") in {"paused_at_98", "resume_dispatched", "complete"}:
                 row["phase1"] = "已完成"

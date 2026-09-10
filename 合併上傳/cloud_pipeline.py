@@ -330,8 +330,16 @@ def scan_due(_args):
         if not path.startswith("_system/full_merges/") or not path.endswith("/upload_state.json"): continue
         state=remote_json(path)
         if state.get("status")!="paused_at_98" or datetime.fromisoformat(state["target_resume_at"])>now: continue
+        title = state.get("book_title")
+        if not title and state.get("manifest_path"):
+            try:
+                title = remote_json(state["manifest_path"]).get("book_title")
+            except Exception:
+                pass
+        if title and not state.get("book_title"):
+            state["book_title"] = title
         state["status"]="resume_dispatched"; state["resume_attempts"]=int(state.get("resume_attempts") or 0)+1; state["resume_dispatched_at"]=now.isoformat(); upload_json(path,state,"Dispatch phase 2")
-        response=requests.post(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/resume-hf-upload.yml/dispatches",headers={"Authorization":f"Bearer {os.environ['GITHUB_TOKEN']}","Accept":"application/vnd.github+json"},json={"ref":os.environ.get("GITHUB_REF_NAME","main"),"inputs":{"state_path":path,"book_title":str(state.get("book_title") or "")}},timeout=30)
+        response=requests.post(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/resume-hf-upload.yml/dispatches",headers={"Authorization":f"Bearer {os.environ['GITHUB_TOKEN']}","Accept":"application/vnd.github+json"},json={"ref":os.environ.get("GITHUB_REF_NAME","master"),"inputs":{"state_path":path,"book_title":str(state.get("book_title") or "")}},timeout=30)
         if response.status_code not in (204,):
             state["status"]="paused_at_98"; state["dispatch_error"]=f"HTTP {response.status_code}: {response.text[:300]}"; upload_json(path,state,"Restore failed phase 2 dispatch")
             raise RuntimeError(f"resume dispatch failed: {response.status_code} {response.text}")

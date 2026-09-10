@@ -73,3 +73,11 @@ def test_delete_book_rejects_broad_or_mismatched_paths(tmp_path):
         else:
             raise AssertionError(f"unsafe path was accepted: {root}")
     instance.api.delete_folder.assert_not_called()
+
+
+def test_gui_provides_immediate_resume_scan_dispatch():
+    text = (ROOT / "合併上傳" / "gui.py").read_text(encoding="utf-8")
+    assert '立即掃描續傳排程' in text
+    assert 'dispatch_resume_scheduler' in text
+    assert 'hf-upload-resume-scheduler.yml' in text
+
