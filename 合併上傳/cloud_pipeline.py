@@ -119,6 +119,13 @@ def write_phase1_summary(state, title):
     target = datetime.fromisoformat(state["target_resume_at"]).astimezone(taipei)
     scan = next_hourly_scan(target)
     confirmed_percent = (int(state["confirmed_bytes"]) / int(state["total_size"]) * 100)
+    publish_info = ""
+    if state.get("publish_at"):
+        try:
+            pub_dt = datetime.fromisoformat(str(state["publish_at"]).replace("Z", "+00:00")).astimezone(taipei)
+            publish_info = f"- 預約公開時間（台北）：{pub_dt:%Y-%m-%d %H:%M:%S} (UTC: {state['publish_at']})\n"
+        except Exception:
+            publish_info = f"- 預約公開時間（UTC）：{state['publish_at']}\n"
     text = (
         "## YouTube 兩階段上傳狀態\n\n"
         "✅ 本次流程成功：影片已合併並暫停在 YouTube 續傳工作階段。\n\n"
@@ -127,6 +134,7 @@ def write_phase1_summary(state, title):
         f"- 暫停時間（台北）：{paused:%Y-%m-%d %H:%M:%S}\n"
         f"- 可開始續傳（台北）：{target:%Y-%m-%d %H:%M:%S}\n"
         f"- 預計排程啟動 Phase 2（台北）：{scan:%Y-%m-%d %H:%M:%S}\n"
+        f"{publish_info}"
         "- 下一步：`hf-upload-resume-scheduler.yml` 將自動觸發 `resume-hf-upload.yml`，補完最後 2%、設定封面並完成 YouTube 發布。\n"
         "- 注意：此 run 顯示 Success 只代表 Phase 1 成功，不代表 YouTube 影片已完整發布。\n"
     )
@@ -293,7 +301,11 @@ def phase1(args):
         raise RuntimeError("cannot build a legal YouTube description")
     if len(title) > 100:
         raise RuntimeError("YouTube title exceeds 100 characters")
-    body={"snippet":{"title":title,"description":description},"status":{"privacyStatus":args.privacy}}
+    publish_at = str(getattr(args, "publish_at", "") or "").strip()
+    status_body = {"privacyStatus": "private" if publish_at else args.privacy}
+    if publish_at:
+        status_body["publishAt"] = publish_at
+    body = {"snippet": {"title": title, "description": description}, "status": status_body}
     response=requests.post("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",headers=headers,json=body,timeout=60); response.raise_for_status(); session=response.headers["Location"]
     target=(int(total*.98)//(256*1024))*(256*1024); sent=0
     while sent<target:
@@ -302,7 +314,7 @@ def phase1(args):
         if result.status_code not in (200,201,308): raise RuntimeError(f"YouTube chunk failed: {result.status_code}")
         sent += len(data)
     confirmed,video_id=query(session,total,cred); now=datetime.now(timezone.utc)
-    state={"status":"paused_at_98","book_title":manifest.get("book_title"),"youtube_title":manifest.get("youtube_title"),"plan_id":manifest.get("plan_id"),"output_number":(manifest.get("output") or {}).get("output_number"),"session_url":session,"session_id":hashlib.sha256(session.encode()).hexdigest()[:20],"manifest_path":args.manifest,"source_revision":source_revision(manifest),"total_size":total,"confirmed_bytes":confirmed,"paused_at":now.isoformat(),"target_resume_at":(now+timedelta(hours=24)).isoformat(),"privacy":args.privacy,"video_id":video_id,"credential_slot":int(getattr(args,"credential_slot",None) or 1)}
+    state={"status":"paused_at_98","book_title":manifest.get("book_title"),"youtube_title":manifest.get("youtube_title"),"plan_id":manifest.get("plan_id"),"output_number":(manifest.get("output") or {}).get("output_number"),"session_url":session,"session_id":hashlib.sha256(session.encode()).hexdigest()[:20],"manifest_path":args.manifest,"source_revision":source_revision(manifest),"total_size":total,"confirmed_bytes":confirmed,"paused_at":now.isoformat(),"target_resume_at":(now+timedelta(hours=24)).isoformat(),"privacy":args.privacy,"publish_at":publish_at or None,"video_id":video_id,"credential_slot":int(getattr(args,"credential_slot",None) or 1)}
     upload_json(args.state_path,state,"Save two-phase YouTube session")
     write_phase1_summary(state, title)
 
@@ -351,6 +363,6 @@ def reset_resume(args):
     upload_json(args.state_path,state,"Record failed phase 2 attempt")
 
 def main():
-    p=argparse.ArgumentParser(); p.add_argument("command",choices=("plan","merge","phase1","phase2","scan","reset")); p.add_argument("--book-key"); p.add_argument("--revision",default=""); p.add_argument("--mode",choices=("all","max_hours")); p.add_argument("--max-hours",type=float); p.add_argument("--expected-plan-id",default=""); p.add_argument("--plan",default="plan.json"); p.add_argument("--output-number",type=int); p.add_argument("--bucket-mount"); p.add_argument("--manifest"); p.add_argument("--state-path"); p.add_argument("--privacy",choices=("private","unlisted","public"),default="public"); p.add_argument("--title",default=""); p.add_argument("--credential-slot",type=int,choices=range(1,11)); a=p.parse_args()
+    p=argparse.ArgumentParser(); p.add_argument("command",choices=("plan","merge","phase1","phase2","scan","reset")); p.add_argument("--book-key"); p.add_argument("--revision",default=""); p.add_argument("--mode",choices=("all","max_hours")); p.add_argument("--max-hours",type=float); p.add_argument("--expected-plan-id",default=""); p.add_argument("--plan",default="plan.json"); p.add_argument("--output-number",type=int); p.add_argument("--bucket-mount"); p.add_argument("--manifest"); p.add_argument("--state-path"); p.add_argument("--privacy",choices=("private","unlisted","public"),default="public"); p.add_argument("--publish-at",default=""); p.add_argument("--title",default=""); p.add_argument("--credential-slot",type=int,choices=range(1,11)); a=p.parse_args()
     {"plan":make_plan,"merge":merge_output,"phase1":phase1,"phase2":phase2,"scan":scan_due,"reset":reset_resume}[a.command](a)
 if __name__=="__main__": main()

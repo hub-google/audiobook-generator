@@ -81,3 +81,89 @@ def test_gui_provides_immediate_resume_scan_dispatch():
     assert 'dispatch_resume_scheduler' in text
     assert 'hf-upload-resume-scheduler.yml' in text
 
+
+def test_schedule_preset_computation(monkeypatch):
+    monkeypatch.syspath_prepend(str(MERGE_DIR))
+    gui = load_module("gui")
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    base = datetime(2026, 9, 11, 10, 0, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+    preset = gui.compute_schedule_preset("3 天後 18:00", base_dt=base)
+    assert preset == "2026-09-14 18:00"
+    preset_7 = gui.compute_schedule_preset("7 天後 18:00", base_dt=base)
+    assert preset_7 == "2026-09-18 18:00"
+
+
+def test_validate_and_convert_schedule(monkeypatch):
+    monkeypatch.syspath_prepend(str(MERGE_DIR))
+    gui = load_module("gui")
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    now = datetime(2026, 9, 11, 8, 0, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+
+    # Valid: 3 days later 18:00 (72 + 10 = 82 hours in future > 25 hours)
+    utc_str = gui.validate_and_convert_schedule("2026-09-14 18:00", now_dt=now, min_hours=25.0)
+    assert utc_str == "2026-09-14T10:00:00Z"
+
+    # Too soon: only 10 hours later
+    try:
+        gui.validate_and_convert_schedule("2026-09-11 18:00", now_dt=now, min_hours=25.0)
+    except ValueError as exc:
+        assert "預約發布時間過近" in str(exc)
+    else:
+        raise AssertionError("should have rejected schedule time that is too soon")
+
+    # Past time
+    try:
+        gui.validate_and_convert_schedule("2026-09-10 18:00", now_dt=now, min_hours=25.0)
+    except ValueError as exc:
+        assert "必須是未來的時間" in str(exc)
+    else:
+        raise AssertionError("should have rejected past schedule time")
+
+    # Invalid format
+    try:
+        gui.validate_and_convert_schedule("invalid-datetime", now_dt=now)
+    except ValueError as exc:
+        assert "格式錯誤" in str(exc)
+    else:
+        raise AssertionError("should have rejected malformed schedule time")
+
+
+def test_gui_contains_schedule_controls_and_dispatch():
+    text = (ROOT / "合併上傳" / "gui.py").read_text(encoding="utf-8")
+    assert "預約公開（排程發布）" in text
+    assert "SCHEDULE_PRESETS" in text
+    assert "publish_at" in text
+
+
+def test_gui_has_vertical_scrollbar_and_scrollable_canvas():
+    text = (ROOT / "合併上傳" / "gui.py").read_text(encoding="utf-8")
+    assert "self.canvas = tk.Canvas" in text
+    assert "self.v_scrollbar = ttk.Scrollbar" in text
+    assert "yscrollcommand=self.v_scrollbar.set" in text
+    assert "self.scroll_content" in text
+    assert "<MouseWheel>" in text
+
+
+def test_gui_initializes_canvas_and_widgets(monkeypatch):
+    monkeypatch.syspath_prepend(str(MERGE_DIR))
+    gui = load_module("gui")
+    monkeypatch.setattr(gui.MergeUploadGUI, "refresh_books", lambda self, force=False: None)
+    app = gui.MergeUploadGUI()
+    try:
+        app.update_idletasks()
+        assert app.canvas is not None
+        assert app.v_scrollbar is not None
+        assert app.scroll_content is not None
+        assert app.start_btn is not None
+        assert app.open_btn is not None
+        bbox = app.canvas.bbox("all")
+        assert bbox is not None
+        content_height = bbox[3] - bbox[1]
+        assert 500 < content_height < 1500
+    finally:
+        app.destroy()
+
+
+

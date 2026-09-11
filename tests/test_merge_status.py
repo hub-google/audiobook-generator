@@ -41,3 +41,12 @@ def test_resume_run_title_extracts_book_name_and_rejects_legacy_unmapped_run():
     status = module()
     assert status.resume_run_book_title("【HF 續傳】七零，我成了年代文里的惡毒女配") == "七零，我成了年代文里的惡毒女配"
     assert status.resume_run_book_title("Resume HF audiobook YouTube upload") == ""
+
+
+def test_phase_two_reports_scheduled_publish_when_complete():
+    status = module()
+    phase, resume = status.phase2_summary([
+        {"status": "complete", "publish_at": "2026-09-14T10:00:00Z"},
+    ])
+    assert "已完成 1/1 支（預約 09-14 18:00 公開）" in phase
+

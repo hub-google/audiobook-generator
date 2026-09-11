@@ -11,6 +11,7 @@ on:
       max_hours: {description: "Maximum hours per output", required: false, type: string}
       expected_plan_id: {description: "GUI preview plan id", required: true, type: string}
       privacy: {description: "YouTube privacy", required: true, type: choice, options: [private, unlisted, public]}
+      publish_at: {description: "Scheduled publish time in UTC ISO 8601", required: false, type: string}
 
 permissions: {contents: read}
 concurrency:
@@ -124,6 +125,10 @@ jobs:
           NUMBER=$(printf '%03d' '${{ matrix.output_number }}')
           ROOT="_system/full_merges/${{ needs.plan.outputs.plan_id }}/output-$NUMBER"
           SLOT=$(( ( ${{ matrix.output_number }} - 1 ) % 10 + 1 ))
-          python "合併上傳/cloud_pipeline.py" phase1 --manifest "$ROOT/merge_manifest.json" --state-path "$ROOT/upload_state.json" --privacy "${{ inputs.privacy }}" --credential-slot "$SLOT"
+          EXTRA_ARGS=()
+          if [ -n "${{ inputs.publish_at }}" ]; then
+            EXTRA_ARGS+=(--publish-at "${{ inputs.publish_at }}")
+          fi
+          python "合併上傳/cloud_pipeline.py" phase1 --manifest "$ROOT/merge_manifest.json" --state-path "$ROOT/upload_state.json" --privacy "${{ inputs.privacy }}" --credential-slot "$SLOT" "${EXTRA_ARGS[@]}"
       - if: always()
         run: "$RUNNER_TEMP/hf-mount stop $RUNNER_TEMP/hf-bucket || true"

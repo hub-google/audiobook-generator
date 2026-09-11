@@ -118,3 +118,22 @@ def test_scan_due_falls_back_to_manifest_title_and_defaults_master():
     assert 'remote_json(state["manifest_path"]).get("book_title")' in pipeline
     assert 'os.environ.get("GITHUB_REF_NAME","master")' in pipeline
 
+
+def test_merge_workflow_declares_publish_at_and_passes_to_phase1():
+    text = (ROOT / ".github" / "workflows" / "merge-hf-book.yml").read_text(encoding="utf-8")
+    parsed = workflow("merge-hf-book.yml")
+    inputs = parsed[True]["workflow_dispatch"]["inputs"]
+    assert "publish_at" in inputs
+    assert inputs["publish_at"]["required"] is False
+    assert '--publish-at "${{ inputs.publish_at }}"' in text
+
+
+def test_cloud_pipeline_supports_publish_at():
+    pipeline = (ROOT / "合併上傳" / "cloud_pipeline.py").read_text(encoding="utf-8")
+    assert '"--publish-at"' in pipeline
+    assert '"privacyStatus": "private" if publish_at else args.privacy' in pipeline
+    assert 'status_body["publishAt"] = publish_at' in pipeline
+    assert '"publish_at":publish_at or None' in pipeline
+    assert '預約公開時間' in pipeline
+
+

@@ -67,8 +67,14 @@ def phase2_summary(states):
         key = state.get("status") or "unknown"
         counts[key] = counts.get(key, 0) + 1
     total = len(states); done = counts.get("complete", 0)
+    scheduled = [parse_time(s.get("publish_at")) for s in states if s.get("publish_at")]
+    scheduled = [v for v in scheduled if v]
     if done == total:
-        phase = f"已完成 {done}/{total} 支"
+        if scheduled:
+            earliest = min(scheduled).astimezone(TAIPEI)
+            phase = f"已完成 {done}/{total} 支（預約 {earliest:%m-%d %H:%M} 公開）"
+        else:
+            phase = f"已完成 {done}/{total} 支"
     elif counts.get("needs_attention"):
         phase = f"需人工處理 {counts['needs_attention']}/{total} 支"
     elif counts.get("resume_dispatched"):

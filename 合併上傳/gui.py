@@ -2,9 +2,61 @@
 from __future__ import annotations
 
 import json, os, shutil, subprocess, sys, threading, time, tkinter as tk, webbrowser
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import messagebox, ttk
+from zoneinfo import ZoneInfo
+
+TAIPEI = ZoneInfo("Asia/Taipei")
+SCHEDULE_PRESETS = [
+    "3 天後 18:00",
+    "4 天後 18:00",
+    "5 天後 18:00",
+    "7 天後 18:00",
+    "自訂時間",
+]
+
+def compute_schedule_preset(preset_str: str, base_dt: datetime | None = None) -> str:
+    """Compute Taipei datetime string (YYYY-MM-DD HH:MM) for a preset."""
+    if base_dt is None:
+        base_dt = datetime.now(TAIPEI)
+    else:
+        base_dt = base_dt.astimezone(TAIPEI) if base_dt.tzinfo else base_dt.replace(tzinfo=TAIPEI)
+    if "天後" in preset_str:
+        try:
+            days = int(preset_str.split("天後")[0].strip())
+            target = (base_dt + timedelta(days=days)).replace(hour=18, minute=0, second=0, microsecond=0)
+            return target.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+    return base_dt.strftime("%Y-%m-%d %H:%M")
+
+def validate_and_convert_schedule(schedule_text: str, now_dt: datetime | None = None, min_hours: float = 25.0) -> str:
+    """Parse Taipei time YYYY-MM-DD HH:MM, ensure >= now + min_hours, return UTC ISO 8601 string."""
+    text = str(schedule_text or "").strip()
+    if not text:
+        raise ValueError("預約發布時間不可為空")
+    try:
+        if len(text) == 16:
+            dt = datetime.strptime(text, "%Y-%m-%d %H:%M").replace(tzinfo=TAIPEI)
+        elif len(text) == 19:
+            dt = datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=TAIPEI)
+        else:
+            raise ValueError()
+    except Exception:
+        raise ValueError("預約發布時間格式錯誤，請使用：YYYY-MM-DD HH:MM（例如 2026-09-14 18:00）")
+
+    now = now_dt.astimezone(TAIPEI) if now_dt else datetime.now(TAIPEI)
+    if dt <= now:
+        raise ValueError("預約發布時間必須是未來的時間")
+    earliest = now + timedelta(hours=min_hours)
+    if dt < earliest:
+        diff_hours = (dt - now).total_seconds() / 3600
+        raise ValueError(
+            f"預約發布時間過近（僅距現在 {diff_hours:.1f} 小時）。\n"
+            f"因為兩階段上傳需等待 24 小時後續傳最後 2%，預約公開時間建議至少設定在 {min_hours:.0f} 小時之後（{earliest:%Y-%m-%d %H:%M} 之後），避免影片尚未續傳完畢排程就已過期！"
+        )
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 HERE = Path(__file__).resolve().parent; ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
@@ -70,23 +122,55 @@ class MergeUploadGUI(tk.Tk):
         self._build(); self.after(250, self.refresh_books)
 
     def _build(self):
-        top=ttk.Frame(self,padding=14); top.pack(fill="x")
+        container = ttk.Frame(self)
+        container.pack(fill="both", expand=True)
+
+        self.canvas = tk.Canvas(container, highlightthickness=0)
+        self.v_scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.canvas.yview)
+        self.scroll_content = ttk.Frame(self.canvas)
+
+        self.scroll_content.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        )
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.scroll_content, anchor="nw")
+        self.canvas.bind(
+            "<Configure>",
+            lambda e: self.canvas.itemconfig(self.canvas_window, width=e.width)
+        )
+        self.canvas.configure(yscrollcommand=self.v_scrollbar.set)
+
+        self.v_scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+
+        def _on_mousewheel(event):
+            widget = event.widget
+            if widget == getattr(self, "book_tree", None) or str(widget).startswith(str(getattr(self, "book_tree", ""))):
+                return
+            bbox = self.canvas.bbox("all")
+            if bbox and (bbox[3] - bbox[1] > self.canvas.winfo_height()):
+                self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        self.bind("<Destroy>", lambda e: self.unbind_all("<MouseWheel>") if e.widget == self else None)
+
+        top=ttk.Frame(self.scroll_content,padding=(14,10,14,6)); top.pack(fill="x")
         self.repo_var=tk.StringVar(value="正在讀取 HF_ARCHIVE_REPO…"); ttk.Label(top,textvariable=self.repo_var).pack(side="left")
         self.refresh_btn=ttk.Button(top,text="重新整理清單與進度",command=lambda:self.refresh_books(True)); self.refresh_btn.pack(side="right")
         self.scan_resume_btn=ttk.Button(top,text="立即掃描續傳排程",command=self.dispatch_resume_scheduler); self.scan_resume_btn.pack(side="right",padx=(0,8))
-        progress=ttk.LabelFrame(self,text="已發動合併的書（第一階段：合併＋上傳至 98%；第二階段：24 小時後續傳＋發布）",padding=8); progress.pack(fill="x",padx=14,pady=(0,8))
-        scols=("book","phase1_run","phase1","phase2_run","phase2","resume"); self.status_tree=ttk.Treeview(progress,columns=scols,show="headings",height=5)
+        progress=ttk.LabelFrame(self.scroll_content,text="已發動合併的書（第一階段：合併＋上傳至 98%；第二階段：24 小時後續傳＋發布）",padding=6); progress.pack(fill="x",padx=14,pady=(0,6))
+        scols=("book","phase1_run","phase1","phase2_run","phase2","resume"); self.status_tree=ttk.Treeview(progress,columns=scols,show="headings",height=4)
         for key,label,width in (("book","小說",255),("phase1_run","第一階段 Run",120),("phase1","第一階段",220),("phase2_run","第二階段 Run",120),("phase2","第二階段",190),("resume","什麼時候會續做（台北時間）",285)):
             self.status_tree.heading(key,text=label); self.status_tree.column(key,width=width,anchor="w" if key in {"book","phase1","phase2","resume"} else "center")
         self.status_tree.pack(fill="x")
         self.status_tree.bind("<ButtonRelease-1>",self.open_status_run)
         self.status_tree.bind("<Motion>",self.status_link_cursor)
-        box=ttk.LabelFrame(self,text="1. 選擇 HF 上可合併的小說",padding=10); box.pack(fill="both",expand=True,padx=14,pady=(0,10))
-        book_actions=ttk.Frame(box); book_actions.pack(side="bottom",fill="x",pady=(8,0))
+        box=ttk.LabelFrame(self.scroll_content,text="1. 選擇 HF 上可合併的小說",padding=8); box.pack(fill="x",padx=14,pady=(0,6))
+        book_actions=ttk.Frame(box); book_actions.pack(side="bottom",fill="x",pady=(6,0))
         self.delete_book_btn=ttk.Button(book_actions,text="刪除選取小說的 HF 資料夾",command=self.delete_selected_book,state="disabled")
         self.delete_book_btn.pack(side="right")
         book_table=ttk.Frame(box); book_table.pack(fill="both",expand=True)
-        cols=tuple(BOOK_COLUMNS); self.book_tree=ttk.Treeview(book_table,columns=cols,show="headings",height=9)
+        cols=tuple(BOOK_COLUMNS); self.book_tree=ttk.Treeview(book_table,columns=cols,show="headings",height=7)
         widths=(280,80,130,130,100,250)
         for key,width in zip(cols,widths):
             self.book_tree.heading(key,text=BOOK_COLUMNS[key],command=lambda column=key:self.sort_books(column)); self.book_tree.column(key,width=width,anchor="center")
@@ -94,26 +178,45 @@ class MergeUploadGUI(tk.Tk):
         self.book_tree.column("title",anchor="w"); scroll=ttk.Scrollbar(book_table,orient="vertical",command=self.book_tree.yview)
         self.book_tree.configure(yscrollcommand=scroll.set); self.book_tree.pack(side="left",fill="both",expand=True); scroll.pack(side="right",fill="y")
         self.book_tree.bind("<<TreeviewSelect>>",self.on_select_book)
-        opts=ttk.LabelFrame(self,text="2. 選擇合併方式",padding=10); opts.pack(fill="x",padx=14,pady=(0,10))
-        self.mode_var=tk.StringVar(value="hours"); ttk.Radiobutton(opts,text="每支影片最多",variable=self.mode_var,value="hours",command=self.update_preview).pack(side="left")
-        self.hours_var=tk.StringVar(value="48"); entry=ttk.Entry(opts,textvariable=self.hours_var,width=8); entry.pack(side="left",padx=(8,4)); entry.bind("<KeyRelease>",self.update_preview)
-        ttk.Label(opts,text="小時（依序放入最多 HF Parts，絕不超過）").pack(side="left")
-        ttk.Radiobutton(opts,text="全部合併成一部",variable=self.mode_var,value="all",command=self.update_preview).pack(side="left",padx=(30,0))
-        ttk.Label(opts,text="YouTube 隱私：").pack(side="left",padx=(30,4)); self.privacy_var=tk.StringVar(value="public")
-        ttk.Combobox(opts,textvariable=self.privacy_var,values=("private","unlisted","public"),state="readonly",width=10).pack(side="left")
-        preview=ttk.LabelFrame(self,text="3. 合併計畫預覽（每列會成為一支 YouTube 影片）",padding=10); preview.pack(fill="both",expand=True,padx=14,pady=(0,10))
-        pcols=("output","youtube_title","parts","chapters","duration","size"); self.preview_tree=ttk.Treeview(preview,columns=pcols,show="headings",height=8)
+        opts=ttk.LabelFrame(self.scroll_content,text="2. 選擇合併方式與發布設定",padding=8); opts.pack(fill="x",padx=14,pady=(0,6))
+        row1=ttk.Frame(opts); row1.pack(fill="x",pady=(0,6))
+        self.mode_var=tk.StringVar(value="hours"); ttk.Radiobutton(row1,text="每支影片最多",variable=self.mode_var,value="hours",command=self.update_preview).pack(side="left")
+        self.hours_var=tk.StringVar(value="48"); entry=ttk.Entry(row1,textvariable=self.hours_var,width=8); entry.pack(side="left",padx=(8,4)); entry.bind("<KeyRelease>",self.update_preview)
+        ttk.Label(row1,text="小時（依序放入最多 HF Parts，絕不超過）").pack(side="left")
+        ttk.Radiobutton(row1,text="全部合併成一部",variable=self.mode_var,value="all",command=self.update_preview).pack(side="left",padx=(30,0))
+        row2=ttk.Frame(opts); row2.pack(fill="x")
+        ttk.Label(row2,text="YouTube 隱私：").pack(side="left",padx=(0,4)); self.privacy_var=tk.StringVar(value="public")
+        self.privacy_combo=ttk.Combobox(row2,textvariable=self.privacy_var,values=("public","unlisted","private"),state="readonly",width=10)
+        self.privacy_combo.pack(side="left")
+        ttk.Separator(row2,orient="vertical").pack(side="left",fill="y",padx=12)
+        self.schedule_enabled_var=tk.BooleanVar(value=False)
+        self.schedule_check=ttk.Checkbutton(row2,text="預約公開（排程發布）",variable=self.schedule_enabled_var,command=self.on_toggle_schedule)
+        self.schedule_check.pack(side="left",padx=(0,8))
+        self.schedule_preset_var=tk.StringVar(value="3 天後 18:00")
+        self.preset_combo=ttk.Combobox(row2,textvariable=self.schedule_preset_var,values=SCHEDULE_PRESETS,state="disabled",width=13)
+        self.preset_combo.pack(side="left",padx=(0,8))
+        self.preset_combo.bind("<<ComboboxSelected>>",self.on_select_preset)
+        ttk.Label(row2,text="發布時間 (台北)：").pack(side="left",padx=(0,4))
+        self.schedule_time_var=tk.StringVar(value=compute_schedule_preset("3 天後 18:00"))
+        self.schedule_entry=ttk.Entry(row2,textvariable=self.schedule_time_var,width=18,state="disabled")
+        self.schedule_entry.pack(side="left",padx=(0,8))
+        self.schedule_time_var.trace_add("write",lambda *args:self.update_schedule_hint())
+        self.schedule_hint_var=tk.StringVar(value="")
+        self.schedule_hint_label=ttk.Label(row2,textvariable=self.schedule_hint_var,foreground="#666")
+        self.schedule_hint_label.pack(side="left")
+        preview=ttk.LabelFrame(self.scroll_content,text="3. 合併計畫預覽（每列會成為一支 YouTube 影片）",padding=8); preview.pack(fill="x",padx=14,pady=(0,6))
+        pcols=("output","youtube_title","parts","chapters","duration","size"); self.preview_tree=ttk.Treeview(preview,columns=pcols,show="headings",height=4)
         for key,label,width in (("output","輸出",70),("youtube_title","YouTube 影片名稱",520),("parts","HF Part 範圍",140),("chapters","章節範圍",130),("duration","精確時長",110),("size","來源總容量",110)):
             self.preview_tree.heading(key,text=label); self.preview_tree.column(key,width=width,anchor="center")
         self.preview_tree.column("youtube_title",anchor="w")
         preview_scroll=ttk.Scrollbar(preview,orient="horizontal",command=self.preview_tree.xview)
         self.preview_tree.configure(xscrollcommand=preview_scroll.set)
         self.preview_tree.pack(fill="both",expand=True); preview_scroll.pack(fill="x")
-        bottom=ttk.Frame(self,padding=(14,0,14,12)); bottom.pack(fill="x")
+        bottom=ttk.Frame(self.scroll_content,padding=(14,6,14,4)); bottom.pack(fill="x")
         self.start_btn=ttk.Button(bottom,text="送出 GitHub Actions 合併＋98% 上傳",command=self.start,state="disabled"); self.start_btn.pack(side="left")
         self.open_btn=ttk.Button(bottom,text="開啟 Actions Run",command=lambda:webbrowser.open(self.run_url),state="disabled"); self.open_btn.pack(side="left",padx=8)
         self.status_var=tk.StringVar(value="正在載入…"); ttk.Label(bottom,textvariable=self.status_var).pack(side="right")
-        self.detail_var=tk.StringVar(); ttk.Label(self,textvariable=self.detail_var,padding=(14,0,14,12),foreground="#555").pack(fill="x")
+        self.detail_var=tk.StringVar(); ttk.Label(self.scroll_content,textvariable=self.detail_var,padding=(14,2,14,10),foreground="#555").pack(fill="x")
 
     def dispatch_resume_scheduler(self):
         self.scan_resume_btn.configure(state="disabled")
@@ -219,13 +322,58 @@ class MergeUploadGUI(tk.Tk):
             for item in plan["outputs"]: self.preview_tree.insert("","end",values=(f"第 {item['output_number']} 支",item["youtube_title"],f"Part {item['part_start']:02d}–{item['part_end']:02d}",f"Ch {item['start_chapter']}–{item['end_chapter']}",format_duration(item["duration_seconds"]),format_size(item["bytes"])))
             self.current_plan=plan; self.detail_var.set(f"計畫 {plan['plan_id']}｜{len(book.parts)} 個 HF MP4 → {len(plan['outputs'])} 支影片｜總時長 {format_duration(book.total_duration)}"); self.start_btn.configure(state="normal")
         except (ValueError,TypeError) as exc: self.detail_var.set(str(exc)); self.start_btn.configure(state="disabled")
+    def on_toggle_schedule(self):
+        enabled = self.schedule_enabled_var.get()
+        state = "readonly" if enabled else "disabled"
+        entry_state = "normal" if enabled else "disabled"
+        self.preset_combo.configure(state=state)
+        self.schedule_entry.configure(state=entry_state)
+        if enabled:
+            self.privacy_combo.configure(state="disabled")
+            self.on_select_preset()
+        else:
+            self.privacy_combo.configure(state="readonly")
+            self.schedule_hint_var.set("")
+
+    def on_select_preset(self, _event=None):
+        preset = self.schedule_preset_var.get()
+        if preset != "自訂時間":
+            computed = compute_schedule_preset(preset)
+            self.schedule_time_var.set(computed)
+        self.update_schedule_hint()
+
+    def update_schedule_hint(self):
+        if not self.schedule_enabled_var.get():
+            self.schedule_hint_var.set("")
+            return
+        try:
+            val = self.schedule_time_var.get().strip()
+            utc_iso = validate_and_convert_schedule(val, min_hours=0)
+            self.schedule_hint_var.set(f"（UTC: {utc_iso}；時間到自動公開）")
+            self.schedule_hint_label.configure(foreground="#1b5e20")
+        except Exception:
+            self.schedule_hint_var.set("（請輸入未來時間，格式：YYYY-MM-DD HH:MM）")
+            self.schedule_hint_label.configure(foreground="#b71c1c")
+
     def start(self):
-        if not self.current_plan or not messagebox.askyesno("確認送出",f"將建立 {len(self.current_plan['outputs'])} 支影片。\n合併及兩階段上傳均在 GitHub Actions 執行，確定送出？"): return
+        if not self.current_plan: return
+        publish_note = ""
+        if self.schedule_enabled_var.get():
+            try:
+                utc_val = validate_and_convert_schedule(self.schedule_time_var.get())
+                publish_note = f"\n預約發布：台北時間 {self.schedule_time_var.get().strip()}（UTC {utc_val}）"
+            except ValueError as exc:
+                messagebox.showerror("預約時間無效", str(exc))
+                return
+        if not messagebox.askyesno("確認送出",f"將建立 {len(self.current_plan['outputs'])} 支影片。{publish_note}\n合併及兩階段上傳均在 GitHub Actions 執行，確定送出？"): return
         self.start_btn.configure(state="disabled"); self.status_var.set("正在送出 GitHub Actions…"); threading.Thread(target=self._dispatch,daemon=True).start()
     def _dispatch(self):
         try:
             p=self.current_plan; before=datetime.now(timezone.utc); fields=[]
             for key,value in (("book_key",p["book_key"]),("book_title",p["book_title"]),("repo_revision",p["repo_revision"]),("merge_mode",p["mode"]),("max_hours",p.get("max_hours") or ""),("expected_plan_id",p["plan_id"]),("privacy",self.privacy_var.get())): fields += ["-f",f"{key}={value}"]
+            if self.schedule_enabled_var.get():
+                publish_at = validate_and_convert_schedule(self.schedule_time_var.get())
+                fields += ["-f", f"publish_at={publish_at}"]
             run_gh("workflow","run",WORKFLOW,"--repo",REPOSITORY,*fields); run=self._find_run(before); self.run_url=run["url"]
             self.after(0,lambda:self.open_btn.configure(state="normal")); self.after(0,self.status_var.set,f"已送出 Run #{run['databaseId']}")
             self.after(0,lambda:self.refresh_books(True))
