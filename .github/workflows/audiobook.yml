@@ -53,6 +53,10 @@ on:
         description: '將已選章節重新編為連續章號'
         required: false
         default: 'false'
+      publish_at:
+        description: 'YouTube 排定公開時間 (ISO 8601 UTC+8, 例如 2026-09-11T18:00:00+08:00)'
+        required: false
+        default: ''
       chapter_title_overrides_b64:
         description: 'GUI 編輯後的章節名稱（Base64 JSON；固定目錄 UUID 對應完整標題）'
         required: false
@@ -1327,7 +1331,7 @@ jobs:
           for attempt in 1 2 3; do
             echo "YouTube uploader attempt $attempt/3"
             set +e
-            python src/youtube_api_uploader.py --run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --source-run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --execution-run-id "${{ github.run_id }}" --input-dir prepared_parts --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --state-file upload_resume_state/state.json
+            python src/youtube_api_uploader.py --run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --source-run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --execution-run-id "${{ github.run_id }}" --input-dir prepared_parts --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --publish-at "${{ github.event.inputs.publish_at }}" --state-file upload_resume_state/state.json
             code=$?
             set -e
 

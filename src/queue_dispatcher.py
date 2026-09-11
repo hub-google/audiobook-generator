@@ -634,6 +634,7 @@ class Dispatcher:
             "end_chap": str(end_int),
             "exclude_chapters": ",".join(str(value) for value in sorted(task.get("excluded_chapters") or [])),
             "renumber_selected": "true" if renumber else "false",
+            "publish_at": str(task.get("publish_at") or ""),
             "chapter_title_overrides_b64": base64.b64encode(
                 json.dumps(snapshot.get("chapter_title_overrides") or {}, ensure_ascii=False).encode("utf-8")
             ).decode("ascii"),
@@ -651,7 +652,7 @@ class Dispatcher:
                       scrape_source_run_id=str(task.get("scrape_run_id") or "") if not need_scrape else "",
                       cover_source_run_id=str(task.get("cover_run_id") or ""))
         cover_inputs = {key: value for key, value in common_inputs.items() if key not in {
-            "chapter_label", "resume_source_run_id", "zip_password",
+            "chapter_label", "resume_source_run_id", "zip_password", "publish_at",
         }}
         dispatch_requested_at = datetime.now(timezone.utc)
         try:

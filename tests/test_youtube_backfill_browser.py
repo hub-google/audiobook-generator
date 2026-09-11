@@ -18,6 +18,9 @@ from tools.chrome_cookie_harvester import (
 from tools.youtube_backfill_gui import (
     StateStore,
     StudioPrivateClient,
+    VideoRow,
+    build_navigation_comment_text,
+    extract_part_number,
 )
 
 
@@ -103,3 +106,109 @@ def test_browser_card_worker_auth_detection():
     ]
     worker._context = mock_context
     assert worker._has_studio_auth() is True
+
+
+def test_extract_part_number():
+    assert extract_part_number("[已完結]《修真聊天群》第 1501~1600 章【第 18 部】") == 18
+    assert extract_part_number("[已完結]《凡人修仙傳》第 1~90 章【第 1 部】") == 1
+    assert extract_part_number("【第 19 部】下一部預告") == 19
+    assert extract_part_number("小說合集 第20部 完結") == 20
+    assert extract_part_number("Novel Title Part 05") == 5
+    assert extract_part_number("【第 7 集】有聲書") == 7
+    assert extract_part_number("無部數標題", default=99) == 99
+    assert extract_part_number("", default=1) == 1
+
+
+def test_build_navigation_comment_text_middle_part():
+    first = VideoRow(video_id="g9Ku5qHqKsk", title="【第 1 部】", position=0)
+    current = VideoRow(video_id="curr_vid_18", title="【第 18 部】", position=17)
+    prev_v = VideoRow(video_id="WAN53AmDn84", title="【第 17 部】", position=16)
+    next_v = VideoRow(video_id="xIsqFbnTzME", title="【第 19 部】", position=18)
+    playlist_id = "PLYHOe8Vx5qQI"
+
+    text = build_navigation_comment_text(
+        current_video_id=current.video_id,
+        playlist_id=playlist_id,
+        first_video=first,
+        next_video=next_v,
+        prev_video=prev_v,
+        next_part_num=19,
+        prev_part_num=17,
+    )
+
+    expected = (
+        "🎧 【從第1部開始聽】：https://www.youtube.com/watch?v=g9Ku5qHqKsk\n"
+        "▶️【下一部 第19部】：https://www.youtube.com/watch?v=xIsqFbnTzME\n"
+        "⏪【上一部 第17部】：https://www.youtube.com/watch?v=WAN53AmDn84\n"
+        "📚  完整播放清單：https://www.youtube.com/playlist?list=PLYHOe8Vx5qQI"
+    )
+    assert text == expected
+
+
+def test_build_navigation_comment_text_first_part():
+    first = VideoRow(video_id="g9Ku5qHqKsk", title="【第 1 部】", position=0)
+    next_v = VideoRow(video_id="part2_id", title="【第 2 部】", position=1)
+    playlist_id = "PLYHOe8Vx5qQI"
+
+    text = build_navigation_comment_text(
+        current_video_id=first.video_id,
+        playlist_id=playlist_id,
+        first_video=first,
+        next_video=next_v,
+        prev_video=None,
+        next_part_num=2,
+        prev_part_num=None,
+    )
+
+    # 第 1 部自身不應出現「從第1部開始聽」與「上一部」
+    expected = (
+        "▶️【下一部 第2部】：https://www.youtube.com/watch?v=part2_id\n"
+        "📚  完整播放清單：https://www.youtube.com/playlist?list=PLYHOe8Vx5qQI"
+    )
+    assert text == expected
+
+
+def test_build_navigation_comment_text_last_part():
+    first = VideoRow(video_id="g9Ku5qHqKsk", title="【第 1 部】", position=0)
+    current = VideoRow(video_id="part20_id", title="【第 20 部】", position=19)
+    prev_v = VideoRow(video_id="part19_id", title="【第 19 部】", position=18)
+    playlist_id = "PLYHOe8Vx5qQI"
+
+    text = build_navigation_comment_text(
+        current_video_id=current.video_id,
+        playlist_id=playlist_id,
+        first_video=first,
+        next_video=None,
+        prev_video=prev_v,
+        next_part_num=None,
+        prev_part_num=19,
+    )
+
+    # 最後一部不應出現「下一部」
+    expected = (
+        "🎧 【從第1部開始聽】：https://www.youtube.com/watch?v=g9Ku5qHqKsk\n"
+        "⏪【上一部 第19部】：https://www.youtube.com/watch?v=part19_id\n"
+        "📚  完整播放清單：https://www.youtube.com/playlist?list=PLYHOe8Vx5qQI"
+    )
+    assert text == expected
+
+
+def test_post_navigation_comment_custom_text():
+    client = object.__new__(StudioPrivateClient)
+    client._youtube_post = Mock(return_value={"commentId": "cid_999"})
+    client._web_context = Mock(return_value={})
+    client._create_comment_params = Mock(return_value="mock_params")
+
+    custom_text = "🎧 【從第1部開始聽】：https://www.youtube.com/watch?v=aaa"
+    cid, _ = client.post_navigation_comment(
+        video_id="vid_123",
+        first_video_id="aaa",
+        playlist_id="plist_1",
+        comment_text=custom_text,
+    )
+
+    assert cid == "cid_999"
+    client._youtube_post.assert_called_once()
+    payload = client._youtube_post.call_args[0][1]
+    assert payload["commentText"] == custom_text
+

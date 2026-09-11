@@ -110,7 +110,7 @@ def set_video_thumbnail(youtube, video_id, cover_path, attempts=None):
 
 
 def upload_video_file(youtube, video_path, title, description, category_id="22",
-                      privacy_status="public", cover_path=None,
+                      privacy_status="public", publish_at=None, cover_path=None,
                       network_attempts=8, initial_retry_delay=2):
     """使用 Resumable 上傳 MP4 到 YouTube"""
     media_file_cls = _get_symbol("MediaFileUpload", MediaFileUpload)
@@ -122,16 +122,23 @@ def upload_video_file(youtube, video_path, title, description, category_id="22",
         logging.info(f"📤 開始 API 極速上傳影片: {title} (檔案大小: {file_size_mb:.1f} MB)...")
         sys.stdout.flush()
 
+        status_dict = {
+            "selfDeclaredMadeForKids": False,
+        }
+        if publish_at and str(publish_at).strip():
+            status_dict["privacyStatus"] = "private"
+            status_dict["publishAt"] = str(publish_at).strip()
+            logging.info(f"📅 設定 YouTube 排定公開時間: {str(publish_at).strip()}")
+        else:
+            status_dict["privacyStatus"] = privacy_status
+
         body = {
             "snippet": {
                 "title": title[:100],
                 "description": description[:5000],
                 "categoryId": category_id,
             },
-            "status": {
-                "privacyStatus": privacy_status,
-                "selfDeclaredMadeForKids": False,
-            }
+            "status": status_dict,
         }
 
         media = media_file_cls(video_path, chunksize=10*1024*1024, resumable=True)

@@ -81,6 +81,76 @@ class VideoRow:
     position: int
 
 
+def extract_part_number(title: str, default: int | None = None) -> int | None:
+    """從影片標題精準提取部數（數字）。
+    
+    支援格式範例：
+    - [已完結]《修真聊天群》第 1501~1600 章【第 18 部】 -> 18
+    - 【第18部】 -> 18
+    - 第19部 -> 19
+    - Part 2 -> 2
+    - 【第 3 集】 -> 3
+    """
+    if not title:
+        return default
+    patterns = [
+        r"【第\s*(\d+)\s*部】",
+        r"第\s*(\d+)\s*部",
+        r"\[第\s*(\d+)\s*部\]",
+        r"\(第\s*(\d+)\s*部\)",
+        r"(?:^|\s)Part[_\s]*(\d+)",
+        r"【第\s*(\d+)\s*集】",
+        r"第\s*(\d+)\s*集",
+    ]
+    for pat in patterns:
+        m = re.search(pat, title, re.IGNORECASE)
+        if m:
+            try:
+                return int(m.group(1))
+            except (ValueError, TypeError):
+                pass
+    return default
+
+
+def build_navigation_comment_text(
+    current_video_id: str,
+    playlist_id: str,
+    first_video: VideoRow | None = None,
+    next_video: VideoRow | None = None,
+    prev_video: VideoRow | None = None,
+    next_part_num: int | None = None,
+    prev_part_num: int | None = None,
+) -> str:
+    """組裝標準化置頂導流留言格式。
+    
+    格式範例：
+    🎧 【從第1部開始聽】：https://www.youtube.com/watch?v=g9Ku5qHqKsk
+    ▶️【下一部 第19部】：https://www.youtube.com/watch?v=xIsqFbnTzME
+    ⏪【上一部 第17部】：https://www.youtube.com/watch?v=WAN53AmDn84
+    📚  完整播放清單：https://www.youtube.com/playlist?list=PLYHOe8Vx5qQI
+    """
+    lines: list[str] = []
+
+    # 1. 🎧 【從第1部開始聽】 (若有第 1 部且當前影片並非第 1 部)
+    if first_video and first_video.video_id and first_video.video_id != current_video_id:
+        lines.append(f"🎧 【從第1部開始聽】：https://www.youtube.com/watch?v={first_video.video_id}")
+
+    # 2. ▶️【下一部 第X部】 (若有下一部)
+    if next_video and next_video.video_id and next_video.video_id != current_video_id:
+        next_label = f"第{next_part_num}部" if next_part_num is not None else "下一部"
+        lines.append(f"▶️【下一部 {next_label}】：https://www.youtube.com/watch?v={next_video.video_id}")
+
+    # 3. ⏪【上一部 第Y部】 (若有上一部)
+    if prev_video and prev_video.video_id and prev_video.video_id != current_video_id:
+        prev_label = f"第{prev_part_num}部" if prev_part_num is not None else "上一部"
+        lines.append(f"⏪【上一部 {prev_label}】：https://www.youtube.com/watch?v={prev_video.video_id}")
+
+    # 4. 📚  完整播放清單 (始終顯示)
+    lines.append(f"📚  完整播放清單：https://www.youtube.com/playlist?list={playlist_id}")
+
+    return "\n".join(lines)
+
+
 class StateStore:
     def __init__(self, path: Path = STATE_PATH) -> None:
         self.path = path
@@ -467,18 +537,22 @@ class StudioPrivateClient:
         buf.extend(b"\xf0\x01\x00\x8a\x02\x10comments-section\xf8\x02\x01\xb0\x03\x00\xc8\x03\x00")
         return base64.urlsafe_b64encode(buf).decode("ascii").rstrip("=")
 
-    def post_navigation_comment(self, video_id: str, first_video_id: str, playlist_id: str) -> tuple[str, dict[str, Any]]:
-        if first_video_id and first_video_id != video_id:
-            text = (
-                f"{COMMENT_MARKER}\n🎧 第一次收聽這部小說？建議從第一集開始：\n"
-                f"▶ 第一集：https://youtu.be/{first_video_id}\n\n"
-                f"📚 完整播放清單：\nhttps://www.youtube.com/playlist?list={playlist_id}"
-            )
-        else:
-            text = (
-                f"{COMMENT_MARKER}\n🎧 歡迎收聽本部小說！可收藏完整小說播放清單隨時回聽：\n"
-                f"📚 完整播放清單：\nhttps://www.youtube.com/playlist?list={playlist_id}"
-            )
+    def post_navigation_comment(
+        self,
+        video_id: str,
+        first_video_id: str,
+        playlist_id: str,
+        comment_text: str = "",
+    ) -> tuple[str, dict[str, Any]]:
+        text = comment_text.strip()
+        if not text:
+            if first_video_id and first_video_id != video_id:
+                text = (
+                    f"🎧 【從第1部開始聽】：https://www.youtube.com/watch?v={first_video_id}\n"
+                    f"📚  完整播放清單：https://www.youtube.com/playlist?list={playlist_id}"
+                )
+            else:
+                text = f"📚  完整播放清單：https://www.youtube.com/playlist?list={playlist_id}"
         body = self._youtube_post("comment/create_comment", {
             "context": self._web_context(), "commentText": text,
             "createCommentParams": self._create_comment_params(video_id),
@@ -738,14 +812,32 @@ class StudioPrivateClient:
                         video_id,
                     )
                     body_str = json.dumps(body, ensure_ascii=False)
-                    if COMMENT_MARKER in body_str:
+                    has_nav = (
+                        COMMENT_MARKER in body_str
+                        or "從第1部開始聽" in body_str
+                        or ("完整播放清單" in body_str and playlist_id in body_str)
+                    )
+                    if has_nav:
                         result["has_comment"] = True
                         for node in self._walk(body):
                             if isinstance(node, dict) and "commentViewModel" in node:
-                                cid = node["commentViewModel"].get("commentId")
-                                if cid:
-                                    result["comment_id"] = cid
-                                    break
+                                n_str = json.dumps(node, ensure_ascii=False)
+                                if (
+                                    COMMENT_MARKER in n_str
+                                    or "從第1部開始聽" in n_str
+                                    or ("完整播放清單" in n_str and playlist_id in n_str)
+                                ):
+                                    cid = node["commentViewModel"].get("commentId")
+                                    if cid:
+                                        result["comment_id"] = cid
+                                        break
+                        if not result["comment_id"]:
+                            for node in self._walk(body):
+                                if isinstance(node, dict) and "commentViewModel" in node:
+                                    cid = node["commentViewModel"].get("commentId")
+                                    if cid:
+                                        result["comment_id"] = cid
+                                        break
                         if (
                             "RENDERING_PRIORITY_PINNED_COMMENT" in body_str
                             or "pinnedText" in body_str
@@ -1120,7 +1212,15 @@ class App(tk.Tk):
         self.start_button.configure(state="disabled")
         playlist = self.playlists[int(selection[0])]
         videos = list(self.videos)
-        first = videos[0]
+        # 建立部數映射表以精確獲取上一部、下一部與第一部
+        part_map: dict[int, VideoRow] = {}
+        for idx, v in enumerate(videos):
+            pnum = extract_part_number(v.title, default=idx + 1)
+            if pnum is not None and pnum not in part_map:
+                part_map[pnum] = v
+
+        first_video = part_map.get(min(part_map.keys())) if part_map else (videos[0] if videos else None)
+        first = first_video or videos[0]
         do_card = self.do_card.get()
         do_comment = self.do_comment.get()
         do_pin = self.do_pin.get()
@@ -1132,7 +1232,7 @@ class App(tk.Tk):
             try:
                 studio = StudioPrivateClient(raw_cookie)
                 self.studio_client = studio
-                for video in videos:
+                for idx, video in enumerate(videos):
                     if self.stop_event.is_set():
                         break
                     if video.position == 0 and not include_first:
@@ -1193,8 +1293,43 @@ class App(tk.Tk):
                             self.event_queue.put(("log", f"⏩ 影片「{video.title}」導流留言已存在，自動跳過。"))
                         else:
                             try:
+                                pnum = extract_part_number(video.title, default=idx + 1)
+                                prev_video = (
+                                    part_map.get(pnum - 1)
+                                    if (pnum is not None and (pnum - 1) in part_map)
+                                    else (videos[idx - 1] if idx > 0 and not part_map else None)
+                                )
+                                prev_pnum = (
+                                    extract_part_number(prev_video.title, default=pnum - 1 if pnum else idx)
+                                    if prev_video
+                                    else None
+                                )
+
+                                next_video = (
+                                    part_map.get(pnum + 1)
+                                    if (pnum is not None and (pnum + 1) in part_map)
+                                    else (videos[idx + 1] if idx + 1 < len(videos) and not part_map else None)
+                                )
+                                next_pnum = (
+                                    extract_part_number(next_video.title, default=pnum + 1 if pnum else idx + 2)
+                                    if next_video
+                                    else None
+                                )
+
+                                comment_text = build_navigation_comment_text(
+                                    current_video_id=video.video_id,
+                                    playlist_id=playlist.playlist_id,
+                                    first_video=first,
+                                    next_video=next_video,
+                                    prev_video=prev_video,
+                                    next_part_num=next_pnum,
+                                    prev_part_num=prev_pnum,
+                                )
                                 comment_id, _ = studio.post_navigation_comment(
-                                    video.video_id, first.video_id, playlist.playlist_id
+                                    video.video_id,
+                                    first.video_id,
+                                    playlist.playlist_id,
+                                    comment_text=comment_text,
                                 )
                                 self.state_store.mark(video.video_id, "comment_id", comment_id)
                                 self.state_store.mark(video.video_id, "has_comment", True)

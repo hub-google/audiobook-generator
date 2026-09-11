@@ -195,6 +195,7 @@ def main():
     parser.add_argument("--input-dir", help="Local directory containing MP4 files")
     parser.add_argument("--repo", default="hub-google/audiobook-generator", help="GitHub Repository")
     parser.add_argument("--privacy", default="public", choices=["public", "unlisted", "private"], help="Privacy status")
+    parser.add_argument("--publish-at", default="", help="Scheduled publish time in ISO 8601 format (e.g. 2026-09-11T18:00:00+08:00)")
     parser.add_argument("--state-file", default="upload_resume_state/state.json",
                         help="Durable state restored/saved by GitHub Actions")
     parser.add_argument("--task-id", default=os.environ.get("QUEUE_TASK_ID", ""), help="Persistent cloud queue task ID")
