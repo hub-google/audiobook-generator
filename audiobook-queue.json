@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1157,
-  "updated_at": "2026-09-11T01:24:56.031976+00:00",
+  "revision": 1158,
+  "updated_at": "2026-09-11T01:25:29.018632+00:00",
   "queue": [
     {
       "task_id": "book-20260824-8dbac83d",
@@ -1533,7 +1533,7 @@
         1514,
         1515
       ],
-      "status": "queued",
+      "status": "dispatching",
       "run_id": null,
       "run_attempt": 0,
       "execution_generation": 2,
@@ -1550,17 +1550,19 @@
         "total": 23
       },
       "created_at": "2026-08-24T01:02:29.893317+00:00",
-      "updated_at": "2026-09-08T16:23:04.876219+00:00",
+      "updated_at": "2026-09-11T01:25:29.018612+00:00",
       "book_profile_id": "3cdd876b035be4ae",
       "profile_snapshot": {
         "book_profile_id": "3cdd876b035be4ae",
-        "profile_revision": 3,
+        "catalog_url": "https://tw.hjwzw.com/Book/Chapter/34810",
+        "catalog_identity": "",
+        "profile_revision": 4,
         "cleaner_remove_patterns": [
           "《之王旗飛揚》完。"
         ],
         "duplicate_detection": {
-          "use_normalized_number": false,
-          "use_chapter_name": true,
+          "use_normalized_number": true,
+          "use_chapter_name": false,
           "use_number_and_name": false
         },
         "chapter_title_overrides": {},
@@ -1578,10 +1580,10 @@
           "quality": 98
         },
         "chapter_normalized_number_overrides": {},
-        "cleaner_fingerprint": "ce7ee525737b86d6dbdf553368e726cb783d5a53f5aaed5dbbd327a8263f1794"
+        "cleaner_fingerprint": "be915bb6995f73b47499ac48cddcc64e29f760d35a62f204a046d50186128be2"
       },
       "artifact_source_run_id": null,
-      "dispatched_at": "2026-08-27T09:58:38.242951+00:00",
+      "dispatched_at": "2026-09-11T01:25:28.997295+00:00",
       "completed_at": "2026-08-27T12:49:38Z",
       "stages": {
         "scrape": {
