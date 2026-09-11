@@ -287,6 +287,7 @@ def run_local_prepared_parts_mode(
                     title=v_title,
                     description=full_desc,
                     privacy_status="public",
+                    publish_at=getattr(args, "publish_at", None),
                     cover_path=None,
                 )
             except UploadPaused as paused:

@@ -371,6 +371,7 @@ def run_ci_artifact_mode(
                         title=p_meta["title"],
                         description=full_desc,
                         privacy_status="public",
+                        publish_at=getattr(args, "publish_at", None),
                         cover_path=None,
                     )
                 except UploadPaused as paused:

@@ -361,6 +361,7 @@ class QueueOperationsMixin:
         except ValueError:
             messagebox.showwarning("提示", "章節範圍必須是數字")
             return
+        publish_at = self._get_configured_publish_at() if hasattr(self, "_get_configured_publish_at") else None
         task = new_task(
             catalog_url=self.url_entry.get().strip(),
             catalog_identity=self.catalog_data.get("catalog_identity", ""),
@@ -373,6 +374,7 @@ class QueueOperationsMixin:
             chapter_title_overrides=self.chapter_title_overrides,
             chapter_order=self.chapter_order,
             chapter_normalized_number_overrides=self.chapter_normalized_number_overrides,
+            publish_at=publish_at,
         )
         self._mutate_queue_async(
             lambda queue: add_tasks(queue, [task]),
@@ -401,6 +403,7 @@ class QueueOperationsMixin:
         except ValueError as error:
             messagebox.showwarning("更新章節", str(error))
             return
+        publish_at = self._get_configured_publish_at() if hasattr(self, "_get_configured_publish_at") else None
         duplicate_detection = dict(self.duplicate_detection)
         chapter_title_overrides = dict(self.chapter_title_overrides)
         chapter_normalized_number_overrides = dict(self.chapter_normalized_number_overrides)
@@ -463,6 +466,7 @@ class QueueOperationsMixin:
                         chapter_title_overrides=chapter_title_overrides,
                         chapter_order=self.chapter_order,
                         chapter_normalized_number_overrides=chapter_normalized_number_overrides,
+                        publish_at=publish_at,
                     ),
                     f"Update chapter plan for audiobook task {task_id}",
                 )
