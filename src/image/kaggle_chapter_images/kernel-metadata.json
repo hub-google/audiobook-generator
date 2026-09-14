@@ -1,0 +1,14 @@
+{
+  "id": "cit5055/quanzhigaoshou-chapter-images",
+  "title": "Quanzhigaoshou Chapter Images",
+  "code_file": "kaggle_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": ["cit5055/quanzhigaoshou-chapter-images-input"],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}

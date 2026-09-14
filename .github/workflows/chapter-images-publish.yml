@@ -1,0 +1,65 @@
+name: Publish Kaggle chapter images to HF
+
+on:
+  workflow_dispatch:
+    inputs:
+      kaggle_kernel:
+        description: Completed private Kaggle kernel slug
+        required: true
+        default: cit5055/quanzhigaoshou-chapter-images
+      hf_repo_id:
+        description: Existing HF dataset repository
+        required: true
+        default: hub-google/audiobook-archive
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download the completed Kaggle output
+        run: |
+          pip install "kaggle>=1.7,<2" "huggingface-hub>=1.0,<2" pillow
+          kaggle kernels output "${{ inputs.kaggle_kernel }}" -p "$RUNNER_TEMP/kaggle-output"
+
+      - name: Verify the Kaggle provenance and six images
+        run: |
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          from PIL import Image
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "kaggle-output" / "chapter_images"
+          report = json.loads((root / "run_report.json").read_text(encoding="utf-8"))
+          assert report["status"] == "generated"
+          assert report["chapters"] == 3 and report["images"] == 6
+          images = sorted(root.glob("chapter_*/scene_*.webp"))
+          rows = [json.loads(line) for line in (root / "manifests/images.jsonl").read_text(encoding="utf-8").splitlines()]
+          assert len(images) == len(rows) == 6
+          for image, row in zip(images, rows):
+              with Image.open(image) as opened:
+                  assert opened.size == (1280, 720) and opened.format == "WEBP"
+              assert hashlib.sha256(image.read_bytes()).hexdigest() == row["sha256"]
+              assert row["status"] == "needs_review"
+          print(json.dumps(report["timings"], indent=2))
+          PY
+
+      - name: Publish content then manifests then latest pointer
+        run: |
+          python src/image/kaggle_chapter_images/publish_outputs.py \
+            --output "$RUNNER_TEMP/kaggle-output/chapter_images" \
+            --assets src/image/kaggle_chapter_images \
+            --repo-id "${{ inputs.hf_repo_id }}" \
+            --env-file /dev/null

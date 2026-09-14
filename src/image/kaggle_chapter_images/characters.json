@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0.0",
+  "review_status": "demo_design_locked_for_chapters_1_3",
+  "characters": [
+    {"character_id": "char_ye_xiu", "names": ["葉修", "葉秋"], "forms": {"real_v1": {"valid_chapters": [1, 1729], "source": "chapter_3 explicit traits plus project visual design", "immutable_prompt_block": "Ye Xiu, Chinese man age 25, pale slightly tired face, lean average build, untidy short black hair, faint unshaven stubble, calm dark eyes, understated charcoal winter coat over a simple dark shirt", "reference_ids": []}}},
+    {"character_id": "char_su_mucheng", "names": ["蘇沐橙"], "forms": {"real_v1": {"valid_chapters": [1, 1729], "source": "chapter_1 explicit beauty and calm demeanor plus project visual design", "immutable_prompt_block": "Su Mucheng, Chinese woman in her early twenties, elegant oval face, long dark hair, gentle composed eyes, slender build, refined cream winter coat", "reference_ids": []}}},
+    {"character_id": "char_chen_guo", "names": ["陳果"], "forms": {"real_v1": {"valid_chapters": [2, 1729], "source": "chapter_2 explicit high ponytail and fierce manner plus project visual design", "immutable_prompt_block": "Chen Guo, Chinese woman in her mid-twenties, clear attractive face, expressive eyes, long dark hair tied in a high swinging ponytail, energetic athletic posture, practical warm red sweater and dark jeans", "reference_ids": []}}}
+  ]
+}

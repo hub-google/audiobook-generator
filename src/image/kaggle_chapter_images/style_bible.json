@@ -1,0 +1,11 @@
+{
+  "version": "1.0.0-demo",
+  "review_status": "candidate",
+  "aspect_ratio": "16:9",
+  "medium": "high-detail semi-realistic cinematic digital animation illustration",
+  "realism": "grounded adult anatomy and facial proportions; not photographic",
+  "color": "restrained saturation, deep neutral blacks, natural skin tones",
+  "lighting": "cinematic practical light, soft volumetric atmosphere, subtle rim light",
+  "linework": "no heavy comic outlines",
+  "postprocess": "fine detail, gentle film grain, no novelty filters"
+}
