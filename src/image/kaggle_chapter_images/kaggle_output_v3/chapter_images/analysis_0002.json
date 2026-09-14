@@ -1,0 +1,76 @@
+{
+  "core_summary_zh": "葉秋接受解約條件並離開俱樂部，前往網吧玩榮耀遊戲，遇到一名名叫陳果的普通玩家。",
+  "two_scene_feasibility": "高",
+  "candidates": [
+    {
+      "event_id": "E1",
+      "position": 0.3,
+      "event_type": "人物行動",
+      "summary_zh": "葉秋接受解約條件並離開俱樂部。",
+      "characters": [
+        "葉秋"
+      ],
+      "location": "俱樂部",
+      "visible_action": "葉秋離開俱樂部",
+      "visible_emotion": "葉秋淚流滿面",
+      "key_objects": [
+        "紅酒",
+        "賬號卡"
+      ],
+      "evidence": [
+        {
+          "chunk_id": "ch0002_p001",
+          "start_char": 661,
+          "end_char": 1280,
+          "support_summary": "葉秋接受解約條件並離開俱樂部"
+        }
+      ],
+      "scores": {
+        "narrative": 5,
+        "visual": 4,
+        "character": 4,
+        "emotion": 5,
+        "coverage": 5,
+        "evidence": 5
+      },
+      "uncertainties": [],
+      "not_depicted": []
+    },
+    {
+      "event_id": "E2",
+      "position": 0.6,
+      "event_type": "人物互動",
+      "summary_zh": "葉秋在網吧遇到陳果，陳果誤操作盜取葉秋賬號。",
+      "characters": [
+        "葉秋",
+        "陳果"
+      ],
+      "location": "網吧",
+      "visible_action": "葉秋坐在C區47號機位，陳果誤操作盜取葉秋賬號",
+      "visible_emotion": "葉秋驚訝",
+      "key_objects": [
+        "賬號卡",
+        "榮耀遊戲"
+      ],
+      "evidence": [
+        {
+          "chunk_id": "ch0002_p003",
+          "start_char": 1281,
+          "end_char": 1926,
+          "support_summary": "葉秋在網吧遇到陳果"
+        }
+      ],
+      "scores": {
+        "narrative": 5,
+        "visual": 4,
+        "character": 4,
+        "emotion": 4,
+        "coverage": 5,
+        "evidence": 5
+      },
+      "uncertainties": [],
+      "not_depicted": []
+    }
+  ],
+  "chapter": 2
+}

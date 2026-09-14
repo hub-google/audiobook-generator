@@ -1,0 +1,46 @@
+{
+  "book_id": "quanzhigaoshou",
+  "chapter": 2,
+  "title": "C區47號",
+  "source_sha256": "90542d6e447d7a3a36d191b38a1f8cd99ece10a4eb94bb9740f0e5c1debb1f27",
+  "pair_score": 87.09,
+  "scenes": [
+    {
+      "scene": 1,
+      "source_event_id": "E1",
+      "evidence": [
+        {
+          "chunk_id": "ch0002_p001",
+          "start_char": 661,
+          "end_char": 1280,
+          "support_summary": "葉秋接受解約條件並離開俱樂部"
+        }
+      ],
+      "character_versions": {
+        "char_ye_xiu": "real_v1"
+      },
+      "summary_zh": "葉秋接受解約條件並淚流滿面地離開俱樂部。",
+      "prompt": "Ye Xiu, a 25-year-old Chinese man with a slightly tired and pale face, accepts the severance conditions and leaves the club in tears. He is wearing an understated charcoal winter coat over a simple dark shirt, his untidy short black hair and faint unshaven stubble hint at his calm demeanor.. Character identity: Ye Xiu, Chinese man age 25, pale slightly tired face, lean average build, untidy short black hair, faint unshaven stubble, calm dark eyes, understated charcoal winter coat over a simple dark shirt. Style: high-detail semi-realistic cinematic digital animation illustration, grounded adult facial proportions, natural skin texture, finely rendered fabric and environment, restrained saturation, deep neutral blacks, soft volumetric winter lighting, subtle rim light, shallow cinematic depth of field, widescreen composition, consistent visual language. no written text",
+      "negative_prompt": "photograph, chibi, cartoon, manga, comic, watercolor, oil painting, 3d render, plastic skin, text, subtitles, watermark, logo, UI, low quality, blurry, deformed hands, extra fingers, duplicate people"
+    },
+    {
+      "scene": 2,
+      "source_event_id": "E2",
+      "evidence": [
+        {
+          "chunk_id": "ch0002_p003",
+          "start_char": 1281,
+          "end_char": 1926,
+          "support_summary": "葉秋在網吧遇到陳果"
+        }
+      ],
+      "character_versions": {
+        "char_ye_xiu": "real_v1",
+        "char_chen_guo": "real_v1"
+      },
+      "summary_zh": "葉秋在網吧遇到陳果，陳果誤操作盜取葉秋賬號。",
+      "prompt": "Ye Xiu, a slightly tired-looking Chinese man in his early twenties with untidy short black hair and a calm gaze, is sitting at a computer terminal in a网吧. Chen Guo, a vibrant and energetic Chinese woman in her mid-twenties with long dark hair tied up in a high ponytail, is mistakenly accessing Ye Xiu's game account. Ye Xiu looks surprised.. Character identity: Ye Xiu, Chinese man age 25, pale slightly tired face, lean average build, untidy short black hair, faint unshaven stubble, calm dark eyes, understated charcoal winter coat over a simple dark shirt; Chen Guo, Chinese woman in her mid-twenties, clear attractive face, expressive eyes, long dark hair tied in a high swinging ponytail, energetic athletic posture, practical warm red sweater and dark jeans. Style: high-detail semi-realistic cinematic digital animation illustration, grounded adult facial proportions, natural skin texture, finely rendered fabric and environment, restrained saturation, deep neutral blacks, soft volumetric winter lighting, subtle rim light, shallow cinematic depth of field, widescreen composition, consistent visual language. no written text",
+      "negative_prompt": "photograph, chibi, cartoon, manga, comic, watercolor, oil painting, 3d render, plastic skin, text, subtitles, watermark, logo, UI, low quality, blurry, deformed hands, extra fingers, duplicate people"
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "book_id": "quanzhigaoshou",
+  "chapter": 1,
+  "title": "被驅逐的高手",
+  "source_sha256": "a9e975bb1bca19d54f5e22d434f2b202305dbc4a7f182dfd6dfbd14e585a9310",
+  "pair_score": 86.18,
+  "scenes": [
+    {
+      "scene": 1,
+      "source_event_id": "1",
+      "evidence": [
+        {
+          "chunk_id": "ch0001_p001",
+          "start_char": 0,
+          "end_char": 703,
+          "support_summary": "一雙靈巧的手飛舞著操縱著鍵盤和鼠標，富有節奏的敲擊聲仿佛是一首輕快的樂章。"
+        }
+      ],
+      "character_versions": {
+        "char_ye_xiu": "real_v1"
+      },
+      "summary_zh": "葉秋在房間裡操作電腦，擊敗了對手，準備開始新的對戰。",
+      "prompt": "A young Chinese man named Ye Xiu is confidently operating a computer in his room, having just defeated an opponent and preparing for the next battle. The background noise is the rhythmic sound of typing on a keyboard and mouse.. Character identity: Ye Xiu, Chinese man age 25, pale slightly tired face, lean average build, untidy short black hair, faint unshaven stubble, calm dark eyes, understated charcoal winter coat over a simple dark shirt. Style: high-detail semi-realistic cinematic digital animation illustration, grounded adult facial proportions, natural skin texture, finely rendered fabric and environment, restrained saturation, deep neutral blacks, soft volumetric winter lighting, subtle rim light, shallow cinematic depth of field, widescreen composition, consistent visual language. no written text",
+      "negative_prompt": "photograph, chibi, cartoon, manga, comic, watercolor, oil painting, 3d render, plastic skin, text, subtitles, watermark, logo, UI, low quality, blurry, deformed hands, extra fingers, duplicate people"
+    },
+    {
+      "scene": 2,
+      "source_event_id": "4",
+      "evidence": [
+        {
+          "chunk_id": "ch0001_p007",
+          "start_char": 4035,
+          "end_char": 4056,
+          "support_summary": "蘇沐橙是唯一一個跟在他身后的。"
+        }
+      ],
+      "character_versions": {
+        "char_ye_xiu": "real_v1",
+        "char_su_mucheng": "real_v1"
+      },
+      "summary_zh": "葉秋準備離開俱樂部，蘇沐橙送行，兩人依依不舍。",
+      "prompt": "Ye Xiu is preparing to leave the club while Su Mucheng sees him off. Both show signs of reluctance to part ways.. Character identity: Ye Xiu, Chinese man age 25, pale slightly tired face, lean average build, untidy short black hair, faint unshaven stubble, calm dark eyes, understated charcoal winter coat over a simple dark shirt; Su Mucheng, Chinese woman in her early twenties, elegant oval face, long dark hair, gentle composed eyes, slender build, refined cream winter coat. Style: high-detail semi-realistic cinematic digital animation illustration, grounded adult facial proportions, natural skin texture, finely rendered fabric and environment, restrained saturation, deep neutral blacks, soft volumetric winter lighting, subtle rim light, shallow cinematic depth of field, widescreen composition, consistent visual language. no written text",
+      "negative_prompt": "photograph, chibi, cartoon, manga, comic, watercolor, oil painting, 3d render, plastic skin, text, subtitles, watermark, logo, UI, low quality, blurry, deformed hands, extra fingers, duplicate people"
+    }
+  ]
+}
