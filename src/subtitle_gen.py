@@ -5,7 +5,7 @@ import logging
 from datetime import timedelta
 
 def get_wav_duration(wav_path):
-    with contextlib.closing(wave.open(wav_path, 'r')) as f:
+    with contextlib.closing(wave.open(os.fspath(wav_path), 'rb')) as f:
         frames = f.getnframes()
         rate = f.getframerate()
         return frames / float(rate)
@@ -85,24 +85,23 @@ def generate_chapter_srt(part_wav_paths, lines, srt_output_path):
     根據每個分段 WAV 的長度，產生 SRT 檔案 (自動清理句尾標點符號與長句折行)
     """
     if len(part_wav_paths) != len(lines):
-        logging.warning(f"[Subtitle] Mismatch: {len(part_wav_paths)} wavs vs {len(lines)} lines")
+        raise ValueError(f"Subtitle/audio count mismatch: {len(part_wav_paths)} wavs vs {len(lines)} lines")
+    # Validate all segments before replacing a previous good subtitle file.
+    durations = [get_wav_duration(path) for path in part_wav_paths]
+    if any(duration <= 0 for duration in durations):
+        raise ValueError("Subtitle audio segment is empty")
     
     current_time = 0.0
     cue_index = 1
     
     partial_path = srt_output_path + ".tmp"
     with open(partial_path, "w", encoding="utf-8") as f:
-        for idx, (wav_path, text) in enumerate(zip(part_wav_paths, lines)):
+        for text, duration in zip(lines, durations):
             text = text.strip()
             if not text:
+                current_time += duration
                 continue
-                
-            try:
-                duration = get_wav_duration(wav_path)
-            except Exception as e:
-                logging.error(f"[Subtitle] Cannot read duration for {wav_path}: {e}")
-                duration = 2.0 # fallback
-                
+
             start_ts = format_timestamp(current_time)
             end_time = current_time + duration
             end_ts = format_timestamp(end_time)

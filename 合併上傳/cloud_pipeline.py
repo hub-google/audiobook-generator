@@ -253,9 +253,46 @@ def make_plan(args):
     matrix={"include":[{"output_number":x["output_number"]} for x in plan["outputs"]]}
     with open(os.environ["GITHUB_OUTPUT"],"a",encoding="utf-8") as f: f.write("matrix="+json.dumps(matrix,separators=(",",":"))+"\nplan_id="+plan["plan_id"]+"\n")
 
+def optional_remote_json(path):
+    try:
+        return remote_json(path)
+    except EntryNotFoundError:
+        return None
+
+
+def reusable_merge_manifest(root, plan, item):
+    """Never replace the pinned object of an existing resumable upload."""
+    manifest = optional_remote_json(f"{root}/merge_manifest.json")
+    state = optional_remote_json(f"{root}/upload_state.json")
+    if manifest:
+        same_plan = (
+            manifest.get("status") == "merge_complete"
+            and manifest.get("plan_id") == plan["plan_id"]
+            and manifest.get("parts_revision") == plan["repo_revision"]
+            and manifest.get("output") == item
+            and manifest.get("video_path") == f"{root}/audiobook.mp4"
+            and int(manifest.get("bytes") or 0) > 0
+            and re.fullmatch(r"[0-9a-f]{64}", str(manifest.get("sha256") or ""))
+            and re.fullmatch(r"[0-9a-f]{40}", str(manifest.get("output_revision") or ""))
+        )
+        if same_plan:
+            if state and (state.get("source_revision") != source_revision(manifest)
+                          or int(state.get("total_size") or 0) != int(manifest["bytes"])
+                          or state.get("manifest_path") != f"{root}/merge_manifest.json"):
+                raise RuntimeError("Existing upload state does not match its pinned merge")
+            return manifest
+    if state:
+        raise RuntimeError("Existing upload session prevents rebuilding its pinned merge")
+    return None
+
+
 def merge_output(args):
     plan=json.loads(Path(args.plan).read_text(encoding="utf-8")); item=next(x for x in plan["outputs"] if x["output_number"]==args.output_number)
-    _, repo, token=api(); root=output_root(plan["plan_id"],args.output_number); target=Path(args.bucket_mount)/root/"audiobook.mp4"; target.parent.mkdir(parents=True,exist_ok=True)
+    root=output_root(plan["plan_id"],args.output_number)
+    if reusable_merge_manifest(root, plan, item):
+        print("Reusing completed pinned merge; existing upload session is preserved", flush=True)
+        return
+    _, repo, token=api(); target=Path(args.bucket_mount)/root/"audiobook.mp4"; target.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         source_dir=Path(tmp)/"source-parts"
         local_parts=[
@@ -285,10 +322,19 @@ def credentials(slot=None):
 
 def put_chunk(url,start,total,data): return requests.put(url,headers={"Content-Length":str(len(data)),"Content-Range":f"bytes {start}-{start+len(data)-1}/{total}"},data=data,timeout=180)
 def query(url,total,cred):
-    response=requests.put(url,headers={"Authorization":f"Bearer {cred.token}","Content-Length":"0","Content-Range":f"bytes */{total}"},timeout=60)
-    if response.status_code in (200,201): return total,(response.json() or {}).get("id")
-    if response.status_code!=308: raise RuntimeError(f"YouTube resume query failed: {response.status_code} {response.text[:300]}")
-    value=response.headers.get("Range",""); return (int(value.rsplit("-",1)[1])+1 if "-" in value else 0),None
+    for attempt in range(TRANSFER_RETRIES):
+        try:
+            response=requests.put(url,headers={"Authorization":f"Bearer {cred.token}","Content-Length":"0","Content-Range":f"bytes */{total}"},timeout=60)
+            if response.status_code in (200,201) or response.status_code == 308:
+                return acknowledged_offset(response, total)
+            if response.status_code not in (408, 429, 500, 502, 503, 504):
+                raise RuntimeError(f"YouTube resume query failed: {response.status_code}")
+        except (requests.Timeout, requests.ConnectionError):
+            if attempt + 1 == TRANSFER_RETRIES:
+                raise
+        if attempt + 1 < TRANSFER_RETRIES:
+            time.sleep(min(2 ** attempt, 30))
+    raise RuntimeError("YouTube resume query failed after bounded retries")
 
 def acknowledged_offset(response, total):
     if response.status_code in (200, 201):
@@ -296,7 +342,7 @@ def acknowledged_offset(response, total):
         if not video_id:
             raise RuntimeError("YouTube completed response is missing video ID")
         return total, video_id
-    if response.status_code != 308:
+    if response.status_code!=308:
         raise RuntimeError(f"YouTube chunk failed: {response.status_code}")
     value = response.headers.get("Range", "")
     if not value:
@@ -317,7 +363,12 @@ def upload_range(session, source, total, target, sent, cred, video_id=None):
             raise RuntimeError("HF returned a truncated byte range")
         try:
             response = put_chunk(session, sent, total, data)
-            next_sent, found_id = acknowledged_offset(response, total)
+            if response.status_code in (408, 429, 500, 502, 503, 504):
+                # The request may have reached YouTube despite the error.
+                time.sleep(min(2 ** (no_progress + 1), 30))
+                next_sent, found_id = query(session, total, cred)
+            else:
+                next_sent, found_id = acknowledged_offset(response, total)
         except (requests.Timeout, requests.ConnectionError):
             next_sent, found_id = query(session, total, cred)
         if next_sent < 0 or next_sent > total:
@@ -343,7 +394,9 @@ def phase1(args):
     if state:
         if int(state["total_size"]) != total or state.get("source_revision") != source_revision(manifest) or state.get("manifest_path") != args.manifest:
             raise RuntimeError("Existing YouTube upload session belongs to a different source revision")
-        if state.get("status") in {"paused_at_98", "resume_dispatched", "complete", "needs_attention"}:
+        if state.get("status") == "needs_attention":
+            raise RuntimeError("Existing upload requires attention; refusing to report success")
+        if state.get("status") in {"paused_at_98", "resume_dispatched", "complete"}:
             if state.get("status") == "paused_at_98":
                 write_phase1_summary(state, str(state.get("youtube_title") or manifest.get("youtube_title")))
             return
@@ -391,6 +444,11 @@ def phase2(args):
     state=remote_json(args.state_path)
     if state.get("status") == "complete" and state.get("video_id"):
         return
+    if state.get("status") not in {"paused_at_98", "resume_dispatched"}:
+        raise RuntimeError("Upload is not ready for phase 2")
+    target = datetime.fromisoformat(state["target_resume_at"])
+    if target.tzinfo is None or datetime.now(timezone.utc) < target:
+        raise RuntimeError("The required 24-hour pause has not elapsed")
     manifest=remote_json(state["manifest_path"]); total=int(manifest["bytes"])
     if total!=int(state["total_size"]) or source_revision(manifest)!=state.get("source_revision"): raise RuntimeError("HF merged video changed")
     cred=credentials(state.get("credential_slot"))
@@ -461,7 +519,7 @@ def scan_due(_args):
 
 def reset_resume(args):
     state=remote_json(args.state_path)
-    if state.get("status") == "complete":
+    if state.get("status") not in {"resume_dispatched", "paused_at_98"}:
         return
     attempts=int(state.get("resume_attempts") or 0)
     state["status"]="needs_attention" if attempts>=3 else "paused_at_98"
