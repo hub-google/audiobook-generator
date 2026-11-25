@@ -72,3 +72,7 @@ python tools/download_novel_txt.py https://www.69shuba.com/book/29590/ --count 3
 ## 小說狂人（czbooks）
 
 書籍網址格式 `https://czbooks.net/n/<book_id>`。來源識別及章節 ID 與舊來源隔離；保留章節 URL query，依站內章節順序整理目錄。預設單 Worker、3 秒間隔。僅供具備相應使用及有聲改編權利的作品使用。2026-11-25 已確認公開書籍頁及章節頁可供瀏覽；執行環境 DNS 無法直接連線，線上 Python 抓取驗證尚未完成。回歸測試使用合成 HTML，不代表線上抓取驗收。
+
+## 2026-11-25 線上驗證
+
+[第一輪九站報告](https://github.com/hub-google/audiobook-generator/actions/runs/45527336329)：黃金屋三章正文成功（3893、5893、4116 個中文字），但目錄第 120 筆實為第 92 回。已修正完整且唯一的 1..N 章號序列排序，版本升為 2。舊設定的章節索引須重新解析確認。69 書吧及小說狂人在 GitHub Runner 收到 403；不可將合成測試通過當作線上成功。請使用有權限的來源或既有使用者提供 HTML 匯入方式。其他六站仍是候選，HTTP 200 不等同完整正文解析。

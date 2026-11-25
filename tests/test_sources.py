@@ -141,3 +141,18 @@ def test_http_404_raises_source_parse_error():
     with patch('src.sources.http_client.requests.get', return_value=response), patch('src.sources.http_client.time.sleep'):
         with pytest.raises(SourceParseError, match='HTTP 404'):
             fetch_page(URL, resolve_source(URL))
+
+
+def test_hjwzw_reorders_proven_complete_number_sequence():
+    url = 'https://tw.hjwzw.com/Book/Chapter/1'
+    html = '<h1>書</h1><a href="/Book/Read/1,1">第一回 開始</a><a href="/Book/Read/1,3">第三回 結束</a><a href="/Book/Read/1,99">第二回 補回</a>'
+    result = parse_catalog(url, html=html)
+    assert result['chapter_titles'] == ['第一回 開始', '第二回 補回', '第三回 結束']
+    assert [r['source_order'] for r in result['chapter_records']] == [1, 2, 3]
+    assert result['chapters'][1].endswith('1,99')
+
+
+def test_hjwzw_does_not_sort_ambiguous_number_sequence():
+    url = 'https://tw.hjwzw.com/Book/Chapter/1'
+    html = '<h1>書</h1><a href="/Book/Read/1,1">第一章 開始</a><a href="/Book/Read/1,2">第三章 續篇</a><a href="/Book/Read/1,3">番外</a>'
+    assert parse_catalog(url, html=html)['chapter_titles'] == ['第一章 開始', '第三章 續篇', '番外']

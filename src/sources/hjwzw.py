@@ -5,6 +5,7 @@ from .base import SourceAdapter, Chapter, SourceParseError
 
 class HJWZWSource(SourceAdapter):
     source_id = "hjwzw"
+    version = "2"
     max_parallel = 17  # Preserve the established HJWZW production concurrency.
     hosts = ("tw.hjwzw.com", "www.hjwzw.com", "hjwzw.com")
     opening_labels = ("黃金屋", "黄金屋")
@@ -36,6 +37,18 @@ class HJWZWSource(SourceAdapter):
             href = self.absolute_url(url, a['href'])
             label = a.get_text(strip=True)
             chapters.append(Chapter(urlsplit(href).path + ('?' + urlsplit(href).query if urlsplit(href).query else ''), href, label, label, len(chapters)+1))
+        # Some catalogs append a previously omitted chapter at the end.
+        # Sort only when labels prove an unambiguous complete 1..N sequence;
+        # preserve site order for volumes, prologues, extras and duplicate labels.
+        try:
+            from ..catalog_parser import parse_chapter_number
+        except ImportError:
+            from catalog_parser import parse_chapter_number
+        numbers = [parse_chapter_number(ch.title) for ch in chapters]
+        if numbers and None not in numbers and set(numbers) == set(range(1, len(chapters) + 1)):
+            chapters = [ch for _, ch in sorted(zip(numbers, chapters), key=lambda pair: pair[0])]
+            for index, chapter in enumerate(chapters, 1):
+                chapter.source_order = index
         return self.catalog_result(url, title, chapters)
 
     def parse_chapter(self, html, url):

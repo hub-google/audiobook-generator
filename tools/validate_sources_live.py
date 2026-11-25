@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 import requests
 from bs4 import BeautifulSoup
 
-from src.catalog_parser import parse_catalog
+from src.catalog_parser import parse_catalog, parse_chapter_number
 from src.crawler import fetch_chapter_text
 from src.sources import resolve_source
 
@@ -41,6 +41,10 @@ def live_adapter(source_id):
         result["book_title"] = catalog["book_title"]
         if count < 3:
             raise ValueError("catalog has fewer than 3 chapters")
+        if source_id == "hjwzw":
+            numbers = [parse_chapter_number(t) for t in catalog["chapter_titles"]]
+            if count != 120 or numbers != list(range(1, 121)):
+                raise ValueError("Three Kingdoms catalog must contain chapters 1 through 120 in order")
         result["stage"] = "chapter"
         for index in sorted({1, count // 2, count}):
             target = catalog["chapters"][index - 1]
@@ -49,6 +53,8 @@ def live_adapter(source_id):
             try:
                 title, body = fetch_chapter_text(target, source_id=source_id)
                 size = len(re.findall(r"[\u3400-\u9fff]", body))
+                if source_id == "hjwzw" and parse_chapter_number(title) != index:
+                    raise ValueError("chapter title does not match expected chapter index")
                 if not title.strip() or size < 300:
                     raise ValueError(f"empty title or too few Chinese characters: {size}")
                 detail.update(status="PASS", title=title, chinese_chars=size,
