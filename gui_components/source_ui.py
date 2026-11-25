@@ -65,7 +65,7 @@ def detect_source(raw_url):
     """Return the registered adapter for an approved host, or None."""
     try:
         return resolve_source(str(raw_url or "").strip())
-    except SourceParseError:
+    except (SourceParseError, ValueError):
         return None
 
 
@@ -74,11 +74,14 @@ def normalize_source_url(raw_url):
     raw_url = str(raw_url or "").strip()
     if not raw_url:
         raise SourceParseError("請貼上小說書籍、目錄或章節網址")
-    source = resolve_source(raw_url)
-    canonical = source.catalog_url(raw_url)
-    source.absolute_url(raw_url, canonical)
-    source.book_id(canonical)
-    return source, canonical
+    try:
+        source = resolve_source(raw_url)
+        canonical = source.catalog_url(raw_url)
+        source.absolute_url(raw_url, canonical)
+        source.book_id(canonical)
+        return source, canonical
+    except ValueError as exc:
+        raise SourceParseError(f"無法辨識此小說網址：{raw_url}") from exc
 
 
 def source_hint(source):

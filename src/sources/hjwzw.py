@@ -11,7 +11,7 @@ class HJWZWSource(SourceAdapter):
     opening_labels = ("黃金屋", "黄金屋")
 
     def book_id(self, url):
-        match = re.search(r"/Book/(?:Chapter/)?(\d+)", urlsplit(url).path, re.I)
+        match = re.search(r"/Book/(?:Chapter/|Read/)?(\d+)", urlsplit(url).path, re.I)
         if not match:
             raise SourceParseError("無效的黃金屋書籍網址")
         return match[1]

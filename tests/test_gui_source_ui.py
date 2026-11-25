@@ -49,6 +49,7 @@ def test_chapter_or_book_page_goes_to_source_specific_catalog(url, source_id):
     "https://www.69shuba.com.evil.com/book/53782/",
     "file:///etc/passwd", "https://user:pw@czbooks.net/n/c37492",
     "https://czbooks.net/n/not-allowed/read/1",
+    "https://[",
 ])
 def test_invalid_urls_never_go_to_network(bad):
     with pytest.raises(SourceParseError):
