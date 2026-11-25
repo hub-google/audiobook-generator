@@ -1,0 +1,84 @@
+name: AUDIO｜月亮小說新版 TXT 即時重發
+on:
+  push:
+    branches: [master]
+    paths: ['.github/workflows/audiobook-tts-txt-relaunch-20261125.yml']
+permissions:
+  contents: write
+  actions: write
+jobs:
+  relaunch_txt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+      - name: Dispatch corrected TXT immediately and attach Run to current task
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os,json,base64,requests,time,datetime
+          repo=os.environ['GITHUB_REPOSITORY'];token=os.environ['GH_TOKEN']
+          base=f'https://api.github.com/repos/{repo}'
+          s=requests.Session();s.headers.update({'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})
+          def latest_queue():
+              r=s.get(base+'/contents/audiobook-queue.json',params={'ref':'automation-state'},timeout=30);r.raise_for_status()
+              return json.loads(base64.b64decode(r.json()['content'])),r.json()['sha']
+          q,sha=latest_queue()
+          task=next(x for x in q['queue'] if x['task_id']=='book-20261125-7fa2c918')
+          old_id=(task.get('stages') or {}).get('scrape',{}).get('run_id')
+          if old_id not in (None,45592660691):raise SystemExit(f'New TXT already assigned: {old_id}')
+          if task.get('status')=='completed':raise SystemExit('Already completed')
+          if int(task.get('start_chapter') or 1)!=1 or task['catalog_url']!='https://www.17moon.com/book/JFM/':raise SystemExit('Book settings changed, aborting')
+          snapshot=task.get('profile_snapshot') or {}
+          common={'book_title':task['book_title'],'chapter_label':'Ch1-全部','queue_task_id':task['task_id'],
+            'resume_source_run_id':'','catalog_url':task['catalog_url'],'start_chap':'1','end_chap':str(task.get('end_chapter') or 999999),
+            'exclude_chapters':','.join(str(x) for x in task.get('excluded_chapters') or []),
+            'renumber_selected':'true' if task.get('renumber_selected') else 'false','publish_at':str(task.get('publish_at') or ''),
+            'chapter_title_overrides_b64':base64.b64encode(json.dumps(snapshot.get('chapter_title_overrides') or {},ensure_ascii=False).encode()).decode(),
+            'chapter_order_b64':base64.b64encode(json.dumps(task.get('chapter_order') or []).encode()).decode(),
+            'book_profile_snapshot_b64':base64.b64encode(json.dumps(snapshot,ensure_ascii=False).encode()).decode(),
+            'zip_password':'','execution_phase':'scrape_only','scrape_source_run_id':'',
+            'cover_source_run_id':str(task.get('cover_run_id') or '')}
+          start=datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(seconds=15)
+          r=s.post(base+'/actions/workflows/audiobook.yml/dispatches',json={'ref':'master','inputs':common},timeout=30);r.raise_for_status()
+          print('Dispatched corrected TXT workflow, now locating actual Run ID',flush=True)
+          run=None
+          for attempt in range(24):
+              response=s.get(base+'/actions/runs',params={'per_page':100},timeout=30);response.raise_for_status()
+              for x in response.json().get('workflow_runs',[]):
+                  label=x.get('display_title') or ''
+                  created=datetime.datetime.fromisoformat(x['created_at'].replace('Z','+00:00'))
+                  if task['task_id'] in label and '【TXT抓取】' in label and created>=start and x['id'] not in (45591363976,45592660691):
+                      run=x;break
+              if run:break
+              time.sleep(5)
+          if not run:raise SystemExit('GitHub dispatched but new Run ID unconfirmed: retry query before resubmitting')
+          print('NEW RUN',run['id'],run['html_url'],'SHA',run['head_sha'],flush=True)
+          if run['head_sha']!=os.environ['GITHUB_SHA']:raise SystemExit('GitHub new TXT Run SHA mismatch; do not reassign')
+          for attempt in range(8):
+              latest,revision_sha=latest_queue()
+              t=next(x for x in latest['queue'] if x['task_id']==task['task_id'])
+              old=(t.get('stages') or {}).get('scrape',{}).get('run_id')
+              if old not in (None,45592660691,run['id']):raise SystemExit(f'Concurrent newer run in queue {old}')
+              st=t['stages']['scrape'];st.update(status='running',run_id=run['id'],run_attempt=1,reason=None,completed_at=None)
+              t.update(status='preparing_assets',workflow_phase='preflight',run_id=run['id'],scrape_run_id=run['id'],reason=None,updated_at=datetime.datetime.now(datetime.timezone.utc).isoformat())
+              latest['revision']=int(latest.get('revision',0))+1;latest['updated_at']=t['updated_at']
+              payload={'branch':'automation-state','sha':revision_sha,'message':'Attach corrected Chrome-based TXT Run '+str(run['id']),'content':base64.b64encode((json.dumps(latest,ensure_ascii=False,indent=2)+'\n').encode()).decode()}
+              x=s.put(base+'/contents/audiobook-queue.json',json=payload,timeout=30)
+              if x.ok:break
+              if x.status_code not in (409,422):x.raise_for_status()
+              time.sleep(1)
+          else:raise SystemExit('New TXT dispatched; queue update conflicted repeatedly')
+          print('New TXT Run attached to queue successfully',flush=True)
+          PY
+      - name: Stop previous wait-for-cover recovery task to avoid conflicting requeue
+        if: success()
+        shell: bash
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/actions/runs/45593979628/cancel" || true
