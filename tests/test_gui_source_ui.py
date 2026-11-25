@@ -243,3 +243,20 @@ def test_catalog_parse_remains_available_when_github_profile_unavailable():
     app._on_parse_success.assert_called_once_with(catalog, {})
     app._on_parse_failed.assert_not_called()
     assert "雲端書籍設定" in app.log.call_args.args[0]
+
+
+
+def test_main_gui_launches_existing_tools_without_shell_or_new_credentials():
+    from gui_components import tool_launchers
+    app = object.__new__(AudiobookGUIApp)
+    app.log = Mock()
+    with patch.object(tool_launchers.subprocess, "Popen") as popen:
+        assert app._launch_auxiliary_tool("merge") is True
+        popen.assert_called_once()
+        args = popen.call_args.args[0]
+        assert args[0] == tool_launchers.sys.executable
+        assert args[1].endswith("合併上傳/gui.py")
+        assert popen.call_args.kwargs["cwd"] == str(tool_launchers.Path(tool_launchers.PROJECT_ROOT).resolve())
+    with patch.object(tool_launchers.subprocess, "Popen") as popen:
+        assert app._launch_auxiliary_tool("youtube") is True
+        assert popen.call_args.args[0][1].endswith("tools/youtube_backfill_gui.py")

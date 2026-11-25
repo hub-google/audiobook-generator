@@ -61,13 +61,14 @@ from gui_components.source_ui import (
 )
 
 from gui_components import QueueOperationsMixin, ReviewMixin, WorkflowMixin
+from gui_components.tool_launchers import ToolLauncherMixin
 from gui_components.queue_monitor import QueueMonitorMixin
 from gui_components.publish_settings import PublishSettingsMixin
 
 ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 load_dotenv(ENV_PATH)
 
-class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMonitorMixin, PublishSettingsMixin):
+class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMonitorMixin, PublishSettingsMixin, ToolLauncherMixin):
     def __init__(self, root):
         self.root = root
         self.root.title("📚 控制台")
@@ -133,10 +134,13 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         settings_tab = ttk.Frame(notebook, padding=(4, 8))
         publish_tab = ttk.Frame(notebook, padding=(4, 8))
         cloud_tab = ttk.Frame(notebook, padding=(4, 8))
+        tools_tab = ttk.Frame(notebook, padding=(10, 12))
         notebook.add(cloud_tab, text="雲端執行日誌")
         notebook.add(settings_tab, text="新增小說／章節設定")
         notebook.add(publish_tab, text="公開時間設定")
+        notebook.add(tools_tab, text="延伸工具")
         self._build_publish_tab_ui(publish_tab)
+        self._build_tools_tab_ui(tools_tab)
 
         self.selected_status_frame = ttk.LabelFrame(cloud_tab, text="選取小說目前狀態")
         self.selected_status_frame.pack(fill=tk.X, pady=(0, 10))
