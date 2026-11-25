@@ -5,7 +5,7 @@ from .base import SourceAdapter, Chapter, SourceParseError
 
 class Shuba69Source(SourceAdapter):
     source_id = "shuba69"
-    version = "2"
+    version = "3"
     max_parallel = 17
     hosts = ("www.69shuba.com", "69shuba.com")
     encoding = "gb18030"
@@ -77,7 +77,12 @@ class Shuba69Source(SourceAdapter):
         title = self.clean_title(heading.get_text(strip=True))
         for node in body.select('h1, .txtinfo, .bottom-ad, .contentadv, script, style, iframe, .page1'):
             node.decompose()
-        text = body.get_text('\n', strip=True)
+        # HTML inline markup must not split a sentence into TTS fragments.
+        for node in body.select("br"):
+            node.replace_with("\n")
+        for node in body.select("p, div, blockquote"):
+            node.insert_after("\n")
+        text = "\n".join(line.strip() for line in body.get_text().splitlines() if line.strip())
         text = re.sub(r'(?:\n|^)[（(]本章完[）)]\s*$', '', text).strip()
         if not text:
             raise SourceParseError('69 書吧正文空白')

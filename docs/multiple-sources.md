@@ -104,3 +104,9 @@ python tools/download_novel_txt.py https://www.69shuba.com/book/29590/ --count 3
 ## 台灣小說網獨立驗證
 
 [三部作品測試](https://github.com/hub-google/audiobook-generator/actions/runs/45531007953)：501、648、571 筆完整目錄，均有兩頁；12 筆中九筆正常正文、一筆明確新書公告（24 字）、兩筆來源正文容器只有 100／111 字。解析器已正式註冊（版本 3），明確公告保留原文，不假裝正常故事；短一般章節仍報錯，不自動跳過或用其他作品補文。此為可用但存在來源資料缺漏的站點，不是全站無缺文驗證。
+
+## 授權頁面離線匯入（包含多頁目錄和正文）
+
+`tools/download_novel_txt.py --html-dir <資料夾>` 支援既有單頁檔名格式，也支援 `pages.json`。格式：`{"source_id":"moon17","pages":{"https://www.17moon.com/book/abc/":"catalog.html","https://www.17moon.com/book/abc/def.html":"first.html","https://www.17moon.com/book/abc/def_2.html":"second.html"}}`。URL 必須是實際匯出的同站同書頁面，正文須為正常完整可讀內容。使用原站獨立解析器，沒有網路回退，不跨書補文、不猜測缺字、不自動跳過分頁。沒有匯出齊全會明確失敗。
+
+[獨立線上測試](https://github.com/hub-google/audiobook-generator/actions/runs/45531791840) 顯示無限小說四本書的目錄分別有 47、1104、213、1245 筆，全部章節連向外站；月亮小說網普通 Chromium 的正文請求收到 HTTP 403。兩站僅新增離線合法匯入能力，仍未開放正式線上製作。69 書吧修正 UTF-8／GB18030 解碼及行內文字分段，但線上 403 尚未解除。

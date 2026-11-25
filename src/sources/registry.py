@@ -17,3 +17,16 @@ def resolve_source(url, source_id=None):
                 raise SourceParseError('設定的來源與網址不一致')
             return source
     raise SourceParseError(f'尚未支援此小說來源：{url}')
+
+
+def resolve_saved_source(url):
+    """Local, authorized HTML imports can use offline-only adapters.
+
+    This does not register unverified candidates for live production fetching.
+    """
+    from .moon17 import Moon17Source
+    from .book8 import Book8Source
+    for source in (*SOURCES.values(), Moon17Source(), Book8Source()):
+        if source.matches(url):
+            return source
+    raise SourceParseError(f"尚未支援此小說來源：{url}")

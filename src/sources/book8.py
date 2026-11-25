@@ -7,7 +7,7 @@ from .paging import read_body
 
 class Book8Source(SourceAdapter):
     source_id = "book8"
-    version = "2"
+    version = "3"
     hosts = ("8book.com", "www.8book.com", "v.8book.com", "m.8book.com", "i.8book.com")
     plain_http = True
     max_parallel = 1
@@ -34,7 +34,10 @@ class Book8Source(SourceAdapter):
             title = soup.title.get_text(strip=True).split(",")[0].strip()
         records, seen = [], set()
         for link in root.select("a.episode_li[href], a[href]"):
-            target = self.absolute_url(url, link["href"])
+            try:
+                target = self.absolute_url(url, link["href"])
+            except SourceParseError as exc:
+                raise SourceParseError("無限小說目錄指向非本站閱讀網域；拒絕將外站資料視為本站正文") from exc
             parts = urlsplit(target)
             if not re.fullmatch(rf"/read/{self.book_id(url)}/?", parts.path):
                 continue
@@ -58,7 +61,11 @@ class Book8Source(SourceAdapter):
             raise SourceParseError("無限小說尚未取得可辨識的完整閱讀頁")
         for node in body.select("script, style, iframe, nav, button, form, h1, h2"):
             node.decompose()
-        text = body.get_text("\n", strip=True)
+        for node in body.select("br"):
+            node.replace_with("\n")
+        for node in body.select("p, div, blockquote"):
+            node.insert_after("\n")
+        text = "\n".join(line.strip() for line in body.get_text().splitlines() if line.strip())
         if len(re.findall(r"[\u3400-\u9fff]", text)) < 300:
             raise SourceParseError("無限小說閱讀頁沒有完整正文")
         return heading.get_text(" ", strip=True), text

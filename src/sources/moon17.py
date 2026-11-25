@@ -6,7 +6,7 @@ from .paging import catalog_entries, read_body, next_page
 
 class Moon17Source(SourceAdapter):
     source_id = "moon17"
-    version = "2"
+    version = "3"
     hosts = ("17moon.com", "www.17moon.com")
     plain_http = True
     max_parallel = 1
@@ -38,6 +38,8 @@ class Moon17Source(SourceAdapter):
         if article and article.select_one(".js-reversed-text, i[class^='icon-'], i[class*=' icon-']"):
             raise SourceParseError("月亮小說網原始HTML含反序及缺字標記；需完整正常閱讀頁或授權匯出")
         title, body = read_body(self, soup, "article#article", "h1.reader-header__title")
+        if "\ufffd" in body or "\ufffc" in body:
+            raise SourceParseError("月亮小說網正文有未解出的字元")
         title = re.sub(r"^《[^》]+》", "", title).strip()
         match = re.search(r"\s*[（(](\d+)[）)]\s*$", title)
         page = int(match[1]) if match else 1

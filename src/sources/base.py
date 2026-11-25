@@ -50,14 +50,17 @@ class SourceAdapter:
 
     def soup(self, html):
         if isinstance(html, bytes):
-            if self.encoding:
-                html = html.decode(self.encoding, errors='replace')
-            else:
-                # Avoid statistical mis-detection on short UTF-8 Chinese pages.
-                try:
-                    html = html.decode('utf-8')
-                except UnicodeDecodeError:
-                    pass  # BeautifulSoup honors a declared legacy encoding.
+            # Browser-saved HTML may be UTF-8 even for legacy GB18030 sites.
+            # Decode strictly; never substitute missing bytes with replacement characters.
+            try:
+                html = html.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                if self.encoding:
+                    try:
+                        html = html.decode(self.encoding)
+                    except UnicodeDecodeError as exc:
+                        raise SourceParseError("來源正文編碼無法完整解讀") from exc
+                # Otherwise BeautifulSoup honors the declared legacy encoding.
         soup = BeautifulSoup(html, "html.parser")
         text = soup.get_text(" ", strip=True).lower()
         if any(x in text for x in ("just a moment", "captcha", "access denied", "人機驗證", "访问过于频繁", "訪問過於頻繁")):
