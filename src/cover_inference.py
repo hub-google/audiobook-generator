@@ -3,12 +3,11 @@
 The cover configuration functions remain injectable via the metadata facade;
 the public download_ai_image import is backwards-compatible.
 """
-import io
 import logging
 import os
 import requests
 import time
-from PIL import Image
+from huggingface_hub.errors import InferenceTimeoutError
 
 
 def _hf_error_is_retryable(error):
@@ -16,7 +15,7 @@ def _hf_error_is_retryable(error):
     retryable_statuses = {408, 425, 429, 500, 502, 503, 504}
     current = error
     while current is not None:
-        if isinstance(current, (requests.ConnectionError, requests.Timeout)):
+        if isinstance(current, (requests.ConnectionError, requests.Timeout, InferenceTimeoutError)):
             return True
         response = getattr(current, "response", None)
         status = getattr(response, "status_code", None)
@@ -48,12 +47,11 @@ def download_ai_image(prompt, width=1280, height=720, max_attempts=4, retry_base
     if max_attempts < 1:
         raise ValueError("max_attempts 必須至少為 1")
 
-    last_error = None
+    from huggingface_hub import InferenceClient
+
+    client = InferenceClient(model=model, token=hf_token, timeout=60)
     for attempt in range(1, max_attempts + 1):
-        img = None
         try:
-            from huggingface_hub import InferenceClient
-            client = InferenceClient(model=model, token=hf_token, timeout=60)
             img = client.text_to_image(
                 prompt,
                 width=width,
@@ -62,39 +60,24 @@ def download_ai_image(prompt, width=1280, height=720, max_attempts=4, retry_base
                 guidance_scale=guidance,
             )
         except Exception as hf_err:
-            logging.warning("⚠️ HF SDK 呼叫失敗；同輪改用 REST API: %s", hf_err)
-            api_url = f"https://api-inference.huggingface.co/models/{model}"
-            headers = {"Authorization": f"Bearer {hf_token}"}
-            try:
-                res = requests.post(
-                    api_url,
-                    headers=headers,
-                    json={
-                        "inputs": prompt,
-                        "parameters": {
-                            "width": width,
-                            "height": height,
-                            "num_inference_steps": steps,
-                            "guidance_scale": guidance,
-                        },
-                    },
-                    timeout=60,
-                )
-                if res.status_code == 200:
-                    img = Image.open(io.BytesIO(res.content))
-                else:
-                    raise RuntimeError(f"HTTP {res.status_code}: {res.text[:200]}")
-            except Exception as rest_err:
-                last_error = rest_err
-                if not _hf_error_is_retryable(rest_err) or attempt == max_attempts:
-                    break
-                delay = min(retry_base_seconds * (2 ** (attempt - 1)), 120)
-                logging.warning(
-                    "⚠️ HF 暫時性連線錯誤（第 %d/%d 次）：%s；%d 秒後重試",
-                    attempt, max_attempts, rest_err, delay,
-                )
-                time.sleep(delay)
-                continue
+            status = getattr(getattr(hf_err, "response", None), "status_code", None)
+            if status == 402:
+                raise RuntimeError(
+                    "Hugging Face 生圖失敗（HTTP 402）：目前的推論請求需要付費額度，"
+                    "請檢查 Hugging Face 帳號的 Inference Providers 用量與帳單設定。"
+                ) from hf_err
+            if not _hf_error_is_retryable(hf_err) or attempt == max_attempts:
+                detail = f"HTTP {status}: {hf_err}" if status else str(hf_err)
+                raise RuntimeError(
+                    f"Hugging Face 生圖失敗（已嘗試 {attempt} 次）：{detail}"
+                ) from hf_err
+            delay = min(retry_base_seconds * (2 ** (attempt - 1)), 120)
+            logging.warning(
+                "HF 推論暫時失敗（第 %d/%d 次）：%s；%d 秒後重試",
+                attempt, max_attempts, hf_err, delay,
+            )
+            time.sleep(delay)
+            continue
 
         if img:
             img = img.convert("RGB")
@@ -105,13 +88,4 @@ def download_ai_image(prompt, width=1280, height=720, max_attempts=4, retry_base
                 )
             logging.info("✅ 成功從 Hugging Face %s 生成底圖！", model)
             return img
-        last_error = RuntimeError("Hugging Face 沒有回傳圖片")
-        break
-
-    raise RuntimeError(
-        f"❌ [CRITICAL] Hugging Face 生圖失敗（已嘗試 {max_attempts} 次）: "
-        f"{last_error}！流程直接終止，嚴禁降級使用低品質備用圖。"
-    ) from last_error
-
-
-
+        raise RuntimeError("Hugging Face 沒有回傳圖片")
