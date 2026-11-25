@@ -71,3 +71,11 @@ firebase-debug.log
 # Multi-source architecture documentation and local sample exports
 !docs/multiple-sources.md
 Samples/
+
+# Local source text and generated Kaggle artifacts are not production code
+/src/image/全職高手_TXT/
+/src/image/kaggle_chapter_images/batch/
+/src/image/kaggle_chapter_images/kaggle_output*/
+/temp_queue.json
+!/README.md
+!docs/*.md

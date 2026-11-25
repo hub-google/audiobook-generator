@@ -20,6 +20,15 @@ concurrency:
   group: hf-book-merge-global
   cancel-in-progress: false
 
+env:
+  INPUT_BOOK_KEY: ${{ inputs.book_key }}
+  INPUT_REPO_REVISION: ${{ inputs.repo_revision }}
+  INPUT_MERGE_MODE: ${{ inputs.merge_mode }}
+  INPUT_MAX_HOURS: ${{ inputs.max_hours }}
+  INPUT_EXPECTED_PLAN_ID: ${{ inputs.expected_plan_id }}
+  INPUT_PUBLISH_AT: ${{ inputs.publish_at }}
+  INPUT_PRIVACY: ${{ inputs.privacy }}
+
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -46,11 +55,13 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
-        run: >-
-          python "合併上傳/cloud_pipeline.py" plan
-          --book-key "${{ inputs.book_key }}" --revision "${{ inputs.repo_revision }}"
-          --mode "${{ inputs.merge_mode }}" ${{ inputs.merge_mode == 'max_hours' && format('--max-hours {0}', inputs.max_hours) || '' }}
-          --expected-plan-id "${{ inputs.expected_plan_id }}" --plan plan.json
+        run: |
+          MAX_HOURS_ARGS=()
+          if [ "$INPUT_MERGE_MODE" = "max_hours" ]; then MAX_HOURS_ARGS=(--max-hours "$INPUT_MAX_HOURS"); fi
+          python "合併上傳/cloud_pipeline.py" plan \
+            --book-key "$INPUT_BOOK_KEY" --revision "$INPUT_REPO_REVISION" \
+            --mode "$INPUT_MERGE_MODE" "${MAX_HOURS_ARGS[@]}" \
+            --expected-plan-id "$INPUT_EXPECTED_PLAN_ID" --plan plan.json
       - uses: actions/upload-artifact@v4
         with: {name: hf-merge-plan, path: plan.json, retention-days: 2}
 
@@ -126,9 +137,9 @@ jobs:
           ROOT="_system/full_merges/${{ needs.plan.outputs.plan_id }}/output-$NUMBER"
           SLOT=$(( ( ${{ matrix.output_number }} - 1 ) % 10 + 1 ))
           EXTRA_ARGS=()
-          if [ -n "${{ inputs.publish_at }}" ]; then
-            EXTRA_ARGS+=(--publish-at "${{ inputs.publish_at }}")
+          if [ -n "$INPUT_PUBLISH_AT" ]; then
+            EXTRA_ARGS+=(--publish-at "$INPUT_PUBLISH_AT")
           fi
-          python "合併上傳/cloud_pipeline.py" phase1 --manifest "$ROOT/merge_manifest.json" --state-path "$ROOT/upload_state.json" --privacy "${{ inputs.privacy }}" --credential-slot "$SLOT" "${EXTRA_ARGS[@]}"
+          python "合併上傳/cloud_pipeline.py" phase1 --manifest "$ROOT/merge_manifest.json" --state-path "$ROOT/upload_state.json" --privacy "$INPUT_PRIVACY" --credential-slot "$SLOT" "${EXTRA_ARGS[@]}"
       - if: always()
         run: "$RUNNER_TEMP/hf-mount stop $RUNNER_TEMP/hf-bucket || true"

@@ -9,6 +9,9 @@ permissions: {contents: read}
 concurrency:
   group: hf-phase2-${{ inputs.state_path }}
   cancel-in-progress: false
+env:
+  INPUT_STATE_PATH: ${{ inputs.state_path }}
+
 jobs:
   resume:
     runs-on: ubuntu-latest
@@ -51,10 +54,10 @@ jobs:
           YOUTUBE_CLIENT_ID_10: ${{ secrets.YOUTUBE_CLIENT_ID_10 }}
           YOUTUBE_CLIENT_SECRET_10: ${{ secrets.YOUTUBE_CLIENT_SECRET_10 }}
           YOUTUBE_REFRESH_TOKEN_10: ${{ secrets.YOUTUBE_REFRESH_TOKEN_10 }}
-        run: python "合併上傳/cloud_pipeline.py" phase2 --state-path "${{ inputs.state_path }}"
+        run: python "合併上傳/cloud_pipeline.py" phase2 --state-path "$INPUT_STATE_PATH"
       - name: Return failed session to scheduler or mark needs attention
         if: failure()
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
-        run: python "合併上傳/cloud_pipeline.py" reset --state-path "${{ inputs.state_path }}"
+        run: python "合併上傳/cloud_pipeline.py" reset --state-path "$INPUT_STATE_PATH"

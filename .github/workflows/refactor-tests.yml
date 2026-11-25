@@ -1,0 +1,23 @@
+name: 有聲小說｜重構回歸測試
+on:
+  push:
+    branches: ["refactor/reliability-20261125", master]
+permissions:
+  contents: read
+concurrency:
+  group: regression-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk xvfb
+      - run: python -m pip install -r requirements.txt pytest
+      - run: python -m compileall -q src gui_components tests 合併上傳 tools gui_app.py
+      - run: xvfb-run -a python -m pytest -q tests src/image/kaggle_chapter_images/tests

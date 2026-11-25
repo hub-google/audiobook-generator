@@ -26,6 +26,9 @@ concurrency:
   group: merge-run-upload-${{ inputs.source_run_id }}
   cancel-in-progress: false
 
+env:
+  INPUT_PRIVACY: ${{ inputs.privacy }}
+
 jobs:
   discover:
     runs-on: ubuntu-latest
@@ -64,8 +67,8 @@ jobs:
         run: |
           run_id=$(printf '%s' "$SOURCE_RUN_ID")
           [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "Invalid source run: $SOURCE_RUN_ID" >&2; exit 1; }
-          names=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false) | .name' | grep -E '^mp4-worker-[0-9]+$' | sort -t- -k3,3n)
-          [[ -n "$names" ]] || { echo "No live mp4-worker artifacts" >&2; exit 1; }
+          names=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false) | .name' | grep -E '^(mp4|video)-worker-[0-9]+$' | cut -d- -f3 | sort -nu)
+          [[ -n "$names" ]] || { echo "No live worker artifacts" >&2; exit 1; }
           count=$(printf '%s\n' "$names" | grep -c .)
           echo "count=$count" >> "$GITHUB_OUTPUT"
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
@@ -271,7 +274,7 @@ jobs:
             --bucket-mount "$RUNNER_TEMP/hf-bucket" \
             --expected-workers "${{ needs.discover.outputs.count }}" \
             --expected-shards "${{ needs.discover.outputs.shard_count }}" \
-            --privacy "${{ inputs.privacy }}"
+            --privacy "$INPUT_PRIVACY"
       - name: Report final merge and upload progress
         if: always()
         env:

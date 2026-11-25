@@ -37,7 +37,7 @@ tts:
   split_retries: 3
   chapter_retries: 3
   silent_fallback:
-    enabled: true
+    enabled: false
     duration_seconds: 1.5
     log_original_text_hash: true
   cache:

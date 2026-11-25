@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import unicodedata
+from collections import Counter
 from pathlib import Path
 
 CHAPTER_RE = re.compile(r"^第0*(\d+)章")
@@ -80,13 +81,15 @@ def make_chunks(text: str, chapter: int, target: int = 600) -> list[dict]:
 def discover(source: Path) -> list[Path]:
     files = sorted(source.glob("*.txt"), key=chapter_number)
     numbers = [chapter_number(p) for p in files]
-    duplicates = sorted({n for n in numbers if numbers.count(n) > 1})
+    duplicates = sorted(n for n, count in Counter(numbers).items() if count > 1)
     if duplicates:
         raise ValueError(f"章號重複：{duplicates}")
     return files
 
 
 def build_batch(source: Path, output: Path, start: int, count: int, min_chars: int = 600) -> int:
+    if start < 1 or count < 1 or min_chars < 1:
+        raise ValueError('start, count and min_chars must be positive')
     selected = [p for p in discover(source) if chapter_number(p) >= start][:count]
     if not selected:
         raise SystemExit(f"找不到第 {start} 章起的章節")

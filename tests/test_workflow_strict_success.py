@@ -144,27 +144,24 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("有聲小說製作", self.text)
         self.assertIn("inputs.book_title", self.text)
         self.assertIn("有聲小說佇列調度", self.dispatcher_text)
-        self.assertIn("Delete older dispatcher run records", self.dispatcher_text)
-        self.assertIn('actions/runs/$old_run_id', self.dispatcher_text)
-        self.assertIn("cancel-in-progress: true", self.dispatcher_text)
-        self.assertIn('old_status="$(gh api', self.dispatcher_text)
+        self.assertNotIn("Delete older dispatcher run records", self.dispatcher_text)
+        self.assertNotIn('actions/runs/$old_run_id', self.dispatcher_text)
+        self.assertIn("cancel-in-progress: false", self.dispatcher_text)
         self.assertNotIn("select(.key >= 20)", self.dispatcher_text)
         self.assertNotIn("old_conclusion", self.dispatcher_text)
 
-    def test_native_rerun_controllers_are_labeled_and_keep_only_the_latest_run(self):
+    def test_native_rerun_controllers_are_isolated_by_source_run(self):
         expectations = (
             (self.scrape_rerun_text, "【TXT抓取】", "txt-scrape-native-rerun-controller", "scrape-rerun.yml", "scrape_rerun_controller.py"),
             (self.cover_rerun_text, "【封面產生】", "cover-native-rerun-controller", "cover-rerun.yml", "cover_rerun_controller.py"),
         )
         for workflow, label, group, filename, controller in expectations:
             self.assertIn(label, workflow)
-            self.assertIn(f"group: {group}", workflow)
-            self.assertIn("cancel-in-progress: true", workflow)
-            self.assertIn(f"actions/workflows/{filename}/runs", workflow)
-            self.assertIn('select(.id != ($CURRENT_RUN_ID | tonumber))', workflow)
-            self.assertIn('actions/runs/$old_run_id/cancel', workflow)
-            self.assertIn('old_status="$(gh api', workflow)
-            self.assertIn('actions/runs/$old_run_id"', workflow)
+            self.assertIn(f"group: {group}-", workflow)
+            self.assertIn("${{ inputs.source_run_id }}", workflow)
+            self.assertIn("cancel-in-progress: false", workflow)
+            self.assertNotIn("actions/runs/$old_run_id/cancel", workflow)
+            self.assertNotIn("--method DELETE", workflow)
             self.assertIn(controller, workflow)
 
         self.assertNotIn("cover_rerun_controller.py", self.scrape_rerun_text)
@@ -213,7 +210,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
     def test_worker_artifacts_cannot_be_empty(self):
         steps = self.jobs["process_chapters"]["steps"]
         upload_steps = [step for step in steps if step.get("uses") == "actions/upload-artifact@v4"]
-        self.assertEqual(len(upload_steps), 5)
+        self.assertEqual(len(upload_steps), 4)
         self.assertTrue(all(step["with"]["if-no-files-found"] == "error" for step in upload_steps))
         full_steps = [step for step in upload_steps if "video-worker" in step["with"]["name"]]
         self.assertEqual(len(full_steps), 3)
@@ -222,10 +219,9 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertTrue(full_steps[1].get("continue-on-error"))
         self.assertNotIn("continue-on-error", full_steps[2])
         self.assertTrue(all(step["with"].get("compression-level") == 0 for step in full_steps))
-        mp4_step = next(step for step in upload_steps if "mp4-worker" in step["with"]["name"])
-        self.assertEqual(mp4_step.get("if"), "success()")
-        self.assertIn("Workspace/*/SourceStatus/", mp4_step["with"]["path"])
-        self.assertIn("Workspace/*/Manifests/", mp4_step["with"]["path"])
+        self.assertFalse(any("mp4-worker" in step["with"]["name"] for step in upload_steps))
+        cache_save = next(step for step in steps if step.get("name") == "Save Worker Workspace Checkpoint")
+        self.assertEqual(cache_save.get("if"), "failure() || cancelled()")
         manifest_step = next(step for step in upload_steps if "manifest-worker" in step["with"]["name"])
         self.assertEqual(manifest_step.get("if"), "success()")
         self.assertIn("manifest-worker-", manifest_step["with"]["path"])

@@ -15,6 +15,10 @@ import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
+try:
+    from .tts_quality import degraded_chapters
+except ImportError:
+    from tts_quality import degraded_chapters
 
 import yaml
 
@@ -301,8 +305,13 @@ def validate_worker(root, matrix_item, config, require_complete=False):
     data = json.loads(manifest.read_text(encoding="utf-8"))
     expected = _worker_expected(matrix_item, config)
     completed = []
+    degraded = set()
+    for evidence in Path(root).rglob("silent-fallback-manifest.json"):
+        degraded.update(degraded_chapters(evidence))
     for item in data.get("chapters") or []:
         number = int(item["chap_num"])
+        if number in degraded:
+            continue
         video = _find_manifest_path(root, item.get("video_relpath") or item.get("video"), f"chapter_{number}.mp4")
         subtitle = _find_manifest_path(root, item.get("srt_relpath") or item.get("subtitle"), f"chapter_{number}.srt")
         valid = bool(video and subtitle and video.stat().st_size > 1000 and subtitle.stat().st_size > 10)

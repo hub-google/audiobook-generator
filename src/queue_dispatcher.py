@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import json
 import logging
 import os
@@ -18,10 +19,10 @@ from zoneinfo import ZoneInfo
 import requests
 
 try:
-    from .cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, next_task, settle_interrupted_task, task_id_from_run_name, update_task
+    from .cloud_queue import BLOCKING_STATES, MAX_NATIVE_PREFLIGHT_RERUNS, preflight_status, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, next_task, settle_interrupted_task, task_id_from_run_name, update_task
     from .book_profiles import GitHubBookProfileStore, get_book_profile, profile_snapshot
 except ImportError:
-    from cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, next_task, settle_interrupted_task, task_id_from_run_name, update_task
+    from cloud_queue import BLOCKING_STATES, MAX_NATIVE_PREFLIGHT_RERUNS, preflight_status, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, next_task, settle_interrupted_task, task_id_from_run_name, update_task
     from book_profiles import GitHubBookProfileStore, get_book_profile, profile_snapshot
 
 
@@ -105,8 +106,8 @@ STATUS_LABELS = {
 
 # A scrape rerun gets a fresh GitHub-hosted runner.  This is intentionally
 # separate from in-process HTTP retries, which keep the same blocked egress IP.
-MAX_IMMEDIATE_SCRAPE_RERUNS = 20
-MAX_IMMEDIATE_COVER_RERUNS = 20
+MAX_IMMEDIATE_SCRAPE_RERUNS = MAX_NATIVE_PREFLIGHT_RERUNS
+MAX_IMMEDIATE_COVER_RERUNS = MAX_NATIVE_PREFLIGHT_RERUNS
 _AUTO_TASK = object()
 
 
@@ -358,12 +359,18 @@ class Dispatcher:
                     if state.get("run_id"):
                         return next((r for r in candidates if int(r["id"]) == int(state["run_id"])), None) or self.run_by_id(state["run_id"])
                     since = parse_time(state.get("dispatched_at") or task.get("dispatched_at"))
+                    if since:
+                        since = since.replace(microsecond=0)
                     return next((r for r in candidates if not since or
                                  (parse_time(r.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc)) >= since), None)
                 scrape_run = stage_run(scrape, by_task.get(task_id) or [], triggered_audiobook)
                 cover_run = stage_run(cover, covers_by_task.get(task_id) or [], triggered_cover)
                 for name, state, run in (("scrape", scrape, scrape_run), ("cover", cover, cover_run)):
                     if not run:
+                        stamp = parse_time(state.get("dispatched_at") or task.get("dispatched_at"))
+                        if state.get("status") == "dispatching" and stamp and datetime.now(timezone.utc) - stamp >= timedelta(minutes=30):
+                            state.update(status="failed", reason="dispatch_unconfirmed")
+                            changed = True
                         continue
                     run_id = int(run["id"])
                     raw_status = run.get("status")
@@ -371,8 +378,9 @@ class Dispatcher:
                     next_status = "running" if raw_status != "completed" else (
                         "completed" if conclusion == "success" else "failed"
                     )
-                    if state.get("run_id") != run_id or state.get("status") != next_status:
-                        state.update({"run_id": run_id, "status": next_status})
+                    attempt = int(run.get("run_attempt") or 1)
+                    if state.get("run_id") != run_id or state.get("status") != next_status or state.get("run_attempt") != attempt:
+                        state.update({"run_id": run_id, "status": next_status, "run_attempt": attempt})
                         if next_status == "failed":
                             state["reason"] = conclusion or "failure"
                         elif next_status == "completed":
@@ -401,40 +409,8 @@ class Dispatcher:
                         for state in (scrape, cover)
                     )
                     new_status, reason = ("canceling" if cancel_pending else "stopped"), "user_cancelled"
-                elif scrape.get("status") == "failed" and scrape_run:
-                    # The dedicated scrape-rerun controller owns native
-                    # rerun-failed-jobs calls. This dispatcher only reconciles
-                    # durable queue state, so two controllers cannot request
-                    # duplicate reruns for the same completed Run.
-                    run_attempt = int(scrape_run.get("run_attempt") or scrape.get("run_attempt") or 1)
-                    scrape["run_attempt"] = run_attempt
-                    if run_attempt <= MAX_IMMEDIATE_SCRAPE_RERUNS:
-                        new_status, reason = "preparing_assets", "scrape_rerun_pending"
-                    else:
-                        new_status, reason = (
-                            "needs_attention",
-                            f"scrape_failed_after_{MAX_IMMEDIATE_SCRAPE_RERUNS}_reruns",
-                        )
-                elif cover.get("status") == "failed" and cover_run:
-                    # Cover preflight has its own native rerun controller. Keep
-                    # the task non-actionable while that controller owns retry,
-                    # preventing a competing manual/new workflow dispatch.
-                    run_attempt = int(cover_run.get("run_attempt") or cover.get("run_attempt") or 1)
-                    cover["run_attempt"] = run_attempt
-                    if run_attempt <= MAX_IMMEDIATE_COVER_RERUNS:
-                        new_status, reason = "preparing_assets", "cover_rerun_pending"
-                    else:
-                        new_status, reason = (
-                            "needs_attention",
-                            f"cover_failed_after_{MAX_IMMEDIATE_COVER_RERUNS}_reruns",
-                        )
-                elif "failed" in statuses:
-                    failed_names = [name for name, state in (("TXT", scrape), ("封面", cover)) if state.get("status") == "failed"]
-                    new_status, reason = "needs_attention", "preflight_failed:" + ",".join(failed_names)
-                elif statuses == {"completed"}:
-                    new_status, reason = "waiting_review", None
                 else:
-                    new_status, reason = "preparing_assets", None
+                    new_status, reason = preflight_status(stages)
                 if task.get("status") != new_status or task.get("reason") != reason:
                     task.update({"status": new_status, "reason": reason})
                     changed = True
@@ -468,6 +444,10 @@ class Dispatcher:
                         changed = True
                         continue
                 if not run:
+                    stamp = parse_time(task.get("dispatched_at"))
+                    if task.get("status") == "dispatching" and stamp and datetime.now(timezone.utc) - stamp >= timedelta(minutes=30):
+                        task.update(status="needs_attention", reason="dispatch_unconfirmed")
+                        changed = True
                     continue
             run_id = int(run["id"])
             status = run.get("status")
@@ -545,7 +525,14 @@ class Dispatcher:
                             changed = True
         return queue, changed
 
-    def dispatch_next(self, queue):
+    def dispatch_next(self, queue, reservation_sha=_AUTO_TASK):
+        # The normal run path already has the exact SHA from load/reconcile.
+        # Standalone callers must verify their snapshot before reserving.
+        if reservation_sha is _AUTO_TASK:
+            latest, reservation_sha = self.store.load()
+            if latest != queue:
+                raise QueueConflict("queue changed before dispatch reservation")
+        queue = copy.deepcopy(queue)
         active_runs = [r for r in self.runs()
                        if r.get("status") != "completed"
                        and not self.is_authoritatively_completed_run(r)]
@@ -616,7 +603,7 @@ class Dispatcher:
             retry_at=None,
             dispatched_at=task["dispatched_at"],
         )
-        self.store.save(queue, sha=self.store.load()[1], message=f"Reserve audiobook task {task_id}")
+        self.store.save(queue, sha=reservation_sha, message=f"Reserve audiobook task {task_id}")
 
         start_int = int(task.get("start_chapter") or 1)
         end_int = int(task.get("end_chapter") or 999999)
@@ -654,7 +641,7 @@ class Dispatcher:
         cover_inputs = {key: value for key, value in common_inputs.items() if key not in {
             "chapter_label", "resume_source_run_id", "zip_password", "publish_at",
         }}
-        dispatch_requested_at = datetime.now(timezone.utc)
+        dispatch_requested_at = datetime.now(timezone.utc).replace(microsecond=0)
         try:
             if need_scrape or is_processing:
                 self.request("POST", "/actions/workflows/audiobook.yml/dispatches", json={"ref": "master", "inputs": inputs})
@@ -831,23 +818,23 @@ class Dispatcher:
             if is_ready:
                 run_id = active.get("run_id")
                 if run_id and not self.force and self.run_uses_current_master(run_id):
-                    try:
-                        self.request("POST", f"/actions/runs/{run_id}/rerun-failed-jobs")
-                        updated = update_task(queue, active["task_id"], status="running", run_attempt=int(active.get("run_attempt") or 1) + 1, retry_at=None, reason=None)
-                        self.store.save(updated, sha=sha, message=f"Retry audiobook task {active['task_id']}")
-                        return self.summary(updated, "retried", current_task(updated))
-                    except Exception as rerun_err:
-                        logging.warning("Rerun failed; will dispatch fresh run: %s", rerun_err)
+                    # Do not convert an ambiguous request or a post-dispatch
+                    # storage conflict into a new production Run. Reconcile
+                    # the existing Run first on the next dispatcher attempt.
+                    self.request("POST", f"/actions/runs/{run_id}/rerun-failed-jobs")
+                    updated = update_task(queue, active["task_id"], status="running", run_attempt=int(active.get("run_attempt") or 1) + 1, retry_at=None, reason=None)
+                    self.store.save(updated, sha=sha, message=f"Retry audiobook task {active['task_id']}")
+                    return self.summary(updated, "retried", current_task(updated))
                 elif run_id and not self.force:
                     logging.info("Run %s does not use current master; dispatching a fresh run.", run_id)
-                # If rerun failed or self.force, unblock to queued for immediate fresh dispatch
+                # For an explicitly forced or stale-code Run, dispatch a fresh Run.
                 queue = update_task(queue, active["task_id"], status="queued", retry_at=None, reason=None)
                 sha = self.store.save(queue, sha=sha, message=f"Unblock task {active['task_id']} for immediate dispatch")
                 active = None
 
         if active:
             return self.summary(queue, "active", active)
-        queue, _message = self.dispatch_next(queue)
+        queue, _message = self.dispatch_next(queue, reservation_sha=sha)
         dispatched = current_task(queue)
         # A 204 dispatch response is not proof that GitHub created a run. Never
         # label the still-queued prospective task as launched unless a run was

@@ -14,6 +14,10 @@ import hashlib
 import json
 import unicodedata
 from datetime import datetime, timezone
+try:
+    from .tts_quality import degraded_chapters, update_fallback_manifest
+except ImportError:
+    from tts_quality import degraded_chapters, update_fallback_manifest
 from opencc import OpenCC
 from pydub import AudioSegment
 from pydub.silence import detect_leading_silence
@@ -128,10 +132,10 @@ def sanitize_text(text):
     return text.strip()
 
 
-def segment_cache_key(text, voice, rate, settings_signature=""):
+def segment_cache_key(text, voice, rate, settings_signature="", paragraph_end=False):
     speech = sanitize_text(speech_text_for_voice(text, voice))
     payload = {"speech_text": speech, "voice": voice, "rate": rate,
-               "settings_signature": settings_signature, "version": "tts-segment-v3"}
+               "settings_signature": settings_signature, "paragraph_end": bool(paragraph_end), "version": "tts-segment-v4"}
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
 
@@ -163,7 +167,7 @@ def create_silent_wav(wav_path, ffmpeg_path="ffmpeg", duration=1.5):
 async def _generate_one_segment(semaphore, text, mp3_path, wav_path, part_label, voice,
                                 rate="+0%", ffmpeg_path="ffmpeg", max_retries=5,
                                 normalized_retries=3, split_retries=3,
-                                silent_fallback=True, silent_duration=1.5,
+                                silent_fallback=False, silent_duration=1.5,
                                 fallback_records=None, chapter=None, segment_index=None):
     """
     非同步生成單一段落的 Edge-TTS MP3。
@@ -234,7 +238,7 @@ async def _generate_one_segment(semaphore, text, mp3_path, wav_path, part_label,
 async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, rate,
                                   ffmpeg_path, max_concurrency=5, max_retries=5,
                                   normalized_retries=3, split_retries=3,
-                                  silent_fallback=True, silent_duration=1.5,
+                                  silent_fallback=False, silent_duration=1.5,
                                   settings_signature="", fallback_records=None):
     """
     並行非同步處理一章所有段落。
@@ -242,7 +246,7 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, 
     - 若任何段落最終失敗，回傳 ([], [])，整章廢棄。
     - 回傳 (generated_parts, valid_lines) 表示全部成功。
     """
-    semaphore = asyncio.Semaphore(max_concurrency)
+    semaphore = asyncio.Semaphore(max(1, max_concurrency))
 
     # 整理每個段落的中繼資訊，保留 Cleaner 的空白行作為段落邊界。
     task_metas = []
@@ -250,7 +254,7 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, 
     os.makedirs(cache_dir, exist_ok=True)
     segment_lines = _segment_lines_with_paragraphs(lines)
     for part_idx, (text, paragraph_end) in enumerate(segment_lines):
-        cache_key = segment_cache_key(text, voice, rate, settings_signature)
+        cache_key = segment_cache_key(text, voice, rate, settings_signature, paragraph_end)
         wav_path = os.path.join(cache_dir, cache_key + ".wav")
         mp3_path = os.path.join(cache_dir, cache_key + ".mp3")
         part_label = f"[Ch{chap_num} 段落 {part_idx+1}/{len(segment_lines)}]"
@@ -260,76 +264,66 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, 
         logging.warning(f"[TTS_MS] 第 {chap_num} 章沒有有效文字段落")
         return [], []
 
-    # 建立並行任務（已有 WAV 的直接跳過 TTS）
-    coros = []
-    skip_flags = []
-    for text, paragraph_end, mp3_path, wav_path, part_label in task_metas:
-        cache_valid = False
-        if os.path.exists(wav_path):
-            try:
-                validate_wav(wav_path)
-                cache_valid = True
-            except (ArtifactValidationError, OSError, ValueError):
-                cache_valid = False
-        if cache_valid:
-            logging.info(f"[TTS_MS] Resuming validated content cache: {os.path.basename(wav_path)}")
-            coros.append(None)
-            skip_flags.append(True)
-        else:
-            # 清除殘留的不完整 WAV
-            if os.path.exists(wav_path):
-                os.remove(wav_path)
-            coros.append(_generate_one_segment(
-                semaphore, text, mp3_path, wav_path, part_label, voice,
-                rate, ffmpeg_path, max_retries, normalized_retries, split_retries,
-                silent_fallback, silent_duration, fallback_records, chap_num,
-                len(skip_flags) + 1,
-            ))
-            skip_flags.append(False)
-
-    # 並行執行所有 TTS 請求
-    pending_coros = [(i, c) for i, (c, skip) in enumerate(zip(coros, skip_flags)) if not skip]
-    if pending_coros:
-        logging.info(f"[TTS_MS] 第 {chap_num} 章：並行生成 {len(pending_coros)} 段語音 (並行={max_concurrency})")
-        await asyncio.gather(*[c for _, c in pending_coros])
-
-    # 將本輪成功的 MP3 轉為 WAV，並保留已成功的段落 WAV 快取
-    for i, (text, paragraph_end, mp3_path, wav_path, part_label) in enumerate(task_metas):
-        if not skip_flags[i] and os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 100:
-            try:
-                await asyncio.to_thread(
-                    subprocess.run,
-                    [ffmpeg_path, "-y", "-i", mp3_path, wav_path],
-                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )
-                if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
-                    await asyncio.to_thread(
-                        _trim_and_add_pause, wav_path, text, paragraph_end,
-                    )
-                    os.remove(mp3_path)
-            except Exception as e:
-                logging.error(f"[TTS_MS] ✗ {part_label} MP3→WAV 轉換失敗: {e}")
-
-    # 檢查是否所有段落的 WAV 均已備齊
-    generated_parts = []
-    valid_lines = []
-    missing_count = 0
-
-    for text, paragraph_end, mp3_path, wav_path, part_label in task_metas:
+    # Each content key has exactly one producer per chapter. A validated
+    # cache entry is published atomically, never from a silent fallback.
+    async def materialize(meta, segment_index):
+        text, paragraph_end, mp3_path, wav_path, part_label = meta
         try:
             validate_wav(wav_path)
-            generated_parts.append(wav_path)
-            valid_lines.append(text)
+            return True
         except (ArtifactValidationError, OSError, ValueError):
-            missing_count += 1
+            pass
 
-    if missing_count > 0:
-        logging.warning(
-            f"[TTS_MS] ⚠️ 第 {chap_num} 章有 {missing_count} 個段落未完成 TTS。"
-            f"已成功的 {len(generated_parts)} 段已保留 WAV 快取，下一次重試將僅重派失敗段落。"
-        )
+        temporary_wav = wav_path + ".pending.wav"
+        temporary_mp3 = mp3_path + ".pending.mp3"
+        records = []
+        try:
+            for path in (temporary_wav, temporary_mp3):
+                if os.path.exists(path):
+                    os.remove(path)
+            ok = await _generate_one_segment(
+                semaphore, text, temporary_mp3, temporary_wav, part_label,
+                voice, rate, ffmpeg_path, max_retries, normalized_retries,
+                split_retries, silent_fallback, silent_duration, records,
+                chap_num, segment_index,
+            )
+            if records:
+                if fallback_records is not None:
+                    fallback_records.extend(records)
+                return False
+            if not ok:
+                return False
+            if os.path.exists(temporary_mp3):
+                await asyncio.to_thread(
+                    subprocess.run,
+                    [ffmpeg_path, "-y", "-i", temporary_mp3, temporary_wav],
+                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            await asyncio.to_thread(_trim_and_add_pause, temporary_wav, text, paragraph_end)
+            validate_wav(temporary_wav)
+            os.replace(temporary_wav, wav_path)
+            return True
+        except Exception as error:
+            logging.error("[TTS_MS] %s materialization failed: %s", part_label, error)
+            return False
+        finally:
+            for path in (temporary_mp3, temporary_wav):
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+
+    unique = {}
+    for index, meta in enumerate(task_metas, 1):
+        if meta[3] not in unique:
+            unique[meta[3]] = (meta, index)
+    results = await asyncio.gather(*(materialize(meta, index) for meta, index in unique.values()))
+    if not all(results):
+        logging.warning("[TTS_MS] Chapter %s has missing or degraded speech; retry required", chap_num)
         return [], []
-
+    generated_parts = [meta[3] for meta in task_metas]
+    valid_lines = [meta[0] for meta in task_metas]
     return generated_parts, valid_lines
 
 
@@ -366,9 +360,9 @@ def run_tts_ms(target_indices=None):
     split_retries = int(tts_cfg.get('split_retries', 3))
     chapter_retries = int(tts_cfg.get('chapter_retries', 3))
     fallback_cfg = tts_cfg.get('silent_fallback') or {}
-    fallback_enabled = fallback_cfg.get('enabled', True)
+    fallback_enabled = fallback_cfg.get('enabled', False)
     fallback_duration = float(fallback_cfg.get('duration_seconds', 1.5))
-    settings_signature = stable_signature({"version": "tts-v5-content-cache", **tts_cfg})
+    settings_signature = stable_signature({"version": "tts-v6-content-cache", **tts_cfg})
     fallback_records = []
     logging.info("[TTS_MS] Edge-TTS voice=%s, rate=%s", voice, rate)
 
@@ -407,6 +401,11 @@ def run_tts_ms(target_indices=None):
             wav_ok = srt_ok = True
         except (ArtifactValidationError, OSError, ValueError):
             wav_ok = srt_ok = False
+        if int(chap_num) in degraded_chapters(os.path.join(audio_dir, "silent-fallback-manifest.json")):
+            wav_ok = srt_ok = False
+            for degraded_output in (wav_path, srt_path):
+                if os.path.exists(degraded_output):
+                    os.remove(degraded_output)
         if wav_ok and srt_ok:
             logging.info(f"[TTS_MS] Skipping existing WAV + SRT: {wav_filename}")
             succeeded_chapters.add(int(chap_num))
@@ -442,6 +441,9 @@ def run_tts_ms(target_indices=None):
                 )
             )
 
+            if fallback_records:
+                update_fallback_manifest(audio_dir, fallback_records)
+                fallback_records.clear()
             if not generated_parts:
                 logging.error(f"[TTS_MS] ✗ 第 {chap_num} 章嘗試 {chapter_attempt} TTS 失敗")
                 continue  # 進入下一次章節重試
@@ -530,6 +532,7 @@ def run_tts_ms(target_indices=None):
             break  # 成功，跳出章節重試迴圈
 
         if chapter_success:
+            update_fallback_manifest(audio_dir, recovered_chapter=int(chap_num))
             succeeded_chapters.add(int(chap_num))
         else:
             logging.error(
@@ -550,15 +553,6 @@ def run_tts_ms(target_indices=None):
                 f"[TTS_MS] 第 {chap_num} 章經過 {CHAPTER_MAX_ATTEMPTS} 次完整嘗試仍失敗，流程中止"
             )
 
-    if fallback_records:
-        manifest_path = os.path.join(audio_dir, "silent-fallback-manifest.json")
-        temporary = manifest_path + ".tmp"
-        with open(temporary, "w", encoding="utf-8") as handle:
-            json.dump({"schema_version": 1, "count": len(fallback_records),
-                       "segments": fallback_records}, handle, ensure_ascii=False, indent=2)
-            handle.flush(); os.fsync(handle.fileno())
-        os.replace(temporary, manifest_path)
-        logging.warning("[TTS_MS] 本次共有 %s 個 TTS Segment 使用 Silent Fallback", len(fallback_records))
     return succeeded_chapters, failed_chapters
 
 
