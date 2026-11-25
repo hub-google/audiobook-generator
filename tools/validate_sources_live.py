@@ -13,11 +13,28 @@ from bs4 import BeautifulSoup
 from src.catalog_parser import parse_catalog, parse_chapter_number
 from src.crawler import fetch_chapter_text
 from src.sources import resolve_source
+from src.sources.registry import SOURCES
+from src.sources.twkan import TwkanSource
+from src.sources.sixk import SixKSource
+from src.sources.xszj import XszjSource
+from src.sources.metanovel import MetaNovelSource
+from src.sources.moon17 import Moon17Source
+from src.sources.book8 import Book8Source
+
+# Test-only registration: candidates remain unavailable to production until validated.
+for candidate in (TwkanSource(), SixKSource(), XszjSource(), MetaNovelSource(), Moon17Source(), Book8Source()):
+    SOURCES.setdefault(candidate.source_id, candidate)
 
 SAMPLES = {
     "hjwzw": "https://tw.hjwzw.com/Book/1889",
     "shuba69": "https://www.69shuba.com/book/53782/",
     "czbooks": "https://czbooks.net/n/c37492",
+    "twkan": "https://www.twkan.cc/book/2T9qchiJD4h31AQnZuI6gI.html",
+    "sixk": "https://www.6ksu.app/novel/5050292.html",
+    "xszj": "https://xszj.tw/book/491274",
+    "metanovel": "https://m.metanovel.org/book/480384",
+    "moon17": "https://www.17moon.com/book/8Kk/",
+    "book8": "https://8book.com/novelbooks/168909/",
 }
 CANDIDATES = {
     "twkan": ("https://www.twkan.cc/book/2T9qchiJD4h31AQnZuI6gI.html", None),
@@ -129,7 +146,7 @@ def probe_candidate(source_id):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("source", choices=[*SAMPLES, *CANDIDATES])
+    parser.add_argument("source", choices=list(SAMPLES))
     args = parser.parse_args()
     result = live_adapter(args.source) if args.source in SAMPLES else probe_candidate(args.source)
     report = json.dumps(result, ensure_ascii=False, indent=2)

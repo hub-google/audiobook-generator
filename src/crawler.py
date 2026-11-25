@@ -43,7 +43,7 @@ def fetch_chapter_text(url, timeout=15, source_id=None, html=None):
         from sources.http_client import fetch_page
     source = resolve_source(url, source_id)
     if html is None:
-        html = fetch_page(url, source, timeout).content
+        return source.load_chapter(url, lambda target: fetch_page(target, source, timeout).content)
     return source.parse_chapter(html, url)
 
 def load_config():

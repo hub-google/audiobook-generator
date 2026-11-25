@@ -429,8 +429,9 @@ def parse_catalog(catalog_url, html=None):
     source = resolve_source(catalog_url)
     target_url = getattr(source, 'catalog_url', lambda u: u)(catalog_url)
     if html is None:
-        html = fetch_page(target_url, source).content
-    result = source.parse_catalog(html, target_url)
+        result = source.load_catalog(target_url, lambda url: fetch_page(url, source).content)
+    else:
+        result = source.parse_catalog(html, target_url)
     result['source_max_parallel'] = getattr(source, 'max_parallel', 17)
     result['needs_browser_scrape'] = bool(getattr(source, 'requires_browser', False))
     result['book_title'] = re.sub(r'[\\/:*?"<>|]', '', result['book_title'])

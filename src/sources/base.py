@@ -31,6 +31,7 @@ class SourceAdapter:
     requires_browser = False
     opening_labels = ()
     encoding = None
+    plain_http = False
 
     def matches(self, url):
         return urlsplit(url).hostname in self.hosts
@@ -83,6 +84,12 @@ class SourceAdapter:
         return {"title": meta("og:novel:book_name") or meta("og:title"),
                 "author": meta("og:novel:author"), "category": meta("og:novel:category"),
                 "description": meta("og:description"), "url": url}
+
+    def load_catalog(self, url, fetch):
+        return self.parse_catalog(fetch(url), url)
+
+    def load_chapter(self, url, fetch):
+        return self.parse_chapter(fetch(url), url)
 
     def parse_catalog(self, html, url):
         raise NotImplementedError
