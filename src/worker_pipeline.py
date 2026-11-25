@@ -383,6 +383,8 @@ def _copy_artifact_files_to_workspace(src_dir, workspace_dir, book_title):
                 dest_folder = "CleanText"
             elif "manifest-worker" in f and f.endswith(".json"):
                 dest_folder = "Manifests"
+            elif f == "silent-fallback-manifest.json" and os.path.basename(root) == "Audio":
+                dest_folder = "Audio"
             elif "source_missing" in f and f.endswith(".json"):
                 dest_folder = "SourceStatus"
             elif (
@@ -401,6 +403,7 @@ def _copy_artifact_files_to_workspace(src_dir, workspace_dir, book_title):
             if dest_folder and (
                 "chapter_" in f
                 or dest_folder in {"Manifests", "SourceStatus", "Checkpoints"}
+                or f == "silent-fallback-manifest.json"
             ):
                 target_dir = os.path.join(workspace_dir, dest_folder)
                 os.makedirs(target_dir, exist_ok=True)
@@ -412,6 +415,7 @@ def _copy_artifact_files_to_workspace(src_dir, workspace_dir, book_title):
                 # and force needless cleaner/TTS/video regeneration.
                 if (
                     dest_folder == "Checkpoints"
+                    or f == "silent-fallback-manifest.json"
                     or not os.path.exists(dest_path)
                     or os.path.getsize(dest_path) < os.path.getsize(src_path)
                 ):

@@ -188,6 +188,56 @@ class Dispatcher:
             raise RuntimeError(f"GitHub API GET /actions/runs/{run_id} failed ({response.status_code}): {response.text}")
         return response.json()
 
+    def recover_preflight_controller(self, task):
+        """Recover an abandoned controller without competing with a live one."""
+        if task.get("workflow_phase") != "preflight" or task.get("status") != "preparing_assets":
+            return False
+        for stage_name in ("scrape", "cover"):
+            stage = (task.get("stages") or {}).get(stage_name) or {}
+            if stage.get("status") != "failed" or stage.get("reason") != "failure":
+                continue
+            run_id = stage.get("run_id")
+            if not run_id or int(stage.get("run_attempt") or 1) > MAX_NATIVE_PREFLIGHT_RERUNS:
+                continue
+            source = self.run_by_id(run_id)
+            if not source or source.get("status") != "completed" or source.get("conclusion") != "failure":
+                continue
+            stamp = parse_time(source.get("updated_at"))
+            if not stamp or datetime.now(timezone.utc) - stamp < timedelta(minutes=2):
+                continue
+            if int(source.get("run_attempt") or 1) > MAX_NATIVE_PREFLIGHT_RERUNS:
+                continue
+            workflow = f"{stage_name}-rerun.yml"
+            response = self.request("GET", f"/actions/workflows/{workflow}/runs", params={"per_page": 100})
+            controllers = [r for r in response.json().get("workflow_runs", [])
+                           if str(r.get("display_title") or r.get("name") or "").endswith(f"#{run_id}")]
+            if any(r.get("status") != "completed" for r in controllers):
+                continue
+            # A just-finished controller can be observed before the source
+            # attempt is indexed. Allow a short settling period.
+            recent = [parse_time(r.get("updated_at")) for r in controllers]
+            if any(t and datetime.now(timezone.utc) - t < timedelta(minutes=2) for t in recent):
+                continue
+            try:
+                if stage_name == "scrape":
+                    from .scrape_rerun_controller import decide_rerun
+                else:
+                    from .cover_rerun_controller import decide_rerun
+            except ImportError:
+                if stage_name == "scrape":
+                    from scrape_rerun_controller import decide_rerun
+                else:
+                    from cover_rerun_controller import decide_rerun
+            decision = decide_rerun(source, self.run_jobs(run_id))
+            if not decision.should_rerun:
+                continue
+            # The workflow itself serializes all controllers for this source.
+            self.request("POST", f"/actions/workflows/{workflow}/dispatches",
+                         json={"ref": "master", "inputs": {"source_run_id": str(run_id)}})
+            logging.info("Recovered %s native rerun controller for source %s", stage_name, run_id)
+            return True
+        return False
+
     def run_artifact_names(self, run_id):
         """Return non-expired artifact names for one existing Actions Run."""
         response = self.request(
@@ -833,6 +883,8 @@ class Dispatcher:
                 active = None
 
         if active:
+            if self.recover_preflight_controller(active):
+                return self.summary(queue, "active", active) + "\n\n- 已重新啟動中斷的前置作業重跑控制器。"
             return self.summary(queue, "active", active)
         queue, _message = self.dispatch_next(queue, reservation_sha=sha)
         dispatched = current_task(queue)
