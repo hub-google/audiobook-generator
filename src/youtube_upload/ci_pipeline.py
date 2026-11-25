@@ -1,6 +1,7 @@
 """CI artifact download, multi-worker inventorying, merging, and upload pipeline."""
 
 import glob
+import yaml
 import logging
 import os
 import shutil
@@ -82,15 +83,19 @@ def run_ci_artifact_mode(
 
     inventory.sort(key=lambda item: int(item["chap_num"]))
     publication.mark_global("validate_inventory", "running")
+    selected = None
+    if config_path and os.path.isfile(config_path):
+        with open(config_path, encoding="utf-8") as handle:
+            selected = (yaml.safe_load(handle) or {}).get("selected_indices")
     inventory_result = validate_chapter_inventory(
-        inventory, start_chap, end_chap, confirmed_source_missing
+        inventory, start_chap, end_chap, confirmed_source_missing, expected_indices=selected
     )
     publication.mark_global(
         "validate_inventory", "completed", chapter_count=len(inventory),
         source_missing_chapters=inventory_result["confirmed_missing"],
     )
     candidate_plan = build_part_plan_from_inventory(
-        inventory, min_seconds, max_seconds, confirmed_source_missing
+        inventory, min_seconds, max_seconds, confirmed_source_missing, expected_indices=selected
     )
     for planned in candidate_plan:
         planned["title"] = generate_video_title(

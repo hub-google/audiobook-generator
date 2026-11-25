@@ -384,7 +384,7 @@ class YouTubeServicePool:
         )
         return False
 
-    def authorize_all_local(self, sync_github=True):
+    def authorize_all_local(self, sync_github=True, repo="hub-google/audiobook-generator"):
         """本地一次授權所有 client_secrets 並生成對應的 tokens"""
         logging.info("🚀 開始檢查並授權所有 YouTube 專案...")
         success_count = 0
@@ -394,21 +394,20 @@ class YouTubeServicePool:
             if srv and creds:
                 success_count += 1
                 logging.info(f"✅ 專案 #{slot} 授權有效！")
-                if sync_github and creds.refresh_token and acc["cs_path"] and os.path.exists(acc["cs_path"]):
+                if sync_github:
                     try:
-                        with open(acc["cs_path"], "r", encoding="utf-8") as f:
-                            cs_info = json.load(f).get("installed", {})
-                        cid = cs_info.get("client_id", "")
-                        csec = cs_info.get("client_secret", "")
-                        if cid and csec:
-                            gh_bin = _find_gh()
-                            suffix = f"_{slot}"
-                            subprocess.run([gh_bin, "secret", "set", f"YOUTUBE_CLIENT_ID{suffix}", "--body", cid], check=False)
-                            subprocess.run([gh_bin, "secret", "set", f"YOUTUBE_CLIENT_SECRET{suffix}", "--body", csec], check=False)
-                            subprocess.run([gh_bin, "secret", "set", f"YOUTUBE_REFRESH_TOKEN{suffix}", "--body", creds.refresh_token], check=False)
-                            logging.info(f"☁️ 已自動將專案 #{slot} 憑證同步至 GitHub Secrets (YOUTUBE_*_{slot})！")
-                    except Exception as e:
-                        logging.warning(f"同步至 GitHub Secrets 失敗: {e}")
+                        cid = creds.client_id
+                        csec = creds.client_secret
+                        if not all((cid, csec, creds.refresh_token)):
+                            raise RuntimeError("Incomplete authorized credential")
+                        gh_bin = _find_gh()
+                        for key, value in (("CLIENT_ID", cid), ("CLIENT_SECRET", csec), ("REFRESH_TOKEN", creds.refresh_token)):
+                            subprocess.run([gh_bin, "secret", "set", f"YOUTUBE_{key}_{slot}", "--repo", repo],
+                                           input=value, text=True, check=True, capture_output=True)
+                        logging.info("專案 #%s 已同步 GitHub Secrets", slot)
+                    except Exception as error:
+                        success_count -= 1
+                        logging.error("專案 #%s 同步失敗：%s", slot, type(error).__name__)
         logging.info(f"🎉 授權檢測完成：共 {success_count}/{len(self.accounts)} 個專案可用！")
         return success_count
 

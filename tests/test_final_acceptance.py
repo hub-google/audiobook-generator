@@ -138,3 +138,18 @@ def test_abandoned_controller_recovered_only_when_no_live_controller():
     dispatcher.request.return_value.json.return_value = {"workflow_runs":[{"display_title":"控制｜來源 Run #100","status":"completed","updated_at":past}]}
     assert dispatcher.recover_preflight_controller(task)
     assert dispatcher.request.call_args.args == ("POST", "/actions/workflows/scrape-rerun.yml/dispatches")
+
+def test_wav_validator_accepts_path_objects(tmp_path):
+    from src.artifact_validation import validate_wav
+    path = tmp_path / "voice.wav"
+    with wave.open(str(path), "wb") as audio:
+        audio.setnchannels(1); audio.setsampwidth(2); audio.setframerate(24000)
+        audio.writeframes(b"\x01\x00" * 24000)
+    assert validate_wav(path)["sample_rate"] == 24000
+
+
+def test_stale_completion_cannot_replace_newer_native_attempt():
+    active = {"id":100, "run_attempt":3, "status":"in_progress"}
+    event = {"id":100, "run_attempt":2, "status":"completed", "conclusion":"failure"}
+    assert Dispatcher.apply_completion_event(active,event) == active
+    assert Dispatcher.apply_completion_event(active,{**event,"run_attempt":3})["status"] == "completed"

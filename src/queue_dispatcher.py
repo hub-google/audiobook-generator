@@ -123,7 +123,7 @@ def parse_time(value):
 class Dispatcher:
     def __init__(self, repo, token, branch="automation-state", force=False,
                  trigger_run_id=None, trigger_workflow_name="",
-                 trigger_conclusion="", trigger_completed_at=""):
+                 trigger_conclusion="", trigger_completed_at="", trigger_attempt=None):
         self.repo = repo
         self.token = token
         self.store = GitHubQueueStore(repo, token, branch=branch)
@@ -133,6 +133,7 @@ class Dispatcher:
         self.trigger_workflow_name = str(trigger_workflow_name or "")
         self.trigger_conclusion = str(trigger_conclusion or "")
         self.trigger_completed_at = str(trigger_completed_at or "")
+        self.trigger_attempt = int(trigger_attempt or 0)
         # workflow_dispatch returns no Run ID. Poll briefly until GitHub indexes
         # every requested Run; GUI reconciliation remains the durable fallback.
         self.dispatch_discovery_delays = (0, 1, 2, 3, 4)
@@ -158,8 +159,19 @@ class Dispatcher:
             "id": self.trigger_run_id,
             "status": "completed",
             "conclusion": self.trigger_conclusion,
+            **({"run_attempt": self.trigger_attempt} if self.trigger_attempt else {}),
             "updated_at": self.trigger_completed_at or datetime.now(timezone.utc).isoformat(),
         }
+
+    @staticmethod
+    def apply_completion_event(run, trigger, bound_attempt=0):
+        if not trigger:
+            return run
+        current_attempt = int((run or {}).get("run_attempt") or bound_attempt or 1)
+        event_attempt = int(trigger.get("run_attempt") or current_attempt)
+        if event_attempt < current_attempt:
+            return run
+        return {**(run or {}), **trigger, "run_attempt": event_attempt}
 
     def is_authoritatively_completed_run(self, run):
         return bool(
@@ -404,10 +416,11 @@ class Dispatcher:
                 scrape = stages.setdefault("scrape", {})
                 cover = stages.setdefault("cover", {})
                 def stage_run(state, candidates, trigger=None):
-                    if trigger and int(state.get("run_id") or 0) == int(trigger["id"]):
-                        return trigger
                     if state.get("run_id"):
-                        return next((r for r in candidates if int(r["id"]) == int(state["run_id"])), None) or self.run_by_id(state["run_id"])
+                        bound = next((r for r in candidates if int(r["id"]) == int(state["run_id"])), None)
+                        if trigger and int(state["run_id"]) == int(trigger["id"]):
+                            return self.apply_completion_event(bound, trigger, state.get("run_attempt"))
+                        return bound or self.run_by_id(state["run_id"])
                     since = parse_time(state.get("dispatched_at") or task.get("dispatched_at"))
                     if since:
                         since = since.replace(microsecond=0)
@@ -481,7 +494,7 @@ class Dispatcher:
             run = candidates[0] if candidates else None
             if (triggered_audiobook
                     and int(task.get("run_id") or 0) == int(triggered_audiobook["id"])):
-                run = triggered_audiobook
+                run = self.apply_completion_event(run if run and int(run['id']) == int(triggered_audiobook['id']) else None, triggered_audiobook, task.get('run_attempt'))
             if not run:
                 bound_run_id = task.get("run_id")
                 if bound_run_id and task.get("status") in BLOCKING_STATES:
@@ -914,6 +927,7 @@ def main():
     parser.add_argument("--trigger-workflow-name", default=os.environ.get("TRIGGER_WORKFLOW_NAME", ""))
     parser.add_argument("--trigger-conclusion", default=os.environ.get("TRIGGER_CONCLUSION", ""))
     parser.add_argument("--trigger-completed-at", default=os.environ.get("TRIGGER_COMPLETED_AT", ""))
+    parser.add_argument("--trigger-attempt", default=os.environ.get("TRIGGER_ATTEMPT", ""))
     args = parser.parse_args()
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if not args.repo or not token:
@@ -924,6 +938,7 @@ def main():
         trigger_workflow_name=args.trigger_workflow_name,
         trigger_conclusion=args.trigger_conclusion,
         trigger_completed_at=args.trigger_completed_at,
+        trigger_attempt=args.trigger_attempt,
     ).run())
 
 

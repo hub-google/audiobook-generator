@@ -76,3 +76,23 @@ jobs:
             case "$name" in HF_TOKEN|HF_ARCHIVE_REPO|YOUTUBE_CLIENT_ID_*|YOUTUBE_CLIENT_SECRET_*|YOUTUBE_REFRESH_TOKEN_*) args+=(-e "$name");; esac
           done < <(compgen -e)
           docker run --rm -v "$GITHUB_WORKSPACE:/work:ro" -w /work "${args[@]}" -e PYTHONPATH=/work ghcr.io/hub-google/audiobook-worker@sha256:4979e4cda14569f3d0b941341dd2ae819db5b2f8863c6738acf138f951feb9b1 python tools/live_service_check.py
+  schedule-health:
+    if: github.ref == 'refs/heads/master'
+    needs: regression
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Restore schedules disabled by repository inactivity only
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for workflow in queue-dispatcher.yml hf-upload-resume-scheduler.yml; do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow" --jq .state)
+            echo "$workflow: $state"
+            if [ "$state" = disabled_inactivity ]; then
+              gh api --method PUT "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/enable"
+              echo "$workflow: re-enabled after inactivity"
+            fi
+          done

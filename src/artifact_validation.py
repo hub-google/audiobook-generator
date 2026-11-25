@@ -150,7 +150,7 @@ def validate_text(path, clean=False):
 
 def validate_wav(path):
     try:
-        with wave.open(path, "rb") as audio:
+        with wave.open(os.fspath(path), "rb") as audio:
             frames = audio.getnframes()
             rate = audio.getframerate()
             channels = audio.getnchannels()

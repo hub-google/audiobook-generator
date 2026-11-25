@@ -46,7 +46,9 @@ def check_youtube():
             service.channels().list(part="id", mine=True, maxResults=1).execute()
             read_access += 1
         except Exception as exc:
-            print(f"YouTube slot {slot}: {type(exc).__name__}", flush=True)
+            # Never print token endpoint payloads or credential values.
+            category = next((code for code in ("invalid_grant", "invalid_client", "invalid_scope", "unauthorized_client") if code in str(exc)), type(exc).__name__)
+            print(f"YouTube slot {slot}: {category}", flush=True)
     print(f"YouTube credentials: {refreshed}/{configured} refreshed; {read_access}/{configured} read API passed", flush=True)
     if not configured or refreshed != configured or read_access != configured:
         raise RuntimeError("YouTube read-only check incomplete")
