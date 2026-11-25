@@ -70,7 +70,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
 
     def test_dispatcher_runs_one_task_aware_decision(self):
         steps = self.dispatcher_jobs["dispatch_once"]["steps"]
-        self.assertTrue(any("python src/queue_dispatcher.py" in step.get("run", "") for step in steps))
+        self.assertTrue(any("python -m src.queue_dispatcher" in step.get("run", "") for step in steps))
         self.assertIn("audiobook-queue-dispatcher", self.dispatcher_text)
         self.assertIn("workflow_run:", self.dispatcher_text)
 
