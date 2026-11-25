@@ -5,7 +5,7 @@ from src.chapter_selection_state import (
 )
 from .duplicate_review_dialogs import show_duplicate_details, choose_duplicate_conditions
 from .chapter_cell_editors import edit_chapter_name, edit_normalized_number
-from .chapter_table_ui import create_chapter_table
+from .chapter_table_ui import create_chapter_table, render_chapter_rows
 from .runtime import (
     threading, tk, Decimal, InvalidOperation, ttk, messagebox, webbrowser, analyze_duplicate_chapters, find_direct_duplicate_matches, split_chapter_title, normalize_positive_chapter_number, GitHubBookProfileStore, update_book_profile, move_chapter_order,
 )
@@ -82,41 +82,13 @@ class ChapterFilterDialogMixin:
             return output_numbers(chapter_order, chapter_state, cur_start, cur_end)
 
         def _update_listbox():
-            chapter_tree.delete(*chapter_tree.get_children())
-            visible_indices.clear()
-
-            is_show_all = show_all_var.get()
-            s_idx = 1 if is_show_all else cur_start
-            e_idx = total_chapters if is_show_all else cur_end
-            
-            filter_text = search_entry.get().strip().lower()
-
-            output_numbers = _output_numbers()
-            for global_idx in chapter_order:
-                if not s_idx <= global_idx <= e_idx:
-                    continue
-                if show_duplicates_only_var.get() and global_idx not in duplicate_group_indices:
-                    continue
-                parts = chapter_parts[global_idx - 1]
-                is_checked = chapter_state.get(global_idx, True)
-                output_number = ""
-                if is_checked and cur_start <= global_idx <= cur_end:
-                    output_number = output_numbers.get(global_idx, "")
-                values = (
-                    global_idx,
-                    f"{'☑' if is_checked else '☐'} {output_number}".rstrip(),
-                    parts["normalized_number"],
-                    parts["display_number"],
-                    parts["chapter_name"],
-                    "重複" if global_idx in duplicate_group_indices else "",
-                )
-                display_text = " ".join(str(value) for value in values)
-
-                if filter_text and filter_text not in display_text.lower():
-                    continue
-
-                visible_indices.append(global_idx)
-                chapter_tree.insert("", tk.END, iid=str(global_idx), values=values)
+            visible_indices[:] = render_chapter_rows(
+                chapter_tree, chapter_order, chapter_parts, chapter_state,
+                cur_start, cur_end, total_chapters,
+                show_all_var.get(), show_duplicates_only_var.get(),
+                duplicate_group_indices, search_entry.get(),
+                _output_numbers(),
+            )
 
         chk_show_all = ttk.Checkbutton(control_frame, text="🌐 顯示全書章節", variable=show_all_var, command=_update_listbox)
         chk_show_all.pack(side=tk.LEFT, padx=(0, 10))

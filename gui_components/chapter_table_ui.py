@@ -79,3 +79,38 @@ def create_chapter_table(parent, count, first, last):
     container.rowconfigure(0, weight=1)
     container.columnconfigure(0, weight=1)
     return ChapterTableWidgets(top, info, controls, search, tree, show_all, show_duplicates)
+
+
+def render_chapter_rows(
+    tree, order, chapter_parts, checked, first, last, total,
+    show_all, duplicates_only, duplicate_indices, query, output_numbers,
+):
+    """Render one filtered chapter table; return the visible original IDs."""
+    tree.delete(*tree.get_children())
+    start = 1 if show_all else first
+    end = total if show_all else last
+    query = str(query or "").strip().lower()
+    visible = []
+    for source_index in order:
+        if source_index < start or source_index > end:
+            continue
+        if duplicates_only and source_index not in duplicate_indices:
+            continue
+        parts = chapter_parts[source_index - 1]
+        selected = checked.get(source_index, True)
+        number = output_numbers.get(source_index, "") if (
+            selected and first <= source_index <= last
+        ) else ""
+        row = (
+            source_index,
+            f"{'☑' if selected else '☐'} {number}".rstrip(),
+            parts["normalized_number"],
+            parts["display_number"],
+            parts["chapter_name"],
+            "重複" if source_index in duplicate_indices else "",
+        )
+        if query and query not in " ".join(str(value) for value in row).lower():
+            continue
+        visible.append(source_index)
+        tree.insert("", tk.END, iid=str(source_index), values=row)
+    return visible
