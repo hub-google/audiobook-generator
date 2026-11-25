@@ -4805,7 +4805,7 @@
         4783,
         4784
       ],
-      "status": "canceling",
+      "status": "stopped",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
@@ -4852,7 +4852,7 @@
       "retry_requested_at": null,
       "run_history": [],
       "retry_at": null,
-      "reason": "chapter_plan_updated",
+      "reason": "user_cancelled",
       "hf_progress": {
         "completed": 0,
         "total": 0
