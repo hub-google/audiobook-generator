@@ -81,7 +81,7 @@ def test_moon_complete_pages_and_corrupt_rejection():
 
 def test_promoted_sources_are_registered():
     from src.sources import resolve_source
-    for cls, url in [(SixKSource, "https://www.6ksu.app/novel/1.html"), (XszjSource, "https://xszj.tw/book/1"), (MetaNovelSource, "https://m.metanovel.org/book/1")]:
+    for cls, url in [(SixKSource, "https://www.6ksu.app/novel/1.html"), (XszjSource, "https://xszj.tw/book/1"), (MetaNovelSource, "https://m.metanovel.org/book/1"), (Moon17Source,"https://www.17moon.com/book/abc/"), (Book8Source,"https://8book.com/novelbooks/1/")]:
         assert isinstance(resolve_source(url), cls)
 
 

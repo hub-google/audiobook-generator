@@ -5,9 +5,11 @@ from .sixk import SixKSource
 from .xszj import XszjSource
 from .metanovel import MetaNovelSource
 from .twkan import TwkanSource
+from .moon17 import Moon17Source
+from .book8 import Book8Source
 from .base import SourceParseError
 
-SOURCES = {source.source_id: source for source in (HJWZWSource(), Shuba69Source(), CZBooksSource(), SixKSource(), XszjSource(), MetaNovelSource(), TwkanSource())}
+SOURCES = {source.source_id: source for source in (HJWZWSource(), Shuba69Source(), CZBooksSource(), SixKSource(), XszjSource(), MetaNovelSource(), TwkanSource(), Moon17Source(), Book8Source())}
 
 
 def resolve_source(url, source_id=None):
@@ -20,13 +22,8 @@ def resolve_source(url, source_id=None):
 
 
 def resolve_saved_source(url):
-    """Local, authorized HTML imports can use offline-only adapters.
-
-    This does not register unverified candidates for live production fetching.
-    """
-    from .moon17 import Moon17Source
-    from .book8 import Book8Source
-    for source in (*SOURCES.values(), Moon17Source(), Book8Source()):
+    """Use the same validated source-specific parser for authorized saved HTML."""
+    for source in SOURCES.values():
         if source.matches(url):
             return source
     raise SourceParseError(f"尚未支援此小說來源：{url}")

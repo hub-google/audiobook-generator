@@ -16,11 +16,11 @@ def test_shuba_utf8_and_gb18030_are_identical():
         assert src.parse_chapter(html.encode(encoding), url) == expected
 
 
-def test_offline_only_moon_adapter_not_live_registered():
+def test_moon_is_live_and_saved_with_same_adapter():
     url = "https://www.17moon.com/book/abc/"
     assert resolve_saved_source(url).source_id == "moon17"
-    with pytest.raises(SourceParseError):
-        resolve_source(url)
+    assert resolve_source(url).source_id == "moon17"
+    assert type(resolve_saved_source(url)) is type(resolve_source(url))
 
 
 def test_moon_saved_multi_page_import(tmp_path, monkeypatch):

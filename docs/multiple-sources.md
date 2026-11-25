@@ -114,3 +114,10 @@ python tools/download_novel_txt.py https://www.69shuba.com/book/29590/ --count 3
 ## 2026-11-25 追加修正
 
 修復離線多頁測試發現的相對網址解析錯誤；小說狂人支援從 0 或 1 起算的連續章節序號，保留段落；無限小說優先使用章節標題、拒絕未解出字元；月亮小說網檢查分頁 query 一致。HTTP 在連線前驗證重新導向，拒絕外部網域。這些為解析及安全性修復，不代表網站已允許自動連線。69 書吧已於 [45532885782](https://github.com/hub-google/audiobook-generator/actions/runs/45532885782) 成功抓取三章；其他三站未完成線上驗收。
+
+## 實際閱讀器修正（2026/11/25）
+
+- 小說狂人：改用已實測成功的普通 HTTP 傳輸，[實測 119 章、三章正文成功](https://github.com/hub-google/audiobook-generator/actions/runs/45534269902)。
+- 月亮小說網：依官方 reader.js 還原文字節點倒序，並將網站自訂字型 195 個字形轉為 Unicode，無須在 Git 中存放字型檔；[實測 546 章目錄、首中末正文成功](https://github.com/hub-google/audiobook-generator/actions/runs/45534921596)。已加入正式來源。
+- 無限小說：外站連結僅用於識別章節 ID，不直接請求體育或財經網站；依原站 inline JS 組合原站 /txt/ AJAX 章節實體網址，不執行來源腳本；[實測 47 章目錄、首中末正文成功](https://github.com/hub-google/audiobook-generator/actions/runs/45535104990)。已加入正式來源。
+- 站點連線可能因 HTTP 403 或原始章節缺文而暫時失敗；此類狀態明確回報，不與解析器 bug 混淆。僅處理公開可讀或已獲授權的內容。
