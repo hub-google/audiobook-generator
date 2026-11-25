@@ -2,10 +2,8 @@
 
 import logging
 import os
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Any
 
 from .ci_pipeline import run_ci_artifact_mode
 from .errors import UploadPaused
@@ -47,12 +45,6 @@ except ImportError:
     from metadata_gen import save_book_metadata
     from publication_checkpoint import PublicationCheckpoint, plan_fingerprint
 
-
-def _get_symbol(name: str, fallback: Any) -> Any:
-    uploader = sys.modules.get("src.youtube_api_uploader") or sys.modules.get("youtube_api_uploader")
-    if uploader is not None and hasattr(uploader, name):
-        return getattr(uploader, name)
-    return fallback
 
 
 def run_upload_pipeline(args):

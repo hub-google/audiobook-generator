@@ -6,7 +6,6 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -30,12 +29,6 @@ SCOPES = [
 EXIT_RETRY_LATER = 75
 YOUTUBE_SLOT_ROTATION_ROUNDS = 3
 
-
-def _get_symbol(name: str, fallback: Any) -> Any:
-    uploader = sys.modules.get("src.youtube_api_uploader") or sys.modules.get("youtube_api_uploader")
-    if uploader is not None and hasattr(uploader, name):
-        return getattr(uploader, name)
-    return fallback
 
 
 def _find_gh() -> str:
@@ -66,7 +59,9 @@ class YouTubeServicePool:
         BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         cs_dir = os.path.join(BASE_DIR, "client_secret")
 
-        path_exists_fn = _get_symbol("os", os).path.exists
+        # The OS module is shared with the public uploader; no sys.modules
+        # reflection or implicit compatibility hook is needed.
+        path_exists_fn = os.path.exists
 
         for slot in enabled_youtube_account_slots():
             # 1. 檔案路徑檢查
