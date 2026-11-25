@@ -6,7 +6,10 @@ from .base import SourceAdapter, Chapter, SourceParseError
 
 class CZBooksSource(SourceAdapter):
     source_id = "czbooks"
-    version = "3"
+    version = "4"
+    # Normal requests returned a real 200 catalog, while curl_cffi received 403.
+    # Use the verified ordinary HTTP transport without challenge-solving.
+    plain_http = True
     hosts = ("czbooks.net", "www.czbooks.net")
     min_interval = 3.0
     max_parallel = 1
