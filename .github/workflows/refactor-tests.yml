@@ -1,5 +1,6 @@
 name: 有聲小說｜重構回歸測試
 on:
+  workflow_dispatch:
   push:
     branches: ["refactor/reliability-20261125", "refactor/final-acceptance-20261125", master]
 permissions:
@@ -23,7 +24,7 @@ jobs:
       - run: xvfb-run -a python -m pytest -q tests src/image/kaggle_chapter_images/tests
 
   live-service-check:
-    if: github.ref == 'refs/heads/refactor/final-acceptance-20261125'
+    if: github.ref == 'refs/heads/refactor/final-acceptance-20261125' || (github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
