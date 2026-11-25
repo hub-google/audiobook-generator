@@ -16,6 +16,10 @@ def test_runtime_does_not_duplicate_src_module_identity():
     assert "from src.catalog_parser import" in code
     assert "from catalog_parser import" not in code
     assert "GitHubQueueStore = None" not in code
+    app = (ROOT / "gui_app.py").read_text(encoding="utf-8")
+    assert "sys.path.append" not in app
+    assert "from src.catalog_parser import" in app
+    assert "GitHubQueueStore = None" not in app
 
 
 def test_durable_run_settlement_is_owned_by_dispatcher():
