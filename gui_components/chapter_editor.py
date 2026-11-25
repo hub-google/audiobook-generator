@@ -24,9 +24,25 @@ class ChapterEditorMixin:
         def _worker():
             try:
                 res = parse_catalog(canonical)
-                canonical_url = res.get("catalog_url", url)
-                profiles, _ = self._profile_store()[0].load()
-                _, profile = get_book_profile(profiles, canonical_url, res.get("book_title") or "")
+                canonical_url = res.get("catalog_url", canonical)
+                profile = {}
+                try:
+                    profiles, _ = self._profile_store()[0].load()
+                    _, profile = get_book_profile(
+                        profiles, canonical_url, res.get("book_title") or "",
+                    )
+                except Exception as profile_error:
+                    # Catalog parsing and the first-chapter preview should
+                    # work even when GitHub book settings are temporarily
+                    # unreachable. Queue writes still need GitHub credentials.
+                    detail = str(profile_error)
+                    self.root.after(
+                        0,
+                        lambda message=detail: self.log(
+                            f"⚠ 目錄已取得，但無法讀取雲端書籍設定：{message}；"
+                            "可以先查看章節或試抓首章，加入佇列時仍需 GitHub 連線。"
+                        ),
+                    )
                 apply_chapter_title_overrides(
                     res, profile.get("chapter_title_overrides") or {},
                     profile.get("chapter_normalized_number_overrides") or {},

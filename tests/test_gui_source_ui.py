@@ -205,3 +205,41 @@ def test_source_catalog_example_is_the_live_validated_golden_house_book():
     other, live_url = normalize_source_url(SAMPLES["hjwzw"])
     assert source.source_id == other.source_id == "hjwzw"
     assert source.book_id(gui_url) == other.book_id(live_url)
+
+
+
+def test_catalog_parse_remains_available_when_github_profile_unavailable():
+    """A profile API outage must not be mislabeled as a website parser error."""
+    from gui_components.source_ui import normalize_source_url
+    app = object.__new__(AudiobookGUIApp)
+    url = "https://czbooks.net/n/c37492"
+    app.url_entry = Mock()
+    app.url_entry.get.return_value = url
+    app.editing_task_id = None
+    app.catalog_load_token = 0
+    app.btn_parse = Mock()
+    app.lbl_status = Mock()
+    app.log = Mock()
+    app.root = Mock()
+    app.root.after.side_effect = lambda delay, callback: callback()
+    app._profile_store = Mock(side_effect=RuntimeError("GitHub 暫時無法連線"))
+    app._on_parse_success = Mock()
+    app._on_parse_failed = Mock()
+    catalog = {
+        "success": True, "catalog_url": normalize_source_url(url)[1],
+        "book_title": "測試作品", "source_id": "czbooks",
+        "total_chapters": 3,
+    }
+
+    def immediate_thread(target, daemon=True):
+        thread = Mock()
+        thread.start.side_effect = target
+        return thread
+
+    with patch("gui_components.chapter_editor.parse_catalog", return_value=catalog):
+        with patch("gui_components.chapter_editor.threading.Thread", side_effect=immediate_thread):
+            app.start_parse_catalog()
+
+    app._on_parse_success.assert_called_once_with(catalog, {})
+    app._on_parse_failed.assert_not_called()
+    assert "雲端書籍設定" in app.log.call_args.args[0]

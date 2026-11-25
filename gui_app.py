@@ -582,8 +582,20 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         def worker():
             try:
                 result = parse_catalog(task.get("catalog_url") or "")
-                profiles, _ = self._profile_store()[0].load()
-                _, profile = get_book_profile(profiles, task.get("catalog_url") or "", task.get("book_title") or "")
+                try:
+                    profiles, _ = self._profile_store()[0].load()
+                    _, profile = get_book_profile(
+                        profiles, task.get("catalog_url") or "", task.get("book_title") or "",
+                    )
+                except Exception as profile_error:
+                    profile = {}
+                    detail = str(profile_error)
+                    self.root.after(
+                        0,
+                        lambda message=detail: self.log(
+                            f"⚠ 雲端書籍設定暫時無法讀取，將使用佇列中的章節設定：{message}"
+                        ),
+                    )
                 overrides = profile.get("chapter_title_overrides") or task.get("chapter_title_overrides") or {}
                 normalized_overrides = (
                     profile.get("chapter_normalized_number_overrides") or
