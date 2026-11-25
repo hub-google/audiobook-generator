@@ -59,7 +59,7 @@ def test_cover_config_rejects_snapshot_from_another_book():
 def test_cover_workflow_cannot_depend_on_catalog_scraping():
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    assert "src/cover_preflight.py" in workflow
+    assert "python -m src.cover_preflight" in workflow
     assert "--book-profile-snapshot-b64" in workflow
     assert "catalog_parser.py" not in workflow
     assert "crawler.py" not in workflow

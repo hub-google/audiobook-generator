@@ -159,8 +159,8 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
 
     def test_native_rerun_controllers_are_isolated_by_source_run(self):
         expectations = (
-            (self.scrape_rerun_text, "【TXT抓取】", "txt-scrape-native-rerun-controller", "scrape-rerun.yml", "scrape_rerun_controller.py"),
-            (self.cover_rerun_text, "【封面產生】", "cover-native-rerun-controller", "cover-rerun.yml", "cover_rerun_controller.py"),
+            (self.scrape_rerun_text, "【TXT抓取】", "txt-scrape-native-rerun-controller", "scrape-rerun.yml", "src.scrape_rerun_controller"),
+            (self.cover_rerun_text, "【封面產生】", "cover-native-rerun-controller", "cover-rerun.yml", "src.cover_rerun_controller"),
         )
         for workflow, label, group, filename, controller in expectations:
             self.assertIn(label, workflow)
@@ -246,7 +246,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
             item for item in self.jobs["process_chapters"]["steps"]
             if item.get("name") == "Run Per-Chapter End-to-End Pipeline (Real-Time Saving)"
         )
-        self.assertIn("python src/worker_pipeline.py", step["run"])
+        self.assertIn("python -m src.worker_pipeline", step["run"])
         self.assertNotIn("for attempt in 1 2 3", step["run"])
         self.assertEqual(step.get("if"), "steps.artifact_restore.outputs.complete != 'true'")
 
