@@ -1,11 +1,13 @@
 import re
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 from .base import SourceAdapter, Chapter, SourceParseError
 
 
 class Shuba69Source(SourceAdapter):
     source_id = "shuba69"
-    version = "3"
+    version = "4"
+    plain_http = True
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     max_parallel = 17
     hosts = ("www.69shuba.com", "69shuba.com")
     encoding = "gb18030"
@@ -21,16 +23,16 @@ class Shuba69Source(SourceAdapter):
     def get_referer(self, url):
         try:
             bid = self.book_id(url)
-            return self.absolute_url(url, f'/book/{bid}/')
+            return self.absolute_url(url, f'https://69shuba.com/book/{bid}/')
         except Exception:
-            return f"{urlsplit(url).scheme}://{urlsplit(url).netloc}/"
+            return "https://69shuba.com/"
 
     def catalog_url(self, url):
         query = f'?{urlsplit(url).query}' if urlsplit(url).query else ''
-        return self.absolute_url(url, f'/book/{self.book_id(url)}/{query}')
+        return self.absolute_url(url, f'https://69shuba.com/book/{self.book_id(url)}/{query}')
 
     def metadata_url(self, url):
-        return self.absolute_url(url, f'/book/{self.book_id(url)}.htm')
+        return self.absolute_url(url, f'https://69shuba.com/book/{self.book_id(url)}.htm')
 
     def clean_title(self, title):
         return re.sub(r'^\s*\d+\s*[.．]\s*', '', title).strip()
@@ -53,14 +55,18 @@ class Shuba69Source(SourceAdapter):
         seen = set()
         book_id = self.book_id(url)
         for a in root.select('a[href]'):
-            href = self.absolute_url(url, a['href'])
-            match = re.fullmatch(r'/txt/' + re.escape(book_id) + r'/(\d+)/?', urlsplit(href).path)
+            original = self.absolute_url(url, a['href'])
+            parts = urlsplit(original)
+            match = re.fullmatch(r'/txt/' + re.escape(book_id) + r'/(\d+)/?', parts.path)
             if match and match[1] not in seen:
                 label = a.get_text(strip=True)
                 if not label:
                     raise SourceParseError('69 書吧章節標題空白')
                 seen.add(match[1])
-                entries.append((match[1], href, label))
+                # The published bare domain is reachable using ordinary HTTP.
+                # Never inherit a blocked www hostname from an absolute href.
+                target = self.absolute_url(url, urlunsplit(("https","69shuba.com",parts.path,parts.query,parts.fragment)))
+                entries.append((match[1], target, label))
         # DOM may be descending. IDs are site publication IDs, not title numbers.
         if len(entries) > 1 and int(entries[0][0]) > int(entries[-1][0]):
             entries.reverse()
@@ -88,7 +94,7 @@ class Shuba69Source(SourceAdapter):
             raise SourceParseError('69 書吧正文空白')
         return title, text
 
-    def parse_full_novels(self, html, base_url="https://www.69shuba.com"):
+    def parse_full_novels(self, html, base_url="https://69shuba.com"):
         soup = self.soup(html)
         novels = []
         seen_ids = set()

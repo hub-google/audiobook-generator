@@ -125,3 +125,7 @@ python tools/download_novel_txt.py https://www.69shuba.com/book/29590/ --count 3
 ## 台灣小說網：區分來源健康度與個別缺章
 
 九站綜合 smoke check 的台灣小說網樣本改用交叉驗證中完整的 648 章作品（首頁／中頁／末頁都已實際取得可讀正文），持續保留 `tools/validate_twkan.py` 多書完整性驗證，明確報告其他作品存在原站正文 100／111 字的缺章。這不是自動填補或忽略缺章；特定缺文書籍仍不能製作完整有聲書。
+
+## 69 書吧不帶 www 的官方網址
+
+獨立診斷 [45535552234](https://github.com/hub-google/audiobook-generator/actions/runs/45535552234) 確認同時使用普通 HTTP 請求時，`www.69shuba.com/book/53782/` 為 403，而 `69shuba.com/book/53782/` 返回 200 且帶完整目錄；相同的裸網域使用 curl_cffi 也返回 200。V4 將本站目錄／正文內部 URL 統一使用裸網域與實測成功的普通 HTTP，保留使用者原本輸入的網址作為工作區來源指紋。這是站點實測修正，不是保存錯誤頁面或跳過缺章。

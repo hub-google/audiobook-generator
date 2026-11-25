@@ -50,7 +50,7 @@ def fetch_page(url, source, timeout=20):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     }
     if source.plain_http:
-        headers['User-Agent'] = 'AUDIO-source-validation/1.0'
+        headers['User-Agent'] = getattr(source, 'user_agent', 'AUDIO-source-validation/1.0')
     referer = getattr(source, 'get_referer', lambda u: None)(url)
     if referer:
         headers['Referer'] = referer

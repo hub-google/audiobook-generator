@@ -32,7 +32,7 @@ def test_registry_rejects_unknown_and_host_spoofing():
 def test_shuba_catalog_order_ids_and_original_labels():
     result = parse_catalog(URL, html=CATALOG)
     assert result['book_title'] == '測試小說'
-    assert result['chapters'][0] == 'https://www.69shuba.com/txt/29590/10'
+    assert result['chapters'][0] == 'https://69shuba.com/txt/29590/10'
     assert result['chapter_titles'][0] == '第1章 開始'
     assert result['chapter_records'][0]['original_title'] == '1.第1章 開始'
     assert result['chapter_records'][0]['source_chapter_id'] == '10'
@@ -61,7 +61,7 @@ def test_chapter_removes_ui_but_keeps_novel_paragraphs():
 
 def test_shuba_metadata_does_not_point_to_hjwzw():
     from src.metadata_gen import _catalog_book_url
-    assert _catalog_book_url(URL) == 'https://www.69shuba.com/book/29590.htm'
+    assert _catalog_book_url(URL) == 'https://69shuba.com/book/29590.htm'
 
 
 def test_same_title_different_urls_are_isolated(tmp_path):
@@ -119,11 +119,11 @@ def test_three_txt_exports_use_production_parser(tmp_path):
 
 def test_catalog_url_normalization():
     shuba = resolve_source('https://www.69shuba.com/book/29590')
-    assert shuba.catalog_url('https://www.69shuba.com/book/29590') == 'https://www.69shuba.com/book/29590/'
+    assert shuba.catalog_url('https://www.69shuba.com/book/29590') == 'https://69shuba.com/book/29590/'
     assert shuba.catalog_url('https://www.69shuba.com/book/29590/') == 'https://www.69shuba.com/book/29590/'
     assert shuba.catalog_url('https://www.69shuba.com/book/29590.htm') == 'https://www.69shuba.com/book/29590/'
     assert shuba.catalog_url('https://www.69shuba.com/txt/29590/10') == 'https://www.69shuba.com/book/29590/'
-    assert shuba.catalog_url('https://www.69shuba.com/book/29590?edition=2') == 'https://www.69shuba.com/book/29590/?edition=2'
+    assert shuba.catalog_url('https://www.69shuba.com/book/29590?edition=2') == 'https://69shuba.com/book/29590/?edition=2'
 
     hjwzw = resolve_source('https://tw.hjwzw.com/Book/35120')
     assert hjwzw.catalog_url('https://tw.hjwzw.com/Book/35120') == 'https://tw.hjwzw.com/Book/Chapter/35120'
