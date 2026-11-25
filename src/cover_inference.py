@@ -33,7 +33,7 @@ def _hf_error_is_retryable(error):
     ))
 
 
-def download_ai_image(prompt, width=1280, height=720, max_attempts=5, retry_base_seconds=15):
+def download_ai_image(prompt, width=1280, height=720, max_attempts=4, retry_base_seconds=15):
     # Defer the import to prevent cycles and honor application/test config injection.
     from .metadata_gen import _cover_config, _validate_cover_config
     cover_config = _cover_config()
@@ -53,7 +53,7 @@ def download_ai_image(prompt, width=1280, height=720, max_attempts=5, retry_base
         img = None
         try:
             from huggingface_hub import InferenceClient
-            client = InferenceClient(model=model, token=hf_token)
+            client = InferenceClient(model=model, token=hf_token, timeout=60)
             img = client.text_to_image(
                 prompt,
                 width=width,

@@ -1,0 +1,74 @@
+name: AUDIO One-time Cover Recovery
+run-name: "【封面補救】萬古第一廢材｜book-20261125-7fa2c918"
+on:
+  push:
+    paths:
+      - .github/workflows/recover-wanggu-cover-once.yml
+permissions:
+  contents: read
+  actions: write
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify existing cover is not finished
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          count="$(gh api 'repos/${{ github.repository }}/actions/runs/45592664172/artifacts?per_page=100' --jq '[.artifacts[] | select(.name == "cover-review-book-20261125-7fa2c918" and .expired == false)] | length')"
+          echo "exists=$([ "$count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "Existing completed cover artifacts: $count"
+      - name: Cancel stalled old image-only attempt
+        if: steps.check.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          status="$(gh api 'repos/${{ github.repository }}/actions/runs/45592664172' --jq .status)"
+          echo "Original cover Run status: $status"
+          if [ "$status" != completed ]; then
+            gh api -X POST 'repos/${{ github.repository }}/actions/runs/45592664172/cancel' --silent || true
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.exists != 'true'
+        with: {python-version: '3.11', cache: pip}
+      - name: Install image dependencies
+        if: steps.check.outputs.exists != 'true'
+        run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        if: steps.check.outputs.exists != 'true'
+        with:
+          name: cover-prompt-book-20261125-7fa2c918
+          repository: ${{ github.repository }}
+          run-id: '45592664172'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: .
+      - name: Generate image from the already-approved Gemini prompt
+        if: steps.check.outputs.exists != 'true'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          timeout --signal=TERM --kill-after=15s 780 python -u -m src.cover_preflight \
+            --stage cover --config config.yaml --task-id book-20261125-7fa2c918
+      - name: Upload cover review artifact
+        if: steps.check.outputs.exists != 'true' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cover-review-book-20261125-7fa2c918
+          path: |
+            Workspace/*/Cover/
+            config.yaml
+          if-no-files-found: error
+          retention-days: 30
+      - name: Summarize outcome
+        if: always()
+        run: |
+          echo "## 《萬古第一廢材》封面救援" >> "$GITHUB_STEP_SUMMARY"
+          echo "保留原 Gemini 介紹、封面資訊與提示詞 Artifact，不重新產生。" >> "$GITHUB_STEP_SUMMARY"
+          echo "原始封面 Run：45592664172；本次新 SHA：${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "實際封面是否生成，請以本次 cover-review Artifact 為準。" >> "$GITHUB_STEP_SUMMARY"
