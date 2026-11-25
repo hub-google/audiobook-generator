@@ -18,14 +18,14 @@
       "chapter_title_overrides": {},
       "chapter_normalized_number_overrides": {},
       "chapter_order": [],
-      "status": "canceling",
+      "status": "stopped",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "running",
+          "status": "failed",
           "run_id": 45594139300,
           "run_attempt": 1,
-          "reason": null,
+          "reason": "cancelled",
           "completed_at": null,
           "dispatched_at": "2026-11-25T10:11:58.352116+00:00"
         },
