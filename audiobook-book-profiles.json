@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
-  "revision": 92,
-  "updated_at": "2026-11-25T13:56:13.964337+00:00",
+  "revision": 93,
+  "updated_at": "2026-11-25T13:57:15.267882+00:00",
   "books": {
     "961a5688c922a185": {
       "catalog_url": "https://tw.hjwzw.com/Book/Chapter/33827",
@@ -1116,14 +1116,16 @@
       "book_title": "萬古第一廢材",
       "cleaner_remove_patterns": [],
       "duplicate_detection": {
-        "use_normalized_number": true,
+        "use_normalized_number": false,
         "use_chapter_name": true,
         "use_number_and_name": false
       },
-      "chapter_title_overrides": {},
+      "chapter_title_overrides": {
+        "1947": "第1947章 神皇殿"
+      },
       "chapter_normalized_number_overrides": {},
-      "profile_revision": 1,
-      "updated_at": "2026-11-25T13:56:13.964337+00:00",
+      "profile_revision": 2,
+      "updated_at": "2026-11-25T13:57:15.267882+00:00",
       "manual_cover": {}
     }
   }
