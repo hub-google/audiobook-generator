@@ -1,0 +1,21 @@
+name: 有聲小說｜字型顯示驗證
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - 'tools/icon_gallery.py'
+      - '.github/workflows/icon-gallery.yml'
+permissions:
+  contents: read
+jobs:
+  font-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install requests Pillow
+      - run: python -m tools.icon_gallery

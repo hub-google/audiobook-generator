@@ -45,10 +45,10 @@ def run(source):
             if "var bids" in s or "var td" in s or "var e=" in s:
                 matches.append(s[:1300])
         result["inline_chunks"]=matches[:4]
-        for url in [
-            "https://8book.com/txt/168909/39876.html",
-            "https://8book.com/txt/11f168909/39876.html",
-        ]:
+        # Real AJAX path derived from public read-page JS (not guessed).
+        secret = "827833895359553635194794343985497618332263635512447119523458192996385441394216873155738718687317164922719781641658694727"
+        urls = ["https://8book.com/txt/11/168909/" + str(cid) + secret[(cid*3)%100:((cid*3)%100)+5] + ".html" for cid in (39876,39890,39922)]
+        for url in urls:
             try:
                 r=retrieve(url)
                 soup=BeautifulSoup(r.content,"html.parser")
