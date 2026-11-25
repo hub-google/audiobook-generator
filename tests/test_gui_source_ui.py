@@ -185,3 +185,23 @@ def test_full_gui_window_has_nine_sources_preview_and_queue_site_column():
         assert app.pending_queue_tree.set("book-ui-test", "source") == "無限小說"
     finally:
         root.destroy()
+
+
+
+def test_scrape_workflow_respects_source_specific_parallelism():
+    """The GUI's selected site must constrain TXT workers, not just rendering."""
+    from pathlib import Path
+    workflow = (Path(__file__).resolve().parents[1] /
+                ".github" / "workflows" / "audiobook.yml").read_text(encoding="utf-8")
+    scrape = workflow.split("\n  scrape_chapters:", 1)[1].split("\n  trigger_scrape_rerun:", 1)[0]
+    assert "max-parallel: ${{ fromJSON(needs.setup.outputs.source_max_parallel || '1') }}" in scrape
+    assert "max-parallel: 17" not in scrape
+    assert "needs: [setup, resume_planner]" in scrape
+
+
+def test_source_catalog_example_is_the_live_validated_golden_house_book():
+    from tools.validate_sources_live import SAMPLES
+    source, gui_url = normalize_source_url(SOURCE_EXAMPLES["hjwzw"])
+    other, live_url = normalize_source_url(SAMPLES["hjwzw"])
+    assert source.source_id == other.source_id == "hjwzw"
+    assert source.book_id(gui_url) == other.book_id(live_url)

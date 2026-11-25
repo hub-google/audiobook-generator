@@ -608,7 +608,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 17
+      # TXT workers must obey the same site-specific cap as processing workers.
+      # Source adapters set source_max_parallel via setup/config.yaml.
+      max-parallel: ${{ fromJSON(needs.setup.outputs.source_max_parallel || '1') }}
       matrix: ${{ fromJSON(needs.resume_planner.outputs.worker_matrix) }}
     steps:
       - uses: actions/checkout@v4

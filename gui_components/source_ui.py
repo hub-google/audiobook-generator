@@ -26,7 +26,7 @@ SOURCE_NAMES = {
 }
 # All examples have been used in the source-specific live validation.
 SOURCE_EXAMPLES = {
-    "hjwzw": "https://tw.hjwzw.com/Book/Chapter/35120",
+    "hjwzw": "https://tw.hjwzw.com/Book/1889",
     "shuba69": "https://69shuba.com/book/53782/",
     "czbooks": "https://czbooks.net/n/c37492",
     "twkan": "https://www.twkan.cc/book/5xqpGOcl46z9RzbASUJWgx.html",
