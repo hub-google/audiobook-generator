@@ -5,6 +5,7 @@ from src.chapter_selection_state import (
 )
 from .duplicate_review_dialogs import show_duplicate_details, choose_duplicate_conditions
 from .chapter_cell_editors import edit_chapter_name, edit_normalized_number
+from .chapter_table_ui import create_chapter_table
 from .runtime import (
     threading, tk, Decimal, InvalidOperation, ttk, messagebox, webbrowser, analyze_duplicate_chapters, find_direct_duplicate_matches, split_chapter_title, normalize_positive_chapter_number, GitHubBookProfileStore, update_book_profile, move_chapter_order,
 )
@@ -33,68 +34,10 @@ class ChapterFilterDialogMixin:
         cur_start = max(1, min(cur_start, total_chapters))
         cur_end = max(1, min(cur_end, total_chapters))
         
-        top = tk.Toplevel(self.root)
-        top.title("選擇要轉換的章節")
-        top.geometry("1280x680")
-        top.minsize(1050, 480)
-        top.resizable(True, True)
-        top.grab_set()
-
-        BG_COLOR = "#f5f6fa"
-        top.configure(bg=BG_COLOR)
-
-        header_frame = ttk.Frame(top)
-        header_frame.pack(fill=tk.X, padx=15, pady=(15, 5))
-
-        ttk.Label(header_frame, text="請取消勾選「不想轉換」的章節 (點擊列或按空白鍵切換勾選)", font=("Microsoft JhengHei", 10, "bold")).pack(anchor="w")
-
-        info_lbl = ttk.Label(header_frame, text=f"全書共 {total_chapters} 章 | 目前範圍：第 {cur_start} ~ {cur_end} 章", font=("Microsoft JhengHei", 9), foreground="#666666")
-        info_lbl.pack(anchor="w", pady=(2, 5))
-
-        # 控制列（全書切換 & 搜尋框）
-        control_frame = ttk.Frame(top)
-        control_frame.pack(fill=tk.X, padx=15, pady=5)
-
-        show_all_var = tk.BooleanVar(value=True)
-        show_duplicates_only_var = tk.BooleanVar(value=False)
-        
-        ttk.Label(control_frame, text="🔍 搜尋:").pack(side=tk.LEFT, padx=(0, 4))
-        search_entry = ttk.Entry(control_frame, width=16)
-        search_entry.pack(side=tk.LEFT, padx=(0, 10))
-
-        # 中間章節表格 + Scrollbar 區塊
-        container = ttk.Frame(top)
-        container.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
-
-        columns = ("uuid", "output_number", "normalized_number", "display_number", "chapter_name", "duplicate")
-        chapter_tree = ttk.Treeview(container, columns=columns, show="headings", selectmode="extended")
-        headings = {
-            "uuid": "UUID",
-            "output_number": "編號章節數",
-            "normalized_number": "網站章節數正規化",
-            "display_number": "網站顯示章節數",
-            "chapter_name": "章節名稱",
-            "duplicate": "重複標記",
-        }
-        widths = {
-            "uuid": 65, "output_number": 105, "normalized_number": 155, "display_number": 145,
-            "chapter_name": 280, "duplicate": 85,
-        }
-        for column in columns:
-            chapter_tree.heading(column, text=headings[column])
-            chapter_tree.column(
-                column, width=widths[column], minwidth=70,
-                anchor=tk.W if column == "chapter_name" else tk.CENTER,
-                stretch=column == "chapter_name",
-            )
-        y_scrollbar = ttk.Scrollbar(container, orient="vertical", command=chapter_tree.yview)
-        x_scrollbar = ttk.Scrollbar(container, orient="horizontal", command=chapter_tree.xview)
-        chapter_tree.configure(yscrollcommand=y_scrollbar.set, xscrollcommand=x_scrollbar.set)
-        chapter_tree.grid(row=0, column=0, sticky="nsew")
-        y_scrollbar.grid(row=0, column=1, sticky="ns")
-        x_scrollbar.grid(row=1, column=0, sticky="ew")
-        container.rowconfigure(0, weight=1)
-        container.columnconfigure(0, weight=1)
+        widgets = create_chapter_table(self.root, total_chapters, cur_start, cur_end)
+        top, info_lbl, control_frame = widgets.top, widgets.info, widgets.controls
+        search_entry, chapter_tree = widgets.search, widgets.tree
+        show_all_var, show_duplicates_only_var = widgets.show_all, widgets.show_duplicates
 
         # 紀錄目前每個章節的勾選狀態 {global_idx: True/False} (True = 要轉換)
         chapter_state = {}
