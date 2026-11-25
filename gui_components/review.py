@@ -155,14 +155,9 @@ class ReviewMixin(AdReviewDialogMixin, CoverPreflightDialogMixin, BatchCoverDial
         task = tasks[0]
         if task.get("run_id"):
             self.current_run_id = int(task["run_id"])
-            try:
-                self.current_repo, self.current_token = self._github_settings()
-                self.btn_cancel.config(state=tk.NORMAL if task.get("workflow_phase") != "preflight" and task.get("status") in {"running", "dispatching", "processing", "waiting_retry"} else tk.DISABLED)
-            except Exception:
-                pass
+            # Queue-specific cancel controls are handled by _update_queue_control_states.
         else:
             self.current_run_id = None
-            self.btn_cancel.config(state=tk.DISABLED)
         self._update_queue_control_states(tasks)
         if len(tasks) > 1:
             self.selected_status_var.set(f"已選取 {len(tasks)} 筆小說任務；可批次暫停、刪除或調整順位。")

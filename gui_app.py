@@ -211,7 +211,6 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         editor_actions.pack(fill=tk.X, pady=(5, 0))
         self.btn_add_queue = ttk.Button(editor_actions, text="➕ 新增至雲端小說佇列", style="Accent.TButton", command=self.enqueue_current_task, state=tk.DISABLED)
         self.btn_add_queue.pack(side=tk.RIGHT)
-        self.btn_run = self.btn_add_queue
         self.btn_update_queue = ttk.Button(editor_actions, text="💾 更新選取小說章節設定", style="Accent.TButton", command=self.update_selected_task_chapters, state=tk.DISABLED)
         
         self.excluded_chapters = set()
@@ -223,12 +222,8 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         section2 = ttk.LabelFrame(cloud_tab, text="2. 雲端執行日誌")
         section2.pack(fill=tk.BOTH, expand=True)
 
-        # 保留元件供舊版單一 Run 相容程式使用，但不放進新介面。
-        action_frame = ttk.Frame(section2)
-        self.btn_cancel = ttk.Button(action_frame, text="🛑 取消雲端作業", command=self.cancel_github_actions, state=tk.DISABLED)
-        self.btn_download = ttk.Button(action_frame, text="📥 一鍵下載成品", command=self.start_batch_download, state=tk.DISABLED)
-        self.lbl_status = ttk.Label(action_frame, text="就緒", style="Status.TLabel")
-        self.progress_bar = ttk.Progressbar(section2, mode="indeterminate")
+        self.lbl_status = ttk.Label(section2, text="就緒", style="Status.TLabel")
+        self.lbl_status.pack(fill=tk.X, padx=6, pady=(4, 2))
 
         # 實時 Log 控制台
         self.log_text = scrolledtext.ScrolledText(section2, height=12, background="#1e1e1e", foreground="#dcdcdc", font=("Consolas", 9))
