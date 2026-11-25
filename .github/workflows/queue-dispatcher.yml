@@ -2,6 +2,7 @@ name: Audiobook Queue Dispatcher
 run-name: "有聲小說佇列調度｜${{ github.event_name }}｜#${{ github.run_number }}"
 
 on:
+  # Immediate verification rerun after stale-run repair
   push:
     branches: [master]
     paths: ['.github/workflows/queue-dispatcher.yml']
