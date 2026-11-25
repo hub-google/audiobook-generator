@@ -1,0 +1,82 @@
+name: AUDIO｜30分鐘真實執行健康監控
+on:
+  push:
+    branches: [master]
+    paths: ['.github/workflows/audiobook-health-watch-20261125.yml']
+permissions:
+  actions: write
+  contents: read
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 37
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TARGET_TASK_ID: book-20261125-7fa2c918
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cancel obsolete recovery monitor (wrong code-SHA assertion)
+        shell: bash
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/actions/runs/45592180164/cancel" || true
+      - name: Watch TXT and cover state for 30 minutes
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64, datetime, json, os, time, sys, urllib.request
+          repo=os.environ["GITHUB_REPOSITORY"]
+          task_id=os.environ["TARGET_TASK_ID"]
+          base=f"https://api.github.com/repos/{repo}"
+          def api(path):
+              req=urllib.request.Request(base+path,headers={
+                  "Authorization":"Bearer "+os.environ["GH_TOKEN"],
+                  "Accept":"application/vnd.github+json",
+                  "X-GitHub-Api-Version":"2022-11-28"})
+              with urllib.request.urlopen(req,timeout=30) as handle:return json.load(handle)
+          checks=[]
+          for i in range(30):
+              now=datetime.datetime.now(datetime.timezone.utc).isoformat()
+              try:
+                  runs=api("/actions/runs?per_page=100")["workflow_runs"]
+                  observed={}
+                  for kind,match in (("txt","【TXT抓取】"),("cover","【封面與Gemini】")):
+                      rs=[r for r in runs if task_id in r.get("display_title","") and match in r.get("display_title","") and r.get("created_at","")>="2026-11-25T10:11:00Z"]
+                      rs.sort(key=lambda x:x.get("created_at",""),reverse=True)
+                      if rs:
+                          x=rs[0]
+                          observed[kind]={"run_id":x["id"],"status":x["status"],"conclusion":x["conclusion"],"sha":x["head_sha"],"url":x["html_url"]}
+                  obj=api("/contents/audiobook-queue.json?ref=automation-state")
+                  q=json.loads(base64.b64decode(obj["content"]))
+                  task=next((x for x in q["queue"]+q["completed"] if x.get("task_id")==task_id),None)
+                  stages={k:v.get("status") for k,v in (task or {}).get("stages",{}).items()}
+                  sample={"sample":i+1,"time_utc":now,"task_status":(task or {}).get("status"),"stages":stages,"runs":observed}
+                  print(json.dumps(sample,ensure_ascii=False),flush=True)
+              except Exception as e:
+                  sample={"sample":i+1,"time_utc":now,"error":repr(e)}
+                  print(json.dumps(sample,ensure_ascii=False),flush=True)
+              checks.append(sample)
+              if i<29:time.sleep(60)
+          with open("audiobook-health-30m.json","w",encoding="utf-8") as f:json.dump(checks,f,ensure_ascii=False,indent=2)
+          latest=next((x for x in reversed(checks) if x.get("runs")),None)
+          with open(os.environ["GITHUB_STEP_SUMMARY"],"a",encoding="utf-8") as f:
+              f.write("# AUDIO 30分鐘監控驗收\n\n")
+              f.write(f"共記錄 {len(checks)} 次檢查；監控期間 API 錯誤次數 {sum('error' in x for x in checks)}。\n\n")
+              if latest:
+                  f.write(f"最後佇列狀態：{latest['task_status']}；各階段：{latest['stages']}\n\n")
+                  for name,run in latest["runs"].items():
+                      f.write(f"{name}: [{run['run_id']}]({run['url']}) / {run['status']} / {run['conclusion']} / {run['sha']}\n\n")
+          if not latest or len(latest["runs"])<2:sys.exit("Missing current TXT and cover Actions")
+          if sum("error" in x for x in checks)>2:sys.exit("Excessive monitoring API failures")
+          if latest["task_status"] in ("stopped","needs_attention","interrupted"):sys.exit("Production queue unhealthy")
+          for kind,run in latest["runs"].items():
+              if run["sha"]=="3620cec92e423dbb12c6df5cb01a48d5a4508a8f":sys.exit(f"{kind} mistakenly uses broken code")
+              if run["conclusion"] in ("failure","cancelled","timed_out","action_required"):sys.exit(f"{kind} has failed: {run}")
+          print("30-minute monitoring completed: current TXT and cover Runs healthy.")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audiobook-30-minute-health-record
+          path: audiobook-health-30m.json
+          retention-days: 7
+          if-no-files-found: ignore
