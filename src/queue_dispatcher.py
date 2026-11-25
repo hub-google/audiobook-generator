@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import json
 import logging
 import os
@@ -408,7 +409,7 @@ class Dispatcher:
                     # duplicate reruns for the same completed Run.
                     run_attempt = int(scrape_run.get("run_attempt") or scrape.get("run_attempt") or 1)
                     scrape["run_attempt"] = run_attempt
-                    if run_attempt <= MAX_IMMEDIATE_SCRAPE_RERUNS:
+                    if scrape_run.get("conclusion") == "failure" and run_attempt <= MAX_IMMEDIATE_SCRAPE_RERUNS:
                         new_status, reason = "preparing_assets", "scrape_rerun_pending"
                     else:
                         new_status, reason = (
@@ -421,7 +422,7 @@ class Dispatcher:
                     # preventing a competing manual/new workflow dispatch.
                     run_attempt = int(cover_run.get("run_attempt") or cover.get("run_attempt") or 1)
                     cover["run_attempt"] = run_attempt
-                    if run_attempt <= MAX_IMMEDIATE_COVER_RERUNS:
+                    if cover_run.get("conclusion") == "failure" and run_attempt <= MAX_IMMEDIATE_COVER_RERUNS:
                         new_status, reason = "preparing_assets", "cover_rerun_pending"
                     else:
                         new_status, reason = (
@@ -546,6 +547,11 @@ class Dispatcher:
         return queue, changed
 
     def dispatch_next(self, queue):
+        # Bind the reservation to the exact snapshot from which it is computed.
+        latest, reservation_sha = self.store.load()
+        if latest != queue:
+            raise QueueConflict("queue changed before dispatch reservation")
+        queue = copy.deepcopy(queue)
         active_runs = [r for r in self.runs()
                        if r.get("status") != "completed"
                        and not self.is_authoritatively_completed_run(r)]
@@ -616,7 +622,7 @@ class Dispatcher:
             retry_at=None,
             dispatched_at=task["dispatched_at"],
         )
-        self.store.save(queue, sha=self.store.load()[1], message=f"Reserve audiobook task {task_id}")
+        self.store.save(queue, sha=reservation_sha, message=f"Reserve audiobook task {task_id}")
 
         start_int = int(task.get("start_chapter") or 1)
         end_int = int(task.get("end_chapter") or 999999)
@@ -654,7 +660,7 @@ class Dispatcher:
         cover_inputs = {key: value for key, value in common_inputs.items() if key not in {
             "chapter_label", "resume_source_run_id", "zip_password", "publish_at",
         }}
-        dispatch_requested_at = datetime.now(timezone.utc)
+        dispatch_requested_at = datetime.now(timezone.utc).replace(microsecond=0)
         try:
             if need_scrape or is_processing:
                 self.request("POST", "/actions/workflows/audiobook.yml/dispatches", json={"ref": "master", "inputs": inputs})

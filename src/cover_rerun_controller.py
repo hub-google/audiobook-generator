@@ -114,10 +114,11 @@ class GitHubActions:
         response.raise_for_status()
 
 
-def _wait_for_completion(client: GitHubActions, run_id: str) -> dict:
-    while True:
+def _wait_for_completion(client: GitHubActions, run_id: str, after_attempt=0) -> dict:
+    deadline = time.monotonic() + 5 * 60 * 60
+    while time.monotonic() < deadline:
         run = client.get_run(run_id)
-        if run.get("status") == "completed":
+        if run.get("status") == "completed" and _attempt(run) > after_attempt:
             return run
         print(
             f"Source Run {run_id} is {run.get('status')}; "
@@ -125,12 +126,14 @@ def _wait_for_completion(client: GitHubActions, run_id: str) -> dict:
             flush=True,
         )
         time.sleep(POLL_SECONDS)
+    raise TimeoutError(f"Source Run {run_id} did not complete a new attempt")
 
 
 def run_controller(client: GitHubActions, run_id: str) -> str:
     rerun_count = 0
+    previous_attempt = 0
     while True:
-        run = _wait_for_completion(client, run_id)
+        run = _wait_for_completion(client, run_id, previous_attempt)
         jobs = client.get_jobs(run_id)
         decision = decide_rerun(run, jobs)
 
@@ -147,7 +150,8 @@ def run_controller(client: GitHubActions, run_id: str) -> str:
             return decision.reason
 
         client.rerun_failed_jobs(run_id)
-        rerun_count += 1
+        previous_attempt = _attempt(run)
+        rerun_count = previous_attempt
         print(
             f"Immediately requested native cover rerun {rerun_count}/"
             f"{MAX_NATIVE_COVER_RERUNS} for Run {run_id}; failed jobs: "

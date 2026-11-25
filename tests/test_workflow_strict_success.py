@@ -151,20 +151,18 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertNotIn("select(.key >= 20)", self.dispatcher_text)
         self.assertNotIn("old_conclusion", self.dispatcher_text)
 
-    def test_native_rerun_controllers_are_labeled_and_keep_only_the_latest_run(self):
+    def test_native_rerun_controllers_are_isolated_by_source_run(self):
         expectations = (
             (self.scrape_rerun_text, "【TXT抓取】", "txt-scrape-native-rerun-controller", "scrape-rerun.yml", "scrape_rerun_controller.py"),
             (self.cover_rerun_text, "【封面產生】", "cover-native-rerun-controller", "cover-rerun.yml", "cover_rerun_controller.py"),
         )
         for workflow, label, group, filename, controller in expectations:
             self.assertIn(label, workflow)
-            self.assertIn(f"group: {group}", workflow)
-            self.assertIn("cancel-in-progress: true", workflow)
-            self.assertIn(f"actions/workflows/{filename}/runs", workflow)
-            self.assertIn('select(.id != ($CURRENT_RUN_ID | tonumber))', workflow)
-            self.assertIn('actions/runs/$old_run_id/cancel', workflow)
-            self.assertIn('old_status="$(gh api', workflow)
-            self.assertIn('actions/runs/$old_run_id"', workflow)
+            self.assertIn(f"group: {group}-", workflow)
+            self.assertIn("${{ inputs.source_run_id }}", workflow)
+            self.assertIn("cancel-in-progress: false", workflow)
+            self.assertNotIn("actions/runs/$old_run_id/cancel", workflow)
+            self.assertNotIn("--method DELETE", workflow)
             self.assertIn(controller, workflow)
 
         self.assertNotIn("cover_rerun_controller.py", self.scrape_rerun_text)
