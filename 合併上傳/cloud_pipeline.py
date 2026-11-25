@@ -329,7 +329,7 @@ def phase2(args):
     sent=total if video_id else 0
     if not video_id:
         sent,video_id=query(state["session_url"],total,cred)
-    source=resolve_url(manifest["video_path"],source_revision(manifest))
+    source=resolve_url(manifest["video_path"],source_revision(manifest)) if sent < total else None
     while sent<total:
         end=min(total-1,sent+CHUNK-1); data=read_range(source,sent,end)
         response=put_chunk(state["session_url"],sent,total,data)

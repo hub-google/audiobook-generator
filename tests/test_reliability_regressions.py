@@ -66,3 +66,28 @@ class ReliabilityTests(unittest.TestCase):
         with patch("src.scrape_rerun_controller.time.sleep"):
             self.assertEqual(run_controller(client, "123"), "source_run_not_failed")
         client.rerun_failed_jobs.assert_called_once_with("123")
+
+    def test_reservation_uses_sha_of_caller_snapshot(self):
+        from src.cloud_queue import update_task
+        queue = add_tasks(empty_queue(), [new_task("https://example.com/1", "A")])
+        task_id = queue["queue"][0]["task_id"]
+        dispatcher = Dispatcher("owner/repo", "token")
+        dispatcher.store = Mock()
+        dispatcher.store.save.side_effect = QueueConflict("concurrent edit")
+        dispatcher.runs = Mock(return_value=[])
+        dispatcher.cover_runs = Mock(return_value=[])
+        dispatcher.profile_store.load = Mock(return_value=({"books": {}}, None))
+        dispatcher.request = Mock()
+        with self.assertRaises(QueueConflict):
+            dispatcher.dispatch_next(queue, reservation_sha="old-sha")
+        self.assertEqual(dispatcher.store.save.call_args.kwargs["sha"], "old-sha")
+        dispatcher.request.assert_not_called()
+
+    def test_hf_stale_dispatch_recovery_has_bounded_delay(self):
+        import importlib
+        from datetime import datetime, timedelta, timezone
+        pipeline = importlib.import_module("合併上傳.cloud_pipeline")
+        now = datetime.now(timezone.utc)
+        self.assertFalse(pipeline.resume_dispatch_stale({"status": "complete"}, now))
+        self.assertFalse(pipeline.resume_dispatch_stale({"status": "resume_dispatched", "resume_dispatched_at": (now - timedelta(hours=1)).isoformat()}, now))
+        self.assertTrue(pipeline.resume_dispatch_stale({"status": "resume_dispatched", "resume_dispatched_at": (now - timedelta(hours=9)).isoformat()}, now))

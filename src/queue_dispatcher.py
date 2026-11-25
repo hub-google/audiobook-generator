@@ -544,11 +544,13 @@ class Dispatcher:
                             changed = True
         return queue, changed
 
-    def dispatch_next(self, queue):
-        # Bind the reservation to the exact snapshot from which it is computed.
-        latest, reservation_sha = self.store.load()
-        if latest != queue:
-            raise QueueConflict("queue changed before dispatch reservation")
+    def dispatch_next(self, queue, reservation_sha=_AUTO_TASK):
+        # The normal run path already has the exact SHA from load/reconcile.
+        # Standalone callers must verify their snapshot before reserving.
+        if reservation_sha is _AUTO_TASK:
+            latest, reservation_sha = self.store.load()
+            if latest != queue:
+                raise QueueConflict("queue changed before dispatch reservation")
         queue = copy.deepcopy(queue)
         active_runs = [r for r in self.runs()
                        if r.get("status") != "completed"
@@ -835,23 +837,23 @@ class Dispatcher:
             if is_ready:
                 run_id = active.get("run_id")
                 if run_id and not self.force and self.run_uses_current_master(run_id):
-                    try:
-                        self.request("POST", f"/actions/runs/{run_id}/rerun-failed-jobs")
-                        updated = update_task(queue, active["task_id"], status="running", run_attempt=int(active.get("run_attempt") or 1) + 1, retry_at=None, reason=None)
-                        self.store.save(updated, sha=sha, message=f"Retry audiobook task {active['task_id']}")
-                        return self.summary(updated, "retried", current_task(updated))
-                    except Exception as rerun_err:
-                        logging.warning("Rerun failed; will dispatch fresh run: %s", rerun_err)
+                    # Do not convert an ambiguous request or a post-dispatch
+                    # storage conflict into a new production Run. Reconcile
+                    # the existing Run first on the next dispatcher attempt.
+                    self.request("POST", f"/actions/runs/{run_id}/rerun-failed-jobs")
+                    updated = update_task(queue, active["task_id"], status="running", run_attempt=int(active.get("run_attempt") or 1) + 1, retry_at=None, reason=None)
+                    self.store.save(updated, sha=sha, message=f"Retry audiobook task {active['task_id']}")
+                    return self.summary(updated, "retried", current_task(updated))
                 elif run_id and not self.force:
                     logging.info("Run %s does not use current master; dispatching a fresh run.", run_id)
-                # If rerun failed or self.force, unblock to queued for immediate fresh dispatch
+                # For an explicitly forced or stale-code Run, dispatch a fresh Run.
                 queue = update_task(queue, active["task_id"], status="queued", retry_at=None, reason=None)
                 sha = self.store.save(queue, sha=sha, message=f"Unblock task {active['task_id']} for immediate dispatch")
                 active = None
 
         if active:
             return self.summary(queue, "active", active)
-        queue, _message = self.dispatch_next(queue)
+        queue, _message = self.dispatch_next(queue, reservation_sha=sha)
         dispatched = current_task(queue)
         # A 204 dispatch response is not proof that GitHub created a run. Never
         # label the still-queued prospective task as launched unless a run was
