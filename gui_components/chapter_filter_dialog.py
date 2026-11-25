@@ -1,4 +1,8 @@
 """Chapter selection and ordering UI; catalog fetching remains in chapter_editor."""
+from src.chapter_selection_state import (
+    complete_source_order, invert_checked, move_before, output_numbers,
+    set_checked, sort_normalized,
+)
 from .runtime import (
     threading, tk, Decimal, InvalidOperation, ttk, messagebox, webbrowser, analyze_duplicate_chapters, find_direct_duplicate_matches, split_chapter_title, normalize_positive_chapter_number, GitHubBookProfileStore, update_book_profile, move_chapter_order,
 )
@@ -95,13 +99,7 @@ class ChapterFilterDialogMixin:
         for i in range(1, total_chapters + 1):
             chapter_state[i] = (i not in self.excluded_chapters)
 
-        saved_order = [int(value) for value in self.chapter_order if 1 <= int(value) <= total_chapters]
-        chapter_order = []
-        seen_order = set()
-        for value in saved_order + list(range(1, total_chapters + 1)):
-            if value not in seen_order:
-                chapter_order.append(value)
-                seen_order.add(value)
+        chapter_order = complete_source_order(total_chapters, self.chapter_order)
 
         chapter_parts = [
             split_chapter_title(title, self.chapter_normalized_number_overrides.get(str(index)))
@@ -136,12 +134,7 @@ class ChapterFilterDialogMixin:
             self.catalog_data.update(duplicate_analysis)
 
         def _output_numbers():
-            selected = [
-                idx for idx in chapter_order
-                if cur_start <= idx <= cur_end
-                if chapter_state.get(idx, True)
-            ]
-            return {source_idx: output_idx for output_idx, source_idx in enumerate(selected, 1)}
+            return output_numbers(chapter_order, chapter_state, cur_start, cur_end)
 
         def _update_listbox():
             chapter_tree.delete(*chapter_tree.get_children())
@@ -433,10 +426,7 @@ class ChapterFilterDialogMixin:
             target_row = chapter_tree.identify_row(event.y)
             if not target_row or int(target_row) in moving:
                 return
-            remaining = [value for value in chapter_order if value not in set(moving)]
-            target = int(target_row)
-            insert_at = remaining.index(target)
-            chapter_order[:] = remaining[:insert_at] + moving + remaining[insert_at:]
+            chapter_order[:] = move_before(chapter_order, moving, int(target_row))
             self.renumber_selected_chapters = True
             _update_listbox()
             existing = [str(value) for value in moving if chapter_tree.exists(str(value))]
@@ -459,18 +449,15 @@ class ChapterFilterDialogMixin:
         order_frame.pack(fill=tk.X, padx=15, pady=(8, 2), before=btn_frame)
 
         def _select_all():
-            for g_idx in visible_indices:
-                chapter_state[g_idx] = True
+            set_checked(chapter_state, visible_indices, True)
             _update_listbox()
                 
         def _deselect_all():
-            for g_idx in visible_indices:
-                chapter_state[g_idx] = False
+            set_checked(chapter_state, visible_indices, False)
             _update_listbox()
 
         def _invert_select():
-            for g_idx in visible_indices:
-                chapter_state[g_idx] = not chapter_state[g_idx]
+            invert_checked(chapter_state, visible_indices)
             _update_listbox()
 
         def _exclude_duplicates():
@@ -573,17 +560,7 @@ class ChapterFilterDialogMixin:
             info_lbl.config(text=f"已{'上' if delta < 0 else '下'}移 {len(selected)} 章｜編號章節數已重算")
 
         def _sort_by_normalized_number():
-            original_positions = {value: index for index, value in enumerate(chapter_order)}
-
-            def sort_key(source_index):
-                normalized = chapter_parts[source_index - 1]["normalized_number"]
-                try:
-                    return (0, Decimal(str(normalized)), original_positions[source_index])
-                except (InvalidOperation, ValueError):
-                    pass
-                return (1, 0, original_positions[source_index])
-
-            chapter_order.sort(key=sort_key)
+            chapter_order[:] = sort_normalized(chapter_order, chapter_parts)
             self.renumber_selected_chapters = True
             _update_listbox()
             info_lbl.config(text="已依網站章節正規化順序排列｜編號章節數即為實際製作順序")
