@@ -157,3 +157,31 @@ def test_gui_invalid_url_reports_error_before_starting_network():
     with patch("gui_components.chapter_editor.messagebox.showwarning") as warn:
         app.start_parse_catalog()
     warn.assert_called_once()
+
+
+
+def test_full_gui_window_has_nine_sources_preview_and_queue_site_column():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        # Tk widgets are fully constructed, but no external GitHub account is read.
+        app = AudiobookGUIApp(root)
+        assert tuple(app.source_combo["values"]) == SOURCE_OPTIONS
+        assert app.source_choice_var.get() == AUTO_SOURCE_LABEL
+        assert "disabled" in app.btn_preview_chapter.state()
+        app.source_choice_var.set(SOURCE_NAMES["moon17"])
+        app._on_source_selected()
+        assert app.url_entry.get() == SOURCE_EXAMPLES["moon17"]
+
+        data = {
+            "queue": [{
+                "task_id": "book-ui-test", "book_title": "紅樓夢",
+                "catalog_url": "https://8book.com/novelbooks/168909/",
+                "position": 1, "status": "queued", "run_id": None,
+            }],
+            "completed": [],
+        }
+        app._render_queue(data)
+        assert app.pending_queue_tree.set("book-ui-test", "source") == "無限小說"
+    finally:
+        root.destroy()
