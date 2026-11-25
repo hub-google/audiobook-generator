@@ -823,20 +823,6 @@ jobs:
           path: Workspace/*/Manifests/manifest-worker-${{ matrix.worker_id }}.json
           if-no-files-found: error
 
-      - name: Upload MP4 Videos & Subtitles Only (Lightweight Artifact for YouTube Upload)
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: mp4-worker-${{ matrix.worker_id }}
-          compression-level: 0
-          path: |
-            Workspace/*/Video/
-            Workspace/*/Subtitles/
-            Workspace/*/SourceStatus/
-            Workspace/*/Manifests/
-            Upload_Subtitles/
-          if-no-files-found: error
-
       - name: Upload full worker workspace artifact (attempt 1/3)
         id: full_workspace_upload_1
         if: always()
@@ -969,7 +955,7 @@ jobs:
         if: needs.resume_planner.outputs.has_plan != 'true'
         uses: actions/download-artifact@v4
         with:
-          pattern: mp4-worker-*
+          pattern: video-worker-*
           path: current_worker_inputs
 
       - name: Inventory every chapter and lock the complete plan
@@ -981,7 +967,13 @@ jobs:
           mkdir -p combined_worker_inputs
           if [ -d resume_bundle/workers ]; then cp -a resume_bundle/workers/. combined_worker_inputs/; fi
           # Current workers are downloaded in the preceding action step.
-          if [ -d current_worker_inputs ]; then cp -a current_worker_inputs/. combined_worker_inputs/; fi
+          if [ -d current_worker_inputs ]; then
+            for worker in current_worker_inputs/video-worker-*; do
+              [ -d "$worker" ] || continue
+              rm -rf "combined_worker_inputs/$(basename "$worker")"
+              cp -a "$worker" combined_worker_inputs/
+            done
+          fi
           for attempt in 1 2 3; do
             echo "Inventory and plan attempt $attempt/3"
             if python src/prepare_parts.py \
@@ -1038,7 +1030,7 @@ jobs:
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
-          pattern: mp4-worker-*
+          pattern: video-worker-*
           path: resume_inputs/current-workers
       - name: Merge only assigned locked Parts
         env:

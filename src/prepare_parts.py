@@ -41,7 +41,7 @@ def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17, 
                 continue
             data = json.loads(manifest_path.read_text(encoding="utf-8"))
             worker_id = int(data["worker_id"])
-            artifact_name = str(data.get("artifact") or f"mp4-worker-{worker_id}")
+            artifact_name = next((part.name for part in (root, *root.parents) if part.name in {f"video-worker-{worker_id}", f"mp4-worker-{worker_id}"}), str(data.get("artifact") or f"video-worker-{worker_id}"))
             scanned = scan_artifact_chapters(str(root), artifact_name)
             inventory.extend(scanned)
             source_missing.update(int(c) for c in data.get("source_missing", []))
@@ -78,9 +78,10 @@ def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17, 
                 raise RuntimeError(f"{name} contains no manifest JSON")
             data = json.loads(manifest_files[0].read_text(encoding="utf-8"))
             worker_id = data.get("worker_id")
+            selected_name = next((name for name in names if name in {f"video-worker-{worker_id}", f"mp4-worker-{worker_id}"}), None)
             for chapter in data.get("chapters", []):
                 inventory.append({
-                    "artifact": chapter.get("artifact") or f"mp4-worker-{worker_id}",
+                    "artifact": selected_name or chapter.get("artifact") or f"video-worker-{worker_id}",
                     "chap_num": int(chapter["chap_num"]),
                     "chapter_title": chapter.get("chapter_title") or f"第{int(chapter['chap_num'])}章",
                     "dur": float(chapter["dur"]),
@@ -188,12 +189,11 @@ def merge_assigned_parts(plan_path, part_numbers, repo, output_dir, work_dir, ar
     for name in artifacts:
         expanded = None
         if artifact_dir:
-            candidates = [p for p in Path(artifact_dir).glob(f"**/{name}") if p.is_dir()]
-            if not candidates and "-worker-" in name:
-                worker_suffix = name.rsplit("-worker-", 1)[1]
-                candidates = [p for p in Path(artifact_dir).glob(f"**/*-worker-{worker_suffix}") if p.is_dir()]
+            worker_suffix = name.rsplit("-worker-", 1)[1] if "-worker-" in name else ""
+            aliases = {name, f"video-worker-{worker_suffix}", f"mp4-worker-{worker_suffix}"}
+            candidates = [p for p in Path(artifact_dir).glob("**/*-worker-*") if p.is_dir() and p.name in aliases]
             if candidates:
-                expanded = candidates[0]
+                expanded = min(candidates, key=lambda p: ("current-workers" not in p.parts, p.name != name, str(p)))
         if expanded is None:
             expanded=work/name
             dl_ok = False

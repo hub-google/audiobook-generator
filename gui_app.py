@@ -36,7 +36,7 @@ try:
     )
     from crawler import fetch_chapter_text
     from cloud_queue import (
-        BLOCKING_STATES, GitHubQueueStore, add_tasks, delete_task, approve_preflight,
+        BLOCKING_STATES, preflight_status, GitHubQueueStore, add_tasks, delete_task, approve_preflight,
         confirm_preflight_review, start_reviewed_processing,
         format_chapter_label, is_task_active, mark_task_completed, mark_task_interrupted, mark_task_waiting_retry,
         mark_tasks_completed, move_chapter_order, move_tasks, move_tasks_to_pending,

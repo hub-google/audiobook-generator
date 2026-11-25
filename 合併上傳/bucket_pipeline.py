@@ -26,7 +26,19 @@ from merge_upload import chapter_number, merge, normalize_book_title, normalize_
 from src.part_builder import merge_part_videos
 from src.source_status import confirmed_missing_from_directory
 
-WORKER_RE = re.compile(r"mp4-worker-(\d+)$")
+WORKER_RE = re.compile(r"(?:mp4|video)-worker-(\d+)$")
+
+def select_worker_records(artifacts):
+    selected = {}
+    for item in artifacts:
+        match = WORKER_RE.fullmatch(item["name"])
+        if not match or item.get("expired"):
+            continue
+        key = int(match.group(1))
+        if key not in selected or item["name"].startswith("mp4-worker-"):
+            selected[key] = item
+    return [selected[key] for key in sorted(selected)]
+
 
 
 def gh_headers():
@@ -292,10 +304,7 @@ def run_shard(args):
     write_report(report_path, report)
     try:
         artifacts = all_artifacts(args.repository, args.run_id)
-        workers = sorted(
-            (item for item in artifacts if WORKER_RE.fullmatch(item["name"])),
-            key=lambda item: int(WORKER_RE.fullmatch(item["name"]).group(1)),
-        )
+        workers = select_worker_records(artifacts)
         if len(workers) != args.expected_workers:
             raise RuntimeError(f"Expected {args.expected_workers} worker artifacts, found {len(workers)}")
         worker_ids = [int(WORKER_RE.fullmatch(item["name"]).group(1)) for item in workers]
@@ -631,8 +640,7 @@ def merge_artifacts_to_bucket(worker_inventory, output, temp):
 
 def finalize_direct(args):
     artifacts = all_artifacts(args.repository, args.run_id)
-    worker_artifacts = [item for item in artifacts if WORKER_RE.fullmatch(item["name"])]
-    worker_artifacts.sort(key=lambda item: int(WORKER_RE.fullmatch(item["name"]).group(1)))
+    worker_artifacts = select_worker_records(artifacts)
     if len(worker_artifacts) != args.expected_workers: raise RuntimeError(f"Expected {args.expected_workers} worker artifacts, found {len(worker_artifacts)}")
     run_root = args.bucket_mount / "runs" / args.run_id
     state_path = run_root / "state.json"

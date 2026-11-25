@@ -185,7 +185,7 @@ def scan_artifact_chapters(artifact_dir, artifact_name):
 
                     if video_path:
                         chapters.append({
-                            "artifact": entry.get("artifact") or artifact_name,
+                            "artifact": artifact_name or entry.get("artifact"),
                             "chap_num": chap_num,
                             "chapter_title": entry.get("chapter_title") or f"第{chap_num}章",
                             "dur": dur,

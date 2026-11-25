@@ -97,3 +97,26 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(preflight_status({"scrape": {"status": "failed", "reason": "failure", "run_attempt": 20}}), ("preparing_assets", "scrape_rerun_pending"))
         self.assertEqual(preflight_status({"scrape": {"status": "failed", "reason": "failure", "run_attempt": 21}}), ("needs_attention", "scrape_failed_after_20_reruns"))
         self.assertEqual(preflight_status({"cover": {"status": "failed", "reason": "dispatch_unconfirmed"}}), ("needs_attention", "cover_dispatch_unconfirmed"))
+
+    def test_kaggle_variable_batch_validation(self):
+        import json, hashlib
+        from pathlib import Path
+        from PIL import Image
+        from src.image.kaggle_chapter_images.validate_outputs import validate_output
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "manifests").mkdir()
+            (root / "chapter_0009").mkdir()
+            rows = []
+            for scene in (1, 2):
+                path = root / f"chapter_0009/scene_{scene:02d}.webp"
+                Image.new("RGB", (1280, 720)).save(path, "WEBP")
+                rows.append({"chapter": 9, "scene": scene, "relative_path": "chapter_images/v1/images/" + path.relative_to(root).as_posix(), "status": "needs_review", "source_sha256": "source", "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+            chapter = {"chapter": 9, "status": "needs_review", "source_sha256": "source", "scene_paths": [r["relative_path"] for r in rows]}
+            (root / "run_report.json").write_text(json.dumps({"status": "generated", "chapters": 1, "images": 2}))
+            (root / "manifests/chapters.jsonl").write_text(json.dumps(chapter))
+            (root / "manifests/images.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
+            self.assertEqual(validate_output(root)["images"], 2)
+            (root / "chapter_0009/scene_02.webp").unlink()
+            with self.assertRaises(ValueError):
+                validate_output(root)

@@ -217,7 +217,7 @@ class PipelineCheckpointTests(unittest.TestCase):
 
         manifest = checkpoint.export_manifest()
         self.assertEqual(manifest["worker_id"], 0)
-        self.assertEqual(manifest["artifact"], "mp4-worker-0")
+        self.assertEqual(manifest["artifact"], "video-worker-0")
         self.assertEqual(len(manifest["chapters"]), 1)
         self.assertEqual(manifest["chapters"][0]["chap_num"], 1)
         self.assertEqual(manifest["chapters"][0]["chapter_title"], "第1章 測試章名")

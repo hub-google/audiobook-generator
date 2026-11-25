@@ -67,7 +67,231 @@ jobs:
         run: |
           run_id=$(printf '%s' "$SOURCE_RUN_ID")
           [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "Invalid source run: $SOURCE_RUN_ID" >&2; exit 1; }
-          names=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false) | .name' | grep -E '^mp4-worker-[0-9]+$' | sort -t- -k3,3n)
+          names=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false) | .name' | grep -E '^(mp4|video)-worker-[0-9]+)
+          [[ -n "$names" ]] || { echo "No live worker artifacts" >&2; exit 1; }
+          count=$(printf '%s\n' "$names" | grep -c .)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          python - "$count" "$GITHUB_OUTPUT" <<'PY'
+          import json, math, sys
+          count, output = int(sys.argv[1]), sys.argv[2]
+          shard_count = min(15, count)
+          include = []
+          for shard_id in range(shard_count):
+              start = shard_id * count // shard_count
+              end = (shard_id + 1) * count // shard_count
+              include.append({
+                  "shard_id": shard_id,
+                  "worker_start": start,
+                  "worker_end": end,
+                  "worker_label": (f"worker {start}" if end == start + 1 else f"workers {start}-{end - 1}"),
+              })
+          with open(output, "a", encoding="utf-8") as handle:
+              handle.write(f"shard_count={len(include)}\n")
+              handle.write("matrix=" + json.dumps({"include": include}, separators=(",", ":")) + "\n")
+          print(json.dumps(include, ensure_ascii=False))
+          PY
+
+  metadata_preflight:
+    needs: discover
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Restore source worker cover cache
+        uses: actions/cache/restore@v4
+        with:
+          path: Workspace/*/Cover/
+          key: merge-source-cover-${{ needs.discover.outputs.run_id }}
+          restore-keys: |
+            youtube-upload-state-source-${{ needs.discover.outputs.run_id }}-
+      - name: Install metadata and HF Bucket dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends nfs-common
+          pip install -r requirements.txt
+          curl --fail --location --retry 5 https://github.com/huggingface/hf-mount/releases/download/v0.9.2/hf-mount-x86_64-linux --output "$RUNNER_TEMP/hf-mount"
+          curl --fail --location --retry 5 https://github.com/huggingface/hf-mount/releases/download/v0.9.2/hf-mount-nfs-x86_64-linux --output "$RUNNER_TEMP/hf-mount-nfs"
+          chmod +x "$RUNNER_TEMP/hf-mount" "$RUNNER_TEMP/hf-mount-nfs"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Mount HF Bucket
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/hf-bucket"
+          "$RUNNER_TEMP/hf-mount" start --hf-token "$HF_TOKEN" --no-disk-cache bucket "${{ needs.discover.outputs.bucket }}" "$RUNNER_TEMP/hf-bucket"
+          ls "$RUNNER_TEMP/hf-bucket" >/dev/null
+      - name: Validate and preserve source title and YouTube cover
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python "合併上傳/bucket_pipeline.py" \
+            --mode preflight \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "${{ needs.discover.outputs.run_id }}" \
+            --bucket-mount "$RUNNER_TEMP/hf-bucket"
+      - name: Stop HF Bucket mount
+        if: always()
+        run: |
+          "$RUNNER_TEMP/hf-mount" stop "$RUNNER_TEMP/hf-bucket" || true
+
+  merge_shards:
+    needs: [discover, metadata_preflight]
+    name: "Merge shard ${{ matrix.shard_id }} (${{ matrix.worker_label }})"
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies and HF Bucket mount
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg nfs-common
+          pip install requests pyyaml
+          curl --fail --location --retry 5 \
+            https://github.com/huggingface/hf-mount/releases/download/v0.9.2/hf-mount-x86_64-linux \
+            --output "$RUNNER_TEMP/hf-mount"
+          curl --fail --location --retry 5 \
+            https://github.com/huggingface/hf-mount/releases/download/v0.9.2/hf-mount-nfs-x86_64-linux \
+            --output "$RUNNER_TEMP/hf-mount-nfs"
+          chmod +x "$RUNNER_TEMP/hf-mount" "$RUNNER_TEMP/hf-mount-nfs"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Mount HF Bucket without local file cache
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/hf-bucket"
+          "$RUNNER_TEMP/hf-mount" start \
+            --hf-token "$HF_TOKEN" \
+            --no-disk-cache \
+            bucket "${{ needs.discover.outputs.bucket }}" \
+            "$RUNNER_TEMP/hf-bucket"
+          ls "$RUNNER_TEMP/hf-bucket" >/dev/null
+      - name: Inventory assigned artifacts and merge one HF chunk
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python "合併上傳/bucket_pipeline.py" \
+            --mode shard \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "${{ needs.discover.outputs.run_id }}" \
+            --bucket-mount "$RUNNER_TEMP/hf-bucket" \
+            --expected-workers "${{ needs.discover.outputs.count }}" \
+            --shard-id "${{ matrix.shard_id }}" \
+            --worker-start "${{ matrix.worker_start }}" \
+            --worker-end "${{ matrix.worker_end }}"
+      - name: Report shard progress
+        if: always()
+        env:
+          RUN_ID: ${{ needs.discover.outputs.run_id }}
+          SHARD_ID: ${{ matrix.shard_id }}
+        run: |
+          report="$RUNNER_TEMP/hf-bucket/runs/$RUN_ID/shards/shard-$SHARD_ID/report.json"
+          echo "## 合併 Shard $SHARD_ID" >> "$GITHUB_STEP_SUMMARY"
+          if [[ ! -f "$report" ]]; then
+            echo "❌ 找不到 shard report；流程在建立報告前失敗。" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python "合併上傳/bucket_pipeline.py" --mode summary --report "$report" >> "$GITHUB_STEP_SUMMARY"
+      - name: Stop HF Bucket mount
+        if: always()
+        run: |
+          "$RUNNER_TEMP/hf-mount" stop "$RUNNER_TEMP/hf-bucket" || true
+
+  finalize_and_upload:
+    needs: [discover, metadata_preflight, merge_shards]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies and HF Bucket mount
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg nfs-common
+          pip install -r requirements.txt
+          curl --fail --location --retry 5 https://github.com/huggingface/hf-mount/releases/download/v0.9.2/hf-mount-x86_64-linux --output "$RUNNER_TEMP/hf-mount"
+          curl --fail --location --retry 5 https://github.com/huggingface/hf-mount/releases/download/v0.9.2/hf-mount-nfs-x86_64-linux --output "$RUNNER_TEMP/hf-mount-nfs"
+          chmod +x "$RUNNER_TEMP/hf-mount" "$RUNNER_TEMP/hf-mount-nfs"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Mount HF Bucket without local file cache
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/hf-bucket"
+          "$RUNNER_TEMP/hf-mount" start --hf-token "$HF_TOKEN" --no-disk-cache bucket "${{ needs.discover.outputs.bucket }}" "$RUNNER_TEMP/hf-bucket"
+          ls "$RUNNER_TEMP/hf-bucket" >/dev/null
+      - name: Merge HF chunks and upload HF output to YouTube
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          YOUTUBE_REFRESH_TOKEN_1: ${{ secrets.YOUTUBE_REFRESH_TOKEN_1 }}
+          YOUTUBE_CLIENT_ID_1: ${{ secrets.YOUTUBE_CLIENT_ID_1 }}
+          YOUTUBE_CLIENT_SECRET_1: ${{ secrets.YOUTUBE_CLIENT_SECRET_1 }}
+          YOUTUBE_REFRESH_TOKEN_2: ${{ secrets.YOUTUBE_REFRESH_TOKEN_2 }}
+          YOUTUBE_CLIENT_ID_2: ${{ secrets.YOUTUBE_CLIENT_ID_2 }}
+          YOUTUBE_CLIENT_SECRET_2: ${{ secrets.YOUTUBE_CLIENT_SECRET_2 }}
+          YOUTUBE_REFRESH_TOKEN_3: ${{ secrets.YOUTUBE_REFRESH_TOKEN_3 }}
+          YOUTUBE_CLIENT_ID_3: ${{ secrets.YOUTUBE_CLIENT_ID_3 }}
+          YOUTUBE_CLIENT_SECRET_3: ${{ secrets.YOUTUBE_CLIENT_SECRET_3 }}
+          YOUTUBE_REFRESH_TOKEN_4: ${{ secrets.YOUTUBE_REFRESH_TOKEN_4 }}
+          YOUTUBE_CLIENT_ID_4: ${{ secrets.YOUTUBE_CLIENT_ID_4 }}
+          YOUTUBE_CLIENT_SECRET_4: ${{ secrets.YOUTUBE_CLIENT_SECRET_4 }}
+          YOUTUBE_REFRESH_TOKEN_5: ${{ secrets.YOUTUBE_REFRESH_TOKEN_5 }}
+          YOUTUBE_CLIENT_ID_5: ${{ secrets.YOUTUBE_CLIENT_ID_5 }}
+          YOUTUBE_CLIENT_SECRET_5: ${{ secrets.YOUTUBE_CLIENT_SECRET_5 }}
+          YOUTUBE_REFRESH_TOKEN_6: ${{ secrets.YOUTUBE_REFRESH_TOKEN_6 }}
+          YOUTUBE_CLIENT_ID_6: ${{ secrets.YOUTUBE_CLIENT_ID_6 }}
+          YOUTUBE_CLIENT_SECRET_6: ${{ secrets.YOUTUBE_CLIENT_SECRET_6 }}
+          YOUTUBE_REFRESH_TOKEN_7: ${{ secrets.YOUTUBE_REFRESH_TOKEN_7 }}
+          YOUTUBE_CLIENT_ID_7: ${{ secrets.YOUTUBE_CLIENT_ID_7 }}
+          YOUTUBE_CLIENT_SECRET_7: ${{ secrets.YOUTUBE_CLIENT_SECRET_7 }}
+          YOUTUBE_REFRESH_TOKEN_8: ${{ secrets.YOUTUBE_REFRESH_TOKEN_8 }}
+          YOUTUBE_CLIENT_ID_8: ${{ secrets.YOUTUBE_CLIENT_ID_8 }}
+          YOUTUBE_CLIENT_SECRET_8: ${{ secrets.YOUTUBE_CLIENT_SECRET_8 }}
+          YOUTUBE_REFRESH_TOKEN_9: ${{ secrets.YOUTUBE_REFRESH_TOKEN_9 }}
+          YOUTUBE_CLIENT_ID_9: ${{ secrets.YOUTUBE_CLIENT_ID_9 }}
+          YOUTUBE_CLIENT_SECRET_9: ${{ secrets.YOUTUBE_CLIENT_SECRET_9 }}
+          YOUTUBE_REFRESH_TOKEN_10: ${{ secrets.YOUTUBE_REFRESH_TOKEN_10 }}
+          YOUTUBE_CLIENT_ID_10: ${{ secrets.YOUTUBE_CLIENT_ID_10 }}
+          YOUTUBE_CLIENT_SECRET_10: ${{ secrets.YOUTUBE_CLIENT_SECRET_10 }}
+          YOUTUBE_EXPECTED_ACCOUNT_COUNT: "10"
+        run: |
+          python "合併上傳/bucket_pipeline.py" \
+            --mode finalize \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "${{ needs.discover.outputs.run_id }}" \
+            --bucket-mount "$RUNNER_TEMP/hf-bucket" \
+            --expected-workers "${{ needs.discover.outputs.count }}" \
+            --expected-shards "${{ needs.discover.outputs.shard_count }}" \
+            --privacy "$INPUT_PRIVACY"
+      - name: Report final merge and upload progress
+        if: always()
+        env:
+          RUN_ID: ${{ needs.discover.outputs.run_id }}
+        run: |
+          report="$RUNNER_TEMP/hf-bucket/runs/$RUN_ID/merge-report.json"
+          echo "## 全集 MP4 合併報告" >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f "$report" ]]; then
+            python "合併上傳/bucket_pipeline.py" --mode summary --report "$report" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ 找不到 merge-report.json；流程在建立報告前失敗。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Stop HF Bucket mount
+        if: always()
+        run: |
+          "$RUNNER_TEMP/hf-mount" stop "$RUNNER_TEMP/hf-bucket" || true
+ | cut -d- -f3 | sort -nu)
           [[ -n "$names" ]] || { echo "No live mp4-worker artifacts" >&2; exit 1; }
           count=$(printf '%s\n' "$names" | grep -c .)
           echo "count=$count" >> "$GITHUB_OUTPUT"

@@ -473,7 +473,7 @@ class PipelineCheckpoint:
             destination_path = os.path.join(manifest_dir, f"manifest-worker-{self.worker_id}.json")
         os.makedirs(os.path.dirname(os.path.abspath(destination_path)), exist_ok=True)
         if artifact_name is None:
-            artifact_name = f"mp4-worker-{self.worker_id}"
+            artifact_name = f"video-worker-{self.worker_id}"
 
         chapters = []
         source_missing = sorted(int(c) for c in self.source_missing_chapters())

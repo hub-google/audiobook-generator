@@ -17,8 +17,20 @@ except ImportError:  # Allows ordering/unit tests before optional CI deps are in
     hf_hub_download = None
 
 CHAPTER_RE = re.compile(r"chapter_(\d+)", re.I)
-WORKER_RE = re.compile(r"mp4-worker-(\d+)$", re.I)
+WORKER_RE = re.compile(r"(?:mp4|video)-worker-(\d+)$", re.I)
 RUN_URL_RE = re.compile(r"^https?://github\.com/[^/]+/[^/]+/actions/runs/(\d+)/?(?:[?#].*)?$", re.I)
+
+def select_worker_records(artifacts):
+    selected = {}
+    for item in artifacts:
+        match = WORKER_RE.fullmatch(item["name"])
+        if not match or item.get("expired"):
+            continue
+        key = int(match.group(1))
+        if key not in selected or item["name"].startswith("mp4-worker-"):
+            selected[key] = item
+    return [selected[key] for key in sorted(selected)]
+
 
 def normalize_run_id(value):
     value = str(value).strip()
@@ -101,8 +113,7 @@ class Pipeline:
     def gh_headers(): return {"Authorization": f"Bearer {os.environ['GH_TOKEN']}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
 
     def artifacts(self):
-        result = [a for a in self.all_artifacts() if WORKER_RE.fullmatch(a["name"])]
-        result.sort(key=lambda a: int(WORKER_RE.fullmatch(a["name"]).group(1)))
+        result = select_worker_records(self.all_artifacts())
         if not result: raise RuntimeError("No non-expired mp4-worker-* artifacts found in the source run")
         return result
 
