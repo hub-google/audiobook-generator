@@ -483,8 +483,10 @@ class PipelineCheckpoint:
 
         chapters = []
         source_missing = sorted(int(c) for c in self.source_missing_chapters())
+        incomplete = set(self.incomplete_chapters())
+        missing = set(source_missing)
         for chapter in self.chapter_numbers:
-            if chapter in source_missing:
+            if chapter in missing or chapter in incomplete:
                 continue
             rec = self.data.get("chapters", {}).get(str(chapter), {})
             video_rec = rec.get("stages", {}).get("video", {})
@@ -521,7 +523,8 @@ class PipelineCheckpoint:
         manifest = {
             "schema_version": 2,
             "stage": "worker",
-            "status": "completed" if not self.incomplete_chapters() else "partial",
+            "status": "completed" if not incomplete else "partial",
+            "incomplete_chapters": sorted(incomplete),
             "worker_id": self.worker_id,
             "artifact": artifact_name,
             "book_title": self.book_title,

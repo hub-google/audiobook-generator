@@ -539,7 +539,7 @@ jobs:
     if: always() && needs.setup.result == 'success'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
+      image: ghcr.io/hub-google/audiobook-worker@sha256:4979e4cda14569f3d0b941341dd2ae819db5b2f8863c6738acf138f951feb9b1
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -734,7 +734,7 @@ jobs:
       needs.resume_planner.outputs.mode != 'final_merge'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
+      image: ghcr.io/hub-google/audiobook-worker@sha256:4979e4cda14569f3d0b941341dd2ae819db5b2f8863c6738acf138f951feb9b1
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -920,7 +920,7 @@ jobs:
     if: always() && inputs.execution_phase != 'scrape_only' && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && (needs.process_chapters.result == 'success' || needs.process_chapters.result == 'skipped')
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
+      image: ghcr.io/hub-google/audiobook-worker@sha256:4979e4cda14569f3d0b941341dd2ae819db5b2f8863c6738acf138f951feb9b1
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -1011,7 +1011,7 @@ jobs:
       matrix: ${{ fromJSON(needs.plan_parts.outputs.matrix) }}
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
+      image: ghcr.io/hub-google/audiobook-worker@sha256:4979e4cda14569f3d0b941341dd2ae819db5b2f8863c6738acf138f951feb9b1
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -1072,7 +1072,7 @@ jobs:
     if: always() && inputs.execution_phase != 'scrape_only' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.plan_parts.result == 'success' && (needs.merge_parts.result == 'success' || needs.merge_parts.result == 'skipped')
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
+      image: ghcr.io/hub-google/audiobook-worker@sha256:4979e4cda14569f3d0b941341dd2ae819db5b2f8863c6738acf138f951feb9b1
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -1135,7 +1135,7 @@ jobs:
     if: always() && inputs.execution_phase != 'scrape_only' && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.final_merge.result == 'success'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
+      image: ghcr.io/hub-google/audiobook-worker@sha256:4979e4cda14569f3d0b941341dd2ae819db5b2f8863c6738acf138f951feb9b1
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}

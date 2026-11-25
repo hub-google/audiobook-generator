@@ -41,7 +41,7 @@ def decide_rerun(run: dict, jobs: list[dict]) -> RerunDecision:
     if run.get("conclusion") != "failure":
         return RerunDecision(False, reason="source_run_not_failed")
 
-    run_name = str(run.get("name") or run.get("display_title") or "")
+    run_name = str(run.get("display_title") or run.get("name") or "")
     if not run_name.startswith(SCRAPE_RUN_PREFIX):
         return RerunDecision(False, reason="not_a_txt_scrape_run")
 

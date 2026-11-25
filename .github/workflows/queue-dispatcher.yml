@@ -44,7 +44,8 @@ jobs:
           QUEUE_STATE_BRANCH: automation-state
           FORCE_RETRY: ${{ github.event_name == 'workflow_dispatch' && inputs.force_retry && 'true' || 'false' }}
           TRIGGER_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || '' }}
-          TRIGGER_WORKFLOW_NAME: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name || '' }}
+          TRIGGER_WORKFLOW_NAME: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.path == '.github/workflows/audiobook.yml' && 'Audiobook Automation Pipeline (Parallel)' || github.event.workflow_run.path == '.github/workflows/cover-preflight.yml' && 'Cover preflight' || github.event.workflow_run.name) || '' }}
+          TRIGGER_ATTEMPT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.run_attempt || '' }}
           TRIGGER_CONCLUSION: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion || '' }}
           TRIGGER_COMPLETED_AT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.updated_at || '' }}
         shell: bash

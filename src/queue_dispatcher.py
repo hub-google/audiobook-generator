@@ -123,7 +123,7 @@ def parse_time(value):
 class Dispatcher:
     def __init__(self, repo, token, branch="automation-state", force=False,
                  trigger_run_id=None, trigger_workflow_name="",
-                 trigger_conclusion="", trigger_completed_at=""):
+                 trigger_conclusion="", trigger_completed_at="", trigger_attempt=None):
         self.repo = repo
         self.token = token
         self.store = GitHubQueueStore(repo, token, branch=branch)
@@ -133,6 +133,7 @@ class Dispatcher:
         self.trigger_workflow_name = str(trigger_workflow_name or "")
         self.trigger_conclusion = str(trigger_conclusion or "")
         self.trigger_completed_at = str(trigger_completed_at or "")
+        self.trigger_attempt = int(trigger_attempt or 0)
         # workflow_dispatch returns no Run ID. Poll briefly until GitHub indexes
         # every requested Run; GUI reconciliation remains the durable fallback.
         self.dispatch_discovery_delays = (0, 1, 2, 3, 4)
@@ -158,8 +159,19 @@ class Dispatcher:
             "id": self.trigger_run_id,
             "status": "completed",
             "conclusion": self.trigger_conclusion,
+            **({"run_attempt": self.trigger_attempt} if self.trigger_attempt else {}),
             "updated_at": self.trigger_completed_at or datetime.now(timezone.utc).isoformat(),
         }
+
+    @staticmethod
+    def apply_completion_event(run, trigger, bound_attempt=0):
+        if not trigger:
+            return run
+        current_attempt = int((run or {}).get("run_attempt") or bound_attempt or 1)
+        event_attempt = int(trigger.get("run_attempt") or current_attempt)
+        if event_attempt < current_attempt:
+            return run
+        return {**(run or {}), **trigger, "run_attempt": event_attempt}
 
     def is_authoritatively_completed_run(self, run):
         return bool(
@@ -187,6 +199,56 @@ class Dispatcher:
         if response.status_code >= 400:
             raise RuntimeError(f"GitHub API GET /actions/runs/{run_id} failed ({response.status_code}): {response.text}")
         return response.json()
+
+    def recover_preflight_controller(self, task):
+        """Recover an abandoned controller without competing with a live one."""
+        if task.get("workflow_phase") != "preflight" or task.get("status") != "preparing_assets":
+            return False
+        for stage_name in ("scrape", "cover"):
+            stage = (task.get("stages") or {}).get(stage_name) or {}
+            if stage.get("status") != "failed" or stage.get("reason") != "failure":
+                continue
+            run_id = stage.get("run_id")
+            if not run_id or int(stage.get("run_attempt") or 1) > MAX_NATIVE_PREFLIGHT_RERUNS:
+                continue
+            source = self.run_by_id(run_id)
+            if not source or source.get("status") != "completed" or source.get("conclusion") != "failure":
+                continue
+            stamp = parse_time(source.get("updated_at"))
+            if not stamp or datetime.now(timezone.utc) - stamp < timedelta(minutes=2):
+                continue
+            if int(source.get("run_attempt") or 1) > MAX_NATIVE_PREFLIGHT_RERUNS:
+                continue
+            workflow = f"{stage_name}-rerun.yml"
+            response = self.request("GET", f"/actions/workflows/{workflow}/runs", params={"per_page": 100})
+            controllers = [r for r in response.json().get("workflow_runs", [])
+                           if str(r.get("display_title") or r.get("name") or "").endswith(f"#{run_id}")]
+            if any(r.get("status") != "completed" for r in controllers):
+                continue
+            # A just-finished controller can be observed before the source
+            # attempt is indexed. Allow a short settling period.
+            recent = [parse_time(r.get("updated_at")) for r in controllers]
+            if any(t and datetime.now(timezone.utc) - t < timedelta(minutes=2) for t in recent):
+                continue
+            try:
+                if stage_name == "scrape":
+                    from .scrape_rerun_controller import decide_rerun
+                else:
+                    from .cover_rerun_controller import decide_rerun
+            except ImportError:
+                if stage_name == "scrape":
+                    from scrape_rerun_controller import decide_rerun
+                else:
+                    from cover_rerun_controller import decide_rerun
+            decision = decide_rerun(source, self.run_jobs(run_id))
+            if not decision.should_rerun:
+                continue
+            # The workflow itself serializes all controllers for this source.
+            self.request("POST", f"/actions/workflows/{workflow}/dispatches",
+                         json={"ref": "master", "inputs": {"source_run_id": str(run_id)}})
+            logging.info("Recovered %s native rerun controller for source %s", stage_name, run_id)
+            return True
+        return False
 
     def run_artifact_names(self, run_id):
         """Return non-expired artifact names for one existing Actions Run."""
@@ -354,10 +416,11 @@ class Dispatcher:
                 scrape = stages.setdefault("scrape", {})
                 cover = stages.setdefault("cover", {})
                 def stage_run(state, candidates, trigger=None):
-                    if trigger and int(state.get("run_id") or 0) == int(trigger["id"]):
-                        return trigger
                     if state.get("run_id"):
-                        return next((r for r in candidates if int(r["id"]) == int(state["run_id"])), None) or self.run_by_id(state["run_id"])
+                        bound = next((r for r in candidates if int(r["id"]) == int(state["run_id"])), None)
+                        if trigger and int(state["run_id"]) == int(trigger["id"]):
+                            return self.apply_completion_event(bound, trigger, state.get("run_attempt"))
+                        return bound or self.run_by_id(state["run_id"])
                     since = parse_time(state.get("dispatched_at") or task.get("dispatched_at"))
                     if since:
                         since = since.replace(microsecond=0)
@@ -431,7 +494,7 @@ class Dispatcher:
             run = candidates[0] if candidates else None
             if (triggered_audiobook
                     and int(task.get("run_id") or 0) == int(triggered_audiobook["id"])):
-                run = triggered_audiobook
+                run = self.apply_completion_event(run if run and int(run['id']) == int(triggered_audiobook['id']) else None, triggered_audiobook, task.get('run_attempt'))
             if not run:
                 bound_run_id = task.get("run_id")
                 if bound_run_id and task.get("status") in BLOCKING_STATES:
@@ -833,6 +896,8 @@ class Dispatcher:
                 active = None
 
         if active:
+            if self.recover_preflight_controller(active):
+                return self.summary(queue, "active", active) + "\n\n- 已重新啟動中斷的前置作業重跑控制器。"
             return self.summary(queue, "active", active)
         queue, _message = self.dispatch_next(queue, reservation_sha=sha)
         dispatched = current_task(queue)
@@ -862,6 +927,7 @@ def main():
     parser.add_argument("--trigger-workflow-name", default=os.environ.get("TRIGGER_WORKFLOW_NAME", ""))
     parser.add_argument("--trigger-conclusion", default=os.environ.get("TRIGGER_CONCLUSION", ""))
     parser.add_argument("--trigger-completed-at", default=os.environ.get("TRIGGER_COMPLETED_AT", ""))
+    parser.add_argument("--trigger-attempt", default=os.environ.get("TRIGGER_ATTEMPT", ""))
     args = parser.parse_args()
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if not args.repo or not token:
@@ -872,6 +938,7 @@ def main():
         trigger_workflow_name=args.trigger_workflow_name,
         trigger_conclusion=args.trigger_conclusion,
         trigger_completed_at=args.trigger_completed_at,
+        trigger_attempt=args.trigger_attempt,
     ).run())
 
 

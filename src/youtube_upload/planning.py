@@ -1,6 +1,8 @@
 """Artifact scanning, chapter inventory validation, and Part planning."""
 
 import glob
+from collections import Counter
+import math
 import json
 import logging
 import os
@@ -242,16 +244,16 @@ def _validate_complete_chapter_inventory(chapters, expected_start, expected_end)
         )
 
 
-def validate_chapter_inventory(chapters, expected_start, expected_end, confirmed_missing=None):
+def validate_chapter_inventory(chapters, expected_start, expected_end, confirmed_missing=None, *, expected_indices=None):
     """Accept absent chapters only when worker artifacts prove origin omission."""
     confirmed_missing = {int(value) for value in (confirmed_missing or set())}
     numbers = [int(item["chap_num"]) for item in chapters]
-    duplicates = sorted({number for number in numbers if numbers.count(number) > 1})
-    expected = set(range(int(expected_start), int(expected_end) + 1))
+    duplicates = sorted(number for number, count in Counter(numbers).items() if count > 1)
+    expected = set(map(int, expected_indices)) if expected_indices is not None else set(range(int(expected_start), int(expected_end) + 1))
     missing = sorted(expected - set(numbers))
     unresolved = sorted(set(missing) - confirmed_missing)
     unexpected = sorted(set(numbers) - expected)
-    if duplicates or unresolved or unexpected or numbers != sorted(numbers):
+    if duplicates or unresolved or unexpected or confirmed_missing - expected or confirmed_missing.intersection(numbers) or numbers != sorted(numbers):
         raise RuntimeError(
             "chapter inventory is not publishable: "
             f"duplicates={duplicates[:10]}, unresolved_missing={unresolved[:10]}, "
@@ -261,7 +263,7 @@ def validate_chapter_inventory(chapters, expected_start, expected_end, confirmed
 
 
 def build_part_plan_from_inventory(chapters, min_seconds=10 * 3600, max_seconds=11 * 3600,
-                                   confirmed_missing=None):
+                                   confirmed_missing=None, *, expected_indices=None):
     """Plan every Part globally before any merge or YouTube API upload."""
     if not chapters:
         raise RuntimeError("沒有可供分部的章節")
@@ -271,7 +273,7 @@ def build_part_plan_from_inventory(chapters, min_seconds=10 * 3600, max_seconds=
     current_duration = 0.0
     for item in ordered:
         duration = float(item["dur"])
-        if duration <= 0:
+        if not math.isfinite(duration) or duration <= 0 or duration > max_seconds:
             raise RuntimeError(f"第 {item['chap_num']} 章無法取得有效片長")
         if current and current_duration + duration > max_seconds:
             plan.append(_make_planned_part(len(plan) + 1, current, current_duration))
@@ -285,6 +287,8 @@ def build_part_plan_from_inventory(chapters, min_seconds=10 * 3600, max_seconds=
     confirmed_missing = {int(value) for value in (confirmed_missing or set())}
     for previous, following in zip(plan, plan[1:]):
         gap = set(range(previous["end_chap"] + 1, following["start_chap"]))
+        if expected_indices is not None:
+            gap.intersection_update(expected_indices)
         if gap and not gap.issubset(confirmed_missing):
             raise RuntimeError(f"分部不連續：Part {previous['part_num']} 後接 Part {following['part_num']}")
     unassigned_missing = set(confirmed_missing)

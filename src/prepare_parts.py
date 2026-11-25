@@ -106,7 +106,7 @@ def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17, 
                 data = json.loads(manifest_files[0].read_text(encoding="utf-8"))
                 for chapter in data.get("chapters", []):
                     inventory.append({
-                        "artifact": chapter.get("artifact") or name,
+                        "artifact": name,
                         "chap_num": int(chapter["chap_num"]),
                         "chapter_title": chapter.get("chapter_title") or f"第{int(chapter['chap_num'])}章",
                         "dur": float(chapter["dur"]),
@@ -121,8 +121,8 @@ def plan_parts(run_id, repo, config_path, output_dir, work_dir, max_workers=17, 
             shutil.rmtree(expanded, ignore_errors=True)
 
     inventory.sort(key=lambda x: int(x["chap_num"]))
-    validate_chapter_inventory(inventory, selected[0], selected[-1], source_missing)
-    parts = build_part_plan_from_inventory(inventory, 10*3600, 11*3600, source_missing)
+    validate_chapter_inventory(inventory, min(selected), max(selected), source_missing, expected_indices=selected)
+    parts = build_part_plan_from_inventory(inventory, 10*3600, 11*3600, source_missing, expected_indices=selected)
     if not parts: raise RuntimeError("validated chapter inventory produced no Parts")
     matrix = build_merge_matrix([part["part_num"] for part in parts], max_workers)
     manifest = {"source_fingerprint": config.get("source_fingerprint", ""), "schema_version": 1, "source_run_id": str(run_id), "book_title": str(config.get("book_title") or "有聲小說全集"), "selected_indices": selected, "source_missing_chapters": sorted(source_missing), "chapter_artifacts": {str(int(x["chap_num"])): x["artifact"] for x in inventory}, "parts": parts, "matrix": matrix}

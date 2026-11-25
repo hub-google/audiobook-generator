@@ -331,7 +331,12 @@ def validate_worker(root, matrix_item, config, require_complete=False):
                 valid = False
         if valid:
             completed.append(number)
-    complete = set(expected) == set(completed) | {int(x) for x in data.get("source_missing") or []}
+    missing = {int(x) for x in data.get("source_missing") or []}
+    complete = (set(expected) == set(completed) | missing
+                and len(completed) == len(set(completed))
+                and not set(completed) & missing
+                and not degraded.intersection(expected)
+                and data.get("status") != "partial")
     if require_complete and complete:
         validate_worker_manifest(str(manifest), worker_id, expected, data.get("source_missing") or [])
     return {"complete": complete, "completed_chapters": sorted(completed)}
