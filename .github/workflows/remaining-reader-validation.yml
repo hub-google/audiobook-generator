@@ -1,0 +1,30 @@
+name: 有聲小說｜剩餘閱讀器獨立驗證
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - 'tools/validate_moon17.py'
+      - 'tools/validate_book8.py'
+      - 'src/sources/moon17.py'
+      - 'src/sources/book8.py'
+      - '.github/workflows/remaining-reader-validation.yml'
+permissions:
+  contents: read
+jobs:
+  reader:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [moon17, book8]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install requests beautifulsoup4 playwright
+      - if: matrix.source == 'moon17'
+        run: python -m playwright install chromium
+      - run: python -m tools.validate_${{ matrix.source }}
