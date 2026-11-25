@@ -7,9 +7,11 @@ from .moon17_reader import render_article
 
 class Moon17Source(SourceAdapter):
     source_id = "moon17"
-    version = "4"
+    version = "5"
     hosts = ("17moon.com", "www.17moon.com")
-    plain_http = True
+    plain_http = False
+    min_timeout = 30.0
+    transient_retries = 1
     max_parallel = 1
     min_interval = 2.0
 
