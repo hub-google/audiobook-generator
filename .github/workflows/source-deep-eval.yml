@@ -1,0 +1,25 @@
+name: 有聲小說｜剩餘兩站實際頁面解構
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - 'tools/source_deep_eval.py'
+      - '.github/workflows/source-deep-eval.yml'
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [moon17, book8]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install requests beautifulsoup4 fonttools
+      - run: python -m tools.source_deep_eval ${{ matrix.source }}
