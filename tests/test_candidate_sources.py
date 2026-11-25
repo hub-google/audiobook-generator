@@ -135,3 +135,26 @@ def test_twkan_short_announcement_is_not_a_missing_chapter():
 def test_twkan_registered():
     from src.sources import resolve_source
     assert isinstance(resolve_source("https://www.twkan.cc/book/abc.html"), TwkanSource)
+
+
+def test_moon_real_renderer_transcribes_icons_and_reversal():
+    src = Moon17Source()
+    url = "https://www.17moon.com/book/abc/def.html"
+    # The published site processes each DOM child: text Unicode codepoints
+    # reverse individually, icon tags move as indivisible units.
+    html = '<h1 class="reader-header__title">《作品》第1章</h1><article id="article"><p>普通段落。</p><p class="js-reversed-text">。尾<i class="icon-147"></i>前</p></article>'
+    title, body = src.parse_chapter(html, url)
+    assert title == "第1章"
+    assert body == "普通段落。\n前身尾。"
+
+
+def test_moon_glyph_dictionary_complete_and_unknown_fails():
+    from src.sources.moon17_glyphs import ICON_GLYPHS
+    assert len(ICON_GLYPHS) == 195
+    assert ICON_GLYPHS[147] == "身"
+    assert ICON_GLYPHS[175] == "絲"
+    assert ICON_GLYPHS[195] == "喘"
+    src = Moon17Source()
+    url = "https://www.17moon.com/book/abc/def.html"
+    with pytest.raises(SourceParseError, match="未知字型字元"):
+        src.parse_chapter('<h1 class="reader-header__title">第1章</h1><article id="article"><p class="js-reversed-text">。<i class="icon-999"></i></p></article>', url)

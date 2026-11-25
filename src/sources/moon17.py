@@ -2,6 +2,7 @@ import re
 from urllib.parse import urlsplit
 from .base import SourceAdapter, SourceParseError
 from .paging import catalog_entries, read_body, next_page
+from .moon17_reader import render_article
 
 
 class Moon17Source(SourceAdapter):
@@ -31,12 +32,11 @@ class Moon17Source(SourceAdapter):
 
     def _page(self, html, url):
         soup = self.soup(html)
-        # The site's public reader applies JavaScript rendering to these
-        # paragraphs. Raw text is not the displayed text. Do not silently
-        # remove missing glyphs or guess their values.
+        # Recreate the site's published public reader.js paragraph order and
+        # the visible Unicode characters rendered by its CSS icon font.
         article = soup.select_one("article#article")
-        if article and article.select_one(".js-reversed-text, i[class^='icon-'], i[class*=' icon-']"):
-            raise SourceParseError("月亮小說網原始HTML含反序及缺字標記；需完整正常閱讀頁或授權匯出")
+        if article:
+            render_article(article)
         title, body = read_body(self, soup, "article#article", "h1.reader-header__title")
         if "\ufffd" in body or "\ufffc" in body:
             raise SourceParseError("月亮小說網正文有未解出的字元")
