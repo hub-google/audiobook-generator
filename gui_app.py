@@ -691,9 +691,10 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin):
                     if stage.get("status") != "failed" or run_id <= int(bound_run_id):
                         continue
                 next_status = result.get("status")
-                if not next_status or stage.get("status") == next_status:
+                attempt = int(result.get("run_attempt") or stage.get("run_attempt") or 1)
+                if not next_status or (stage.get("status") == next_status and stage.get("run_attempt") == attempt and stage.get("run_id") == run_id):
                     continue
-                stage.update({"run_id": run_id, "status": next_status})
+                stage.update({"run_id": run_id, "status": next_status, "run_attempt": attempt})
                 task[f"{stage_name}_run_id"] = run_id
                 if next_status == "completed":
                     stage.update({"reason": None, "completed_at": result.get("updated_at")})
@@ -702,16 +703,9 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin):
                 changed = True
             if task.get("status") == "canceling":
                 continue
-            scrape = (stages.get("scrape") or {}).get("status")
-            cover = (stages.get("cover") or {}).get("status")
-            next_task_status = (
-                "needs_attention" if "failed" in {scrape, cover}
-                else "waiting_review" if {scrape, cover} == {"completed"}
-                else "preparing_assets"
-            )
-            if task.get("status") != next_task_status:
-                task["status"] = next_task_status
-                task["reason"] = None if next_task_status != "needs_attention" else "preflight_failed"
+            next_task_status, reason = preflight_status(stages)
+            if task.get("status") != next_task_status or task.get("reason") != reason:
+                task.update(status=next_task_status, reason=reason)
                 changed = True
         return changed
 
@@ -728,10 +722,10 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin):
         response.raise_for_status()
         run = response.json()
         if run.get("status") != "completed":
-            return {"status": "running", "conclusion": None, "updated_at": run.get("updated_at")}
+            return {"status": "running", "conclusion": None, "updated_at": run.get("updated_at"), "run_attempt": int(run.get("run_attempt") or 1)}
         conclusion = run.get("conclusion")
         if conclusion != "success":
-            return {"status": "failed", "conclusion": conclusion, "updated_at": run.get("updated_at")}
+            return {"status": "failed", "conclusion": conclusion, "updated_at": run.get("updated_at"), "run_attempt": int(run.get("run_attempt") or 1)}
         artifacts = requests.get(
             f"https://api.github.com/repos/{repo}/actions/runs/{int(run_id)}/artifacts",
             headers=headers, params={"per_page": 100}, timeout=15,
@@ -743,6 +737,7 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin):
         )
         return {
             "status": "completed" if artifact_ready else "running",
+            "run_attempt": int(run.get("run_attempt") or 1),
             "conclusion": conclusion,
             "updated_at": run.get("updated_at"),
         }
@@ -775,7 +770,7 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin):
                     created = datetime.fromisoformat(str(run.get("created_at") or "").replace("Z", "+00:00"))
                 except ValueError:
                     continue
-                if created < since:
+                if created < since.replace(microsecond=0):
                     continue
             matches.append(run)
         return max(matches, key=lambda item: (str(item.get("created_at") or ""), int(item.get("id") or 0)), default=None)

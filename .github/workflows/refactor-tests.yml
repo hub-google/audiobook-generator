@@ -1,11 +1,14 @@
 name: 有聲小說｜重構回歸測試
 on:
   push:
-    branches: ["refactor/reliability-20261125"]
+    branches: ["refactor/reliability-20261125", master]
   pull_request:
     branches: [master]
 permissions:
   contents: read
+concurrency:
+  group: regression-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   regression:
     runs-on: ubuntu-latest

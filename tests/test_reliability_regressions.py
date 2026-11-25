@@ -91,3 +91,9 @@ class ReliabilityTests(unittest.TestCase):
         self.assertFalse(pipeline.resume_dispatch_stale({"status": "complete"}, now))
         self.assertFalse(pipeline.resume_dispatch_stale({"status": "resume_dispatched", "resume_dispatched_at": (now - timedelta(hours=1)).isoformat()}, now))
         self.assertTrue(pipeline.resume_dispatch_stale({"status": "resume_dispatched", "resume_dispatched_at": (now - timedelta(hours=9)).isoformat()}, now))
+
+    def test_preflight_gui_and_dispatcher_share_retry_policy(self):
+        from src.cloud_queue import preflight_status
+        self.assertEqual(preflight_status({"scrape": {"status": "failed", "reason": "failure", "run_attempt": 20}}), ("preparing_assets", "scrape_rerun_pending"))
+        self.assertEqual(preflight_status({"scrape": {"status": "failed", "reason": "failure", "run_attempt": 21}}), ("needs_attention", "scrape_failed_after_20_reruns"))
+        self.assertEqual(preflight_status({"cover": {"status": "failed", "reason": "dispatch_unconfirmed"}}), ("needs_attention", "cover_dispatch_unconfirmed"))

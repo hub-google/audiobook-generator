@@ -33,6 +33,27 @@ NON_ACTIVE_STATES = {
 }
 
 
+MAX_NATIVE_PREFLIGHT_RERUNS = 20
+
+
+def preflight_status(stages):
+    """One state decision shared by the dispatcher and GUI."""
+    for name in ("scrape", "cover"):
+        stage = stages.get(name) or {}
+        if stage.get("status") != "failed":
+            continue
+        reason = stage.get("reason") or "failure"
+        attempt = int(stage.get("run_attempt") or 1)
+        if reason == "failure" and attempt <= MAX_NATIVE_PREFLIGHT_RERUNS:
+            return "preparing_assets", f"{name}_rerun_pending"
+        if reason == "failure" and attempt > MAX_NATIVE_PREFLIGHT_RERUNS:
+            return "needs_attention", f"{name}_failed_after_{MAX_NATIVE_PREFLIGHT_RERUNS}_reruns"
+        return "needs_attention", f"{name}_{reason}"
+    if all((stages.get(name) or {}).get("status") == "completed" for name in ("scrape", "cover")):
+        return "waiting_review", None
+    return "preparing_assets", None
+
+
 def empty_stage_state():
     return {
         "status": "pending",

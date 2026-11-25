@@ -144,10 +144,9 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("有聲小說製作", self.text)
         self.assertIn("inputs.book_title", self.text)
         self.assertIn("有聲小說佇列調度", self.dispatcher_text)
-        self.assertIn("Delete older dispatcher run records", self.dispatcher_text)
-        self.assertIn('actions/runs/$old_run_id', self.dispatcher_text)
-        self.assertIn("cancel-in-progress: true", self.dispatcher_text)
-        self.assertIn('old_status="$(gh api', self.dispatcher_text)
+        self.assertNotIn("Delete older dispatcher run records", self.dispatcher_text)
+        self.assertNotIn('actions/runs/$old_run_id', self.dispatcher_text)
+        self.assertIn("cancel-in-progress: false", self.dispatcher_text)
         self.assertNotIn("select(.key >= 20)", self.dispatcher_text)
         self.assertNotIn("old_conclusion", self.dispatcher_text)
 
