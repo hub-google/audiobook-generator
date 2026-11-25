@@ -155,3 +155,14 @@ class ReliabilityTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "validation failed"):
                 run_resumable_chapter({}, checkpoint, "https://example.com/1", 1, 0)
         checkpoint.mark_failed.assert_called()
+
+    def test_upload_range_uses_server_acknowledgement(self):
+        import importlib
+        from unittest.mock import Mock
+        pipeline = importlib.import_module("合併上傳.cloud_pipeline")
+        partial = Mock(status_code=308, headers={"Range": "bytes=0-2"})
+        complete = Mock(status_code=201)
+        complete.json.return_value = {"id": "video-test"}
+        with patch.object(pipeline, "read_range", side_effect=lambda source, start, end: b"x" * (end - start + 1)) as read, patch.object(pipeline, "put_chunk", side_effect=[partial, complete]):
+            self.assertEqual(pipeline.upload_range("session", "source", 6, 6, 0, Mock()), (6, "video-test"))
+        self.assertEqual(read.call_args_list[1].args, ("source", 3, 5))

@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
+from huggingface_hub.errors import EntryNotFoundError
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -288,8 +289,66 @@ def query(url,total,cred):
     if response.status_code!=308: raise RuntimeError(f"YouTube resume query failed: {response.status_code} {response.text[:300]}")
     value=response.headers.get("Range",""); return (int(value.rsplit("-",1)[1])+1 if "-" in value else 0),None
 
+def acknowledged_offset(response, total):
+    if response.status_code in (200, 201):
+        video_id = (response.json() or {}).get("id")
+        if not video_id:
+            raise RuntimeError("YouTube completed response is missing video ID")
+        return total, video_id
+    if response.status_code != 308:
+        raise RuntimeError(f"YouTube chunk failed: {response.status_code}")
+    value = response.headers.get("Range", "")
+    if not value:
+        return 0, None
+    match = re.fullmatch(r"bytes=0-(\d+)", value.strip())
+    if not match or not 0 <= int(match.group(1)) < total:
+        raise RuntimeError("Invalid YouTube acknowledged byte range")
+    return int(match.group(1)) + 1, None
+
+
+def upload_range(session, source, total, target, sent, cred, video_id=None):
+    """Use server acknowledgements, not bytes merely sent by the client."""
+    no_progress = 0
+    while sent < target:
+        end = min(target - 1, sent + CHUNK - 1)
+        data = read_range(source, sent, end)
+        if len(data) != end - sent + 1:
+            raise RuntimeError("HF returned a truncated byte range")
+        try:
+            response = put_chunk(session, sent, total, data)
+            next_sent, found_id = acknowledged_offset(response, total)
+        except (requests.Timeout, requests.ConnectionError):
+            next_sent, found_id = query(session, total, cred)
+        if next_sent < 0 or next_sent > total:
+            raise RuntimeError("YouTube returned an invalid byte offset")
+        no_progress = no_progress + 1 if next_sent <= sent else 0
+        if no_progress >= TRANSFER_RETRIES:
+            raise RuntimeError("YouTube upload did not acknowledge progress")
+        if no_progress:
+            time.sleep(min(2 ** no_progress, 30))
+        sent = next_sent
+        video_id = found_id or video_id
+        if video_id:
+            return total, video_id
+    return sent, video_id
+
+
 def phase1(args):
-    manifest=remote_json(args.manifest); total=int(manifest["bytes"]); source=verified_hf_source(manifest); cred=credentials(getattr(args,"credential_slot",None))
+    manifest=remote_json(args.manifest); total=int(manifest["bytes"]); source=verified_hf_source(manifest)
+    try:
+        state = remote_json(args.state_path)
+    except EntryNotFoundError:
+        state = None
+    if state:
+        if int(state["total_size"]) != total or state.get("source_revision") != source_revision(manifest) or state.get("manifest_path") != args.manifest:
+            raise RuntimeError("Existing YouTube upload session belongs to a different source revision")
+        if state.get("status") in {"paused_at_98", "resume_dispatched", "complete", "needs_attention"}:
+            if state.get("status") == "paused_at_98":
+                write_phase1_summary(state, str(state.get("youtube_title") or manifest.get("youtube_title")))
+            return
+        if state.get("status") != "phase1_uploading" or not state.get("session_url"):
+            raise RuntimeError("Existing upload state is not safe to restart")
+    cred=credentials(state.get("credential_slot") if state else getattr(args,"credential_slot",None))
     headers={"Authorization":f"Bearer {cred.token}","Content-Type":"application/json; charset=UTF-8","X-Upload-Content-Length":str(total),"X-Upload-Content-Type":"video/mp4"}
     title = str(args.title or manifest.get("youtube_title") or "").strip()
     description = str(manifest.get("youtube_description") or "").strip()
@@ -306,15 +365,20 @@ def phase1(args):
     if publish_at:
         status_body["publishAt"] = publish_at
     body = {"snippet": {"title": title, "description": description}, "status": status_body}
-    response=requests.post("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",headers=headers,json=body,timeout=60); response.raise_for_status(); session=response.headers["Location"]
-    target=(int(total*.98)//(256*1024))*(256*1024); sent=0
-    while sent<target:
-        end=min(target-1,sent+CHUNK-1); data=read_range(source,sent,end)
-        result=put_chunk(session,sent,total,data)
-        if result.status_code not in (200,201,308): raise RuntimeError(f"YouTube chunk failed: {result.status_code}")
-        sent += len(data)
-    confirmed,video_id=query(session,total,cred); now=datetime.now(timezone.utc)
-    state={"status":"paused_at_98","book_title":manifest.get("book_title"),"youtube_title":manifest.get("youtube_title"),"plan_id":manifest.get("plan_id"),"output_number":(manifest.get("output") or {}).get("output_number"),"session_url":session,"session_id":hashlib.sha256(session.encode()).hexdigest()[:20],"manifest_path":args.manifest,"source_revision":source_revision(manifest),"total_size":total,"confirmed_bytes":confirmed,"paused_at":now.isoformat(),"target_resume_at":(now+timedelta(hours=24)).isoformat(),"privacy":args.privacy,"publish_at":publish_at or None,"video_id":video_id,"credential_slot":int(getattr(args,"credential_slot",None) or 1)}
+    if not state:
+        response=requests.post("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",headers=headers,json=body,timeout=60)
+        response.raise_for_status()
+        session=response.headers["Location"]
+        state={"status":"phase1_uploading","book_title":manifest.get("book_title"),"youtube_title":manifest.get("youtube_title"),"plan_id":manifest.get("plan_id"),"output_number":(manifest.get("output") or {}).get("output_number"),"session_url":session,"session_id":hashlib.sha256(session.encode()).hexdigest()[:20],"manifest_path":args.manifest,"source_revision":source_revision(manifest),"total_size":total,"confirmed_bytes":0,"privacy":args.privacy,"publish_at":publish_at or None,"video_id":None,"credential_slot":int(getattr(args,"credential_slot",None) or 1)}
+        upload_json(args.state_path,state,"Persist YouTube session before transferring data")
+    session=state["session_url"]
+    target=(int(total*.98)//(256*1024))*(256*1024)
+    sent, video_id = query(session, total, cred)
+    confirmed, video_id = upload_range(session, source, total, target, sent, cred, video_id)
+    now=datetime.now(timezone.utc)
+    if confirmed < target:
+        raise RuntimeError("YouTube did not acknowledge phase one target")
+    state.update(status="paused_at_98", confirmed_bytes=confirmed, paused_at=now.isoformat(), target_resume_at=(now+timedelta(hours=24)).isoformat(), video_id=video_id)
     upload_json(args.state_path,state,"Save two-phase YouTube session")
     write_phase1_summary(state, title)
 
@@ -330,18 +394,13 @@ def phase2(args):
     if not video_id:
         sent,video_id=query(state["session_url"],total,cred)
     source=resolve_url(manifest["video_path"],source_revision(manifest)) if sent < total else None
-    while sent<total:
-        end=min(total-1,sent+CHUNK-1); data=read_range(source,sent,end)
-        response=put_chunk(state["session_url"],sent,total,data)
-        if response.status_code in (200,201): video_id=(response.json() or {}).get("id")
-        elif response.status_code!=308: raise RuntimeError(f"YouTube chunk failed: {response.status_code}")
-        sent += len(data)
+    sent, video_id = upload_range(state["session_url"], source, total, total, sent, cred, video_id)
     if not video_id: _,video_id=query(state["session_url"],total,cred)
     if not video_id: raise RuntimeError("Upload completed without a YouTube video id")
     # Persist the video identity before thumbnail upload.
     state.update(video_id=video_id, confirmed_bytes=total)
     upload_json(args.state_path,state,"Confirm uploaded YouTube video before thumbnail")
-    cover=hf_hub_download(repo_token()[0],manifest["cover_path"],repo_type="dataset",token=repo_token()[1])
+    cover=hf_hub_download(repo_token()[0],manifest["cover_path"],repo_type="dataset",token=repo_token()[1],revision=manifest.get("parts_revision") or source_revision(manifest))
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
     build("youtube","v3",credentials=cred).thumbnails().set(videoId=video_id,media_body=MediaFileUpload(cover,mimetype="image/jpeg")).execute()
