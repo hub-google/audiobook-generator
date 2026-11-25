@@ -189,3 +189,43 @@ class GuiQueueControlTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+def test_gui_observer_must_not_write_authoritative_queue_on_run_completion():
+    """The dispatcher alone settles completed/failed/cancelled GitHub Runs."""
+    from unittest.mock import Mock, patch
+    from gui_app import AudiobookGUIApp
+    app = object.__new__(AudiobookGUIApp)
+    queue = {
+        "queue": [{
+            "task_id": "id-1", "run_id": 2468, "status": "running",
+            "workflow_phase": "processing",
+        }],
+        "completed": [],
+    }
+    store = Mock()
+    store.load.return_value = (queue, "sha")
+    app._queue_store = Mock(return_value=(store, "owner/repo", "token"))
+    app.queue_sync_after = None
+    app.queue_syncing = False
+    app.github_observations = {}
+    app._render_queue = Mock()
+    app._dispatch_queue_workflow = Mock()
+    app._observe_github_run = Mock(return_value={
+        "kind": "ok", "raw_status": "completed",
+        "raw_conclusion": "success", "github_updated_at": "2026-11-25T09:30:00Z",
+    })
+    app.root = Mock()
+    app.root.after.side_effect = lambda delay, callback: callback() if delay == 0 else "timer"
+    def synchronous_thread(target, daemon=True):
+        thread = Mock()
+        thread.start.side_effect = target
+        return thread
+    with patch("gui_components.queue_monitor.threading.Thread", side_effect=synchronous_thread):
+        app.sync_cloud_queue()
+    store.mutate.assert_not_called()
+    app._dispatch_queue_workflow.assert_called_once()
+    assert queue["queue"][0]["status"] == "running"
+    assert app.queue_syncing is False
+    app._render_queue.assert_called_once()

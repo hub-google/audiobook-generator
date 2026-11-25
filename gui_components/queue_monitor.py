@@ -1,5 +1,6 @@
 """GitHub observation and cloud queue reconciliation."""
 from .runtime import *  # noqa: F401,F403
+from copy import deepcopy
 
 class QueueMonitorMixin:
     @staticmethod
@@ -68,6 +69,10 @@ class QueueMonitorMixin:
                     display_tree.set(task_id, "status", self._queue_status_text(task))
                     display_tree.set(task_id, "verified", self._observation_checked_time(observation))
         self.queue_freshness_after = self.root.after(1000, self._refresh_observation_freshness)
+
+    def _schedule_queue_refresh(self):
+        self.queue_syncing = False
+        self.queue_sync_after = self.root.after(10000, self.sync_cloud_queue)
 
     def sync_cloud_queue(self):
         if self.queue_sync_after is not None:
@@ -182,46 +187,16 @@ class QueueMonitorMixin:
                                 f"run_{conclusion}", conclusion,
                                 observation.get("github_updated_at"),
                             ))
-                if running_updates:
-                    def apply_running_updates(latest):
-                        for task_id, run_id in running_updates:
-                            latest = update_task(latest, task_id, status="running", run_id=run_id, reason=None, run_conclusion=None)
-                        return latest
-                    queue = store.mutate(apply_running_updates, "Reconcile active running audiobook tasks")
+                # Read-only GUI observer: the dispatcher is the sole writer of
+                # durable run/preflight state. Never replay stale GET results
+                # through GitHubQueueStore.mutate from this local window.
                 if terminal_updates:
-                    def apply_terminal_updates(latest):
-                        for task_id, run_id, target, reason, conclusion, ended_at in terminal_updates:
-                            current = next(
-                                (item for item in latest.get("queue", []) if item.get("task_id") == task_id), None
-                            )
-                            if current and current.get("run_id") == run_id and current.get("status") in BLOCKING_STATES:
-                                if target == "completed":
-                                    latest = mark_task_completed(
-                                        latest, task_id, conclusion=conclusion or "success", ended_at=ended_at,
-                                    )
-                                elif target == "interrupted":
-                                    latest = settle_interrupted_task(
-                                        latest, task_id, reason=reason,
-                                        conclusion=conclusion, ended_at=ended_at,
-                                    )
-                                else:
-                                    if current.get("status") == "waiting_retry" and current.get("retry_at"):
-                                        continue
-                                    latest = mark_task_waiting_retry(latest, task_id, reason=reason, conclusion=conclusion, ended_at=ended_at)
-                        return latest
-                    queue = store.mutate(apply_terminal_updates, "Reconcile completed audiobook runs")
                     self._dispatch_queue_workflow()
+                display_queue = deepcopy(queue)
                 if preflight_updates:
-                    changed = self._apply_preflight_observations(queue, preflight_updates)
-                    if changed:
-                        queue = store.mutate(
-                            lambda latest: (
-                                self._apply_preflight_observations(latest, preflight_updates), latest
-                            )[1],
-                            "Reconcile completed preflight Runs from GUI",
-                        )
+                    self._apply_preflight_observations(display_queue, preflight_updates)
                 self.cloud_queue = queue
-                self.root.after(0, lambda: self._render_queue(queue))
+                self.root.after(0, lambda snapshot=display_queue: self._render_queue(snapshot))
             except Exception as error:
                 if self.cloud_queue:
                     for task in self.cloud_queue.get("queue", []) + self.cloud_queue.get("completed", []):
@@ -232,8 +207,8 @@ class QueueMonitorMixin:
                     self.root.after(0, lambda q=self.cloud_queue: self._render_queue(q))
                 self.root.after(0, lambda e=str(error): self.log(f"⚠ 雲端佇列同步失敗：{e}"))
             finally:
-                self.queue_syncing = False
-                self.queue_sync_after = self.root.after(10000, self.sync_cloud_queue)
+                # Tk's event scheduler must be accessed on the GUI thread.
+                self.root.after(0, self._schedule_queue_refresh)
         threading.Thread(target=worker, daemon=True).start()
 
     @staticmethod
