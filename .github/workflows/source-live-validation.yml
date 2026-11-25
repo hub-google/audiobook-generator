@@ -7,6 +7,12 @@ on:
       - 'src/sources/**'
       - 'src/crawler.py'
       - 'src/catalog_parser.py'
+      - 'src/metadata_gen.py'
+      - 'src/cover_research.py'
+      - 'src/cover_ai.py'
+      - 'src/cover_inference.py'
+      - 'src/dispatch_execution.py'
+      - 'gui_components/source_ui.py'
       - 'tools/validate_sources_live.py'
       - '.github/workflows/source-live-validation.yml'
 permissions:
