@@ -125,7 +125,8 @@ def test_merge_workflow_declares_publish_at_and_passes_to_phase1():
     inputs = parsed[True]["workflow_dispatch"]["inputs"]
     assert "publish_at" in inputs
     assert inputs["publish_at"]["required"] is False
-    assert '--publish-at "${{ inputs.publish_at }}"' in text
+    assert '--publish-at "$INPUT_PUBLISH_AT"' in text
+    assert 'INPUT_PUBLISH_AT: ${{ inputs.publish_at }}' in text
 
 
 def test_cloud_pipeline_supports_publish_at():

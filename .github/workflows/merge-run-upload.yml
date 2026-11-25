@@ -26,6 +26,9 @@ concurrency:
   group: merge-run-upload-${{ inputs.source_run_id }}
   cancel-in-progress: false
 
+env:
+  INPUT_PRIVACY: ${{ inputs.privacy }}
+
 jobs:
   discover:
     runs-on: ubuntu-latest
@@ -271,7 +274,7 @@ jobs:
             --bucket-mount "$RUNNER_TEMP/hf-bucket" \
             --expected-workers "${{ needs.discover.outputs.count }}" \
             --expected-shards "${{ needs.discover.outputs.shard_count }}" \
-            --privacy "${{ inputs.privacy }}"
+            --privacy "$INPUT_PRIVACY"
       - name: Report final merge and upload progress
         if: always()
         env:

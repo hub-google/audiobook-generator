@@ -87,6 +87,22 @@ concurrency:
   group: youtube-resumable-upload
   cancel-in-progress: false
 
+env:
+  INPUT_CATALOG_URL: ${{ github.event.inputs.catalog_url }}
+  INPUT_START_CHAP: ${{ github.event.inputs.start_chap }}
+  INPUT_END_CHAP: ${{ github.event.inputs.end_chap }}
+  INPUT_CHAPTERS_PER_WORKER: ${{ github.event.inputs.chapters_per_worker }}
+  INPUT_EXCLUDE_CHAPTERS: ${{ github.event.inputs.exclude_chapters }}
+  INPUT_RENUMBER_SELECTED: ${{ github.event.inputs.renumber_selected }}
+  INPUT_CHAPTER_TITLE_OVERRIDES_B64: ${{ github.event.inputs.chapter_title_overrides_b64 }}
+  INPUT_CHAPTER_ORDER_B64: ${{ github.event.inputs.chapter_order_b64 }}
+  INPUT_BOOK_PROFILE_SNAPSHOT_B64: ${{ github.event.inputs.book_profile_snapshot_b64 }}
+  INPUT_BOOK_TITLE: ${{ github.event.inputs.book_title }}
+  INPUT_CHAPTER_LABEL: ${{ github.event.inputs.chapter_label }}
+  INPUT_QUEUE_TASK_ID: ${{ github.event.inputs.queue_task_id }}
+  INPUT_RESUME_SOURCE_RUN_ID: ${{ inputs.resume_source_run_id }}
+  INPUT_PUBLISH_AT: ${{ github.event.inputs.publish_at }}
+
 jobs:
   retry_failed_run:
     name: "Retry latest failed audiobook run"
@@ -266,17 +282,17 @@ jobs:
         run: |
           set +e
           python src/catalog_parser.py \
-            --url "${{ github.event.inputs.catalog_url }}" \
-            --start ${{ github.event.inputs.start_chap }} \
-            --end ${{ github.event.inputs.end_chap }} \
+            --url "$INPUT_CATALOG_URL" \
+            --start "$INPUT_START_CHAP" \
+            --end "$INPUT_END_CHAP" \
             --output config.yaml \
-            --workers ${{ github.event.inputs.chapters_per_worker }} \
+            --workers "$INPUT_CHAPTERS_PER_WORKER" \
             --matrix-output matrix.json \
-            --exclude-chapters "${{ github.event.inputs.exclude_chapters }}" \
-            --renumber-selected "${{ github.event.inputs.renumber_selected }}" \
-            --chapter-title-overrides-b64 "${{ github.event.inputs.chapter_title_overrides_b64 }}" \
-            --chapter-order-b64 "${{ github.event.inputs.chapter_order_b64 }}" \
-            --book-profile-snapshot-b64 "${{ github.event.inputs.book_profile_snapshot_b64 }}" \
+            --exclude-chapters "$INPUT_EXCLUDE_CHAPTERS" \
+            --renumber-selected "$INPUT_RENUMBER_SELECTED" \
+            --chapter-title-overrides-b64 "$INPUT_CHAPTER_TITLE_OVERRIDES_B64" \
+            --chapter-order-b64 "$INPUT_CHAPTER_ORDER_B64" \
+            --book-profile-snapshot-b64 "$INPUT_BOOK_PROFILE_SNAPSHOT_B64" \
             2>&1 | tee catalog-fetch.log
           parser_status=${PIPESTATUS[0]}
           set -e
@@ -386,9 +402,9 @@ jobs:
             --output config.yaml \
             --matrix-output matrix.json
 
-          DISPATCH_BOOK_TITLE="${{ github.event.inputs.book_title }}" \
-          DISPATCH_CHAPTER_LABEL="${{ github.event.inputs.chapter_label }}" \
-          DISPATCH_QUEUE_TASK_ID="${{ github.event.inputs.queue_task_id }}" \
+          DISPATCH_BOOK_TITLE="$INPUT_BOOK_TITLE" \
+          DISPATCH_CHAPTER_LABEL="$INPUT_CHAPTER_LABEL" \
+          DISPATCH_QUEUE_TASK_ID="$INPUT_QUEUE_TASK_ID" \
           python - <<'PY'
           import os
           import yaml
@@ -550,7 +566,7 @@ jobs:
           python src/resume_planner.py \
             --repo "${{ github.repository }}" \
             --run-id "${{ github.run_id }}" \
-            --source-run-id "${{ inputs.resume_source_run_id }}" \
+            --source-run-id "$INPUT_RESUME_SOURCE_RUN_ID" \
             --config config.yaml \
             --matrix matrix.json \
             --output-dir resume_bundle \
@@ -631,7 +647,7 @@ jobs:
         if: steps.artifact_restore.outputs.complete != 'true'
         run: |
           RAW_DIR=$(find Workspace -type d -name RawText -print -quit)
-          python src/ad_review_report.py --raw-dir "$RAW_DIR" --output "Workspace/AdReview/ad-candidates-worker-${{ matrix.worker_id }}.json" --task-id "${{ inputs.queue_task_id }}" --worker-id "${{ matrix.worker_id }}"
+          python src/ad_review_report.py --raw-dir "$RAW_DIR" --output "Workspace/AdReview/ad-candidates-worker-${{ matrix.worker_id }}.json" --task-id "$INPUT_QUEUE_TASK_ID" --worker-id "${{ matrix.worker_id }}"
       - name: Upload RawText Checkpoint
         uses: actions/upload-artifact@v4
         with:
@@ -692,7 +708,7 @@ jobs:
         # Downloaded workers must exactly cover the locked selected chapters.
         run: |
           RAW_DIR=$(find all-scrape-workers -type d -name RawText -print -quit)
-          python src/ad_review_report.py --raw-dir "$RAW_DIR" --output "AdReview/ad-candidates-full-book.json" --task-id "${{ inputs.queue_task_id }}" --worker-id -1 --config config.yaml
+          python src/ad_review_report.py --raw-dir "$RAW_DIR" --output "AdReview/ad-candidates-full-book.json" --task-id "$INPUT_QUEUE_TASK_ID" --worker-id -1 --config config.yaml
       - name: Upload authoritative advertisement review report
         uses: actions/upload-artifact@v4
         with:
@@ -1229,7 +1245,7 @@ jobs:
           run-id: ${{ inputs.cover_source_run_id }}
       - name: Restore and validate approved cover
         if: inputs.cover_source_run_id != ''
-        run: python src/cover_preflight.py --restore approved_cover --config prepared_source/config.yaml --task-id "${{ inputs.queue_task_id }}"
+        run: python src/cover_preflight.py --restore approved_cover --config prepared_source/config.yaml --task-id "$INPUT_QUEUE_TASK_ID"
 
       # A cover uploaded from the review window is an explicit override made
       # after the preflight artifact was created.  Apply it last so the old
@@ -1331,7 +1347,7 @@ jobs:
           for attempt in 1 2 3; do
             echo "YouTube uploader attempt $attempt/3"
             set +e
-            python src/youtube_api_uploader.py --run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --source-run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --execution-run-id "${{ github.run_id }}" --input-dir prepared_parts --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --publish-at "${{ github.event.inputs.publish_at }}" --state-file upload_resume_state/state.json
+            python src/youtube_api_uploader.py --run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --source-run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --execution-run-id "${{ github.run_id }}" --input-dir prepared_parts --task-id "$INPUT_QUEUE_TASK_ID" --repo "${{ github.repository }}" --privacy "public" --publish-at "$INPUT_PUBLISH_AT" --state-file upload_resume_state/state.json
             code=$?
             set -e
 
