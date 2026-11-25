@@ -440,7 +440,7 @@ def parse_catalog(catalog_url, html=None):
     return result
 
 
-def fetch_69shuba_full_novels(url="https://www.69shuba.com/novels/full"):
+def fetch_69shuba_full_novels(url="https://69shuba.com/novels/full"):
     try:
         from .sources.shuba69 import fetch_69shuba_full_novels as _fetch
     except ImportError:

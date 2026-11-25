@@ -54,6 +54,12 @@ except ImportError:
     fetch_69shuba_full_novels = None
     GitHubQueueStore = None
 
+from gui_components.source_ui import (
+    AUTO_SOURCE_LABEL, SOURCE_EXAMPLES, SOURCE_OPTIONS, SOURCE_NAMES,
+    catalog_matches_current, detect_source, normalize_source_url,
+    source_hint, source_id_from_label, source_label,
+)
+
 from gui_components import QueueOperationsMixin, ReviewMixin, WorkflowMixin
 from gui_components.queue_monitor import QueueMonitorMixin
 from gui_components.publish_settings import PublishSettingsMixin
@@ -151,13 +157,26 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         url_frame = ttk.Frame(section1)
         url_frame.pack(fill=tk.X, pady=5)
 
-        ttk.Label(url_frame, text="目錄網址:").pack(side=tk.LEFT, padx=(0, 5))
-        self.url_entry = ttk.Entry(url_frame, width=50)
-        self.url_entry.insert(0, "https://tw.hjwzw.com/Book/Chapter/1644")
+        ttk.Label(url_frame, text="來源網站：").pack(side=tk.LEFT, padx=(0, 5))
+        self.source_choice_var = tk.StringVar(value=AUTO_SOURCE_LABEL)
+        self.source_combo = ttk.Combobox(
+            url_frame, textvariable=self.source_choice_var, values=SOURCE_OPTIONS,
+            state="readonly", width=14,
+        )
+        self.source_combo.pack(side=tk.LEFT, padx=(0, 10))
+        self.source_combo.bind("<<ComboboxSelected>>", self._on_source_selected)
+        ttk.Label(url_frame, text="網址：").pack(side=tk.LEFT, padx=(0, 5))
+        self.url_entry = ttk.Entry(url_frame, width=40)
         self.url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        self.url_entry.bind("<KeyRelease>", self._on_catalog_url_changed)
+        self.url_entry.bind("<FocusOut>", self._on_catalog_url_changed)
 
         self.btn_parse = ttk.Button(url_frame, text="🔍 解析章節", command=self.start_parse_catalog)
         self.btn_parse.pack(side=tk.LEFT)
+        self.source_hint_var = tk.StringVar(value="支援 9 個小說網站；貼上書籍、目錄或章節網址後自動辨識。")
+        ttk.Label(section1, textvariable=self.source_hint_var, foreground="#475569").pack(
+            anchor=tk.W, padx=4, pady=(0, 3),
+        )
 
         # 解析結果顯示區
         info_frame = ttk.Frame(section1)
@@ -188,7 +207,7 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
 
         editor_actions = ttk.Frame(section1)
         editor_actions.pack(fill=tk.X, pady=(5, 0))
-        self.btn_add_queue = ttk.Button(editor_actions, text="➕ 新增至雲端小說佇列", style="Accent.TButton", command=self.enqueue_current_task)
+        self.btn_add_queue = ttk.Button(editor_actions, text="➕ 新增至雲端小說佇列", style="Accent.TButton", command=self.enqueue_current_task, state=tk.DISABLED)
         self.btn_add_queue.pack(side=tk.RIGHT)
         self.btn_run = self.btn_add_queue
         self.btn_update_queue = ttk.Button(editor_actions, text="💾 更新選取小說章節設定", style="Accent.TButton", command=self.update_selected_task_chapters, state=tk.DISABLED)
@@ -469,10 +488,48 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
             f"HF：{hf.get('completed', 0)}/{hf.get('total', 0)}　｜　YouTube：{yt.get('completed', 0)}/{yt.get('total', 0)}{publish_note}{stage_text}{extra}"
         )
 
+    def _on_source_selected(self, _event=None):
+        source_id = source_id_from_label(self.source_choice_var.get())
+        if source_id is None:
+            self._on_catalog_url_changed()
+            return
+        raw = self.url_entry.get().strip()
+        current_source = detect_source(raw)
+        # Explicitly selecting a source fills an example only for an empty
+        # field or a previous example; never overwrite a custom book URL.
+        if not raw or raw in SOURCE_EXAMPLES.values():
+            self.url_entry.delete(0, tk.END)
+            self.url_entry.insert(0, SOURCE_EXAMPLES[source_id])
+            self._on_catalog_url_changed()
+        elif current_source and current_source.source_id != source_id:
+            self.source_hint_var.set("已保留原輸入網址；請貼上所選網站的網址，再解析目錄。")
+        else:
+            self._on_catalog_url_changed()
+
+    def _on_catalog_url_changed(self, _event=None):
+        raw = self.url_entry.get().strip()
+        source = detect_source(raw)
+        if source is None:
+            self.source_hint_var.set(
+                "支援 9 個小說網站；請輸入完整的 http(s) 書籍、目錄或章節網址。"
+            )
+        else:
+            self.source_choice_var.set(source_label(source.source_id))
+            self.source_hint_var.set(source_hint(source))
+        if hasattr(self, "btn_add_queue"):
+            active = (not self.editing_task_id and
+                      catalog_matches_current(raw, self.catalog_data))
+            self.btn_add_queue.config(state=tk.NORMAL if active else tk.DISABLED)
+        if self.editing_task_id and hasattr(self, "btn_update_queue") and self.catalog_data:
+            self.btn_update_queue.config(
+                state=tk.NORMAL if catalog_matches_current(raw, self.catalog_data) else tk.DISABLED
+            )
+
     def reset_chapter_editor(self):
         self.catalog_load_token += 1
         self.editing_task_id = None
         self.catalog_data = None
+        self.current_book_profile = {}
         self.chapter_title_overrides = {}
         self.chapter_normalized_number_overrides = {}
         self.cleaner_remove_patterns = []
@@ -484,6 +541,8 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
             tree.selection_remove(*tree.selection())
         self.edit_mode_var.set("新增小說")
         self.url_entry.delete(0, tk.END)
+        self.source_choice_var.set(AUTO_SOURCE_LABEL)
+        self._on_catalog_url_changed()
         self.lbl_book_info.config(text="書名: 尚未解析 | 總章節: 0 章")
         self.entry_start.delete(0, tk.END)
         self.entry_start.insert(0, "1")
@@ -505,6 +564,7 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         self.btn_update_queue.config(state=tk.DISABLED)
         self.url_entry.delete(0, tk.END)
         self.url_entry.insert(0, task.get("catalog_url") or "")
+        self._on_catalog_url_changed()
         self.lbl_book_info.config(text=f"書名: {task.get('book_title') or '待解析'} | 正在載入章節…")
         self._set_configured_publish_at(task.get("publish_at") or "")
 

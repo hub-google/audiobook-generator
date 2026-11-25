@@ -5,17 +5,25 @@ class ChapterEditorMixin:
     # ── 解析目錄 ──
     def start_parse_catalog(self):
         url = self.url_entry.get().strip()
-        if not url:
-            messagebox.showwarning("提示", "請輸入小說目錄網址！")
+        try:
+            source, canonical = normalize_source_url(url)
+        except (ValueError, SourceParseError) as exc:
+            messagebox.showwarning("不支援的來源網址", str(exc))
             return
-
+        if self.editing_task_id:
+            task = self._selected_task()
+            if task and normalize_source_url(task.get("catalog_url") or "")[1] != canonical:
+                messagebox.showwarning("更新章節", "編輯既有任務時不能換書，請先改為「新增小說」。")
+                return
+        self.catalog_load_token += 1
+        token = self.catalog_load_token
         self.btn_parse.config(state=tk.DISABLED)
         self.lbl_status.config(text="解析目錄中...", foreground="#e1b12c")
-        self.log(f"正在解析網址: {url} ...")
+        self.log(f"正在解析 {source_label(source.source_id)}：{canonical} ...")
 
         def _worker():
             try:
-                res = parse_catalog(url)
+                res = parse_catalog(canonical)
                 canonical_url = res.get("catalog_url", url)
                 profiles, _ = self._profile_store()[0].load()
                 _, profile = get_book_profile(profiles, canonical_url, res.get("book_title") or "")
@@ -23,10 +31,10 @@ class ChapterEditorMixin:
                     res, profile.get("chapter_title_overrides") or {},
                     profile.get("chapter_normalized_number_overrides") or {},
                 )
-                self.root.after(0, lambda: self._on_parse_success(res, profile))
+                self.root.after(0, lambda: self._on_parse_success(res, profile) if token == self.catalog_load_token else None)
             except Exception as e:
                 error_message = str(e)
-                self.root.after(0, lambda message=error_message: self._on_parse_failed(message))
+                self.root.after(0, lambda message=error_message: self._on_parse_failed(message) if token == self.catalog_load_token else None)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -37,6 +45,8 @@ class ChapterEditorMixin:
                 self.url_entry.delete(0, tk.END)
                 self.url_entry.insert(0, res["catalog_url"])
             self.catalog_data = res
+            if hasattr(self, "source_choice_var"):
+                self.source_choice_var.set(source_label(res.get("source_id")))
             profile = profile or {}
             self.current_book_profile = dict(profile)
             self.chapter_title_overrides = dict(profile.get("chapter_title_overrides") or {})
@@ -52,7 +62,7 @@ class ChapterEditorMixin:
             duplicate_count = int(res.get("duplicate_chapter_count") or 0)
 
             self.lbl_book_info.config(
-                text=f"書名: {book_title} | 總章節: {total} 章 | 重複章節: {duplicate_count} 章",
+                text=f"來源: {source_label(res.get('source_id'))} | 書名: {book_title} | 總章節: {total} 章 | 重複章節: {duplicate_count} 章",
                 foreground="#27ae60",
             )
             self.entry_start.delete(0, tk.END)
@@ -61,6 +71,8 @@ class ChapterEditorMixin:
             self.entry_end.insert(0, str(total))
             
             self.btn_filter.config(state=tk.NORMAL)
+            if hasattr(self, "_on_catalog_url_changed"):
+                self._on_catalog_url_changed()
             self.excluded_chapters.clear()
             self.renumber_selected_chapters = True
             self.chapter_order = list(range(1, total + 1))
@@ -72,7 +84,12 @@ class ChapterEditorMixin:
             self._on_parse_failed("無法找到章節內容")
 
     def _on_parse_failed(self, error_msg):
+        self.catalog_data = None
         self.btn_parse.config(state=tk.NORMAL)
+        if hasattr(self, "btn_add_queue"):
+            self.btn_add_queue.config(state=tk.DISABLED)
+        if hasattr(self, "btn_update_queue"):
+            self.btn_update_queue.config(state=tk.DISABLED)
         self.btn_filter.config(state=tk.DISABLED)
         self.lbl_status.config(text="解析失敗", foreground="#e74c3c")
         self.log(f"✗ 目錄解析失敗: {error_msg}")

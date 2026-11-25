@@ -21,3 +21,11 @@
 正式 Worker 的 read-only 驗證使用原創文字進行短影音製作，不發布到 YouTube、不變更 HF 既有作品。1,700 章測試驗證分工、排除章節與分部清單，不代表已實際生成 1,700 章語音。
 
 目前正式 Actions 預設只啟用第 1 組 YouTube 憑證；原有第 2～10 組結構與 Secrets 均保留。日後新增授權後，在 GitHub Actions repository variables 設定 `YOUTUBE_ACTIVE_SLOTS`（例如 `1,2,3`）即可啟用指定組別。新 HF 合併影片只會分配到已啟用組別，既有上傳 session 仍綁定原 OAuth 組別，不會任意切換。
+
+## GUI 支援的小說來源（9 站）
+
+執行 `python gui_app.py`，在「新增小說／章節設定」選擇網站或直接貼上網址；程式會依已註冊的站點解析器自動辨識網站，並將書籍頁、章節頁、分頁目錄轉為適合的**完整目錄網址**。GUI 會顯示來源網站、目錄章數、重複章節與各站並行上限。來源欄位變更後須重新解析，避免把舊書的章節送入新網址。
+
+支援黃金屋（hjwzw）、69 書吧（shuba69）、小說狂人（czbooks）、台灣小說網（twkan）、6K 小說網（sixk）、小說之家（xszj）、元小說（metanovel）、月亮小說網（moon17）、無限小說（book8）；GUI 清單直接對應 `src/sources/registry.py` 註冊的九個模組，新增來源時不應只修改 GUI 選項。每站均提供已驗證示例網址，可從網站選單快速帶入。連線存取受限、目錄缺頁、正文缺漏會報錯，不會假裝完整。
+
+「批量加入網址」的手動頁面支援九站混合 URL，按原輸入順序處理，依本站書籍識別碼和查詢條件排除同書重複；69 書吧完本排行榜仍屬該站專用功能，並非全網站通用排行榜。雲端工作流從目錄解析結果自動取得 `source_id`、`parser_version` 及 `source_max_parallel`；各站的目錄分頁、文字還原、AJAX 正文和重試政策仍由個別爬蟲負責。可用 `pytest -q tests/test_gui_source_ui.py` 檢驗九站 GUI URL 流程。

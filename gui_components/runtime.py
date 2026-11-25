@@ -20,6 +20,11 @@ import zipfile
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image, ImageTk
+from .source_ui import (
+    AUTO_SOURCE_LABEL, SOURCE_EXAMPLES, SOURCE_OPTIONS, SOURCE_NAMES,
+    catalog_matches_current, detect_source, normalize_source_url,
+    normalize_batch_urls, source_hint, source_id_from_label, source_label,
+)
 
 # 載入目錄解析器
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

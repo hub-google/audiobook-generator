@@ -355,15 +355,21 @@ class QueueOperationsMixin:
         if not self.catalog_data:
             messagebox.showwarning("提示", "請先解析小說目錄")
             return
+        if not catalog_matches_current(self.url_entry.get(), self.catalog_data):
+            messagebox.showwarning("提示", "網址已變更，請重新解析目錄再加入佇列。")
+            return
         try:
             start = int(self.entry_start.get())
             end = int(self.entry_end.get())
+            total = int(self.catalog_data.get("total_chapters") or 0)
+            if start < 1 or end < start or (total and end > total):
+                raise ValueError
         except ValueError:
             messagebox.showwarning("提示", "章節範圍必須是數字")
             return
         publish_at = self._get_configured_publish_at() if hasattr(self, "_get_configured_publish_at") else None
         task = new_task(
-            catalog_url=self.url_entry.get().strip(),
+            catalog_url=self.catalog_data["catalog_url"],
             catalog_identity=self.catalog_data.get("catalog_identity", ""),
             book_title=self.catalog_data.get("book_title", ""),
             start_chapter=start,
@@ -386,6 +392,9 @@ class QueueOperationsMixin:
         task = self._selected_task()
         if not task or task.get("task_id") != self.editing_task_id:
             messagebox.showinfo("更新章節", "請先從上方雲端小說佇列選取要編輯的小說。")
+            return
+        if not catalog_matches_current(self.url_entry.get(), self.catalog_data):
+            messagebox.showwarning("更新章節", "來源網址已變更，請重新載入原書目錄。")
             return
         try:
             start, end = int(self.entry_start.get()), int(self.entry_end.get())
@@ -689,8 +698,8 @@ class QueueOperationsMixin:
         # --- Tab 2: Manual ---
         ttk.Label(
             tab_manual,
-            text="每行貼上一個小說目錄網址；系統會依行序解析並加入佇列。全部預設製作第 1 章到全書。\n"
-                 "支援 69 書吧目錄或介紹頁網址（如 /book/29590.htm），系統會自動正規化為 /book/29590/。"
+            text="支援 9 個小說網站，可混合貼入書籍、目錄或章節網址，每行一筆。\n"
+                 "自動辨識網站、轉為正確目錄並排除同一本書重複網址；全部預設製作全書。"
         ).pack(anchor=tk.W, pady=(0, 8))
         text_box = scrolledtext.ScrolledText(tab_manual, height=14, wrap=tk.WORD, font=("Consolas", 10))
         text_box.pack(fill=tk.BOTH, expand=True)
@@ -705,32 +714,18 @@ class QueueOperationsMixin:
         lbl_summary = ttk.Label(bottom_bar, text="待加入總計: 0 部小說", font=("Microsoft JhengHei UI", 9))
         lbl_summary.pack(side=tk.LEFT)
 
-        def normalize_url(raw_url):
-            raw_url = raw_url.strip()
-            if not raw_url:
-                return ""
-            m = re.search(r'69shuba\.com/(?:book|txt)/(\d+)', raw_url)
-            if m:
-                return f"https://www.69shuba.com/book/{m.group(1)}/"
-            return raw_url
-
         def submit():
             urls = []
             for n in novels_data:
                 if n["checked"]:
                     urls.append(n["catalog_url"])
             manual_lines = [line.strip() for line in text_box.get("1.0", tk.END).splitlines() if line.strip()]
-            for line in manual_lines:
-                norm = normalize_url(line)
-                if norm:
-                    urls.append(norm)
-
-            final_urls = []
-            seen = set()
-            for u in urls:
-                if u not in seen:
-                    seen.add(u)
-                    final_urls.append(u)
+            urls.extend(manual_lines)
+            try:
+                final_urls = normalize_batch_urls(urls)
+            except (ValueError, SourceParseError) as error:
+                messagebox.showerror("網址錯誤", str(error), parent=top)
+                return
 
             if not final_urls:
                 messagebox.showwarning("提示", "尚未選取或輸入任何小說網址！\n請從完本排行中勾選小說，或在手動輸入區填入網址。", parent=top)

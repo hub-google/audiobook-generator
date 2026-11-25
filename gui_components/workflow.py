@@ -196,6 +196,10 @@ class WorkflowMixin(ChapterEditorMixin):
     # ── 觸發 GitHub Actions ──
     def trigger_github_actions(self):
         url = self.url_entry.get().strip()
+        if not catalog_matches_current(url, self.catalog_data):
+            messagebox.showwarning("提示", "請先解析目前網址；不能用舊書目錄發動新網址的任務。")
+            return
+        url = self.catalog_data["catalog_url"]
         start_chap = self.entry_start.get().strip()
         end_chap = self.entry_end.get().strip()
 
