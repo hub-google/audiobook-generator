@@ -1,12 +1,12 @@
 """CZBooks source for authorized audiobook production."""
 import re
-from urllib.parse import urlsplit, parse_qs
+from urllib.parse import urlsplit, parse_qs, urljoin
 from .base import SourceAdapter, Chapter, SourceParseError
 
 
 class CZBooksSource(SourceAdapter):
     source_id = "czbooks"
-    version = "2"
+    version = "3"
     hosts = ("czbooks.net", "www.czbooks.net")
     min_interval = 3.0
     max_parallel = 1
@@ -54,7 +54,7 @@ class CZBooksSource(SourceAdapter):
         seen = set()
         for link in root.select("a[href]"):
             href = link["href"]
-            if not pattern.fullmatch(urlsplit(href).path):
+            if not pattern.fullmatch(urlsplit(urljoin(url, href)).path):
                 continue
             target = self.absolute_url(url, href)
             cid = pattern.fullmatch(urlsplit(target).path)[1]
@@ -71,7 +71,8 @@ class CZBooksSource(SourceAdapter):
             if len({item[3] for item in entries}) != len(entries):
                 raise SourceParseError("小說狂人章節順序重複")
             entries.sort(key=lambda item: item[3])
-            if [item[3] for item in entries] != list(range(len(entries))):
+            first = entries[0][3]
+            if first not in (0, 1) or [item[3] for item in entries] != list(range(first, first + len(entries))):
                 raise SourceParseError("小說狂人目錄順序不連續；拒絕不完整目錄")
         chapters = [Chapter(cid, target, label, label, i)
                     for i, (cid, target, label, _) in enumerate(entries, 1)]
@@ -89,7 +90,11 @@ class CZBooksSource(SourceAdapter):
         title = re.sub(r"^[〖【《][^〗】》]+[〗】》]\s*", "", title)
         for node in body.select("script, style, iframe, h1, form, button, nav, .adsbygoogle, .chapter-navigation"):
             node.decompose()
-        text = body.get_text("\n", strip=True)
-        if not title or not text:
+        for node in body.select("br"):
+            node.replace_with("\n")
+        for node in body.select("p, div, blockquote"):
+            node.insert_after("\n")
+        text = "\n".join(line.strip() for line in body.get_text().splitlines() if line.strip())
+        if not title or not text or "\ufffd" in text or "\ufffc" in text:
             raise SourceParseError("小說狂人標題或正文空白")
         return title, text

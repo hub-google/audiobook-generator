@@ -1,6 +1,6 @@
 """Small shared primitives. Site selectors and URL rules stay in adapters."""
 import re
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urljoin
 from .base import Chapter, SourceParseError
 
 
@@ -12,7 +12,8 @@ def catalog_entries(source, soup, url, selector, pattern):
     seen = set()
     for link in root.select("a[href]"):
         href = link["href"]
-        match = re.fullmatch(pattern, urlsplit(href).path)
+        candidate = urljoin(url, href)
+        match = re.fullmatch(pattern, urlsplit(candidate).path)
         if not match:
             continue
         target = source.absolute_url(url, href)

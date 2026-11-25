@@ -7,7 +7,7 @@ from .paging import read_body
 
 class Book8Source(SourceAdapter):
     source_id = "book8"
-    version = "3"
+    version = "4"
     hosts = ("8book.com", "www.8book.com", "v.8book.com", "m.8book.com", "i.8book.com")
     plain_http = True
     max_parallel = 1
@@ -56,7 +56,7 @@ class Book8Source(SourceAdapter):
     def parse_chapter(self, html, url):
         soup = self.soup(html)
         body = soup.select_one("#content")
-        heading = soup.select_one("h1, h2, #chapter-title, .chapter-title")
+        heading = soup.select_one("#chapter-title, .chapter-title") or soup.select_one("h1") or soup.select_one("h2")
         if body is None or heading is None:
             raise SourceParseError("無限小說尚未取得可辨識的完整閱讀頁")
         for node in body.select("script, style, iframe, nav, button, form, h1, h2"):
@@ -66,6 +66,6 @@ class Book8Source(SourceAdapter):
         for node in body.select("p, div, blockquote"):
             node.insert_after("\n")
         text = "\n".join(line.strip() for line in body.get_text().splitlines() if line.strip())
-        if len(re.findall(r"[\u3400-\u9fff]", text)) < 300:
+        if "\ufffd" in text or "\ufffc" in text or len(re.findall(r"[\u3400-\u9fff]", text)) < 300:
             raise SourceParseError("無限小說閱讀頁沒有完整正文")
         return heading.get_text(" ", strip=True), text

@@ -34,7 +34,8 @@ class SourceAdapter:
     plain_http = False
 
     def matches(self, url):
-        return urlsplit(url).hostname in self.hosts
+        parts = urlsplit(url)
+        return parts.scheme in ("http", "https") and not parts.username and not parts.password and parts.hostname in self.hosts
 
     def get_referer(self, url):
         return None

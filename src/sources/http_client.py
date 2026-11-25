@@ -35,6 +35,7 @@ def reset_session(source_id=None):
 
 
 def fetch_page(url, source, timeout=20):
+    source.absolute_url(url, url)
     # Process-wide pacing. Workflow max-parallel also honors source.max_parallel.
     with _lock:
         remaining = source.min_interval - (time.monotonic() - _last.get(source.source_id, 0))
@@ -56,10 +57,27 @@ def fetch_page(url, source, timeout=20):
 
     # Allow mock patch of requests.get in tests
     if source.plain_http or getattr(requests.get, '__module__', None) == 'unittest.mock':
-        response = requests.get(url, headers=headers, timeout=timeout)
+        get = requests.get
     else:
-        session = get_session(source.source_id)
-        response = session.get(url, headers=headers, timeout=timeout)
+        get = get_session(source.source_id).get
+
+    # Check redirects before following them; never contact a foreign host
+    # advertised as a chapter endpoint. Stop on explicit access restrictions.
+    target = url
+    seen = set()
+    for _ in range(6):
+        if target in seen:
+            raise SourceParseError("來源網頁重新導向循環")
+        seen.add(target)
+        response = get(target, headers=headers, timeout=timeout, allow_redirects=False)
+        if response.status_code not in (301, 302, 303, 307, 308):
+            break
+        location = response.headers.get("Location")
+        if not location:
+            raise SourceParseError("來源重新導向缺少網址")
+        target = source.absolute_url(target, location)
+    else:
+        raise SourceParseError("來源重新導向次數過多")
 
     if response.status_code in (401, 403, 429):
         raise SourceAccessError(f'來源存取受限 HTTP {response.status_code}: {url}')

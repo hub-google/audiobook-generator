@@ -110,3 +110,7 @@ python tools/download_novel_txt.py https://www.69shuba.com/book/29590/ --count 3
 `tools/download_novel_txt.py --html-dir <資料夾>` 支援既有單頁檔名格式，也支援 `pages.json`。格式：`{"source_id":"moon17","pages":{"https://www.17moon.com/book/abc/":"catalog.html","https://www.17moon.com/book/abc/def.html":"first.html","https://www.17moon.com/book/abc/def_2.html":"second.html"}}`。URL 必須是實際匯出的同站同書頁面，正文須為正常完整可讀內容。使用原站獨立解析器，沒有網路回退，不跨書補文、不猜測缺字、不自動跳過分頁。沒有匯出齊全會明確失敗。
 
 [獨立線上測試](https://github.com/hub-google/audiobook-generator/actions/runs/45531791840) 顯示無限小說四本書的目錄分別有 47、1104、213、1245 筆，全部章節連向外站；月亮小說網普通 Chromium 的正文請求收到 HTTP 403。兩站僅新增離線合法匯入能力，仍未開放正式線上製作。69 書吧修正 UTF-8／GB18030 解碼及行內文字分段，但線上 403 尚未解除。
+
+## 2026-11-25 追加修正
+
+修復離線多頁測試發現的相對網址解析錯誤；小說狂人支援從 0 或 1 起算的連續章節序號，保留段落；無限小說優先使用章節標題、拒絕未解出字元；月亮小說網檢查分頁 query 一致。HTTP 在連線前驗證重新導向，拒絕外部網域。這些為解析及安全性修復，不代表網站已允許自動連線。69 書吧已於 [45532885782](https://github.com/hub-google/audiobook-generator/actions/runs/45532885782) 成功抓取三章；其他三站未完成線上驗收。

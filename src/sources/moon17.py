@@ -6,7 +6,7 @@ from .paging import catalog_entries, read_body, next_page
 
 class Moon17Source(SourceAdapter):
     source_id = "moon17"
-    version = "3"
+    version = "4"
     hosts = ("17moon.com", "www.17moon.com")
     plain_http = True
     max_parallel = 1
@@ -47,7 +47,7 @@ class Moon17Source(SourceAdapter):
         target = next_page(self, soup, url, ".reader-header__nav a[href]")
         if target:
             base_path = re.sub(r"_\d+\.html$", ".html", urlsplit(url).path)
-            if urlsplit(target).path != base_path[:-5] + f"_{page + 1}.html":
+            if urlsplit(target).path != base_path[:-5] + f"_{page + 1}.html" or urlsplit(target).query != urlsplit(url).query:
                 raise SourceParseError("unexpected chapter pagination URL")
         return title, body, page, target
 

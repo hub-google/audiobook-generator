@@ -60,3 +60,43 @@ def test_bundle_rejects_foreign_book_and_path_escape(tmp_path):
         (tmp_path / "pages.json").write_text(json.dumps({"source_id":"moon17","pages":pages}), encoding="utf-8")
         with pytest.raises(SourceParseError):
             SavedPageBundle(tmp_path, src, url)
+
+
+def test_czbooks_zero_or_one_based_catalog_and_relative_urls():
+    src = resolve_source("https://czbooks.net/n/abc")
+    for first in (0, 1):
+        url = "https://czbooks.net/n/abc"
+        html = f'<h1>測試小說</h1><ul id="chapter-list"><li><a href="abc/def?chapterNumber={first}">第一章</a></li><li><a href="abc/ghi?chapterNumber={first+1}">第二章</a></li></ul>'
+        result = src.parse_catalog(html, url)
+        assert result["total_chapters"] == 2
+        assert result["chapters"][0] == f"https://czbooks.net/n/abc/def?chapterNumber={first}"
+        with pytest.raises(SourceParseError, match="順序不連續"):
+            src.parse_catalog(html.replace(f"chapterNumber={first+1}",f"chapterNumber={first+3}"),url)
+
+
+def test_czbooks_keeps_inline_text():
+    src = resolve_source("https://czbooks.net/n/abc")
+    html = '<h1>《測試小說》第一章</h1><div class="chapter-content"><div class="content"><p>這是<span>第一段</span>正文。</p><p>第二段正文。</p></div></div>'
+    assert src.parse_chapter(html,"https://czbooks.net/n/abc/def") == ("第一章","這是第一段正文。\n第二段正文。")
+
+
+def test_book8_saved_same_site_page_preserves_inline_text(tmp_path):
+    from src.sources.registry import resolve_saved_source
+    src = resolve_saved_source("https://8book.com/novelbooks/1/")
+    text = "這是授權測試正文" * 50
+    html = f'<h1>小說名稱</h1><div id="chapter-title">第一章</div><div id="content"><p>{text}<span>完整句子</span>。</p><p>第二段。</p></div>'
+    title, body = src.parse_chapter(html,"https://8book.com/read/1/?2")
+    assert title == "第一章"
+    assert body.endswith("完整句子。\n第二段。")
+
+
+def test_http_does_not_follow_unapproved_redirect():
+    from unittest.mock import Mock, patch
+    from src.sources.http_client import fetch_page
+    src = resolve_source("https://czbooks.net/n/abc")
+    response = Mock(status_code=302, headers={"Location":"https://example.com/other"})
+    with patch("src.sources.http_client.requests.get", return_value=response) as get, patch("src.sources.http_client.time.sleep"):
+        with pytest.raises(SourceParseError):
+            fetch_page("https://czbooks.net/n/abc",src)
+        assert get.call_count == 1
+        assert get.call_args.kwargs["allow_redirects"] is False
