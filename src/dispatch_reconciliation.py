@@ -1,8 +1,9 @@
 """Authoritative GitHub queue reconciliation: status changes happen only here."""
 
 def reconcile(dispatcher, queue):
+    from .dispatch_retry_policy import retry_state
     from .queue_dispatcher import (
-        BLOCKING_STATES, MAX_NATIVE_PREFLIGHT_RERUNS, TRANSIENT_REASONS,
+        BLOCKING_STATES, MAX_NATIVE_PREFLIGHT_RERUNS,
         parse_time, preflight_status, task_id_from_run_name, settle_interrupted_task,
         update_task, datetime, timedelta, timezone, requests,
     )
@@ -171,21 +172,10 @@ def reconcile(dispatcher, queue):
                 continue
             existing_retry_at = parse_time(task.get("retry_at"))
             reason, retry_at = dispatcher.retry_marker(run_id)
-            if reason not in TRANSIENT_REASONS:
-                task.update({
-                    "status": "needs_attention",
-                    "reason": reason or "permanentFailure",
-                    "retry_at": None,
-                })
-                changed = True
-                continue
-            retry_at = existing_retry_at or retry_at or (datetime.now(timezone.utc) + timedelta(hours=2))
-            task.update({
-                "status": "waiting_retry",
-                "reason": reason,
-                "retry_at": retry_at.isoformat(),
-            })
+            task.update(retry_state(reason, suggested_at=retry_at, existing_at=existing_retry_at))
             changed = True
+            if task["status"] == "needs_attention":
+                continue
         elif status == "completed" and conclusion == "cancelled" and task.get("status") != "paused":
             queue = settle_interrupted_task(
                 queue, task["task_id"], reason="run_cancelled",

@@ -37,11 +37,7 @@ def _find_gh() -> str:
     raise FileNotFoundError("找不到 GitHub CLI (gh)。請先安裝並執行 gh auth login。")
 
 
-TRANSIENT_REASONS = {
-    "quotaExceeded", "uploadLimitExceeded", "rateLimitExceeded", "backendError", "otherError",
-    "thumbnailRateLimit", "captionUploadFailed", "playlistInsertFailed", "publishFailed",
-    "retryable YouTube API failure",
-}
+from .dispatch_retry_policy import TRANSIENT_REASONS
 
 
 def failed_artifact_source_candidates(queue, profile_id, current_task_id="", current_task=None):
