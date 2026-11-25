@@ -36,6 +36,10 @@ def reset_session(source_id=None):
 
 def fetch_page(url, source, timeout=20):
     source.absolute_url(url, url)
+    # A few read-heavy sites need longer than the default crawler timeout.
+    # Restrict retries to declared transient failures, never 403/429.
+    timeout = max(float(timeout), min(60.0, float(getattr(source, "min_timeout", 0))))
+    transient_retries = max(0, min(2, int(getattr(source, "transient_retries", 0))))
     # Process-wide pacing. Workflow max-parallel also honors source.max_parallel.
     with _lock:
         remaining = source.min_interval - (time.monotonic() - _last.get(source.source_id, 0))
@@ -69,7 +73,18 @@ def fetch_page(url, source, timeout=20):
         if target in seen:
             raise SourceParseError("來源網頁重新導向循環")
         seen.add(target)
-        response = get(target, headers=headers, timeout=timeout, allow_redirects=False)
+        for attempt in range(transient_retries + 1):
+            try:
+                response = get(target, headers=headers, timeout=timeout, allow_redirects=False)
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+                if attempt >= transient_retries:
+                    raise
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            if response.status_code in (502, 503, 504) and attempt < transient_retries:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            break
         if response.status_code not in (301, 302, 303, 307, 308):
             break
         location = response.headers.get("Location")

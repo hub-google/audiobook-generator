@@ -135,7 +135,7 @@ class Shuba69Source(SourceAdapter):
                 cover = self.absolute_url(base_url, cover)
 
             # Strictly format as catalog URL ending in /
-            catalog_url = f"https://www.69shuba.com/book/{bid}/"
+            catalog_url = f"https://69shuba.com/book/{bid}/"
 
             novels.append({
                 'rank': rank,
@@ -152,7 +152,7 @@ class Shuba69Source(SourceAdapter):
             rank += 1
         return novels
 
-    def fetch_full_novels(self, url="https://www.69shuba.com/novels/full"):
+    def fetch_full_novels(self, url="https://69shuba.com/novels/full"):
         try:
             from .http_client import fetch_page
         except ImportError:

@@ -6,6 +6,9 @@ from .paging import catalog_entries, read_body
 
 class SixKSource(SourceAdapter):
     source_id = "sixk"
+    version = "2"
+    min_timeout = 30
+    transient_retries = 2
     hosts = ("6ksu.app", "www.6ksu.app")
     plain_http = True
     max_parallel = 1
