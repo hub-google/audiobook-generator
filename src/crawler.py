@@ -138,10 +138,9 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                if source.source_id == "shuba69":
-                    # The previously successful 69shuba runs did not burst
-                    # requests immediately when workers started.
-                    time.sleep(random.uniform(2, 5))
+                jitter = source.worker_start_jitter
+                if jitter is not None:
+                    time.sleep(random.uniform(*jitter))
                 title, raw_text = fetch_chapter_text(url, source_id=source.source_id)
                 edited_titles = config.get("chapter_title_by_index") or {}
                 title = str(edited_titles.get(str(global_idx), edited_titles.get(global_idx, title)))

@@ -26,6 +26,7 @@ class SourceAdapter:
     version = "1"
     hosts = ()
     min_interval = 3.0
+    worker_start_jitter = None  # Optional per-chapter delay range, in seconds.
     max_parallel = 17
     requires_browser = False
     opening_labels = ()

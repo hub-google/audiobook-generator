@@ -34,7 +34,7 @@ GUI 新加入的任務會帶上目錄身分摘要，RUN 解析後必須一致才
 1. 建立 SourceAdapter 子類，明列允許的 hostname。
 2. 實作 book_id、metadata_url、parse_catalog、parse_chapter；視需要覆寫
    parse_metadata。輸出完整 URL；網站標題處理、廣告移除只放該模組。
-3. 在 registry 的 SOURCES 註冊，設定 max_parallel 與 min_interval。
+3. 在 registry 的 SOURCES 註冊，設定 max_parallel、min_interval；如需 Worker 請求前延遲，在來源模組設定 worker_start_jitter。共用 crawler 不依網站 ID 分支。
 4. 加入 HTML fixture 測試：正／倒序、標題、相對 URL、正文與錯誤頁。
 5. 解析規則改動時提升 version，重新建立設定，避免沿用舊解析成果。
 

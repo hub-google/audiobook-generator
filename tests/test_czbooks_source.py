@@ -46,3 +46,9 @@ def test_czbooks_chapter_and_errors():
         adapter.parse_chapter("<h1>錯誤頁</h1>", URL + "/xyz")
     with pytest.raises(SourceAccessError):
         adapter.parse_catalog("<title>Just a moment...</title>", URL)
+
+
+def test_worker_delay_is_source_specific():
+    assert resolve_source(URL).worker_start_jitter is None
+    assert resolve_source("https://www.69shuba.com/book/1/").worker_start_jitter == (2, 5)
+    assert resolve_source("https://tw.hjwzw.com/Book/1").worker_start_jitter is None
