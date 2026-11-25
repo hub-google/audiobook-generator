@@ -33,7 +33,10 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
     def test_state_plan_validation_ignores_publication_title_but_keeps_part_structure(self):
         step = next(item for item in self.jobs["upload_to_youtube"]["steps"]
                     if item.get("name") == "Validate and normalize restored YouTube upload checkpoint")
-        self.assertIn("plan_structure_fingerprint", step["run"])
+        self.assertIn("python -m src.ci.audiobook_steps validate_youtube_checkpoint", step["run"])
+        from src.ci import audiobook_steps
+        import inspect
+        self.assertIn("plan_structure_fingerprint", inspect.getsource(audiobook_steps.validate_youtube_checkpoint))
 
     def test_playlist_metadata_quota_is_classified_as_retryable(self):
         uploader_text = UPLOADER_PATH.read_text(encoding="utf-8")
@@ -352,3 +355,16 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+def test_workflow_steps_are_importable_and_no_inline_python_remains():
+    from src.ci import audiobook_steps
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    import ast
+    assert len(audiobook_steps.STEP_NAMES) == 9
+    ast.parse(Path(audiobook_steps.__file__).read_text(encoding="utf-8"))
+    for step in audiobook_steps.STEP_NAMES:
+        assert f"python -m src.ci.audiobook_steps {step}" in workflow
+        assert callable(getattr(audiobook_steps, step))
+    assert "python - <<'PY'" not in workflow
