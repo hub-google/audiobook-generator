@@ -1,5 +1,6 @@
 """No network: nine-site GUI catalog routing, safety and batch handling."""
 import tkinter as tk
+from tkinter import ttk
 from unittest.mock import Mock, patch
 
 import pytest
@@ -246,17 +247,36 @@ def test_catalog_parse_remains_available_when_github_profile_unavailable():
 
 
 
-def test_main_gui_launches_existing_tools_without_shell_or_new_credentials():
+def test_tool_panels_are_embedded_without_child_processes():
     from gui_components import tool_launchers
     app = object.__new__(AudiobookGUIApp)
-    app.log = Mock()
-    with patch.object(tool_launchers.subprocess, "Popen") as popen:
-        assert app._launch_auxiliary_tool("merge") is True
-        popen.assert_called_once()
-        args = popen.call_args.args[0]
-        assert args[0] == tool_launchers.sys.executable
-        assert args[1].endswith("合併上傳/gui.py")
-        assert popen.call_args.kwargs["cwd"] == str(tool_launchers.Path(tool_launchers.PROJECT_ROOT).resolve())
-    with patch.object(tool_launchers.subprocess, "Popen") as popen:
-        assert app._launch_auxiliary_tool("youtube") is True
-        assert popen.call_args.args[0][1].endswith("tools/youtube_backfill_gui.py")
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        app.root = root
+        app.log = Mock()
+        parent = tk.Frame(root)
+        app._build_tools_tab_ui(parent)
+        assert set(app._tool_panels) == {"merge", "youtube"}
+        assert app._tool_instances == {}
+        assert app._tool_panels["merge"].winfo_toplevel() == root
+        assert app._tool_panels["youtube"].winfo_toplevel() == root
+        with patch.object(tool_launchers.importlib, "import_module") as import_module:
+            widget = Mock()
+            widget.winfo_children.return_value = []
+            def make_widget(master):
+                return tk.Frame(master)
+            import_module.return_value.MergeUploadGUI = make_widget
+            assert app._launch_auxiliary_tool("merge") is True
+            assert "merge" in app._tool_instances
+        assert "subprocess" not in tool_launchers.__dict__
+    finally:
+        root.destroy()
+
+
+def test_both_auxiliary_classes_are_tk_frames_and_accept_embedding():
+    import importlib
+    merge = importlib.import_module("合併上傳.gui")
+    youtube = importlib.import_module("tools.youtube_backfill_gui")
+    assert issubclass(merge.MergeUploadGUI, ttk.Frame)
+    assert issubclass(youtube.App, ttk.Frame)

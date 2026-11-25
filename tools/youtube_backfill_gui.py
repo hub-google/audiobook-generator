@@ -851,13 +851,18 @@ class StudioPrivateClient:
         return result
 
 
-class App(tk.Tk):
-    def __init__(self) -> None:
-        super().__init__()
+class App(ttk.Frame):
+    """YouTube supplement panel; runs inside the main Tk event loop."""
+    def __init__(self, master=None) -> None:
+        self._owned_root = tk.Tk() if master is None else None
+        parent = master if master is not None else self._owned_root
+        super().__init__(parent)
+        if self._owned_root is not None:
+            self._owned_root.title("YouTube 小說資訊卡／置頂留言補登工具")
+            self._owned_root.geometry("1160x820")
+            self._owned_root.minsize(960, 680)
+            self.pack(fill="both", expand=True)
         load_dotenv(PROJECT_ROOT / ".env", override=True)
-        self.title("YouTube 小說資訊卡／置頂留言補登工具")
-        self.geometry("1160x820")
-        self.minsize(960, 680)
         self.raw_cookie: str = os.getenv("YOUTUBE_STUDIO_COOKIES", "").strip()
         self.studio_client: StudioPrivateClient | None = None
         self.state_store = StateStore()
@@ -1482,7 +1487,7 @@ class App(tk.Tk):
 
 def main() -> None:
     app = App()
-    app.mainloop()
+    app._owned_root.mainloop()
 
 
 if __name__ == "__main__":
