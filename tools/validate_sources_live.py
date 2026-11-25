@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 
 from src.catalog_parser import parse_catalog, parse_chapter_number
 from src.crawler import fetch_chapter_text
-from src.sources import resolve_source
+from src.sources import resolve_source, SourceAccessError, SourceParseError
 from src.sources.registry import SOURCES
 from src.sources.twkan import TwkanSource
 from src.sources.sixk import SixKSource
@@ -78,12 +78,14 @@ def live_adapter(source_id):
                 detail.update(status="PASS", title=title, chinese_chars=size,
                               sha256=hashlib.sha256(body.encode("utf-8")).hexdigest())
             except Exception as exc:
+                detail["category"] = "ACCESS_RESTRICTED" if isinstance(exc, SourceAccessError) else "SOURCE_OR_PARSE_ERROR"
                 detail["error"] = f"{type(exc).__name__}: {exc}"
         if all(c["status"] == "PASS" for c in result["chapters"]):
             result["status"] = "PASS"
         else:
             result["error"] = "at least one chapter failed"
     except Exception as exc:
+        result["category"] = "ACCESS_RESTRICTED" if isinstance(exc, SourceAccessError) else "SOURCE_OR_PARSE_ERROR"
         result["error"] = f"{type(exc).__name__}: {exc}"
     return result
 

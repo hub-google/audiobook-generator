@@ -5,6 +5,7 @@ from .base import SourceAdapter, Chapter, SourceParseError
 
 class Shuba69Source(SourceAdapter):
     source_id = "shuba69"
+    version = "2"
     max_parallel = 17
     hosts = ("www.69shuba.com", "69shuba.com")
     encoding = "gb18030"
@@ -49,12 +50,16 @@ class Shuba69Source(SourceAdapter):
         heading = root.find('h1') or soup.find('h1')
         title = re.sub(r'(最新章[節节]|章[節节]列表).*$', '', heading.get_text(strip=True)) if heading else ''
         entries = []
+        seen = set()
         book_id = self.book_id(url)
         for a in root.select('a[href]'):
             href = self.absolute_url(url, a['href'])
             match = re.fullmatch(r'/txt/' + re.escape(book_id) + r'/(\d+)/?', urlsplit(href).path)
-            if match:
+            if match and match[1] not in seen:
                 label = a.get_text(strip=True)
+                if not label:
+                    raise SourceParseError('69 書吧章節標題空白')
+                seen.add(match[1])
                 entries.append((match[1], href, label))
         # DOM may be descending. IDs are site publication IDs, not title numbers.
         if len(entries) > 1 and int(entries[0][0]) > int(entries[-1][0]):

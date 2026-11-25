@@ -1,11 +1,12 @@
 import re
 from urllib.parse import urlsplit
 from .base import SourceAdapter, SourceParseError
-from .paging import catalog_entries, read_body
+from .paging import merge_catalog, single_catalog, next_page, read_body
 
 
 class TwkanSource(SourceAdapter):
     source_id = "twkan"
+    version = "2"
     hosts = ("twkan.cc", "www.twkan.cc")
     plain_http = True
     max_parallel = 1
@@ -23,12 +24,24 @@ class TwkanSource(SourceAdapter):
     def metadata_url(self, url):
         return self.absolute_url(url, f"/book/{self.book_id(url)}.html")
 
-    def parse_catalog(self, html, url):
-        soup = self.soup(html)
+    def _title(self, soup):
         title = soup.find("h1")
-        name = re.sub(r"章節列表\s*$", "", title.get_text(strip=True)) if title else ""
-        records = catalog_entries(self, soup, url, "#allchapter", rf"/chapter/{self.book_id(url)}/([A-Za-z0-9]+)\.html")
-        return self.catalog_result(url, name, records)
+        return re.sub(r"章節列表\s*(?:[（(]?第?\s*\d+\s*頁[）)]?)?\s*$", "", title.get_text(strip=True)) if title else ""
+
+    def _next(self, soup, url):
+        target = next_page(self, soup, url, ".mulu-box a[href]")
+        if target and not re.fullmatch(rf"/chapter/{self.book_id(url)}/\d+\.html", urlsplit(target).path):
+            raise SourceParseError("台灣小說網目錄分頁網址不符")
+        return target
+
+    def _pattern(self, url):
+        return rf"/chapter/{self.book_id(url)}/([A-Za-z0-9]+)\.html"
+
+    def load_catalog(self, url, fetch):
+        return merge_catalog(self, url, fetch, "#allchapter", self._pattern(url), self._title, self._next)
+
+    def parse_catalog(self, html, url):
+        return single_catalog(self, html, url, "#allchapter", self._pattern(url), self._title, self._next)
 
     def parse_chapter(self, html, url):
         soup = self.soup(html)

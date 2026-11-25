@@ -83,3 +83,39 @@ def test_promoted_sources_are_registered():
     from src.sources import resolve_source
     for cls, url in [(SixKSource, "https://www.6ksu.app/novel/1.html"), (XszjSource, "https://xszj.tw/book/1"), (MetaNovelSource, "https://m.metanovel.org/book/1")]:
         assert isinstance(resolve_source(url), cls)
+
+
+def test_twkan_full_catalog_pages():
+    src = TwkanSource()
+    url = "https://www.twkan.cc/chapter/abc.html"
+    pages = {
+        url: '<h1>作品章節列表</h1><div id="allchapter"><a href="/chapter/abc/def.html">第1章</a></div><div class="mulu-box"><a href="/chapter/abc/2.html">下一頁</a></div>',
+        "https://www.twkan.cc/chapter/abc/2.html": '<h1>作品章節列表</h1><div id="allchapter"><a href="/chapter/abc/ghi.html">第2章</a></div>',
+    }
+    assert src.load_catalog(url, pages.__getitem__)["chapter_titles"] == ["第1章", "第2章"]
+    with pytest.raises(SourceParseError):
+        src.parse_catalog(pages[url], url)
+
+
+def test_book8_parses_same_site_only():
+    src = Book8Source()
+    url = "https://8book.com/novelbooks/1/"
+    html = '<title>作品, 無限小說</title><div id="chapters"><a class="episode_li" href="/read/1/?2">第1章</a></div>'
+    result = src.parse_catalog(html, url)
+    assert result["chapters"] == ["https://8book.com/read/1/?2"]
+    body = "測試章節" * 100
+    assert src.parse_chapter(f'<h1>第1章</h1><div id="content">{body}</div>', result["chapters"][0]) == ("第1章", body)
+    with pytest.raises(SourceParseError):
+        src.parse_chapter('<h1>第1章</h1><div id="content">載入中</div>', result["chapters"][0])
+
+
+def test_moon_rejects_explicit_unrendered_markup():
+    src = Moon17Source()
+    with pytest.raises(SourceParseError, match="反序及缺字"):
+        src.parse_chapter('<h1 class="reader-header__title">第1章</h1><article id="article"><p class="js-reversed-text">。甲<i class="icon-1"></i></p></article>', "https://www.17moon.com/book/abc/def.html")
+
+
+def test_shared_reader_keeps_inline_text_together():
+    src = SixKSource()
+    html = '<h1 class="reader-title">第1章</h1><article class="chapter"><p>這是<span>一句</span>話。<br>下一行。</p><p>另一段。</p></article>'
+    assert src.parse_chapter(html, "https://www.6ksu.app/novel/1/chapter/2.html") == ("第1章", "這是一句話。\n下一行。\n另一段。")

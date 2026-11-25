@@ -45,7 +45,13 @@ def read_body(source, soup, selector, heading):
         raise SourceParseError(f"{source.source_id}: missing chapter body or title")
     for node in body.select("script,style,iframe,form,button,nav,[hidden],.adsbygoogle"):
         node.decompose()
-    text = body.get_text("\n", strip=True)
+    # Do not insert newlines inside inline spans or ruby annotations.
+    # Preserve paragraph boundaries and explicit <br> boundaries.
+    for node in body.select("br"):
+        node.replace_with("\n")
+    for node in body.select("p, div, li, blockquote"):
+        node.insert_after("\n")
+    text = "\n".join(line.strip() for line in body.get_text().splitlines() if line.strip())
     if not text.strip():
         raise SourceParseError(f"{source.source_id}: empty chapter body")
     return title.get_text(" ", strip=True), text

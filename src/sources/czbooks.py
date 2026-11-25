@@ -6,6 +6,7 @@ from .base import SourceAdapter, Chapter, SourceParseError
 
 class CZBooksSource(SourceAdapter):
     source_id = "czbooks"
+    version = "2"
     hosts = ("czbooks.net", "www.czbooks.net")
     min_interval = 3.0
     max_parallel = 1
@@ -70,6 +71,8 @@ class CZBooksSource(SourceAdapter):
             if len({item[3] for item in entries}) != len(entries):
                 raise SourceParseError("小說狂人章節順序重複")
             entries.sort(key=lambda item: item[3])
+            if [item[3] for item in entries] != list(range(len(entries))):
+                raise SourceParseError("小說狂人目錄順序不連續；拒絕不完整目錄")
         chapters = [Chapter(cid, target, label, label, i)
                     for i, (cid, target, label, _) in enumerate(entries, 1)]
         metadata = self.parse_metadata(html, url)
@@ -83,7 +86,7 @@ class CZBooksSource(SourceAdapter):
             raise SourceParseError("小說狂人正文結構不符")
         title = heading.get_text(" ", strip=True)
         # Keep the original chapter title, excluding only the site book prefix.
-        title = re.sub(r"^[〖【][^〗】]+[〗】]\s*", "", title)
+        title = re.sub(r"^[〖【《][^〗】》]+[〗】》]\s*", "", title)
         for node in body.select("script, style, iframe, h1, form, button, nav, .adsbygoogle, .chapter-navigation"):
             node.decompose()
         text = body.get_text("\n", strip=True)
