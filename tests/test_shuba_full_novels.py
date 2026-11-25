@@ -74,7 +74,7 @@ def test_parse_full_novels_structure_and_url_normalization():
     assert "蒸汽与机械" in first["description"]
     assert first["cover"] == "https://cdn.cdnshu.com/files/article/image/29/29590/29590s.jpg"
     # CRITICAL: catalog_url must be /book/{id}/ and NEVER .htm
-    assert first["catalog_url"] == "https://www.69shuba.com/book/29590/"
+    assert first["catalog_url"] == "https://69shuba.com/book/29590/"
     assert not first["catalog_url"].endswith(".htm")
 
     # 3. Check second novel
@@ -85,7 +85,7 @@ def test_parse_full_novels_structure_and_url_normalization():
     assert second["author"] == "幼儿园一把手"
     assert second["category"] == "都市小说"
     assert second["latest_chapter"] == "第657章 《微胖狐狸》"
-    assert second["catalog_url"] == "https://www.69shuba.com/book/74678/"
+    assert second["catalog_url"] == "https://69shuba.com/book/74678/"
 
 
 def test_fetch_full_novels_via_mock():
@@ -96,13 +96,13 @@ def test_fetch_full_novels_via_mock():
         novels = fetch_69shuba_full_novels()
         assert len(novels) == 2
         assert novels[0]["title"] == "诡秘之主"
-        assert novels[0]["catalog_url"] == "https://www.69shuba.com/book/29590/"
+        assert novels[0]["catalog_url"] == "https://69shuba.com/book/29590/"
 
     with patch("src.sources.http_client.fetch_page", return_value=mock_response):
         catalog_novels = catalog_fetch_full()
         assert len(catalog_novels) == 2
         assert catalog_novels[1]["title"] == "逼我重生是吧"
-        assert catalog_novels[1]["catalog_url"] == "https://www.69shuba.com/book/74678/"
+        assert catalog_novels[1]["catalog_url"] == "https://69shuba.com/book/74678/"
 
 
 def test_url_normalization_rule():
@@ -112,11 +112,11 @@ def test_url_normalization_rule():
             return ""
         m = re.search(r'69shuba\.com/(?:book|txt)/(\d+)', raw_url)
         if m:
-            return f"https://www.69shuba.com/book/{m.group(1)}/"
+            return f"https://69shuba.com/book/{m.group(1)}/"
         return raw_url
 
-    assert normalize_url("https://www.69shuba.com/book/29590.htm") == "https://www.69shuba.com/book/29590/"
-    assert normalize_url("https://www.69shuba.com/book/29590/") == "https://www.69shuba.com/book/29590/"
-    assert normalize_url("https://www.69shuba.com/book/29590") == "https://www.69shuba.com/book/29590/"
-    assert normalize_url("https://www.69shuba.com/txt/29590/10") == "https://www.69shuba.com/book/29590/"
+    assert normalize_url("https://www.69shuba.com/book/29590.htm") == "https://69shuba.com/book/29590/"
+    assert normalize_url("https://69shuba.com/book/29590/") == "https://69shuba.com/book/29590/"
+    assert normalize_url("https://www.69shuba.com/book/29590") == "https://69shuba.com/book/29590/"
+    assert normalize_url("https://www.69shuba.com/txt/29590/10") == "https://69shuba.com/book/29590/"
     assert normalize_url("https://tw.hjwzw.com/Book/Chapter/1") == "https://tw.hjwzw.com/Book/Chapter/1"

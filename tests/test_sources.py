@@ -121,8 +121,8 @@ def test_catalog_url_normalization():
     shuba = resolve_source('https://www.69shuba.com/book/29590')
     assert shuba.catalog_url('https://www.69shuba.com/book/29590') == 'https://69shuba.com/book/29590/'
     assert shuba.catalog_url('https://www.69shuba.com/book/29590/') == 'https://69shuba.com/book/29590/'
-    assert shuba.catalog_url('https://www.69shuba.com/book/29590.htm') == 'https://www.69shuba.com/book/29590/'
-    assert shuba.catalog_url('https://www.69shuba.com/txt/29590/10') == 'https://www.69shuba.com/book/29590/'
+    assert shuba.catalog_url('https://www.69shuba.com/book/29590.htm') == 'https://69shuba.com/book/29590/'
+    assert shuba.catalog_url('https://www.69shuba.com/txt/29590/10') == 'https://69shuba.com/book/29590/'
     assert shuba.catalog_url('https://www.69shuba.com/book/29590?edition=2') == 'https://69shuba.com/book/29590/?edition=2'
 
     hjwzw = resolve_source('https://tw.hjwzw.com/Book/35120')
@@ -132,7 +132,7 @@ def test_catalog_url_normalization():
 
 def test_parse_catalog_accepts_url_without_trailing_slash():
     result = parse_catalog('https://www.69shuba.com/book/29590', html=CATALOG)
-    assert result['catalog_url'] == 'https://www.69shuba.com/book/29590/'
+    assert result['catalog_url'] == 'https://69shuba.com/book/29590/'
     assert result['total_chapters'] == 3
 
 

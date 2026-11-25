@@ -47,7 +47,7 @@ def test_summary_reuses_catalog_snapshot_when_repeat_requests_are_restricted(mon
     ), patch("src.metadata_gen.requests.get") as web:
         summary, source = fetch_book_summary_details(BOOK_TITLE, CATALOG_URL)
 
-    assert source == CATALOG_URL
+    assert source == ACTUAL_CATALOG_URL
     assert "凜冬領地" in summary
     web.assert_not_called()
 
