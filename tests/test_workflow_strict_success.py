@@ -135,10 +135,14 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         planner = next(step for step in steps if step.get("id") == "resume")
         self.assertIn("HF_TOKEN", planner["env"])
         summary = next(step for step in steps if step.get("name") == "Summarize selected resume work")
+        self.assertIn("python -m src.ci.audiobook_steps write_resume_summary", summary["run"])
+        from src.ci import audiobook_steps
+        import inspect
+        detail = inspect.getsource(audiobook_steps.write_resume_summary)
         for label in ("Selected source Run", "Deepest resume mode", "Reused worker IDs",
                       "Rerun worker IDs", "Reused Part numbers", "Rerun Part numbers",
                       "Publication resume position"):
-            self.assertIn(label, summary["run"])
+            self.assertIn(label, detail)
         final_step = next(step for step in self.jobs["final_merge"]["steps"]
                           if step.get("name") == "Reuse or create the complete Final Merge manifest")
         self.assertIn("HF_TOKEN", final_step["env"])
@@ -187,11 +191,15 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
             if step.get("name") == "Restore authoritative shared-config on Resume"
         )
         command = restore["run"]
-        self.assertIn("Strict resume dispatch validation failed", command)
-        self.assertIn('("book_title", supplied_title)', command)
-        self.assertIn('("chapter_label", chapter_label)', command)
-        self.assertIn('("queue_task_id", queue_task_id)', command)
-        self.assertIn("does not match source config", command)
+        self.assertIn("python -m src.ci.audiobook_steps validate_resume_title", command)
+        from src.ci import audiobook_steps
+        import inspect
+        detail = inspect.getsource(audiobook_steps.validate_resume_title)
+        self.assertIn("Strict resume dispatch validation failed", detail)
+        self.assertIn('("book_title", supplied_title)', detail)
+        self.assertIn('("chapter_label", chapter_label)', detail)
+        self.assertIn('("queue_task_id", queue_task_id)', detail)
+        self.assertIn("does not match source config", detail)
 
     def test_setup_summary_uses_restored_config_not_dispatch_defaults(self):
         summary = next(
@@ -199,9 +207,13 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
             if step.get("name") == "Generate Setup Summary"
         )
         command = summary["run"]
-        self.assertIn("config.get('book_title')", command)
-        self.assertIn("config.get('catalog_url')", command)
-        self.assertIn("min(selected)", command)
+        self.assertIn("python -m src.ci.audiobook_steps write_setup_summary", command)
+        from src.ci import audiobook_steps
+        import inspect
+        detail = inspect.getsource(audiobook_steps.write_setup_summary)
+        self.assertIn("config.get('book_title')", detail)
+        self.assertIn("config.get('catalog_url')", detail)
+        self.assertIn("min(selected)", detail)
         self.assertNotIn("github.event.inputs.catalog_url", command)
 
     def test_schedule_is_isolated_from_manual_production_workflow(self):
@@ -291,9 +303,13 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
             item for item in self.jobs["setup"]["steps"]
             if item.get("name") == "Validate non-empty chapter matrix"
         )
-        self.assertIn("import yaml", step["run"])
+        self.assertIn("python -m src.ci.audiobook_steps validate_chapter_matrix", step["run"])
+        from src.ci import audiobook_steps
+        import inspect
+        detail = inspect.getsource(audiobook_steps.validate_chapter_matrix)
+        self.assertIn("import yaml", detail)
         self.assertIn('.include | type == "array"', step["run"])
-        self.assertIn('.get("include")', step["run"])
+        self.assertIn('.get("include")', detail)
 
     def test_scheduled_retry_has_no_attempt_limit(self):
         self.assertNotIn("Max retries", self.dispatcher_text)
@@ -302,13 +318,20 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
     def test_hf_archive_is_required_by_workflow(self):
         upload = str(self.jobs["upload_to_youtube"])
         self.assertIn("HF_ARCHIVE_REPO", upload)
-        self.assertIn("hf_archive_state.json", upload)
+        self.assertIn("python -m src.ci.audiobook_steps write_publication_summary", upload)
+        from src.ci import audiobook_steps
+        import inspect
+        self.assertIn("hf_archive_state.json", inspect.getsource(audiobook_steps.write_publication_summary))
 
     def test_hf_summary_counts_only_the_current_book(self):
         summary = next(
             step["run"] for step in self.jobs["upload_to_youtube"]["steps"]
             if step.get("name") == "Generate Job Summary"
         )
+        self.assertIn("python -m src.ci.audiobook_steps write_publication_summary", summary)
+        from src.ci import audiobook_steps
+        import inspect
+        summary = inspect.getsource(audiobook_steps.write_publication_summary)
         self.assertIn('book_title = publication.data.get("book_title", "")', summary)
         self.assertIn("books.get(hf_book_key, {})", summary)
         self.assertIn("publication.data.get('source_fingerprint') or book_title", summary)
