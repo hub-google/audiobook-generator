@@ -222,8 +222,15 @@ def test_gui_observer_must_not_write_authoritative_queue_on_run_completion():
         thread = Mock()
         thread.start.side_effect = target
         return thread
-    with patch("gui_components.queue_monitor.threading.Thread", side_effect=synchronous_thread):
-        app.sync_cloud_queue()
+    from concurrent.futures import Future
+    def completed_future(fn, *args):
+        future = Future()
+        future.set_result(fn(*args))
+        return future
+    with patch("gui_components.queue_monitor.ThreadPoolExecutor") as pool:
+        pool.return_value.__enter__.return_value.submit.side_effect = completed_future
+        with patch("gui_components.queue_monitor.threading.Thread", side_effect=synchronous_thread):
+            app.sync_cloud_queue()
     store.mutate.assert_not_called()
     app._dispatch_queue_workflow.assert_called_once()
     assert queue["queue"][0]["status"] == "running"
