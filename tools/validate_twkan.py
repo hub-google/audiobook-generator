@@ -47,7 +47,7 @@ def inspect(url):
                 title, text = src.parse_chapter(html, record["url"])
                 if re.sub(r"\s+", "", title) != re.sub(r"\s+", "", record["title"]):
                     raise SourceParseError("chapter heading differs from catalog label")
-                detail.update(status="PASS", title=title, chinese_chars=len(re.findall(r"[\u3400-\u9fff]", text)),
+                detail.update(status="NOTICE" if src.is_notice(title) else "PASS", title=title, chinese_chars=len(re.findall(r"[\u3400-\u9fff]", text)),
                               sha256=hashlib.sha256(text.encode()).hexdigest())
             except (SourceAccessError, SourceParseError) as exc:
                 detail["error"] = str(exc)
@@ -55,7 +55,7 @@ def inspect(url):
             except Exception as exc:
                 detail["error"] = str(exc)
                 detail["category"] = type(exc).__name__
-        result["status"] = "PASS" if all(c["status"]=="PASS" for c in result["chapters"]) else "FAIL"
+        result["status"] = "PASS" if all(c["status"] in ("PASS", "NOTICE") for c in result["chapters"]) else "FAIL"
     except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
     return result

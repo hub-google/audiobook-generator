@@ -4,9 +4,10 @@ from .czbooks import CZBooksSource
 from .sixk import SixKSource
 from .xszj import XszjSource
 from .metanovel import MetaNovelSource
+from .twkan import TwkanSource
 from .base import SourceParseError
 
-SOURCES = {source.source_id: source for source in (HJWZWSource(), Shuba69Source(), CZBooksSource(), SixKSource(), XszjSource(), MetaNovelSource())}
+SOURCES = {source.source_id: source for source in (HJWZWSource(), Shuba69Source(), CZBooksSource(), SixKSource(), XszjSource(), MetaNovelSource(), TwkanSource())}
 
 
 def resolve_source(url, source_id=None):

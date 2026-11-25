@@ -119,3 +119,19 @@ def test_shared_reader_keeps_inline_text_together():
     src = SixKSource()
     html = '<h1 class="reader-title">第1章</h1><article class="chapter"><p>這是<span>一句</span>話。<br>下一行。</p><p>另一段。</p></article>'
     assert src.parse_chapter(html, "https://www.6ksu.app/novel/1/chapter/2.html") == ("第1章", "這是一句話。\n下一行。\n另一段。")
+
+
+def test_twkan_short_announcement_is_not_a_missing_chapter():
+    src = TwkanSource()
+    url = "https://www.twkan.cc/chapter/abc/def.html"
+    html = '<h1 class="pt10">第568章 新書《測試》</h1><div id="content" class="readcontent"><p>新書已經發布，感謝大家支持。</p></div>'
+    title, body = src.parse_chapter(html, url)
+    assert src.is_notice(title)
+    assert body == "新書已經發布，感謝大家支持。"
+    with pytest.raises(SourceParseError, match="正文過短"):
+        src.parse_chapter(html.replace("新書《測試》", "來得好！（4K二合一大章）"), url)
+
+
+def test_twkan_registered():
+    from src.sources import resolve_source
+    assert isinstance(resolve_source("https://www.twkan.cc/book/abc.html"), TwkanSource)

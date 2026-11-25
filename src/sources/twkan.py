@@ -6,7 +6,7 @@ from .paging import merge_catalog, single_catalog, next_page, read_body
 
 class TwkanSource(SourceAdapter):
     source_id = "twkan"
-    version = "2"
+    version = "3"
     hosts = ("twkan.cc", "www.twkan.cc")
     plain_http = True
     max_parallel = 1
@@ -43,11 +43,18 @@ class TwkanSource(SourceAdapter):
     def parse_catalog(self, html, url):
         return single_catalog(self, html, url, "#allchapter", self._pattern(url), self._title, self._next)
 
+    @staticmethod
+    def is_notice(title):
+        # Only an explicit announcement title; a short numbered story chapter
+        # cannot be reclassified just to make a crawl pass.
+        label = re.sub(r"^\s*第\s*\d+\s*[章回節]\s*", "", title)
+        return bool(re.match(r"^(?:新書[《「〈]|新書發布|新書上架|新書已發|完本感言|上架感言|請假條|請假公告|更新公告|作者公告)", label))
+
     def parse_chapter(self, html, url):
         soup = self.soup(html)
         title, body = read_body(self, soup, "#content.readcontent", "h1.pt10")
         if any(re.search(r"下一[頁页]", a.get_text(strip=True)) for a in soup.select("a[href]")):
             raise SourceParseError("台灣小說網正文分頁尚未完整取得")
-        if len(re.findall(r"[\u3400-\u9fff]", body)) < 300:
+        if len(re.findall(r"[\u3400-\u9fff]", body)) < 300 and not self.is_notice(title):
             raise SourceParseError(f"台灣小說網正文過短，疑似預告、公告或缺文：{title}")
         return title, body
