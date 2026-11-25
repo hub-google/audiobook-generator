@@ -109,10 +109,10 @@ def test_book8_parses_same_site_only():
         src.parse_chapter('<h1>第1章</h1><div id="content">載入中</div>', result["chapters"][0])
 
 
-def test_moon_rejects_explicit_unrendered_markup():
+def test_moon_decodes_explicit_reversed_markup():
     src = Moon17Source()
-    with pytest.raises(SourceParseError, match="反序及缺字"):
-        src.parse_chapter('<h1 class="reader-header__title">第1章</h1><article id="article"><p class="js-reversed-text">。甲<i class="icon-1"></i></p></article>', "https://www.17moon.com/book/abc/def.html")
+    result = src.parse_chapter('<h1 class="reader-header__title">第1章</h1><article id="article"><p class="js-reversed-text">。甲<i class="icon-1"></i></p></article>', "https://www.17moon.com/book/abc/def.html")
+    assert result == ("第1章", "成甲。")
 
 
 def test_shared_reader_keeps_inline_text_together():
