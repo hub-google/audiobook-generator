@@ -42,7 +42,8 @@ def preflight_status(stages):
         stage = stages.get(name) or {}
         if stage.get("status") != "failed":
             continue
-        reason = stage.get("reason") or "failure"
+        # Legacy failed stages without retry evidence require manual attention.
+        reason = stage.get("reason") or "failure_unconfirmed"
         attempt = int(stage.get("run_attempt") or 1)
         if reason == "failure" and attempt <= MAX_NATIVE_PREFLIGHT_RERUNS:
             return "preparing_assets", f"{name}_rerun_pending"
