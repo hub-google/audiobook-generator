@@ -120,7 +120,10 @@ def parse_time(value):
         return None
 
 
-class Dispatcher:
+from .dispatch_github_gateway import GitHubRunGateway
+
+
+class Dispatcher(GitHubRunGateway):
     def __init__(self, repo, token, branch="automation-state", force=False,
                  trigger_run_id=None, trigger_workflow_name="",
                  trigger_conclusion="", trigger_completed_at="", trigger_attempt=None):
@@ -180,26 +183,6 @@ class Dispatcher:
             and int(run.get("id") or 0) == self.trigger_run_id
         )
 
-    def request(self, method, path, **kwargs):
-        response = requests.request(method, self.api + path, headers=self.headers, timeout=30, **kwargs)
-        if response.status_code >= 400:
-            raise RuntimeError(f"GitHub API {method} {path} failed ({response.status_code}): {response.text}")
-        return response
-
-    def runs(self):
-        return self.request("GET", "/actions/workflows/audiobook.yml/runs", params={"event": "workflow_dispatch", "per_page": 100}).json().get("workflow_runs", [])
-
-    def cover_runs(self):
-        return self.request("GET", "/actions/workflows/cover-preflight.yml/runs", params={"event": "workflow_dispatch", "per_page": 100}).json().get("workflow_runs", [])
-
-    def run_by_id(self, run_id):
-        response = requests.get(f"{self.api}/actions/runs/{run_id}", headers=self.headers, timeout=30)
-        if response.status_code == 404:
-            return None
-        if response.status_code >= 400:
-            raise RuntimeError(f"GitHub API GET /actions/runs/{run_id} failed ({response.status_code}): {response.text}")
-        return response.json()
-
     def recover_preflight_controller(self, task):
         """Recover an abandoned controller without competing with a live one."""
         if task.get("workflow_phase") != "preflight" or task.get("status") != "preparing_assets":
@@ -250,17 +233,6 @@ class Dispatcher:
             return True
         return False
 
-    def run_artifact_names(self, run_id):
-        """Return non-expired artifact names for one existing Actions Run."""
-        response = self.request(
-            "GET", f"/actions/runs/{run_id}/artifacts", params={"per_page": 100},
-        )
-        return {
-            str(item.get("name") or "")
-            for item in response.json().get("artifacts", [])
-            if not item.get("expired") and item.get("name")
-        }
-
     def select_artifact_source_run_id(self, queue, profile_id, current_task_id="", current_task=None):
         """Lock the newest completed failed/cancelled Run with worker artifacts."""
         for run_id in failed_artifact_source_candidates(
@@ -279,49 +251,6 @@ class Dispatcher:
                 continue
             return int(run_id)
         return None
-
-    def run_uses_current_master(self, run_id):
-        """Only rerun in place when GitHub would execute the current code."""
-        run = self.run_by_id(run_id)
-        if not run or not run.get("head_sha"):
-            return False
-        master = self.request("GET", "/git/ref/heads/master").json()
-        master_sha = ((master.get("object") or {}).get("sha") or "").strip()
-        return bool(master_sha and run["head_sha"] == master_sha)
-
-    def run_jobs(self, run_id):
-        try:
-            response = requests.get(
-                f"{self.api}/actions/runs/{run_id}/jobs",
-                headers=self.headers, params={"per_page": 100}, timeout=30,
-            )
-            if response.status_code == 200:
-                return response.json().get("jobs", [])
-        except Exception:
-            pass
-        return []
-
-    def job_log(self, job_id):
-        try:
-            response = requests.get(
-                f"{self.api}/actions/jobs/{job_id}/logs",
-                headers=self.headers, timeout=15, allow_redirects=True,
-            )
-            if response.status_code == 200 and response.text:
-                return response.text
-        except Exception:
-            pass
-        try:
-            res = subprocess.run(
-                [_find_gh(), "run", "view", f"--job={job_id}", "--repo", self.repo, "--log"],
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=15, check=False,
-            )
-            if res.returncode == 0 and res.stdout:
-                return res.stdout
-        except (OSError, subprocess.SubprocessError):
-            pass
-        return ""
 
     def retry_marker(self, run_id):
         text = ""
