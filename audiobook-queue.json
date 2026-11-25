@@ -1,8 +1,81 @@
 {
   "schema_version": 3,
-  "revision": 1161,
-  "updated_at": "2026-09-11T11:33:36.344940+00:00",
-  "queue": [],
+  "revision": 1162,
+  "updated_at": "2026-11-25T09:56:00.540Z",
+  "queue": [
+    {
+      "task_id": "book-20261125-7fa2c918",
+      "position": 1,
+      "book_title": "萬古第一廢材",
+      "catalog_url": "https://www.17moon.com/book/JFM/",
+      "catalog_identity": "",
+      "start_chapter": 1,
+      "end_chapter": null,
+      "excluded_chapters": [],
+      "renumber_selected": false,
+      "publish_at": null,
+      "duplicate_chapter_count": null,
+      "chapter_title_overrides": {},
+      "chapter_normalized_number_overrides": {},
+      "chapter_order": [],
+      "status": "queued",
+      "workflow_phase": "queued",
+      "stages": {
+        "scrape": {
+          "status": "pending",
+          "run_id": null,
+          "run_attempt": 0,
+          "reason": null,
+          "completed_at": null
+        },
+        "cover": {
+          "status": "pending",
+          "run_id": null,
+          "run_attempt": 0,
+          "reason": null,
+          "completed_at": null
+        },
+        "processing": {
+          "status": "pending",
+          "run_id": null,
+          "run_attempt": 0,
+          "reason": null,
+          "completed_at": null
+        },
+        "publication": {
+          "status": "pending",
+          "run_id": null,
+          "run_attempt": 0,
+          "reason": null,
+          "completed_at": null
+        }
+      },
+      "scrape_run_id": null,
+      "cover_run_id": null,
+      "processing_run_id": null,
+      "scrape_snapshot_id": "",
+      "ad_review": {
+        "status": "pending"
+      },
+      "run_id": null,
+      "run_attempt": 0,
+      "execution_generation": 1,
+      "retry_requested_at": null,
+      "run_history": [],
+      "retry_at": null,
+      "reason": null,
+      "hf_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "youtube_progress": {
+        "completed": 0,
+        "total": 0
+      },
+      "created_at": "2026-11-25T09:56:00.540Z",
+      "updated_at": "2026-11-25T09:56:00.540Z"
+    }
+  ],
   "completed": [
     {
       "task_id": "book-20260819-630acc92",
@@ -2092,10 +2165,10 @@
         1491
       ],
       "chapter_normalized_number_overrides": {
+        "698": "697",
         "1345": "1333",
         "1346": "1333.1",
-        "1347": "1334",
-        "698": "697"
+        "1347": "1334"
       },
       "run_conclusion": "failure",
       "run_completed_at": "2026-08-23T21:20:53Z",
@@ -2137,10 +2210,10 @@
           "quality": 98
         },
         "chapter_normalized_number_overrides": {
+          "698": "697",
           "1345": "1333",
           "1346": "1333.1",
-          "1347": "1334",
-          "698": "697"
+          "1347": "1334"
         },
         "cleaner_fingerprint": "ec6598cc9c99091f36d41b9d350bede67796b693c2cb5820496c6dadbbc71b01"
       },
@@ -18967,8 +19040,8 @@
       "renumber_selected": true,
       "duplicate_chapter_count": 53,
       "chapter_title_overrides": {
-        "1672": "那個人",
-        "1671": "大結局"
+        "1671": "大結局",
+        "1672": "那個人"
       },
       "chapter_normalized_number_overrides": {},
       "chapter_order": [
@@ -20676,8 +20749,8 @@
           "use_number_and_name": false
         },
         "chapter_title_overrides": {
-          "1672": "那個人",
-          "1671": "大結局"
+          "1671": "大結局",
+          "1672": "那個人"
         },
         "manual_cover": {
           "source": "manual_upload",
@@ -38162,9 +38235,9 @@
           "quality": 98
         },
         "chapter_normalized_number_overrides": {
-          "1355": "1355",
           "270": "270",
-          "635": "635"
+          "635": "635",
+          "1355": "1355"
         },
         "cleaner_fingerprint": "fbfea602515b9c1f77ada67dd62ef77ecc32a6f226fc5f22cac13b1a12dcad52"
       },
