@@ -412,10 +412,9 @@ class Dispatcher:
                     if scrape_run.get("conclusion") == "failure" and run_attempt <= MAX_IMMEDIATE_SCRAPE_RERUNS:
                         new_status, reason = "preparing_assets", "scrape_rerun_pending"
                     else:
-                        new_status, reason = (
-                            "needs_attention",
-                            f"scrape_failed_after_{MAX_IMMEDIATE_SCRAPE_RERUNS}_reruns",
-                        )
+                        reason = (f"scrape_failed_after_{MAX_IMMEDIATE_SCRAPE_RERUNS}_reruns"
+                                  if run_attempt > MAX_IMMEDIATE_SCRAPE_RERUNS else "scrape_" + str(scrape_run.get("conclusion")))
+                        new_status = "needs_attention"
                 elif cover.get("status") == "failed" and cover_run:
                     # Cover preflight has its own native rerun controller. Keep
                     # the task non-actionable while that controller owns retry,
@@ -425,10 +424,9 @@ class Dispatcher:
                     if cover_run.get("conclusion") == "failure" and run_attempt <= MAX_IMMEDIATE_COVER_RERUNS:
                         new_status, reason = "preparing_assets", "cover_rerun_pending"
                     else:
-                        new_status, reason = (
-                            "needs_attention",
-                            f"cover_failed_after_{MAX_IMMEDIATE_COVER_RERUNS}_reruns",
-                        )
+                        reason = (f"cover_failed_after_{MAX_IMMEDIATE_COVER_RERUNS}_reruns"
+                                  if run_attempt > MAX_IMMEDIATE_COVER_RERUNS else "cover_" + str(cover_run.get("conclusion")))
+                        new_status = "needs_attention"
                 elif "failed" in statuses:
                     failed_names = [name for name, state in (("TXT", scrape), ("封面", cover)) if state.get("status") == "failed"]
                     new_status, reason = "needs_attention", "preflight_failed:" + ",".join(failed_names)
