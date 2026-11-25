@@ -47,8 +47,12 @@ def test_queue_sync_checks_bound_run_against_github():
     source = all_gui_source()
 
     assert "actions/runs/{run_id}" in source
-    assert "run_not_found" in source
-    assert "mark_task_interrupted" in source
+    # GUI observes only. Durable decisions now belong to queue_dispatcher.
+    dispatcher = (GUI_SOURCE.parent / "src" / "queue_dispatcher.py").read_text(encoding="utf-8")
+    assert "run_not_found" in dispatcher
+    assert "settle_interrupted_task(" in dispatcher
+    observer = (GUI_COMPONENTS / "queue_monitor.py").read_text(encoding="utf-8")
+    assert "store.mutate(" not in observer.split("def sync_cloud_queue(self):", 1)[1].split("@staticmethod", 1)[0]
     assert "self.root.after(10000, self.sync_cloud_queue)" in source
     assert "observation_text" in source
     assert "GitHub 查證" in source
