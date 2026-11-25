@@ -24,7 +24,7 @@ jobs:
       - run: xvfb-run -a python -m pytest -q tests src/image/kaggle_chapter_images/tests
 
   live-service-check:
-    if: github.ref == 'refs/heads/refactor/final-acceptance-20261125' || (github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch')
+    if: github.ref == 'refs/heads/refactor/final-acceptance-20261125' || github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
