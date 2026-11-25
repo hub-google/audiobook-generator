@@ -37,3 +37,5 @@ GUI 的「試抓首章」按鈕使用和正式 Worker 完全相同的來源解�
 2026-11-25 來源並行上限：除了影音後製 Job，**TXT 抓取矩陣**現在也使用 `needs.setup.outputs.source_max_parallel`（直接由站點 adapter 控制），不再固定 `max-parallel: 17`。例如 6K／小說狂人／月亮小說網／無限小說等設定 1 的網站，只會同時執行一台 TXT 工作機；黃金屋保留 17。GUI 黃金屋示例改為先前線上驗證成功的《三國演義》120 回書籍。
 
 GUI 目錄與雲端書籍設定採獨立失敗處理：GitHub Profile API 暫時無法使用時，仍可解析網站、編輯新小說章節與試抓首章；不會將 GitHub 連線故障誤寫為「小說網站解析失敗」。既有佇列任務改用已保存的章節設定作為暫時備援，真正寫回雲端仍要求成功驗證 GitHub 權限。
+
+完整程式分工、重構守則與尚未完成的技術債：[docs/architecture.md](docs/architecture.md)。
