@@ -196,7 +196,7 @@ def test_live_validator_uses_only_production_source_registry():
     assert set(SAMPLES) == set(SOURCES)
     original = SOURCES.pop("sixk")
     try:
-        with pytest.raises(SourceParseError, match="尚未支援"):
+        with pytest.raises(ValueError, match="production registry have diverged"):
             live_adapter("sixk")
         assert "sixk" not in SOURCES
     finally:
