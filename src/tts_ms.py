@@ -14,6 +14,10 @@ import hashlib
 import json
 import unicodedata
 from datetime import datetime, timezone
+try:
+    from .tts_quality import degraded_chapters, update_fallback_manifest
+except ImportError:
+    from tts_quality import degraded_chapters, update_fallback_manifest
 from opencc import OpenCC
 from pydub import AudioSegment
 from pydub.silence import detect_leading_silence
@@ -242,7 +246,7 @@ async def _process_chapter_async(lines, book_title, chap_num, audio_dir, voice, 
     - 若任何段落最終失敗，回傳 ([], [])，整章廢棄。
     - 回傳 (generated_parts, valid_lines) 表示全部成功。
     """
-    semaphore = asyncio.Semaphore(max_concurrency)
+    semaphore = asyncio.Semaphore(max(1, max_concurrency))
 
     # 整理每個段落的中繼資訊，保留 Cleaner 的空白行作為段落邊界。
     task_metas = []
@@ -397,6 +401,11 @@ def run_tts_ms(target_indices=None):
             wav_ok = srt_ok = True
         except (ArtifactValidationError, OSError, ValueError):
             wav_ok = srt_ok = False
+        if int(chap_num) in degraded_chapters(os.path.join(audio_dir, "silent-fallback-manifest.json")):
+            wav_ok = srt_ok = False
+            for degraded_output in (wav_path, srt_path):
+                if os.path.exists(degraded_output):
+                    os.remove(degraded_output)
         if wav_ok and srt_ok:
             logging.info(f"[TTS_MS] Skipping existing WAV + SRT: {wav_filename}")
             succeeded_chapters.add(int(chap_num))
@@ -433,10 +442,8 @@ def run_tts_ms(target_indices=None):
             )
 
             if fallback_records:
-                manifest_path = os.path.join(audio_dir, "silent-fallback-manifest.json")
-                with open(manifest_path + ".tmp", "w", encoding="utf-8") as handle:
-                    json.dump({"schema_version": 1, "count": len(fallback_records), "segments": fallback_records}, handle, ensure_ascii=False, indent=2)
-                os.replace(manifest_path + ".tmp", manifest_path)
+                update_fallback_manifest(audio_dir, fallback_records)
+                fallback_records.clear()
             if not generated_parts:
                 logging.error(f"[TTS_MS] ✗ 第 {chap_num} 章嘗試 {chapter_attempt} TTS 失敗")
                 continue  # 進入下一次章節重試
@@ -525,6 +532,7 @@ def run_tts_ms(target_indices=None):
             break  # 成功，跳出章節重試迴圈
 
         if chapter_success:
+            update_fallback_manifest(audio_dir, recovered_chapter=int(chap_num))
             succeeded_chapters.add(int(chap_num))
         else:
             logging.error(
@@ -545,15 +553,6 @@ def run_tts_ms(target_indices=None):
                 f"[TTS_MS] 第 {chap_num} 章經過 {CHAPTER_MAX_ATTEMPTS} 次完整嘗試仍失敗，流程中止"
             )
 
-    if fallback_records:
-        manifest_path = os.path.join(audio_dir, "silent-fallback-manifest.json")
-        temporary = manifest_path + ".tmp"
-        with open(temporary, "w", encoding="utf-8") as handle:
-            json.dump({"schema_version": 1, "count": len(fallback_records),
-                       "segments": fallback_records}, handle, ensure_ascii=False, indent=2)
-            handle.flush(); os.fsync(handle.fileno())
-        os.replace(temporary, manifest_path)
-        logging.warning("[TTS_MS] 本次共有 %s 個 TTS Segment 使用 Silent Fallback", len(fallback_records))
     return succeeded_chapters, failed_chapters
 
 

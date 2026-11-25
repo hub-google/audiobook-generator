@@ -328,9 +328,9 @@ def run_resumable_chapter(config, checkpoint, chapter_url, chapter_num, worker_i
         for attempt in range(1, 4):
             try:
                 operation()
-                op_success = True
                 for stage in stage_names:
                     checkpoint.mark_completed(chapter_num, stage)
+                op_success = True
                 break
             except SourceMissingError as error:
                 if stage_names[0] != "crawler":
@@ -349,6 +349,7 @@ def run_resumable_chapter(config, checkpoint, chapter_url, chapter_num, worker_i
                     chapter_num, ",".join(stage_names), attempt, error,
                 )
                 if attempt < 3:
+                    checkpoint.prepare_for_run(chapter_num, stage_names)
                     time.sleep(3 * attempt)
 
         if not op_success:

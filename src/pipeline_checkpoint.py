@@ -9,6 +9,10 @@ from __future__ import annotations
 import json
 import os
 import hashlib
+try:
+    from .tts_quality import degraded_chapters
+except ImportError:
+    from tts_quality import degraded_chapters
 from datetime import datetime, timezone
 
 try:
@@ -118,6 +122,8 @@ class PipelineCheckpoint:
 
     def validate_output(self, chapter, stage):
         path = self.output_path(chapter, stage)
+        if stage in ("tts", "subtitle", "video") and int(chapter) in degraded_chapters(os.path.join(self.workspace_dir, "Audio", "silent-fallback-manifest.json")):
+            raise ArtifactValidationError(f"Chapter {chapter} has unresolved silent TTS fallback")
         return self.registry.validate(
             path,
             lambda candidate: validate_stage(

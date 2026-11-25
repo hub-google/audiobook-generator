@@ -135,3 +135,23 @@ class ReliabilityTests(unittest.TestCase):
                     script = re.sub(r"\$\{\{.*?\}\}", "placeholder", step["run"], flags=re.S)
                     result = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
                     self.assertEqual(result.returncode, 0, f"{path.name}: {step.get('name', step['run'][:60])}: {result.stderr}")
+
+    def test_degraded_manifest_preserves_other_chapters(self):
+        from pathlib import Path
+        from src.tts_quality import degraded_chapters, update_fallback_manifest
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "silent-fallback-manifest.json"
+            update_fallback_manifest(tmp, [{"chapter": 1, "silent_fallback_used": True}, {"chapter": 2, "silent_fallback_used": True}])
+            self.assertEqual(degraded_chapters(path), {1, 2})
+            update_fallback_manifest(tmp, recovered_chapter=1)
+            self.assertEqual(degraded_chapters(path), {2})
+
+    def test_worker_validation_failure_is_not_reported_success(self):
+        from src.worker_pipeline import run_resumable_chapter
+        checkpoint = Mock()
+        checkpoint.is_completed.return_value = False
+        checkpoint.mark_completed.side_effect = ValueError("validation failed")
+        with patch("src.worker_pipeline.stage_crawl"), patch("src.worker_pipeline.time.sleep"):
+            with self.assertRaisesRegex(ValueError, "validation failed"):
+                run_resumable_chapter({}, checkpoint, "https://example.com/1", 1, 0)
+        checkpoint.mark_failed.assert_called()

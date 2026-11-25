@@ -531,7 +531,7 @@ class ReviewMixin:
 
     def _load_or_generate_cover_information(self, book_title, catalog_url, use_cache=True, progress_callback=None):
         """Load cached cover information or generate it for the batch GUI."""
-        project_root = os.path.dirname(os.path.abspath(__file__))
+        project_root = PROJECT_ROOT
         info_file = cache_path(project_root, book_profile_id(catalog_url)).parent / "cover_information.json"
         if use_cache and info_file.is_file():
             try:
@@ -547,7 +547,7 @@ class ReviewMixin:
 
     def _upload_manual_cover(self, book_title, catalog_url, source_path):
         """Normalize and sync a manual cover selected from the batch dialog."""
-        project_root = os.path.dirname(os.path.abspath(__file__))
+        project_root = PROJECT_ROOT
         profile_id = book_profile_id(catalog_url)
         local_cover = cache_path(project_root, profile_id)
         details = normalize_manual_cover(source_path, local_cover)
@@ -642,7 +642,7 @@ class ReviewMixin:
             prompt_text.insert("1.0", data.get("prompt") or data.get("error") or "尚未產生")
             task = task_map[selected[0]]
             try:
-                local_cover = cache_path(os.path.dirname(os.path.abspath(__file__)), book_profile_id(task.get("catalog_url") or ""))
+                local_cover = cache_path(PROJECT_ROOT, book_profile_id(task.get("catalog_url") or ""))
                 if local_cover.is_file():
                     with Image.open(local_cover) as image:
                         shown = image.copy(); shown.thumbnail((640, 360))
