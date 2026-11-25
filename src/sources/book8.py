@@ -1,13 +1,14 @@
 """Parse only legitimate same-site reader links; never rewrite third-party links."""
 import re
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urljoin
 from .base import SourceAdapter, Chapter, SourceParseError
 from .paging import read_body
+from .book8_ajax import resolve_reader_ajax
 
 
 class Book8Source(SourceAdapter):
     source_id = "book8"
-    version = "4"
+    version = "5"
     hosts = ("8book.com", "www.8book.com", "v.8book.com", "m.8book.com", "i.8book.com")
     plain_http = True
     max_parallel = 1
@@ -34,17 +35,19 @@ class Book8Source(SourceAdapter):
             title = soup.title.get_text(strip=True).split(",")[0].strip()
         records, seen = [], set()
         for link in root.select("a.episode_li[href], a[href]"):
-            try:
-                target = self.absolute_url(url, link["href"])
-            except SourceParseError as exc:
-                raise SourceParseError("無限小說目錄指向非本站閱讀網域；拒絕將外站資料視為本站正文") from exc
-            parts = urlsplit(target)
+            original = urljoin(url, link["href"])
+            parts = urlsplit(original)
+            # The site's own item.js publishes these two third-party jump hosts.
+            # They are links, not content sources: reconstruct an internal reader
+            # URL and fetch the real AJAX text only from the 8book host.
+            if parts.hostname not in (*self.hosts, "sport.thepaperbooks.com", "finance.binaccount.com"):
+                raise SourceParseError("無限小說目錄包含未受信任的外站閱讀網址")
             if not re.fullmatch(rf"/read/{self.book_id(url)}/?", parts.path):
                 continue
             cid = parts.query
-            if not re.fullmatch(r"\d+=?", cid):
+            if not re.fullmatch(r"\d+", cid):
                 raise SourceParseError("無限小說章節識別不明")
-            cid = cid.rstrip("=")
+            target = self.absolute_url(url, f"/read/{self.book_id(url)}/?{cid}")
             label = link.get_text(" ", strip=True)
             if not label:
                 raise SourceParseError("無限小說章節標題空白")
@@ -69,3 +72,23 @@ class Book8Source(SourceAdapter):
         if "\ufffd" in text or "\ufffc" in text or len(re.findall(r"[\u3400-\u9fff]", text)) < 300:
             raise SourceParseError("無限小說閱讀頁沒有完整正文")
         return heading.get_text(" ", strip=True), text
+
+
+    def load_chapter(self, url, fetch):
+        # Its initial HTML contains a JS-built AJAX URL, not the body.
+        # Recover the URL without executing site JavaScript.
+        title, endpoint = resolve_reader_ajax(self, fetch(url), url)
+        soup = self.soup(fetch(endpoint))
+        if soup.title and "404" in soup.title.get_text(strip=True):
+            raise SourceParseError("無限小說 AJAX 正文返回 404 頁面")
+        root = soup.select_one("body") or soup
+        for tag in root.select("script, style, iframe, nav, button, form"):
+            tag.decompose()
+        for br in root.select("br"):
+            br.replace_with("\n")
+        for node in root.select("p, div, blockquote"):
+            node.insert_after("\n")
+        text = "\n".join(line.strip() for line in root.get_text().splitlines() if line.strip())
+        if "\ufffd" in text or "\ufffc" in text or len(re.findall(r"[\u3400-\u9fff]", text)) < 300:
+            raise SourceParseError("無限小說 AJAX 正文不完整")
+        return title, text

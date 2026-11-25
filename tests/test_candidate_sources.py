@@ -158,3 +158,32 @@ def test_moon_glyph_dictionary_complete_and_unknown_fails():
     url = "https://www.17moon.com/book/abc/def.html"
     with pytest.raises(SourceParseError, match="未知字型字元"):
         src.parse_chapter('<h1 class="reader-header__title">第1章</h1><article id="article"><p class="js-reversed-text">。<i class="icon-999"></i></p></article>', url)
+
+
+def test_book8_real_reader_ajax_signature_and_content():
+    from src.sources.book8_ajax import resolve_reader_ajax
+    src = Book8Source()
+    salt = "827833895359553635194794343985497618332263635512447119523458192996385441394216873155738718687317164922719781641658694727"
+    # The site's literal reader script has dynamic variable names, but this
+    # is the same prefix/signature expression as the public reader.
+    js = f"""var klnvqb89zj=7;var h585hyyc5=2;var rq8b5888=5;var j882e1lnvq=100;
+var eyc5igfc=3;var ye_5r_585h=1;
+var u0u7h9e_5="第1章 夢幻識通靈,第2章 賈母惜孤女(1),第3章 賈母惜孤女(2)".split(',');
+var g1_26_7_h="39876,39877,39878,{salt}".split(',');
+$.get(unescape((typeof(td)!='undefined'?td:'')+'%2f%'+klnvqb89zj+'4%78%74%2f11%'+h585hyyc5+'f168909%2f'+r399__99+g1_26_7_h[g1_26_7_h.length-ye_5r_585h].substr(r399__99 * eyc5igfc % j882e1lnvq, rq8b5888)+'%2e%68%'+klnvqb89zj+'4%6d%6c'));"""
+    url = "https://8book.com/read/168909/?39876"
+    html = "<html><script>" + js + "</script></html>"
+    title, endpoint = resolve_reader_ajax(src, html, url)
+    assert title == "第1章 夢幻識通靈"
+    assert endpoint == "https://8book.com/txt/11/168909/3987685497.html"
+    body = "第一段完整的小說正文。" * 70
+    fetches = {url: html, endpoint: "<p>" + body + "</p>"}
+    assert src.load_chapter(url, fetches.__getitem__) == (title, body)
+
+
+def test_book8_advertised_hosts_never_become_fetch_hosts():
+    src = Book8Source()
+    url = "https://8book.com/novelbooks/168909/"
+    html = '<title>作品</title><div id="chapters"><a class="episode_li" href="//sport.thepaperbooks.com/read/168909/?39876">第一章</a></div>'
+    catalog = src.parse_catalog(html,url)
+    assert catalog["chapters"] == ["https://8book.com/read/168909/?39876"]
