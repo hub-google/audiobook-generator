@@ -4,6 +4,7 @@ from src.chapter_selection_state import (
     set_checked, sort_normalized,
 )
 from .duplicate_review_dialogs import show_duplicate_details, choose_duplicate_conditions
+from .chapter_cell_editors import edit_chapter_name, edit_normalized_number
 from .runtime import (
     threading, tk, Decimal, InvalidOperation, ttk, messagebox, webbrowser, analyze_duplicate_chapters, find_direct_duplicate_matches, split_chapter_title, normalize_positive_chapter_number, GitHubBookProfileStore, update_book_profile, move_chapter_order,
 )
@@ -261,92 +262,16 @@ class ChapterFilterDialogMixin:
         chapter_tree.bind("<space>", lambda e: (_toggle_item(), "break"))
 
         def _edit_chapter_name(event):
-            if chapter_tree.identify_region(event.x, event.y) != "cell" or chapter_tree.identify_column(event.x) != "#5":
-                return
-            row = chapter_tree.identify_row(event.y)
-            if not row:
-                return
-            index = int(row)
-            x, y, width, height = chapter_tree.bbox(row, "chapter_name")
-            editor = ttk.Entry(chapter_tree)
-            editor.insert(0, chapter_parts[index - 1]["chapter_name"])
-            editor.place(x=x, y=y, width=width, height=height)
-            editor.focus_set()
-            editor.select_range(0, tk.END)
-            closed = False
-
-            def finish(save=True):
-                nonlocal closed
-                if closed:
-                    return
-                closed = True
-                if save:
-                    new_name = editor.get().strip()
-                    if not new_name:
-                        messagebox.showwarning("章節名稱", "章節名稱不能是空白。", parent=top)
-                        closed = False
-                        editor.focus_set()
-                        return
-                    parts = chapter_parts[index - 1]
-                    full_title = " ".join(value for value in (parts["display_number"], new_name) if value).strip()
-                    titles[index - 1] = full_title
-                    self.catalog_data["chapter_titles"][index - 1] = full_title
-                    self.chapter_title_overrides[str(index)] = full_title
-                    _refresh_duplicates()
-                    _update_listbox()
-                editor.destroy()
-
-            editor.bind("<Return>", lambda _event: finish(True))
-            editor.bind("<Escape>", lambda _event: finish(False))
-            editor.bind("<FocusOut>", lambda _event: finish(True))
+            edit_chapter_name(
+                self, top, chapter_tree, event, lambda: chapter_parts, titles,
+                _refresh_duplicates, _update_listbox,
+            )
 
         def _edit_normalized_number(event):
-            if (chapter_tree.identify_region(event.x, event.y) != "cell" or
-                    chapter_tree.identify_column(event.x) != "#3"):
-                return
-            row = chapter_tree.identify_row(event.y)
-            if not row:
-                return
-            index = int(row)
-            x, y, width, height = chapter_tree.bbox(row, "normalized_number")
-            editor = ttk.Entry(chapter_tree)
-            editor.insert(0, chapter_parts[index - 1]["normalized_number"])
-            editor.place(x=x, y=y, width=width, height=height)
-            editor.focus_set()
-            editor.select_range(0, tk.END)
-            closed = False
-
-            def finish(save=True):
-                nonlocal closed
-                if closed:
-                    return
-                closed = True
-                if save:
-                    value = editor.get().strip()
-                    if value:
-                        try:
-                            normalized_value = normalize_positive_chapter_number(value)
-                        except ValueError:
-                            messagebox.showwarning(
-                                "網站章節數正規化", "請輸入大於 0 的整數或小數；留白可恢復自動解析。", parent=top,
-                            )
-                            closed = False
-                            editor.focus_set()
-                            return
-                        self.chapter_normalized_number_overrides[str(index)] = normalized_value
-                    else:
-                        self.chapter_normalized_number_overrides.pop(str(index), None)
-                    self.catalog_data["chapter_normalized_number_overrides"] = dict(
-                        self.chapter_normalized_number_overrides
-                    )
-                    _refresh_duplicates()
-                    _update_listbox()
-                    info_lbl.config(text=f"UUID {index} 的網站章節數正規化已更新；按排序按鈕才會移動章節")
-                editor.destroy()
-
-            editor.bind("<Return>", lambda _event: finish(True))
-            editor.bind("<Escape>", lambda _event: finish(False))
-            editor.bind("<FocusOut>", lambda _event: finish(True))
+            edit_normalized_number(
+                self, top, chapter_tree, event, lambda: chapter_parts,
+                _refresh_duplicates, _update_listbox, info_lbl,
+            )
 
         def _edit_chapter_cell(event):
             if chapter_tree.identify_column(event.x) == "#3":
