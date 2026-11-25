@@ -59,8 +59,8 @@ class YouTubeServicePool:
         BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         cs_dir = os.path.join(BASE_DIR, "client_secret")
 
-        # The OS module is shared with the public uploader; no sys.modules
-        # reflection or implicit compatibility hook is needed.
+        # Use the shared standard OS module instead of reflection on
+        # a previously loaded uploader module.
         path_exists_fn = os.path.exists
 
         for slot in enabled_youtube_account_slots():
