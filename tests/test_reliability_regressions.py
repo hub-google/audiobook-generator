@@ -120,3 +120,18 @@ class ReliabilityTests(unittest.TestCase):
             (root / "chapter_0009/scene_02.webp").unlink()
             with self.assertRaises(ValueError):
                 validate_output(root)
+
+    def test_workflow_shell_blocks_parse(self):
+        import re, shutil, subprocess, yaml
+        from pathlib import Path
+        if not shutil.which("bash"):
+            self.skipTest("bash unavailable")
+        for path in (Path(__file__).resolve().parents[1] / ".github/workflows").glob("*.yml"):
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            for job in data.get("jobs", {}).values():
+                for step in job.get("steps", []):
+                    if "run" not in step or step.get("shell", "bash").split()[0] not in ("bash", "sh"):
+                        continue
+                    script = re.sub(r"\$\{\{.*?\}\}", "placeholder", step["run"], flags=re.S)
+                    result = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
+                    self.assertEqual(result.returncode, 0, f"{path.name}: {step.get('name', step['run'][:60])}: {result.stderr}")

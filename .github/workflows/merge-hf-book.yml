@@ -55,13 +55,13 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
-        run: >-
+        run: |
           MAX_HOURS_ARGS=()
           if [ "$INPUT_MERGE_MODE" = "max_hours" ]; then MAX_HOURS_ARGS=(--max-hours "$INPUT_MAX_HOURS"); fi
-          python "合併上傳/cloud_pipeline.py" plan
-          --book-key "$INPUT_BOOK_KEY" --revision "$INPUT_REPO_REVISION"
-          --mode "$INPUT_MERGE_MODE" "${MAX_HOURS_ARGS[@]}"
-          --expected-plan-id "$INPUT_EXPECTED_PLAN_ID" --plan plan.json
+          python "合併上傳/cloud_pipeline.py" plan \
+            --book-key "$INPUT_BOOK_KEY" --revision "$INPUT_REPO_REVISION" \
+            --mode "$INPUT_MERGE_MODE" "${MAX_HOURS_ARGS[@]}" \
+            --expected-plan-id "$INPUT_EXPECTED_PLAN_ID" --plan plan.json
       - uses: actions/upload-artifact@v4
         with: {name: hf-merge-plan, path: plan.json, retention-days: 2}
 
