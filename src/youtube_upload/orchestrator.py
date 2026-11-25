@@ -59,8 +59,8 @@ def run_upload_pipeline(args):
     """Main pipeline execution logic for YouTube video publishing."""
     if getattr(args, "auth_pool", False):
         pool = YouTubeServicePool()
-        pool.authorize_all_local(sync_github=not getattr(args, "no_sync_gh", False))
-        return 0
+        authorized = pool.authorize_all_local(sync_github=not getattr(args, "no_sync_gh", False), repo=getattr(args, "repo", "hub-google/audiobook-generator"))
+        return 0 if pool.accounts and authorized == len(pool.accounts) else 1
 
     publication = PublicationCheckpoint(args.state_file)
 
