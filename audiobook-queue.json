@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "revision": 1175,
-  "updated_at": "2026-11-25T14:17:14.687961+00:00",
+  "revision": 1176,
+  "updated_at": "2026-11-25T14:23:52.803750+00:00",
   "queue": [
     {
       "task_id": "book-20261125-7fa2c918",
@@ -4805,14 +4805,14 @@
         4783,
         4784
       ],
-      "status": "stopped",
+      "status": "preparing_assets",
       "workflow_phase": "preflight",
       "stages": {
         "scrape": {
-          "status": "failed",
+          "status": "running",
           "run_id": 45594139300,
-          "run_attempt": 1,
-          "reason": "cancelled",
+          "run_attempt": 2,
+          "reason": null,
           "completed_at": null,
           "dispatched_at": "2026-11-25T10:11:58.352116+00:00"
         },
@@ -4852,7 +4852,7 @@
       "retry_requested_at": null,
       "run_history": [],
       "retry_at": null,
-      "reason": "user_cancelled",
+      "reason": "cover_rerun_pending",
       "hf_progress": {
         "completed": 0,
         "total": 0
