@@ -13,6 +13,7 @@ from PIL import Image
 import edge_tts
 
 from src.artifact_validation import validate_video, validate_wav
+from src.youtube_upload.state import enabled_youtube_account_slots
 from src.subtitle_gen import generate_chapter_srt
 from src.video_gen import generate_chapter_video
 
@@ -33,7 +34,8 @@ def check_youtube():
     configured = 0
     refreshed = 0
     read_access = 0
-    for slot in range(1, 11):
+    enabled = enabled_youtube_account_slots()
+    for slot in enabled:
         values = [os.environ.get(f"YOUTUBE_{key}_{slot}", "").strip() for key in ("CLIENT_ID", "CLIENT_SECRET", "REFRESH_TOKEN")]
         if not all(values):
             continue
@@ -50,7 +52,7 @@ def check_youtube():
             category = next((code for code in ("invalid_grant", "invalid_client", "invalid_scope", "unauthorized_client") if code in str(exc)), type(exc).__name__)
             print(f"YouTube slot {slot}: {category}", flush=True)
     print(f"YouTube credentials: {refreshed}/{configured} refreshed; {read_access}/{configured} read API passed", flush=True)
-    if not configured or refreshed != configured or read_access != configured:
+    if configured != len(enabled) or refreshed != configured or read_access != configured:
         raise RuntimeError("YouTube read-only check incomplete")
 
 

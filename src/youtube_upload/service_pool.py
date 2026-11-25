@@ -18,6 +18,7 @@ from .state import (
     MAX_YOUTUBE_ACCOUNT_SLOTS,
     atomic_write_json as _atomic_write_json,
     configured_youtube_account_slots,
+    enabled_youtube_account_slots,
 )
 
 SCOPES = [
@@ -67,7 +68,7 @@ class YouTubeServicePool:
 
         path_exists_fn = _get_symbol("os", os).path.exists
 
-        for slot in range(1, MAX_YOUTUBE_ACCOUNT_SLOTS + 1):
+        for slot in enabled_youtube_account_slots():
             # 1. 檔案路徑檢查
             cs_path = os.path.join(cs_dir, f"client_secret_{slot}.json")
             if slot == 1 and not path_exists_fn(cs_path):
@@ -105,6 +106,10 @@ class YouTubeServicePool:
 
     def require_expected_accounts(self):
         """Fail early in CI when the configured credential pool is incomplete."""
+        if os.environ.get("YOUTUBE_ACTIVE_SLOTS", "").strip() and (os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")):
+            missing = set(enabled_youtube_account_slots()) - configured_youtube_account_slots()
+            if missing:
+                raise RuntimeError(f"Enabled YouTube credential slots are incomplete: {sorted(missing)}")
         raw_expected = os.environ.get("YOUTUBE_EXPECTED_ACCOUNT_COUNT", "").strip()
         if not raw_expected:
             return

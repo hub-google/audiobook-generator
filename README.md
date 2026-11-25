@@ -19,3 +19,5 @@
 在本機專案目錄中執行 `python src/youtube_api_uploader.py --auth-pool`。程式使用既有 `client_secret/client_secret_N.json` 或本機設定，對失效授權開啟瀏覽器，並在登入 GitHub CLI 後將有效憑證同步至本專案的 GitHub Secrets。同步失敗不會顯示為成功；不需在聊天中提供任何 Token。未取得 Google 使用者授權前，不得宣稱該憑證已修復。
 
 正式 Worker 的 read-only 驗證使用原創文字進行短影音製作，不發布到 YouTube、不變更 HF 既有作品。1,700 章測試驗證分工、排除章節與分部清單，不代表已實際生成 1,700 章語音。
+
+目前正式 Actions 預設只啟用第 1 組 YouTube 憑證；原有第 2～10 組結構與 Secrets 均保留。日後新增授權後，在 GitHub Actions repository variables 設定 `YOUTUBE_ACTIVE_SLOTS`（例如 `1,2,3`）即可啟用指定組別。新 HF 合併影片只會分配到已啟用組別，既有上傳 session 仍綁定原 OAuth 組別，不會任意切換。

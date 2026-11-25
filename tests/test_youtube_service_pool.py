@@ -300,3 +300,24 @@ class YouTubeServicePoolTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    @patch.dict(os.environ, {
+        "GITHUB_ACTIONS": "true",
+        "YOUTUBE_ACTIVE_SLOTS": "1",
+        **{f"YOUTUBE_{key}_{slot}": "fixture" for key in ("CLIENT_ID", "CLIENT_SECRET", "REFRESH_TOKEN") for slot in range(1, 11)},
+    }, clear=True)
+    def test_single_enabled_slot_ignores_retired_secrets(self):
+        from src.youtube_upload.state import select_youtube_account_slot
+        pool = YouTubeServicePool()
+        self.assertEqual([account["slot"] for account in pool.accounts], [1])
+        self.assertEqual(configured_youtube_account_slots(), {1})
+        pool.require_expected_accounts()
+        self.assertEqual([select_youtube_account_slot(n) for n in range(1, 25)], [1]*24)
+
+    @patch.dict(os.environ, {
+        "YOUTUBE_ACTIVE_SLOTS": "1,3,10",
+        **{f"YOUTUBE_{key}_{slot}": "fixture" for key in ("CLIENT_ID", "CLIENT_SECRET", "REFRESH_TOKEN") for slot in (1, 3, 10)},
+    }, clear=True)
+    def test_future_multi_slot_assignment(self):
+        from src.youtube_upload.state import select_youtube_account_slot
+        self.assertEqual([select_youtube_account_slot(n) for n in range(1, 7)], [1,3,10,1,3,10])

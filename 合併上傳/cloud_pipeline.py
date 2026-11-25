@@ -16,6 +16,7 @@ sys.path.insert(0, str(HERE.parent))
 from hf_catalog import HfCatalog
 from merge_plan import build_plan
 from src.artifact_validation import validate_video
+from src.youtube_upload.state import select_youtube_account_slot
 
 CHUNK = 8 * 1024 * 1024
 TRANSFER_RETRIES = 5
@@ -348,7 +349,11 @@ def phase1(args):
             return
         if state.get("status") != "phase1_uploading" or not state.get("session_url"):
             raise RuntimeError("Existing upload state is not safe to restart")
-    cred=credentials(state.get("credential_slot") if state else getattr(args,"credential_slot",None))
+    # Never change the OAuth project for an already-created upload session.
+    slot = (state.get("credential_slot") or 1) if state else (
+        getattr(args, "credential_slot", None) or select_youtube_account_slot((manifest.get("output") or {}).get("output_number") or 1)
+    )
+    cred=credentials(slot)
     headers={"Authorization":f"Bearer {cred.token}","Content-Type":"application/json; charset=UTF-8","X-Upload-Content-Length":str(total),"X-Upload-Content-Type":"video/mp4"}
     title = str(args.title or manifest.get("youtube_title") or "").strip()
     description = str(manifest.get("youtube_description") or "").strip()
@@ -369,7 +374,7 @@ def phase1(args):
         response=requests.post("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",headers=headers,json=body,timeout=60)
         response.raise_for_status()
         session=response.headers["Location"]
-        state={"status":"phase1_uploading","book_title":manifest.get("book_title"),"youtube_title":manifest.get("youtube_title"),"plan_id":manifest.get("plan_id"),"output_number":(manifest.get("output") or {}).get("output_number"),"session_url":session,"session_id":hashlib.sha256(session.encode()).hexdigest()[:20],"manifest_path":args.manifest,"source_revision":source_revision(manifest),"total_size":total,"confirmed_bytes":0,"privacy":args.privacy,"publish_at":publish_at or None,"video_id":None,"credential_slot":int(getattr(args,"credential_slot",None) or 1)}
+        state={"status":"phase1_uploading","book_title":manifest.get("book_title"),"youtube_title":manifest.get("youtube_title"),"plan_id":manifest.get("plan_id"),"output_number":(manifest.get("output") or {}).get("output_number"),"session_url":session,"session_id":hashlib.sha256(session.encode()).hexdigest()[:20],"manifest_path":args.manifest,"source_revision":source_revision(manifest),"total_size":total,"confirmed_bytes":0,"privacy":args.privacy,"publish_at":publish_at or None,"video_id":None,"credential_slot":int(slot)}
         upload_json(args.state_path,state,"Persist YouTube session before transferring data")
     session=state["session_url"]
     target=(int(total*.98)//(256*1024))*(256*1024)

@@ -102,6 +102,7 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
+          YOUTUBE_ACTIVE_SLOTS: ${{ vars.YOUTUBE_ACTIVE_SLOTS || '1' }}
           YOUTUBE_CLIENT_ID_1: ${{ secrets.YOUTUBE_CLIENT_ID_1 }}
           YOUTUBE_CLIENT_SECRET_1: ${{ secrets.YOUTUBE_CLIENT_SECRET_1 }}
           YOUTUBE_REFRESH_TOKEN_1: ${{ secrets.YOUTUBE_REFRESH_TOKEN_1 }}
@@ -135,11 +136,10 @@ jobs:
         run: |
           NUMBER=$(printf '%03d' '${{ matrix.output_number }}')
           ROOT="_system/full_merges/${{ needs.plan.outputs.plan_id }}/output-$NUMBER"
-          SLOT=$(( ( ${{ matrix.output_number }} - 1 ) % 10 + 1 ))
           EXTRA_ARGS=()
           if [ -n "$INPUT_PUBLISH_AT" ]; then
             EXTRA_ARGS+=(--publish-at "$INPUT_PUBLISH_AT")
           fi
-          python "合併上傳/cloud_pipeline.py" phase1 --manifest "$ROOT/merge_manifest.json" --state-path "$ROOT/upload_state.json" --privacy "$INPUT_PRIVACY" --credential-slot "$SLOT" "${EXTRA_ARGS[@]}"
+          python "合併上傳/cloud_pipeline.py" phase1 --manifest "$ROOT/merge_manifest.json" --state-path "$ROOT/upload_state.json" --privacy "$INPUT_PRIVACY" "${EXTRA_ARGS[@]}"
       - if: always()
         run: "$RUNNER_TEMP/hf-mount stop $RUNNER_TEMP/hf-bucket || true"
