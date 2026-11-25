@@ -109,7 +109,8 @@ def test_merge_downloads_every_part_before_running_ffmpeg(tmp_path):
     plan_path.write_text(__import__("json").dumps(plan), encoding="utf-8")
     args = SimpleNamespace(plan=str(plan_path), output_number=1, bucket_mount=str(tmp_path / "bucket"))
     local_parts = [tmp_path / "cached-one.mp4", tmp_path / "cached-two.mp4"]
-    with patch.object(module, "api", return_value=(Mock(), "owner/archive", "token")), \
+    with patch.object(module, "reusable_merge_manifest", return_value=None), \
+         patch.object(module, "api", return_value=(Mock(), "owner/archive", "token")), \
          patch.object(module, "download_pinned_part", side_effect=local_parts) as download, \
          patch.object(module.subprocess, "run", side_effect=RuntimeError("stop after concat")) as run:
         with pytest.raises(RuntimeError, match="stop after concat"):
@@ -224,3 +225,44 @@ def test_complete_video_validation_rejects_materially_short_output_before_packet
         with pytest.raises(RuntimeError, match="duration mismatch"):
             module.verify_complete_video("audiobook.mp4", 3600)
     run.assert_not_called()
+
+
+def test_existing_merge_is_reused_without_overwriting_upload_state(tmp_path):
+    import json
+    module = cloud_pipeline_module()
+    item = {"output_number": 2, "duration_seconds": 10, "parts": []}
+    plan = {"plan_id": "test", "repo_revision": "b"*40, "outputs": [item]}
+    root = module.output_root("test", 2)
+    manifest = {"status":"merge_complete","plan_id":"test","parts_revision":"b"*40,
+                "output":item,"video_path":f"{root}/audiobook.mp4",
+                "output_revision":"a"*40,"bytes":100,"sha256":"c"*64}
+    state = {"source_revision":"a"*40,"total_size":100,"manifest_path":f"{root}/merge_manifest.json"}
+    plan_path=tmp_path/"plan.json"; plan_path.write_text(json.dumps(plan))
+    args=SimpleNamespace(plan=str(plan_path),output_number=2,bucket_mount=str(tmp_path))
+    with patch.object(module,"optional_remote_json",side_effect=[manifest,state]), patch.object(module,"api") as api:
+        module.merge_output(args)
+    api.assert_not_called()
+    with patch.object(module,"optional_remote_json",side_effect=[{**manifest,"output_revision":"d"*40},state]):
+        with pytest.raises(RuntimeError,match="does not match"):
+            module.reusable_merge_manifest(root,plan,item)
+
+
+def test_retryable_youtube_error_checks_server_offset_before_retrying():
+    module = cloud_pipeline_module()
+    failed = Mock(status_code=503)
+    complete = Mock(status_code=201); complete.json.return_value={"id":"test"}
+    with patch.object(module,"read_range",side_effect=lambda _,start,end:b"x"*(end-start+1)) as read, \
+         patch.object(module,"put_chunk",side_effect=[failed,complete]), \
+         patch.object(module,"query",return_value=(3,None)), patch.object(module.time,"sleep"):
+        assert module.upload_range("session","source",6,6,0,Mock()) == (6,"test")
+    assert read.call_args_list[1].args == ("source",3,5)
+
+
+def test_phase_two_cannot_bypass_the_24_hour_pause():
+    from datetime import timedelta
+    module=cloud_pipeline_module()
+    state={"status":"paused_at_98","target_resume_at":(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()}
+    with patch.object(module,"remote_json",return_value=state), patch.object(module,"credentials") as credentials:
+        with pytest.raises(RuntimeError,match="24-hour"):
+            module.phase2(SimpleNamespace(state_path="state"))
+    credentials.assert_not_called()

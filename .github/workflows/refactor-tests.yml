@@ -40,6 +40,7 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
+          YOUTUBE_ACTIVE_SLOTS: ${{ vars.YOUTUBE_ACTIVE_SLOTS || '1' }}
           YOUTUBE_CLIENT_ID_1: ${{ secrets.YOUTUBE_CLIENT_ID_1 }}
           YOUTUBE_CLIENT_SECRET_1: ${{ secrets.YOUTUBE_CLIENT_SECRET_1 }}
           YOUTUBE_REFRESH_TOKEN_1: ${{ secrets.YOUTUBE_REFRESH_TOKEN_1 }}
@@ -73,7 +74,7 @@ jobs:
         run: |
           args=()
           while IFS= read -r name; do
-            case "$name" in HF_TOKEN|HF_ARCHIVE_REPO|YOUTUBE_CLIENT_ID_*|YOUTUBE_CLIENT_SECRET_*|YOUTUBE_REFRESH_TOKEN_*) args+=(-e "$name");; esac
+            case "$name" in HF_TOKEN|HF_ARCHIVE_REPO|YOUTUBE_ACTIVE_SLOTS|YOUTUBE_CLIENT_ID_*|YOUTUBE_CLIENT_SECRET_*|YOUTUBE_REFRESH_TOKEN_*) args+=(-e "$name");; esac
           done < <(compgen -e)
           docker run --rm -v "$GITHUB_WORKSPACE:/work:ro" -w /work "${args[@]}" -e PYTHONPATH=/work ghcr.io/hub-google/audiobook-worker@sha256:4979e4cda14569f3d0b941341dd2ae819db5b2f8863c6738acf138f951feb9b1 python tools/live_service_check.py
   schedule-health:

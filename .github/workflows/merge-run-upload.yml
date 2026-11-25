@@ -236,6 +236,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           YOUTUBE_REFRESH_TOKEN_1: ${{ secrets.YOUTUBE_REFRESH_TOKEN_1 }}
+          YOUTUBE_ACTIVE_SLOTS: ${{ vars.YOUTUBE_ACTIVE_SLOTS || '1' }}
           YOUTUBE_CLIENT_ID_1: ${{ secrets.YOUTUBE_CLIENT_ID_1 }}
           YOUTUBE_CLIENT_SECRET_1: ${{ secrets.YOUTUBE_CLIENT_SECRET_1 }}
           YOUTUBE_REFRESH_TOKEN_2: ${{ secrets.YOUTUBE_REFRESH_TOKEN_2 }}
@@ -265,7 +266,7 @@ jobs:
           YOUTUBE_REFRESH_TOKEN_10: ${{ secrets.YOUTUBE_REFRESH_TOKEN_10 }}
           YOUTUBE_CLIENT_ID_10: ${{ secrets.YOUTUBE_CLIENT_ID_10 }}
           YOUTUBE_CLIENT_SECRET_10: ${{ secrets.YOUTUBE_CLIENT_SECRET_10 }}
-          YOUTUBE_EXPECTED_ACCOUNT_COUNT: "10"
+          YOUTUBE_EXPECTED_ACCOUNT_COUNT: ${{ vars.YOUTUBE_EXPECTED_ACCOUNT_COUNT || '' }}
         run: |
           python "合併上傳/bucket_pipeline.py" \
             --mode finalize \
