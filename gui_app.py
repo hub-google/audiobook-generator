@@ -248,13 +248,13 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
     def _build_queue_ui(self, parent):
         section = ttk.LabelFrame(parent, text="雲端佇列（關閉 GUI 後仍由 GitHub 繼續）")
         section.pack(fill=tk.X, pady=(0, 12))
-        columns = ("position", "book", "range", "duplicates", "status", "verified", "hf", "youtube", "run")
+        columns = ("position", "book", "source", "range", "duplicates", "status", "verified", "hf", "youtube", "run")
         headings = {
-            "position": "順位", "book": "小說", "range": "章節", "duplicates": "重複章節", "status": "狀態",
+            "position": "順位", "book": "小說", "source": "來源", "range": "章節", "duplicates": "重複章節", "status": "狀態",
             "verified": "GitHub 查證", "hf": "HF", "youtube": "YouTube", "run": "Run",
         }
         widths = {
-            "position": 45, "book": 135, "range": 80, "duplicates": 75, "status": 175,
+            "position": 45, "book": 145, "source": 86, "range": 80, "duplicates": 75, "status": 175,
             "verified": 100, "hf": 65, "youtube": 75, "run": 90,
         }
         lists = ttk.Notebook(section)
@@ -383,8 +383,10 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
             observation = self.github_observations.get(task.get("task_id"))
             duplicate_count = task.get("duplicate_chapter_count")
             target_tree = self.success_queue_tree if task in queue.get("completed", []) else self.pending_queue_tree
+            adapter = detect_source(task.get("catalog_url") or "")
+            source_name = source_label(adapter.source_id) if adapter else "未知來源"
             target_tree.insert("", tk.END, iid=task["task_id"], values=(
-                task.get("position", "—"), task.get("book_title"), f"{start}–{end}",
+                task.get("position", "—"), task.get("book_title"), source_name, f"{start}–{end}",
                 duplicate_count if duplicate_count is not None else "—", self._queue_status_text(task),
                 self._observation_checked_time(observation),
                 f"{hf.get('completed', 0)}/{hf.get('total', 0)}",
@@ -487,7 +489,9 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         if task.get("publish_at"):
             publish_note = f"\n排定公開（台灣時間）：{task.get('publish_at')}"
         self.selected_status_var.set(
-            f"《{task.get('book_title') or '待解析'}》｜第 {task.get('start_chapter') or 1}～{task.get('end_chapter') or '最後'} 章\n"
+            f"《{task.get('book_title') or '待解析'}》｜"
+            f"來源：{source_label(detect_source(task.get('catalog_url') or '').source_id) if detect_source(task.get('catalog_url') or '') else '未知來源'}｜"
+            f"第 {task.get('start_chapter') or 1}～{task.get('end_chapter') or '最後'} 章\n"
             f"狀態：{self._queue_status_text(task)}　｜　GitHub Run：{run_text}\n"
             f"HF：{hf.get('completed', 0)}/{hf.get('total', 0)}　｜　YouTube：{yt.get('completed', 0)}/{yt.get('total', 0)}{publish_note}{stage_text}{extra}"
         )
