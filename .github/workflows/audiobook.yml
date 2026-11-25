@@ -281,7 +281,7 @@ jobs:
         id: fetch
         run: |
           set +e
-          python src/catalog_parser.py \
+          python -m src.catalog_parser \
             --url "$INPUT_CATALOG_URL" \
             --start "$INPUT_START_CHAP" \
             --end "$INPUT_END_CHAP" \
@@ -397,7 +397,7 @@ jobs:
             echo "restored=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          python src/catalog_parser.py \
+          python -m src.catalog_parser \
             --restore-config restored_source/config.yaml \
             --output config.yaml \
             --matrix-output matrix.json
@@ -491,7 +491,7 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
         run: |
-          python src/resume_planner.py \
+          python -m src.resume_planner \
             --repo "${{ github.repository }}" \
             --run-id "${{ github.run_id }}" \
             --source-run-id "$INPUT_RESUME_SOURCE_RUN_ID" \
@@ -549,7 +549,7 @@ jobs:
       - name: Validate and restore only the locked failed Run
         id: artifact_restore
         run: |
-          python src/worker_pipeline.py \
+          python -m src.worker_pipeline \
             --stage restore_artifact \
             --worker-id ${{ matrix.worker_id }} \
             --artifact-dir "resume_bundle/workers/video-worker-${{ matrix.worker_id }}" \
@@ -558,7 +558,7 @@ jobs:
       - name: Scrape Assigned Chapters via HTTP
         if: steps.artifact_restore.outputs.complete != 'true'
         run: |
-          python src/worker_pipeline.py --stage crawl --worker-id ${{ matrix.worker_id }}
+          python -m src.worker_pipeline --stage crawl --worker-id ${{ matrix.worker_id }}
       - name: Build per-chapter advertisement review report
         if: steps.artifact_restore.outputs.complete != 'true'
         run: |
@@ -675,7 +675,7 @@ jobs:
       - name: Validate and restore only the locked failed Run
         id: artifact_restore
         run: |
-          python src/worker_pipeline.py \
+          python -m src.worker_pipeline \
             --stage restore_artifact \
             --worker-id ${{ matrix.worker_id }} \
             --artifact-dir "resume_bundle/workers/video-worker-${{ matrix.worker_id }}" \
@@ -722,7 +722,7 @@ jobs:
           # Network-facing stages already implement their own bounded retries.
           # Retrying the whole worker repeats deterministic validation failures
           # and obscures the original error with duplicate tracebacks.
-          python src/worker_pipeline.py --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1
+          python -m src.worker_pipeline --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1
 
       - name: Save Worker Workspace Checkpoint
         if: failure() || cancelled()
@@ -826,7 +826,7 @@ jobs:
         id: restore_plan
         if: needs.resume_planner.outputs.has_plan == 'true'
         run: |
-          python src/prepare_parts.py --mode restore-plan \
+          python -m src.prepare_parts --mode restore-plan \
             --source-dir resume_bundle/prepared-plan \
             --config prepared_source/config.yaml \
             --output-dir prepared_plan \
@@ -857,7 +857,7 @@ jobs:
           fi
           for attempt in 1 2 3; do
             echo "Inventory and plan attempt $attempt/3"
-            if python src/prepare_parts.py \
+            if python -m src.prepare_parts \
               --mode plan \
               --run-id "${{ github.run_id }}" \
               --repo "${{ github.repository }}" \
@@ -921,7 +921,7 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             echo "Merge parts attempt $attempt/3"
-            if python src/prepare_parts.py \
+            if python -m src.prepare_parts \
               --mode merge \
               --repo "${{ github.repository }}" \
               --plan prepared_plan/parts-plan.json \
@@ -986,7 +986,7 @@ jobs:
             mkdir -p all_merge_results
             if [ -d resume_bundle/merge-results ]; then cp -a resume_bundle/merge-results/. all_merge_results/; fi
             if [ -d current_merge_results ]; then cp -a current_merge_results/. all_merge_results/; fi
-            python src/resume_planner.py --build-final \
+            python -m src.resume_planner --build-final \
               --run-id "${{ github.run_id }}" \
               --plan prepared_plan/parts-plan.json \
               --sidecar-dir all_merge_results \
@@ -1075,7 +1075,7 @@ jobs:
           run-id: ${{ inputs.cover_source_run_id }}
       - name: Restore and validate approved cover
         if: inputs.cover_source_run_id != ''
-        run: python src/cover_preflight.py --restore approved_cover --config prepared_source/config.yaml --task-id "$INPUT_QUEUE_TASK_ID"
+        run: python -m src.cover_preflight --restore approved_cover --config prepared_source/config.yaml --task-id "$INPUT_QUEUE_TASK_ID"
 
       # A cover uploaded from the review window is an explicit override made
       # after the preflight artifact was created.  Apply it last so the old
@@ -1112,7 +1112,7 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             echo "Fetch Parts from HF attempt $attempt/3"
-            if python src/prepare_parts.py \
+            if python -m src.prepare_parts \
               --mode fetch \
               --plan prepared_plan/parts-plan.json \
               --sidecar-dir prepared_sidecars \
@@ -1178,7 +1178,7 @@ jobs:
           for attempt in 1 2 3; do
             echo "YouTube uploader attempt $attempt/3"
             set +e
-            python src/youtube_api_uploader.py --run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --source-run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --execution-run-id "${{ github.run_id }}" --input-dir prepared_parts --task-id "$INPUT_QUEUE_TASK_ID" --repo "${{ github.repository }}" --privacy "public" --publish-at "$INPUT_PUBLISH_AT" --state-file upload_resume_state/state.json
+            python -m src.youtube_api_uploader --run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --source-run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --execution-run-id "${{ github.run_id }}" --input-dir prepared_parts --task-id "$INPUT_QUEUE_TASK_ID" --repo "${{ github.repository }}" --privacy "public" --publish-at "$INPUT_PUBLISH_AT" --state-file upload_resume_state/state.json
             code=$?
             set -e
 

@@ -36,4 +36,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
           REPOSITORY: ${{ github.repository }}
-        run: python src/cover_rerun_controller.py
+        run: python -m src.cover_rerun_controller

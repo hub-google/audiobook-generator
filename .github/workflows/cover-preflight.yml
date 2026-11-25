@@ -41,7 +41,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          python src/cover_preflight.py \
+          python -m src.cover_preflight \
             --stage introduction \
             --config config.yaml \
             --task-id "$INPUT_QUEUE_TASK_ID" \
@@ -75,7 +75,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python src/cover_preflight.py \
+          python -m src.cover_preflight \
             --stage cover-information \
             --config config.yaml \
             --task-id "$INPUT_QUEUE_TASK_ID"
@@ -106,7 +106,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python src/cover_preflight.py \
+          python -m src.cover_preflight \
             --stage review \
             --config config.yaml \
             --task-id "$INPUT_QUEUE_TASK_ID"
@@ -137,7 +137,7 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          python src/cover_preflight.py \
+          python -m src.cover_preflight \
             --stage cover \
             --config config.yaml \
             --task-id "$INPUT_QUEUE_TASK_ID"
