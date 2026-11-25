@@ -90,8 +90,7 @@ class QueueMonitorMixin:
             try:
                 store, repo, token = self._queue_store()
                 queue, _ = store.load()
-                terminal_updates = []
-                running_updates = []
+                needs_dispatcher = False
                 preflight_updates = {}
                 # Preflight owns two independent Runs.  The queue dispatcher
                 # reconciles both atomically; the legacy single-Run observer
@@ -157,42 +156,21 @@ class QueueMonitorMixin:
                             "run_id": run_id, **result,
                         }
                 for task in monitored:
-                    run_id = task["run_id"]
                     observation = observations[task["task_id"]]
                     self.github_observations[task["task_id"]] = observation
-                    if observation.get("kind") == "ok" and observation.get("raw_status") != "completed":
-                        if task.get("status") != "running":
-                            running_updates.append((task["task_id"], run_id))
-                    elif task.get("status") in BLOCKING_STATES:
-                        if observation.get("kind") == "not_found" and observation.get("confirmed_missing"):
-                            terminal_updates.append((task["task_id"], run_id, "interrupted", "run_not_found", "missing", None))
-                        elif (observation.get("kind") == "ok" and
-                              observation.get("raw_status") == "completed" and
-                              observation.get("raw_conclusion") == "cancelled"):
-                            terminal_updates.append((
-                                task["task_id"], run_id, "interrupted", "run_cancelled", "cancelled",
-                                observation.get("github_updated_at"),
-                            ))
-                        elif (observation.get("kind") == "ok" and
-                              observation.get("raw_status") == "completed" and
-                              observation.get("raw_conclusion") == "success"):
-                            terminal_updates.append((
-                                task["task_id"], run_id, "completed", None, "success",
-                                observation.get("github_updated_at"),
-                            ))
-                        elif (observation.get("kind") == "ok" and
-                              observation.get("raw_status") == "completed" and
-                              observation.get("raw_conclusion") != "success"):
-                            conclusion = observation.get("raw_conclusion") or "unknown"
-                            terminal_updates.append((
-                                task["task_id"], run_id, "waiting_retry",
-                                f"run_{conclusion}", conclusion,
-                                observation.get("github_updated_at"),
-                            ))
+                    # No status interpretation here. Only notify the one
+                    # authoritative state machine when a Run finishes.
+                    if task.get("status") in BLOCKING_STATES and (
+                        (observation.get("kind") == "ok" and
+                         observation.get("raw_status") == "completed") or
+                        (observation.get("kind") == "not_found" and
+                         observation.get("confirmed_missing"))
+                    ):
+                        needs_dispatcher = True
                 # Read-only GUI observer: the dispatcher is the sole writer of
                 # durable run/preflight state. Never replay stale GET results
                 # through GitHubQueueStore.mutate from this local window.
-                if terminal_updates:
+                if needs_dispatcher:
                     self._dispatch_queue_workflow()
                 display_queue = deepcopy(queue)
                 if preflight_updates:
