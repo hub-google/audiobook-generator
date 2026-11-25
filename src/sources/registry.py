@@ -1,8 +1,9 @@
 from .hjwzw import HJWZWSource
 from .shuba69 import Shuba69Source
+from .czbooks import CZBooksSource
 from .base import SourceParseError
 
-SOURCES = {source.source_id: source for source in (HJWZWSource(), Shuba69Source())}
+SOURCES = {source.source_id: source for source in (HJWZWSource(), Shuba69Source(), CZBooksSource())}
 
 
 def resolve_source(url, source_id=None):

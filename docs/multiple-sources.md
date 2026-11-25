@@ -1,7 +1,7 @@
 # 多來源小說架構
 
 來源模組在 `src/sources/`。目前有黃金屋（hjwzw）與 69 書吧
-（shuba69）的 HTML 解析器。GUI 目錄解析、正文預覽、CLI 與 Worker
+（shuba69）、小說狂人（czbooks）的 HTML 解析器。GUI 目錄解析、正文預覽、CLI 與 Worker
 使用相同 Registry 和解析器；未知網域不會退回黃金屋。
 
 ## 身分與相容性
@@ -38,7 +38,7 @@ GUI 新加入的任務會帶上目錄身分摘要，RUN 解析後必須一致才
 4. 加入 HTML fixture 測試：正／倒序、標題、相對 URL、正文與錯誤頁。
 5. 解析規則改動時提升 version，重新建立設定，避免沿用舊解析成果。
 
-當前兩站使用已驗證的單頁目錄與正文結構。新增有分頁或 JavaScript 載入的
+既有兩站使用已驗證的單頁目錄與正文結構。新增有分頁或 JavaScript 載入的
 網站時，需要在來源層明確實作完整頁面取得，不能只放寬 selector。
 
 ## 網路與錯誤
@@ -68,3 +68,7 @@ python tools/download_novel_txt.py https://www.69shuba.com/book/29590/ --count 3
 2026-09-05 實測：69 書吧目錄與前三章在瀏覽器可讀；本地 Python 請求
 收到 HTTP 403。此次未成功產出三章原文 TXT。TXT 匯出已用合成 fixture
 完成整合測試；它不能取代該網站的線上抓取成功驗證。
+
+## 小說狂人（czbooks）
+
+書籍網址格式 `https://czbooks.net/n/<book_id>`。來源識別及章節 ID 與舊來源隔離；保留章節 URL query，依站內章節順序整理目錄。預設單 Worker、3 秒間隔。僅供具備相應使用及有聲改編權利的作品使用。2026-11-25 已確認公開書籍頁及章節頁可供瀏覽；執行環境 DNS 無法直接連線，線上 Python 抓取驗證尚未完成。回歸測試使用合成 HTML，不代表線上抓取驗收。
