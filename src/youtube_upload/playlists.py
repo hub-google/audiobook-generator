@@ -132,12 +132,19 @@ def load_measured_prepared_part_plan(input_dir, book_title):
         locked_plan = json.load(handle)
     locked_parts = {int(part["part_num"]): part for part in (locked_plan.get("parts") or [])}
     measured = []
-    for video_path in glob.glob(os.path.join(input_dir, "**", "*.mp4"), recursive=True):
+    seen_parts = set()
+    def part_sort_key(path):
+        match = re.search(r"_Part_(\d+)_", os.path.basename(path))
+        return (int(match.group(1)) if match else float("inf"), path)
+    for video_path in sorted(glob.glob(os.path.join(input_dir, "**", "*.mp4"), recursive=True), key=part_sort_key):
         filename = os.path.basename(video_path)
         number_match = re.search(r"_Part_(\d+)_", filename)
         if not number_match:
             continue
         part_num = int(number_match.group(1))
+        if part_num in seen_parts:
+            raise RuntimeError(f"prepared Part {part_num} appears more than once")
+        seen_parts.add(part_num)
         locked = locked_parts.get(part_num)
         if not locked:
             raise RuntimeError(f"prepared Part {part_num} is absent from the locked plan")
