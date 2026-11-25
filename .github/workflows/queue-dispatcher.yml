@@ -2,6 +2,9 @@ name: Audiobook Queue Dispatcher
 run-name: "有聲小說佇列調度｜${{ github.event_name }}｜#${{ github.run_number }}"
 
 on:
+  push:
+    branches: [master]
+    paths: ['.github/workflows/queue-dispatcher.yml']
   workflow_dispatch:
     inputs:
       force_retry:
@@ -57,7 +60,7 @@ jobs:
           fi
           for attempt in 1 2 3; do
             echo "Queue dispatcher attempt $attempt/3"
-            if python src/queue_dispatcher.py $EXTRA_ARGS 2>&1 | tee dispatcher-result.txt; then
+            if python -m src.queue_dispatcher $EXTRA_ARGS 2>&1 | tee dispatcher-result.txt; then
               break
             fi
             if [ "$attempt" -eq 3 ]; then
