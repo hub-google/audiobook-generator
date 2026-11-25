@@ -1,0 +1,146 @@
+name: AUDIO｜萬古第一廢材｜修復重發與30分鐘監控
+run-name: "AUDIO修復監控｜萬古第一廢材｜#{{ github.run_number }}"
+on:
+  push:
+    branches: [master]
+    paths: ['.github/workflows/audiobook-recover-watch-20261125.yml']
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: audiobook-recover-book-20261125-7fa2c918
+  cancel-in-progress: false
+jobs:
+  recover_and_watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 37
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      QUEUE_STATE_BRANCH: automation-state
+      TARGET_TASK_ID: book-20261125-7fa2c918
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install queue dependency
+        run: pip install requests
+      - name: Stop obsolete pinned-SHA retries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for id in 45591367155 45591428563; do
+            status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq '.status' 2>/dev/null || true)"
+            if [ -n "$status" ] && [ "$status" != "completed" ]; then
+              gh api --method POST "repos/$GITHUB_REPOSITORY/actions/runs/$id/cancel" || true
+            fi
+          done
+          for n in $(seq 1 18); do
+            active=0
+            for id in 45591367155 45591428563; do
+              status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq '.status' 2>/dev/null || true)"
+              if [ -n "$status" ] && [ "$status" != "completed" ]; then active=1; fi
+            done
+            [ "$active" -eq 0 ] && break
+            sleep 5
+          done
+          [ "$active" -eq 0 ] || { echo "::error::stale runs still active"; exit 1; }
+      - name: Requeue only the failed task, preserving all other books
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64, datetime, json, os, requests
+          repo=os.environ['GITHUB_REPOSITORY']
+          headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'}
+          base=f'https://api.github.com/repos/{repo}/contents/audiobook-queue.json'
+          r=requests.get(base,params={'ref':'automation-state'},headers=headers,timeout=30);r.raise_for_status()
+          data=r.json(); queue=json.loads(base64.b64decode(data['content']))
+          task=next(x for x in queue['queue'] if x['task_id']==os.environ['TARGET_TASK_ID'])
+          if task['status'] == 'completed':
+              raise SystemExit('Task already completed; no reset needed')
+          for stage,stale in [('scrape',45591363976),('cover',45591367155)]:
+              actual=(task.get('stages') or {}).get(stage) or {}
+              if actual.get('run_id') not in (None,stale):
+                  raise SystemExit(f'Stopping: {stage} has newer Run {actual.get("run_id")}')
+              if actual.get('status') == 'completed':
+                  raise SystemExit(f'Stopping: {stage} already completed')
+          if task.get('run_id') not in (None,45591363976):
+              raise SystemExit(f'Stopping: task already assigned new Run {task.get("run_id")}')
+          now=datetime.datetime.now(datetime.timezone.utc).isoformat()
+          for stage in ('scrape','cover'):
+              task['stages'][stage]={'status':'pending','run_id':None,'run_attempt':0,'reason':None,'completed_at':None}
+          task.update(status='queued',workflow_phase='queued',run_id=None,scrape_run_id=None,cover_run_id=None,reason=None,retry_at=None,run_conclusion=None,run_completed_at=None,updated_at=now)
+          queue['revision']=int(queue.get('revision') or 0)+1
+          queue['updated_at']=now
+          content=base64.b64encode((json.dumps(queue,ensure_ascii=False,indent=2)+'\n').encode('utf-8')).decode('ascii')
+          w=requests.put(base,headers=headers,json={'message':'Requeue authorized book after package import fixes','content':content,'sha':data['sha'],'branch':'automation-state'},timeout=30)
+          w.raise_for_status()
+          print('Requeued book-20261125-7fa2c918 at revision',queue['revision'])
+          PY
+      - name: Dispatch latest master workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          for n in 1 2 3; do
+            if python -m src.queue_dispatcher --force; then break; fi
+            [ "$n" -lt 3 ] || exit 1
+            sleep 10
+          done
+      - name: Observe actual TXT and cover runs for 30 minutes
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64,datetime,json,os,sys,time,requests
+          repo=os.environ['GITHUB_REPOSITORY'];task_id=os.environ['TARGET_TASK_ID']
+          current_sha=os.environ['GITHUB_SHA']
+          base=f'https://api.github.com/repos/{repo}'
+          headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'}
+          sess=requests.Session();sess.headers.update(headers)
+          snapshots=[]
+          for i in range(30):
+              stamp=datetime.datetime.now(datetime.timezone.utc).isoformat()
+              try:
+                  response=sess.get(f'{base}/actions/runs',params={'per_page':100},timeout=25);response.raise_for_status()
+                  runs=[r for r in response.json().get('workflow_runs',[]) if task_id in (r.get('display_title') or '')]
+                  jobs={}
+                  for kind,match in [('txt','【TXT抓取】'),('cover','【封面與Gemini】')]:
+                      found=[r for r in runs if match in (r.get('display_title') or '')]
+                      found.sort(key=lambda x:x.get('created_at') or '',reverse=True)
+                      if found:
+                          x=found[0]
+                          jobs[kind]={'run':x['id'],'status':x['status'],'conclusion':x['conclusion'],'sha':x['head_sha'],'url':x['html_url']}
+                  state=sess.get(f'{base}/contents/audiobook-queue.json',params={'ref':'automation-state'},timeout=25);state.raise_for_status()
+                  q=json.loads(base64.b64decode(state.json()['content']))
+                  task=next((t for t in q['queue']+q['completed'] if t.get('task_id')==task_id),None)
+                  snapshot={'check':i+1,'at':stamp,'task_status':task.get('status') if task else 'missing','stages':{k:(task.get('stages') or {}).get(k,{}).get('status') for k in ('scrape','cover','processing','publication')} if task else {},'latest_runs':jobs}
+                  print(json.dumps(snapshot,ensure_ascii=False),flush=True);snapshots.append(snapshot)
+              except Exception as e:
+                  snapshot={'check':i+1,'at':stamp,'error':str(e)}
+                  print(json.dumps(snapshot,ensure_ascii=False),flush=True);snapshots.append(snapshot)
+              if i<29: time.sleep(60)
+          with open('audiobook-monitor-30m.json','w',encoding='utf-8') as f: json.dump(snapshots,f,ensure_ascii=False,indent=2)
+          last=next((x for x in reversed(snapshots) if x.get('latest_runs')),None)
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a',encoding='utf-8') as f:
+              f.write('# 30分鐘執行監控\n\n')
+              f.write(f'- 監控任務：{task_id}\n- 監控次數：{len(snapshots)}\n- 當前版號：{current_sha}\n')
+              if last:
+                  f.write(f'- 最後狀態：{last.get("task_status")}\n')
+                  for kind,job in last['latest_runs'].items():
+                      f.write(f'- {kind}：{job.get("status")} / {job.get("conclusion")} / [Run {job["run"]}]({job["url"]}) / SHA {job.get("sha")}\n')
+          if not last or not {'txt','cover'}.issubset(last['latest_runs']):
+              sys.exit('30m check failed: missing fresh TXT/cover runs')
+          for kind in ('txt','cover'):
+              job=last['latest_runs'][kind]
+              if job['sha']!=current_sha or job['conclusion'] in ('failure','cancelled','timed_out','action_required'):
+                  sys.exit(f'30m check unresolved {kind}: {job}')
+          if last.get('task_status') in ('needs_attention','stopped','interrupted'):
+              sys.exit(f'30m task status unhealthy: {last["task_status"]}')
+          print('30m watch complete: latest TXT and cover runs are current and not failed')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audiobook-recovery-30m-monitor
+          path: audiobook-monitor-30m.json
+          if-no-files-found: ignore
+          retention-days: 7
