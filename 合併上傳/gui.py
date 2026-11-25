@@ -59,18 +59,10 @@ def validate_and_convert_schedule(schedule_text: str, now_dt: datetime | None = 
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 HERE = Path(__file__).resolve().parent; ROOT = HERE.parent
-if __package__:
-    from .hf_catalog import HfBook, HfCatalog, load_local_env
-    from .merge_plan import build_plan, format_duration, format_size
-    from .merge_status import collect_status
-else:
-    # Standalone script and older tests continue to work without the GUI
-    # modifying the application's shared module import path.
-    if str(HERE) not in sys.path:
-        sys.path.insert(0, str(HERE))
-    from hf_catalog import HfBook, HfCatalog, load_local_env
-    from merge_plan import build_plan, format_duration, format_size
-    from merge_status import collect_status
+sys.path.insert(0, str(HERE))
+from hf_catalog import HfBook, HfCatalog, load_local_env
+from merge_plan import build_plan, format_duration, format_size
+from merge_status import collect_status
 
 REPOSITORY, WORKFLOW = "hub-google/audiobook-generator", "merge-hf-book.yml"
 
@@ -120,18 +112,10 @@ def book_sort_value(book: HfBook, column: str):
     }
     return values[column]
 
-class MergeUploadGUI(ttk.Frame):
-    """Embeddable merge and upload panel (also usable as a standalone app)."""
-    def __init__(self, master=None):
-        self._owned_root = tk.Tk() if master is None else None
-        parent = master if master is not None else self._owned_root
-        super().__init__(parent)
-        if self._owned_root is not None:
-            self._owned_root.title("全集合併與兩階段上傳")
-            self._owned_root.geometry("1380x920")
-            self._owned_root.minsize(1080, 780)
-            self.pack(fill="both", expand=True)
-        load_local_env(ROOT)
+class MergeUploadGUI(tk.Tk):
+    def __init__(self):
+        super().__init__(); load_local_env(ROOT)
+        self.title("全集合併與兩階段上傳"); self.geometry("1380x920"); self.minsize(1080, 780)
         self.books, self.selected_book, self.current_plan, self.run_url = {}, None, None, ""
         self.status_rows, self._refresh_after = {}, None
         self.book_sort_column, self.book_sort_reverse = "title", False
@@ -403,6 +387,4 @@ class MergeUploadGUI(ttk.Frame):
             time.sleep(2)
         raise RuntimeError("workflow 已送出，但 60 秒內找不到新 Run")
 
-if __name__ == "__main__":
-    app = MergeUploadGUI()
-    app._owned_root.mainloop()
+if __name__=="__main__": MergeUploadGUI().mainloop()

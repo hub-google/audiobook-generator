@@ -1,0 +1,143 @@
+{
+  "core_summary_zh": "葉秋因表現不佳被嘉世俱樂部解雇，轉交一葉之秋賬號給新隊長孫翔，葉秋決定解約並同意退役條件。",
+  "two_scene_feasibility": "可行",
+  "candidates": [
+    {
+      "event_id": "1",
+      "position": 0.1,
+      "event_type": "人物行動",
+      "summary_zh": "葉秋操作電腦對手擊敗，準備對戰。",
+      "characters": [
+        "葉秋"
+      ],
+      "location": "房間",
+      "visible_action": "操作電腦",
+      "visible_emotion": "自信",
+      "key_objects": [
+        "電腦"
+      ],
+      "evidence": [
+        {
+          "chunk_id": "ch0001_p001",
+          "start_char": 0,
+          "end_char": 703,
+          "support_summary": "一雙靈巧的手飛舞著操縱著鍵盤和鼠標，富有節奏的敲擊聲仿佛是一首輕快的樂章。"
+        }
+      ],
+      "scores": {
+        "narrative": 5,
+        "visual": 3,
+        "character": 4,
+        "emotion": 4,
+        "coverage": 4,
+        "evidence": 5
+      },
+      "uncertainties": [],
+      "not_depicted": []
+    },
+    {
+      "event_id": "2",
+      "position": 0.3,
+      "event_type": "人物對話",
+      "summary_zh": "俱樂部經理宣布葉秋被解雇，孫翔接手一葉之秋。",
+      "characters": [
+        "俱樂部經理",
+        "葉秋",
+        "孫翔"
+      ],
+      "location": "會議室",
+      "visible_action": "宣布解雇",
+      "visible_emotion": "冷漠",
+      "key_objects": [
+        "解雇通知"
+      ],
+      "evidence": [
+        {
+          "chunk_id": "ch0001_p001",
+          "start_char": 704,
+          "end_char": 1375,
+          "support_summary": "俱樂部經理看到葉秋進來，立刻回頭說道：\"葉秋，俱樂部已經決定，由新轉會來的孫翔接替你的隊長職務，一葉之秋今后也由孫翔來操控。\""
+        }
+      ],
+      "scores": {
+        "narrative": 5,
+        "visual": 3,
+        "character": 4,
+        "emotion": 4,
+        "coverage": 4,
+        "evidence": 5
+      },
+      "uncertainties": [],
+      "not_depicted": []
+    },
+    {
+      "event_id": "3",
+      "position": 0.5,
+      "event_type": "人物決策",
+      "summary_zh": "葉秋決定解約並同意孫翔接手一葉之秋。",
+      "characters": [
+        "葉秋",
+        "蘇沐橙"
+      ],
+      "location": "會議室",
+      "visible_action": "簽署解約文件",
+      "visible_emotion": "堅定",
+      "key_objects": [
+        "解約文件"
+      ],
+      "evidence": [
+        {
+          "chunk_id": "ch0001_p006",
+          "start_char": 3382,
+          "end_char": 4034,
+          "support_summary": "葉秋答應解約條件，簽署解約文件。"
+        }
+      ],
+      "scores": {
+        "narrative": 5,
+        "visual": 3,
+        "character": 4,
+        "emotion": 4,
+        "coverage": 4,
+        "evidence": 5
+      },
+      "uncertainties": [],
+      "not_depicted": []
+    },
+    {
+      "event_id": "4",
+      "position": 0.7,
+      "event_type": "人物離開",
+      "summary_zh": "葉秋準備離開俱樂部，蘇沐橙送行。",
+      "characters": [
+        "葉秋",
+        "蘇沐橙"
+      ],
+      "location": "俱樂部",
+      "visible_action": "離開",
+      "visible_emotion": "依依不舍",
+      "key_objects": [
+        "俱樂部門"
+      ],
+      "evidence": [
+        {
+          "chunk_id": "ch0001_p007",
+          "start_char": 4035,
+          "end_char": 4056,
+          "support_summary": "蘇沐橙是唯一一個跟在他身后的。"
+        }
+      ],
+      "scores": {
+        "narrative": 5,
+        "visual": 3,
+        "character": 4,
+        "emotion": 4,
+        "coverage": 4,
+        "evidence": 5
+      },
+      "uncertainties": [],
+      "not_depicted": []
+    }
+  ],
+  "chapter": 1
+}

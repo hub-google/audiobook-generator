@@ -166,7 +166,7 @@ class CloudQueueTests(unittest.TestCase):
             "id": 100, "status": "in_progress", "conclusion": None,
             "display_title": f"First｜{first['task_id']}",
         }])
-        dispatcher.dispatch_next = Mock(side_effect=lambda value, **kwargs: (value, "dispatched"))
+        dispatcher.dispatch_next = Mock(side_effect=lambda value: (value, "dispatched"))
 
         dispatcher.run()
 
@@ -979,7 +979,7 @@ Part 2/2 | Ch 51-100
         dispatcher.profile_store.load = Mock(return_value=({"books": {}}, None))
         dispatcher.reconcile = Mock(return_value=(queue, False))
         dispatcher.run_uses_current_master = Mock(return_value=False)
-        dispatch_next.side_effect = lambda value, **kwargs: (value, "fresh")
+        dispatch_next.side_effect = lambda value: (value, "fresh")
 
         dispatcher.run()
 
@@ -994,7 +994,7 @@ Part 2/2 | Ch 51-100
         dispatcher = Dispatcher("owner/repo", "token")
         dispatcher.store.load = Mock(return_value=(queue, "sha-1"))
         dispatcher.reconcile = Mock(return_value=(queue, False))
-        dispatch_next.side_effect = lambda value, **kwargs: (value, "not observed")
+        dispatch_next.side_effect = lambda value: (value, "not observed")
 
         summary = dispatcher.run()
 

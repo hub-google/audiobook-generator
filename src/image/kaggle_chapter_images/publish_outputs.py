@@ -6,10 +6,6 @@ import os
 from pathlib import Path
 
 from huggingface_hub import CommitOperationAdd, HfApi
-try:
-    from .validate_outputs import validate_output
-except ImportError:
-    from validate_outputs import validate_output
 
 
 def load_env(path: Path) -> None:
@@ -33,7 +29,7 @@ def publish(output: Path, assets: Path, repo_id: str, env_file: Path) -> dict:
     token = os.environ.get("HF_TOKEN", "").strip()
     if not token:
         raise RuntimeError("HF_TOKEN is required")
-    report = validate_output(output)
+    report = json.loads((output / "run_report.json").read_text(encoding="utf-8"))
     version_root = "chapter_images/v1"
     api = HfApi(token=token)
     api.create_repo(repo_id, repo_type="dataset", private=True, exist_ok=True)

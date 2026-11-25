@@ -56,7 +56,7 @@ class ResumeArchitectureTests(unittest.TestCase):
             result = asyncio.run(_generate_one_segment(
                 asyncio.Semaphore(1), "禁詞片段", os.path.join(directory, "x.mp3"),
                 os.path.join(directory, "x.wav"), "segment", "voice", max_retries=2,
-                normalized_retries=1, split_retries=1, silent_fallback=True, fallback_records=records,
+                normalized_retries=1, split_retries=1, fallback_records=records,
                 chapter=7, segment_index=3,
             ))
         self.assertTrue(result)

@@ -19,12 +19,6 @@ permissions:
   actions: write
   contents: read
 
-env:
-  INPUT_QUEUE_TASK_ID: ${{ inputs.queue_task_id }}
-  INPUT_BOOK_TITLE: ${{ inputs.book_title }}
-  INPUT_CATALOG_URL: ${{ inputs.catalog_url }}
-  INPUT_BOOK_PROFILE_SNAPSHOT_B64: ${{ inputs.book_profile_snapshot_b64 }}
-
 jobs:
   generate_book_introduction:
     name: "📚 Generate Gemini book introduction"
@@ -41,13 +35,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          python -m src.cover_preflight \
+          python src/cover_preflight.py \
             --stage introduction \
             --config config.yaml \
-            --task-id "$INPUT_QUEUE_TASK_ID" \
-            --book-title "$INPUT_BOOK_TITLE" \
-            --catalog-url "$INPUT_CATALOG_URL" \
-            --book-profile-snapshot-b64 "$INPUT_BOOK_PROFILE_SNAPSHOT_B64"
+            --task-id "${{ inputs.queue_task_id }}" \
+            --book-title "${{ inputs.book_title }}" \
+            --catalog-url "${{ inputs.catalog_url }}" \
+            --book-profile-snapshot-b64 "${{ inputs.book_profile_snapshot_b64 }}"
       - name: Upload book introduction artifact
         uses: actions/upload-artifact@v4
         with:
@@ -75,10 +69,10 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python -m src.cover_preflight \
+          python src/cover_preflight.py \
             --stage cover-information \
             --config config.yaml \
-            --task-id "$INPUT_QUEUE_TASK_ID"
+            --task-id "${{ inputs.queue_task_id }}"
       - name: Upload cover information artifact
         uses: actions/upload-artifact@v4
         with:
@@ -106,10 +100,10 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python -m src.cover_preflight \
+          python src/cover_preflight.py \
             --stage review \
             --config config.yaml \
-            --task-id "$INPUT_QUEUE_TASK_ID"
+            --task-id "${{ inputs.queue_task_id }}"
       - name: Upload reviewed prompt artifact
         uses: actions/upload-artifact@v4
         with:
@@ -137,10 +131,10 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          python -m src.cover_preflight \
+          python src/cover_preflight.py \
             --stage cover \
             --config config.yaml \
-            --task-id "$INPUT_QUEUE_TASK_ID"
+            --task-id "${{ inputs.queue_task_id }}"
       - name: Upload cover review artifact
         uses: actions/upload-artifact@v4
         with:

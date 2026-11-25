@@ -8,36 +8,10 @@ from datetime import datetime, timezone
 MAX_YOUTUBE_ACCOUNT_SLOTS = 10
 
 
-def enabled_youtube_account_slots():
-    """Optional allowlist; preserve discovery of all ten slots when unset."""
-    raw = os.environ.get("YOUTUBE_ACTIVE_SLOTS", "").strip()
-    if not raw:
-        return tuple(range(1, MAX_YOUTUBE_ACCOUNT_SLOTS + 1))
-    try:
-        slots = tuple(sorted({int(part.strip()) for part in raw.split(",")}))
-    except ValueError as error:
-        raise RuntimeError("YOUTUBE_ACTIVE_SLOTS must be comma-separated slot numbers") from error
-    if not slots or any(not 1 <= slot <= MAX_YOUTUBE_ACCOUNT_SLOTS for slot in slots):
-        raise RuntimeError("YOUTUBE_ACTIVE_SLOTS must contain slots 1 through 10")
-    return slots
-
-
-def select_youtube_account_slot(output_number):
-    slots = sorted(configured_youtube_account_slots())
-    if not slots:
-        raise RuntimeError("No enabled YouTube credential is configured")
-    if os.environ.get("YOUTUBE_ACTIVE_SLOTS", "").strip() and set(slots) != set(enabled_youtube_account_slots()):
-        raise RuntimeError("An enabled YouTube credential slot is incomplete")
-    number = int(output_number)
-    if number < 1:
-        raise ValueError("Output number must be positive")
-    return slots[(number - 1) % len(slots)]
-
-
 def configured_youtube_account_slots():
     """Return complete environment-backed credential slots without authenticating."""
     slots = set()
-    for slot in enabled_youtube_account_slots():
+    for slot in range(1, MAX_YOUTUBE_ACCOUNT_SLOTS + 1):
         if all(os.environ.get(f"{name}_{slot}", "").strip() for name in (
             "YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN",
         )):

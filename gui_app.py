@@ -21,48 +21,45 @@ from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image, ImageTk
 
-# The GUI uses the same src module identity as workers and test fixtures.
-# Avoid mutating sys.path or silently suppressing missing dependencies.
-from src.catalog_parser import (
-    analyze_duplicate_chapters, apply_chapter_title_overrides, fetch_69shuba_full_novels,
-    find_direct_duplicate_matches, parse_catalog, split_chapter_title,
-)
-from src.chapter_numbers import normalize_positive_chapter_number
-from src.cleaner import chunk_text, clean_text_content
-from src.book_profiles import (
-    GitHubBookProfileStore, book_profile_id, get_book_profile, profile_snapshot,
-    update_book_profile, validate_remove_patterns,
-)
-from src.crawler import fetch_chapter_text
-from src.cloud_queue import (
-    BLOCKING_STATES, preflight_status, GitHubQueueStore, add_tasks, delete_task, approve_preflight,
-    confirm_preflight_review, start_reviewed_processing,
-    format_chapter_label, is_task_active, mark_task_completed, mark_task_interrupted, mark_task_waiting_retry,
-    mark_tasks_completed, move_chapter_order, move_tasks, move_tasks_to_pending,
-    new_task, normalize_chapter_order, requeue_task_after_active, retry_failed_preflight_stages, settle_interrupted_task,
-    task_id_from_run_name, update_task, update_task_chapters,
-)
-from src.github_run_status import (
-    error_observation, missing_observation, observation_text, successful_observation,
-)
-from src.cover_assets import cache_path, normalize_manual_cover, restore_cover, upload_github_cover
-from src.metadata_gen import build_cover_information
-
-from gui_components.source_ui import (
-    AUTO_SOURCE_LABEL, SOURCE_EXAMPLES, SOURCE_OPTIONS, SOURCE_NAMES,
-    catalog_matches_current, detect_source, normalize_source_url,
-    source_hint, source_id_from_label, source_label,
-)
+# 載入目錄解析器
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
+try:
+    from catalog_parser import (
+        analyze_duplicate_chapters, apply_chapter_title_overrides, fetch_69shuba_full_novels,
+        find_direct_duplicate_matches, parse_catalog, split_chapter_title,
+    )
+    from chapter_numbers import normalize_positive_chapter_number
+    from cleaner import chunk_text, clean_text_content
+    from book_profiles import (
+        GitHubBookProfileStore, book_profile_id, get_book_profile, profile_snapshot,
+        update_book_profile, validate_remove_patterns,
+    )
+    from crawler import fetch_chapter_text
+    from cloud_queue import (
+        BLOCKING_STATES, GitHubQueueStore, add_tasks, delete_task, approve_preflight,
+        confirm_preflight_review, start_reviewed_processing,
+        format_chapter_label, is_task_active, mark_task_completed, mark_task_interrupted, mark_task_waiting_retry,
+        mark_tasks_completed, move_chapter_order, move_tasks, move_tasks_to_pending,
+        new_task, normalize_chapter_order, requeue_task_after_active, retry_failed_preflight_stages, settle_interrupted_task,
+        task_id_from_run_name, update_task, update_task_chapters,
+    )
+    from github_run_status import (
+        error_observation, missing_observation, observation_text,
+        successful_observation,
+    )
+    from cover_assets import cache_path, normalize_manual_cover, restore_cover, upload_github_cover
+    from metadata_gen import build_cover_information
+except ImportError:
+    parse_catalog = None
+    fetch_69shuba_full_novels = None
+    GitHubQueueStore = None
 
 from gui_components import QueueOperationsMixin, ReviewMixin, WorkflowMixin
-from gui_components.tool_launchers import ToolLauncherMixin
-from gui_components.queue_monitor import QueueMonitorMixin
-from gui_components.publish_settings import PublishSettingsMixin
 
 ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 load_dotenv(ENV_PATH)
 
-class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMonitorMixin, PublishSettingsMixin, ToolLauncherMixin):
+class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin):
     def __init__(self, root):
         self.root = root
         self.root.title("📚 控制台")
@@ -128,13 +125,10 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         settings_tab = ttk.Frame(notebook, padding=(4, 8))
         publish_tab = ttk.Frame(notebook, padding=(4, 8))
         cloud_tab = ttk.Frame(notebook, padding=(4, 8))
-        tools_tab = ttk.Frame(notebook, padding=(10, 12))
         notebook.add(cloud_tab, text="雲端執行日誌")
         notebook.add(settings_tab, text="新增小說／章節設定")
         notebook.add(publish_tab, text="公開時間設定")
-        notebook.add(tools_tab, text="延伸工具")
         self._build_publish_tab_ui(publish_tab)
-        self._build_tools_tab_ui(tools_tab)
 
         self.selected_status_frame = ttk.LabelFrame(cloud_tab, text="選取小說目前狀態")
         self.selected_status_frame.pack(fill=tk.X, pady=(0, 10))
@@ -155,30 +149,13 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         url_frame = ttk.Frame(section1)
         url_frame.pack(fill=tk.X, pady=5)
 
-        ttk.Label(url_frame, text="來源網站：").pack(side=tk.LEFT, padx=(0, 5))
-        self.source_choice_var = tk.StringVar(value=AUTO_SOURCE_LABEL)
-        self.source_combo = ttk.Combobox(
-            url_frame, textvariable=self.source_choice_var, values=SOURCE_OPTIONS,
-            state="readonly", width=14,
-        )
-        self.source_combo.pack(side=tk.LEFT, padx=(0, 10))
-        self.source_combo.bind("<<ComboboxSelected>>", self._on_source_selected)
-        ttk.Label(url_frame, text="網址：").pack(side=tk.LEFT, padx=(0, 5))
-        self.url_entry = ttk.Entry(url_frame, width=40)
+        ttk.Label(url_frame, text="目錄網址:").pack(side=tk.LEFT, padx=(0, 5))
+        self.url_entry = ttk.Entry(url_frame, width=50)
+        self.url_entry.insert(0, "https://tw.hjwzw.com/Book/Chapter/1644")
         self.url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        self.url_entry.bind("<KeyRelease>", self._on_catalog_url_changed)
-        self.url_entry.bind("<FocusOut>", self._on_catalog_url_changed)
 
         self.btn_parse = ttk.Button(url_frame, text="🔍 解析章節", command=self.start_parse_catalog)
         self.btn_parse.pack(side=tk.LEFT)
-        self.btn_preview_chapter = ttk.Button(
-            url_frame, text="試抓首章", command=self.preview_first_chapter, state=tk.DISABLED,
-        )
-        self.btn_preview_chapter.pack(side=tk.LEFT, padx=(6, 0))
-        self.source_hint_var = tk.StringVar(value="支援 9 個小說網站；貼上書籍、目錄或章節網址後自動辨識。")
-        ttk.Label(section1, textvariable=self.source_hint_var, foreground="#475569").pack(
-            anchor=tk.W, padx=4, pady=(0, 3),
-        )
 
         # 解析結果顯示區
         info_frame = ttk.Frame(section1)
@@ -209,8 +186,9 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
 
         editor_actions = ttk.Frame(section1)
         editor_actions.pack(fill=tk.X, pady=(5, 0))
-        self.btn_add_queue = ttk.Button(editor_actions, text="➕ 新增至雲端小說佇列", style="Accent.TButton", command=self.enqueue_current_task, state=tk.DISABLED)
+        self.btn_add_queue = ttk.Button(editor_actions, text="➕ 新增至雲端小說佇列", style="Accent.TButton", command=self.enqueue_current_task)
         self.btn_add_queue.pack(side=tk.RIGHT)
+        self.btn_run = self.btn_add_queue
         self.btn_update_queue = ttk.Button(editor_actions, text="💾 更新選取小說章節設定", style="Accent.TButton", command=self.update_selected_task_chapters, state=tk.DISABLED)
         
         self.excluded_chapters = set()
@@ -222,8 +200,12 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         section2 = ttk.LabelFrame(cloud_tab, text="2. 雲端執行日誌")
         section2.pack(fill=tk.BOTH, expand=True)
 
-        self.lbl_status = ttk.Label(section2, text="就緒", style="Status.TLabel")
-        self.lbl_status.pack(fill=tk.X, padx=6, pady=(4, 2))
+        # 保留元件供舊版單一 Run 相容程式使用，但不放進新介面。
+        action_frame = ttk.Frame(section2)
+        self.btn_cancel = ttk.Button(action_frame, text="🛑 取消雲端作業", command=self.cancel_github_actions, state=tk.DISABLED)
+        self.btn_download = ttk.Button(action_frame, text="📥 一鍵下載成品", command=self.start_batch_download, state=tk.DISABLED)
+        self.lbl_status = ttk.Label(action_frame, text="就緒", style="Status.TLabel")
+        self.progress_bar = ttk.Progressbar(section2, mode="indeterminate")
 
         # 實時 Log 控制台
         self.log_text = scrolledtext.ScrolledText(section2, height=12, background="#1e1e1e", foreground="#dcdcdc", font=("Consolas", 9))
@@ -241,13 +223,13 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
     def _build_queue_ui(self, parent):
         section = ttk.LabelFrame(parent, text="雲端佇列（關閉 GUI 後仍由 GitHub 繼續）")
         section.pack(fill=tk.X, pady=(0, 12))
-        columns = ("position", "book", "source", "range", "duplicates", "status", "verified", "hf", "youtube", "run")
+        columns = ("position", "book", "range", "duplicates", "status", "verified", "hf", "youtube", "run")
         headings = {
-            "position": "順位", "book": "小說", "source": "來源", "range": "章節", "duplicates": "重複章節", "status": "狀態",
+            "position": "順位", "book": "小說", "range": "章節", "duplicates": "重複章節", "status": "狀態",
             "verified": "GitHub 查證", "hf": "HF", "youtube": "YouTube", "run": "Run",
         }
         widths = {
-            "position": 45, "book": 145, "source": 86, "range": 80, "duplicates": 75, "status": 175,
+            "position": 45, "book": 135, "range": 80, "duplicates": 75, "status": 175,
             "verified": 100, "hf": 65, "youtube": 75, "run": 90,
         }
         lists = ttk.Notebook(section)
@@ -376,10 +358,8 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
             observation = self.github_observations.get(task.get("task_id"))
             duplicate_count = task.get("duplicate_chapter_count")
             target_tree = self.success_queue_tree if task in queue.get("completed", []) else self.pending_queue_tree
-            adapter = detect_source(task.get("catalog_url") or "")
-            source_name = source_label(adapter.source_id) if adapter else "未知來源"
             target_tree.insert("", tk.END, iid=task["task_id"], values=(
-                task.get("position", "—"), task.get("book_title"), source_name, f"{start}–{end}",
+                task.get("position", "—"), task.get("book_title"), f"{start}–{end}",
                 duplicate_count if duplicate_count is not None else "—", self._queue_status_text(task),
                 self._observation_checked_time(observation),
                 f"{hf.get('completed', 0)}/{hf.get('total', 0)}",
@@ -460,6 +440,346 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
             return f"TXT {task.get('scrape_run_id') or '—'} / 封面 {task.get('cover_run_id') or '—'}"
         return str(task.get("processing_run_id") or task.get("run_id") or "—")
 
+    @staticmethod
+    def _observation_checked_time(observation):
+        if not observation or not observation.get("checked_at"):
+            return "—"
+        try:
+            value = datetime.fromisoformat(str(observation["checked_at"]).replace("Z", "+00:00"))
+            return value.astimezone().strftime("%H:%M:%S")
+        except (TypeError, ValueError):
+            return "無效時間"
+
+    @staticmethod
+    def _http_error_observation(response):
+        status = response.status_code
+        if status == 401:
+            code = "unauthorized"
+        elif status == 429 or response.headers.get("X-RateLimit-Remaining") == "0":
+            code = "rate_limited"
+        elif status == 403:
+            code = "forbidden"
+        elif status >= 500:
+            code = "github_error"
+        else:
+            code = "invalid_response"
+        return error_observation(code, http_status=status, detail=response.text[:500])
+
+    def _observe_github_run(self, repo, token, run_id, previous):
+        headers = {
+            "Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        for attempt in range(2):
+            try:
+                response = requests.get(
+                    f"https://api.github.com/repos/{repo}/actions/runs/{run_id}",
+                    headers=headers, timeout=15,
+                )
+                if response.status_code == 200:
+                    try:
+                        return successful_observation(response.json())
+                    except (AttributeError, TypeError, ValueError, json.JSONDecodeError) as error:
+                        return error_observation("invalid_response", http_status=200, detail=error)
+                if response.status_code == 404:
+                    verification = requests.get(
+                        f"https://api.github.com/repos/{repo}/actions/runs?per_page=1",
+                        headers=headers, timeout=15,
+                    )
+                    if verification.status_code != 200:
+                        return self._http_error_observation(verification)
+                    return missing_observation(previous, confirmed=True)
+                return self._http_error_observation(response)
+            except requests.RequestException as error:
+                if attempt == 1:
+                    return error_observation("network_error", detail=error)
+                time.sleep(1)
+
+    def _refresh_observation_freshness(self):
+        """Expire an old observation in the UI even while a network poll is blocked."""
+        if self.cloud_queue:
+            for task in self.cloud_queue.get("queue", []) + self.cloud_queue.get("completed", []):
+                task_id = task.get("task_id")
+                display_tree = next((tree for tree in (self.pending_queue_tree, self.success_queue_tree) if tree.exists(task_id)), None)
+                if task_id and task.get("run_id") and display_tree is not None:
+                    observation = self.github_observations.get(task_id)
+                    display_tree.set(task_id, "status", self._queue_status_text(task))
+                    display_tree.set(task_id, "verified", self._observation_checked_time(observation))
+        self.queue_freshness_after = self.root.after(1000, self._refresh_observation_freshness)
+
+    def sync_cloud_queue(self):
+        if self.queue_sync_after is not None:
+            try:
+                self.root.after_cancel(self.queue_sync_after)
+            except Exception:
+                pass
+            self.queue_sync_after = None
+        if self.queue_syncing:
+            return
+        self.queue_syncing = True
+        def worker():
+            try:
+                store, repo, token = self._queue_store()
+                queue, _ = store.load()
+                terminal_updates = []
+                running_updates = []
+                preflight_updates = {}
+                # Preflight owns two independent Runs.  The queue dispatcher
+                # reconciles both atomically; the legacy single-Run observer
+                # must not mark the book complete when only TXT has finished.
+                monitored = [
+                    task for task in queue.get("queue", [])
+                    if task.get("run_id") and task.get("workflow_phase") != "preflight"
+                ]
+                observations = {}
+                preflight_stages = []
+                for task in queue.get("queue", []):
+                    if task.get("workflow_phase") != "preflight":
+                        continue
+                    for stage_name, prefix, workflow_file in (
+                        ("scrape", f"scrape-review-{task.get('task_id')}", "audiobook.yml"),
+                        ("cover", f"cover-review-{task.get('task_id')}", "cover-preflight.yml"),
+                    ):
+                        run_id = task.get(f"{stage_name}_run_id") or \
+                            ((task.get("stages") or {}).get(stage_name) or {}).get("run_id")
+                        stage = ((task.get("stages") or {}).get(stage_name) or {})
+                        # A manual retry may create a newer Run without updating
+                        # the durable queue record.  Once the bound Run failed,
+                        # discover and adopt the newest matching retry.
+                        if not run_id or stage.get("status") == "failed":
+                            discovered = self._discover_preflight_run(
+                                repo, token, workflow_file, task["task_id"],
+                                stage.get("dispatched_at") or task.get("dispatched_at"),
+                            )
+                            discovered_id = int(discovered.get("id")) if discovered else None
+                            if discovered_id and (not run_id or discovered_id > int(run_id)):
+                                run_id = discovered_id
+                        if run_id:
+                            preflight_stages.append((task["task_id"], stage_name, int(run_id), prefix))
+                worker_count = min(8, max(1, len(monitored) + len(preflight_stages)))
+                with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                    futures = {
+                        executor.submit(
+                            self._observe_github_run, repo, token, task["run_id"],
+                            self.github_observations.get(task["task_id"]),
+                        ): task
+                        for task in monitored
+                    }
+                    preflight_futures = {
+                        executor.submit(
+                            self._observe_preflight_stage, repo, token, run_id, prefix,
+                        ): (task_id, stage_name, run_id)
+                        for task_id, stage_name, run_id, prefix in preflight_stages
+                    }
+                    for future in as_completed(futures):
+                        task = futures[future]
+                        try:
+                            observations[task["task_id"]] = future.result()
+                        except Exception as error:
+                            observations[task["task_id"]] = error_observation("network_error", detail=error)
+                    for future in as_completed(preflight_futures):
+                        task_id, stage_name, run_id = preflight_futures[future]
+                        try:
+                            result = future.result()
+                        except Exception as error:
+                            logging.warning("Could not reconcile %s %s Run %s: %s", task_id, stage_name, run_id, error)
+                            continue
+                        preflight_updates.setdefault(task_id, {})[stage_name] = {
+                            "run_id": run_id, **result,
+                        }
+                for task in monitored:
+                    run_id = task["run_id"]
+                    observation = observations[task["task_id"]]
+                    self.github_observations[task["task_id"]] = observation
+                    if observation.get("kind") == "ok" and observation.get("raw_status") != "completed":
+                        if task.get("status") != "running":
+                            running_updates.append((task["task_id"], run_id))
+                    elif task.get("status") in BLOCKING_STATES:
+                        if observation.get("kind") == "not_found" and observation.get("confirmed_missing"):
+                            terminal_updates.append((task["task_id"], run_id, "interrupted", "run_not_found", "missing", None))
+                        elif (observation.get("kind") == "ok" and
+                              observation.get("raw_status") == "completed" and
+                              observation.get("raw_conclusion") == "cancelled"):
+                            terminal_updates.append((
+                                task["task_id"], run_id, "interrupted", "run_cancelled", "cancelled",
+                                observation.get("github_updated_at"),
+                            ))
+                        elif (observation.get("kind") == "ok" and
+                              observation.get("raw_status") == "completed" and
+                              observation.get("raw_conclusion") == "success"):
+                            terminal_updates.append((
+                                task["task_id"], run_id, "completed", None, "success",
+                                observation.get("github_updated_at"),
+                            ))
+                        elif (observation.get("kind") == "ok" and
+                              observation.get("raw_status") == "completed" and
+                              observation.get("raw_conclusion") != "success"):
+                            conclusion = observation.get("raw_conclusion") or "unknown"
+                            terminal_updates.append((
+                                task["task_id"], run_id, "waiting_retry",
+                                f"run_{conclusion}", conclusion,
+                                observation.get("github_updated_at"),
+                            ))
+                if running_updates:
+                    def apply_running_updates(latest):
+                        for task_id, run_id in running_updates:
+                            latest = update_task(latest, task_id, status="running", run_id=run_id, reason=None, run_conclusion=None)
+                        return latest
+                    queue = store.mutate(apply_running_updates, "Reconcile active running audiobook tasks")
+                if terminal_updates:
+                    def apply_terminal_updates(latest):
+                        for task_id, run_id, target, reason, conclusion, ended_at in terminal_updates:
+                            current = next(
+                                (item for item in latest.get("queue", []) if item.get("task_id") == task_id), None
+                            )
+                            if current and current.get("run_id") == run_id and current.get("status") in BLOCKING_STATES:
+                                if target == "completed":
+                                    latest = mark_task_completed(
+                                        latest, task_id, conclusion=conclusion or "success", ended_at=ended_at,
+                                    )
+                                elif target == "interrupted":
+                                    latest = settle_interrupted_task(
+                                        latest, task_id, reason=reason,
+                                        conclusion=conclusion, ended_at=ended_at,
+                                    )
+                                else:
+                                    if current.get("status") == "waiting_retry" and current.get("retry_at"):
+                                        continue
+                                    latest = mark_task_waiting_retry(latest, task_id, reason=reason, conclusion=conclusion, ended_at=ended_at)
+                        return latest
+                    queue = store.mutate(apply_terminal_updates, "Reconcile completed audiobook runs")
+                    self._dispatch_queue_workflow()
+                if preflight_updates:
+                    changed = self._apply_preflight_observations(queue, preflight_updates)
+                    if changed:
+                        queue = store.mutate(
+                            lambda latest: (
+                                self._apply_preflight_observations(latest, preflight_updates), latest
+                            )[1],
+                            "Reconcile completed preflight Runs from GUI",
+                        )
+                self.cloud_queue = queue
+                self.root.after(0, lambda: self._render_queue(queue))
+            except Exception as error:
+                if self.cloud_queue:
+                    for task in self.cloud_queue.get("queue", []) + self.cloud_queue.get("completed", []):
+                        if task.get("run_id"):
+                            self.github_observations[task["task_id"]] = error_observation(
+                                "network_error", detail=error,
+                            )
+                    self.root.after(0, lambda q=self.cloud_queue: self._render_queue(q))
+                self.root.after(0, lambda e=str(error): self.log(f"⚠ 雲端佇列同步失敗：{e}"))
+            finally:
+                self.queue_syncing = False
+                self.queue_sync_after = self.root.after(10000, self.sync_cloud_queue)
+        threading.Thread(target=worker, daemon=True).start()
+
+    @staticmethod
+    def _apply_preflight_observations(queue, observations):
+        """Apply verified preflight Run states without overwriting a newer Run."""
+        changed = False
+        for task in queue.get("queue", []):
+            task_id = task.get("task_id")
+            if task.get("workflow_phase") != "preflight" or task_id not in observations:
+                continue
+            stages = task.setdefault("stages", {})
+            for stage_name, result in observations[task_id].items():
+                stage = stages.setdefault(stage_name, {})
+                run_id = int(result["run_id"])
+                bound_run_id = task.get(f"{stage_name}_run_id") or stage.get("run_id")
+                if bound_run_id and int(bound_run_id) != run_id:
+                    if stage.get("status") != "failed" or run_id <= int(bound_run_id):
+                        continue
+                next_status = result.get("status")
+                if not next_status or stage.get("status") == next_status:
+                    continue
+                stage.update({"run_id": run_id, "status": next_status})
+                task[f"{stage_name}_run_id"] = run_id
+                if next_status == "completed":
+                    stage.update({"reason": None, "completed_at": result.get("updated_at")})
+                elif next_status == "failed":
+                    stage["reason"] = result.get("conclusion") or "failure"
+                changed = True
+            if task.get("status") == "canceling":
+                continue
+            scrape = (stages.get("scrape") or {}).get("status")
+            cover = (stages.get("cover") or {}).get("status")
+            next_task_status = (
+                "needs_attention" if "failed" in {scrape, cover}
+                else "waiting_review" if {scrape, cover} == {"completed"}
+                else "preparing_assets"
+            )
+            if task.get("status") != next_task_status:
+                task["status"] = next_task_status
+                task["reason"] = None if next_task_status != "needs_attention" else "preflight_failed"
+                changed = True
+        return changed
+
+    @staticmethod
+    def _observe_preflight_stage(repo, token, run_id, artifact_prefix):
+        headers = {
+            "Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        response = requests.get(
+            f"https://api.github.com/repos/{repo}/actions/runs/{int(run_id)}",
+            headers=headers, timeout=15,
+        )
+        response.raise_for_status()
+        run = response.json()
+        if run.get("status") != "completed":
+            return {"status": "running", "conclusion": None, "updated_at": run.get("updated_at")}
+        conclusion = run.get("conclusion")
+        if conclusion != "success":
+            return {"status": "failed", "conclusion": conclusion, "updated_at": run.get("updated_at")}
+        artifacts = requests.get(
+            f"https://api.github.com/repos/{repo}/actions/runs/{int(run_id)}/artifacts",
+            headers=headers, params={"per_page": 100}, timeout=15,
+        )
+        artifacts.raise_for_status()
+        artifact_ready = any(
+            not item.get("expired") and str(item.get("name") or "").startswith(artifact_prefix)
+            for item in artifacts.json().get("artifacts", [])
+        )
+        return {
+            "status": "completed" if artifact_ready else "running",
+            "conclusion": conclusion,
+            "updated_at": run.get("updated_at"),
+        }
+
+    @staticmethod
+    def _discover_preflight_run(repo, token, workflow_file, task_id, dispatched_at=None):
+        """Recover a Run ID lost during workflow_dispatch indexing or a later re-run."""
+        headers = {
+            "Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        response = requests.get(
+            f"https://api.github.com/repos/{repo}/actions/workflows/{workflow_file}/runs",
+            headers=headers, params={"event": "workflow_dispatch", "per_page": 100}, timeout=15,
+        )
+        response.raise_for_status()
+        since = None
+        if dispatched_at:
+            try:
+                since = datetime.fromisoformat(str(dispatched_at).replace("Z", "+00:00"))
+            except ValueError:
+                pass
+        matches = []
+        for run in response.json().get("workflow_runs", []):
+            name = run.get("display_title") or run.get("name")
+            if task_id_from_run_name(name) != task_id:
+                continue
+            if since:
+                try:
+                    created = datetime.fromisoformat(str(run.get("created_at") or "").replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if created < since:
+                    continue
+            matches.append(run)
+        return max(matches, key=lambda item: (str(item.get("created_at") or ""), int(item.get("id") or 0)), default=None)
+
     def _update_selected_task_status(self, task):
         hf = task.get("hf_progress") or {}
         yt = task.get("youtube_progress") or {}
@@ -482,57 +802,15 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         if task.get("publish_at"):
             publish_note = f"\n排定公開（台灣時間）：{task.get('publish_at')}"
         self.selected_status_var.set(
-            f"《{task.get('book_title') or '待解析'}》｜"
-            f"來源：{source_label(detect_source(task.get('catalog_url') or '').source_id) if detect_source(task.get('catalog_url') or '') else '未知來源'}｜"
-            f"第 {task.get('start_chapter') or 1}～{task.get('end_chapter') or '最後'} 章\n"
+            f"《{task.get('book_title') or '待解析'}》｜第 {task.get('start_chapter') or 1}～{task.get('end_chapter') or '最後'} 章\n"
             f"狀態：{self._queue_status_text(task)}　｜　GitHub Run：{run_text}\n"
             f"HF：{hf.get('completed', 0)}/{hf.get('total', 0)}　｜　YouTube：{yt.get('completed', 0)}/{yt.get('total', 0)}{publish_note}{stage_text}{extra}"
         )
-
-    def _on_source_selected(self, _event=None):
-        source_id = source_id_from_label(self.source_choice_var.get())
-        if source_id is None:
-            self._on_catalog_url_changed()
-            return
-        raw = self.url_entry.get().strip()
-        current_source = detect_source(raw)
-        # Explicitly selecting a source fills an example only for an empty
-        # field or a previous example; never overwrite a custom book URL.
-        if not raw or raw in SOURCE_EXAMPLES.values():
-            self.url_entry.delete(0, tk.END)
-            self.url_entry.insert(0, SOURCE_EXAMPLES[source_id])
-            self._on_catalog_url_changed()
-        elif current_source and current_source.source_id != source_id:
-            self.source_hint_var.set("已保留原輸入網址；請貼上所選網站的網址，再解析目錄。")
-        else:
-            self._on_catalog_url_changed()
-
-    def _on_catalog_url_changed(self, _event=None):
-        raw = self.url_entry.get().strip()
-        source = detect_source(raw)
-        if source is None:
-            self.source_hint_var.set(
-                "支援 9 個小說網站；請輸入完整的 http(s) 書籍、目錄或章節網址。"
-            )
-        else:
-            self.source_choice_var.set(source_label(source.source_id))
-            self.source_hint_var.set(source_hint(source))
-        current = catalog_matches_current(raw, self.catalog_data)
-        if hasattr(self, "btn_add_queue"):
-            active = not self.editing_task_id and current
-            self.btn_add_queue.config(state=tk.NORMAL if active else tk.DISABLED)
-        if hasattr(self, "btn_preview_chapter"):
-            self.btn_preview_chapter.config(state=tk.NORMAL if current else tk.DISABLED)
-        if self.editing_task_id and hasattr(self, "btn_update_queue") and self.catalog_data:
-            self.btn_update_queue.config(
-                state=tk.NORMAL if catalog_matches_current(raw, self.catalog_data) else tk.DISABLED
-            )
 
     def reset_chapter_editor(self):
         self.catalog_load_token += 1
         self.editing_task_id = None
         self.catalog_data = None
-        self.current_book_profile = {}
         self.chapter_title_overrides = {}
         self.chapter_normalized_number_overrides = {}
         self.cleaner_remove_patterns = []
@@ -544,8 +822,6 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
             tree.selection_remove(*tree.selection())
         self.edit_mode_var.set("新增小說")
         self.url_entry.delete(0, tk.END)
-        self.source_choice_var.set(AUTO_SOURCE_LABEL)
-        self._on_catalog_url_changed()
         self.lbl_book_info.config(text="書名: 尚未解析 | 總章節: 0 章")
         self.entry_start.delete(0, tk.END)
         self.entry_start.insert(0, "1")
@@ -553,7 +829,6 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         self.entry_end.insert(0, "10")
         self.chapter_selection_var.set("尚未解析章節")
         self.btn_filter.config(state=tk.DISABLED)
-        self.btn_preview_chapter.config(state=tk.DISABLED)
         self.btn_update_queue.pack_forget()
         self.btn_add_queue.pack(side=tk.RIGHT)
         self._set_configured_publish_at("")
@@ -568,27 +843,14 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         self.btn_update_queue.config(state=tk.DISABLED)
         self.url_entry.delete(0, tk.END)
         self.url_entry.insert(0, task.get("catalog_url") or "")
-        self._on_catalog_url_changed()
         self.lbl_book_info.config(text=f"書名: {task.get('book_title') or '待解析'} | 正在載入章節…")
         self._set_configured_publish_at(task.get("publish_at") or "")
 
         def worker():
             try:
                 result = parse_catalog(task.get("catalog_url") or "")
-                try:
-                    profiles, _ = self._profile_store()[0].load()
-                    _, profile = get_book_profile(
-                        profiles, task.get("catalog_url") or "", task.get("book_title") or "",
-                    )
-                except Exception as profile_error:
-                    profile = {}
-                    detail = str(profile_error)
-                    self.root.after(
-                        0,
-                        lambda message=detail: self.log(
-                            f"⚠ 雲端書籍設定暫時無法讀取，將使用佇列中的章節設定：{message}"
-                        ),
-                    )
+                profiles, _ = self._profile_store()[0].load()
+                _, profile = get_book_profile(profiles, task.get("catalog_url") or "", task.get("book_title") or "")
                 overrides = profile.get("chapter_title_overrides") or task.get("chapter_title_overrides") or {}
                 normalized_overrides = (
                     profile.get("chapter_normalized_number_overrides") or
@@ -632,6 +894,167 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         self._update_chapter_selection_summary(start, end)
         self.btn_update_queue.config(state=tk.NORMAL)
 
+
+    def _build_publish_tab_ui(self, parent):
+        frame = ttk.LabelFrame(parent, text="YouTube 影片公開發布排程（台灣時間 UTC+8）", padding=15)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        mode_frame = ttk.Frame(frame)
+        mode_frame.pack(fill=tk.X, pady=(0, 15))
+
+        ttk.Label(mode_frame, text="發布模式：", style="Header.TLabel").pack(side=tk.LEFT, padx=(0, 15))
+        r1 = ttk.Radiobutton(
+            mode_frame, text="🔘 立即公開（上傳後直接為公開狀態，預設）",
+            variable=self.publish_mode_var, value="immediate",
+            command=self._on_publish_mode_changed,
+        )
+        r1.pack(side=tk.LEFT, padx=(0, 20))
+        r2 = ttk.Radiobutton(
+            mode_frame, text="⏰ 排定時間公開（整本小說所有 Part 同步排程）",
+            variable=self.publish_mode_var, value="scheduled",
+            command=self._on_publish_mode_changed,
+        )
+        r2.pack(side=tk.LEFT)
+
+        self.publish_schedule_frame = ttk.LabelFrame(frame, text="排程詳細設定", padding=12)
+        self.publish_schedule_frame.pack(fill=tk.X, pady=(0, 15))
+
+        quick_frame = ttk.Frame(self.publish_schedule_frame)
+        quick_frame.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(quick_frame, text="常用快捷設定：", style="Header.TLabel").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(quick_frame, text="今日 18:00", command=lambda: self._set_publish_preset(0, "18:00")).pack(side=tk.LEFT, padx=3)
+        ttk.Button(quick_frame, text="今日 20:00", command=lambda: self._set_publish_preset(0, "20:00")).pack(side=tk.LEFT, padx=3)
+        ttk.Button(quick_frame, text="明日 18:00", command=lambda: self._set_publish_preset(1, "18:00")).pack(side=tk.LEFT, padx=3)
+        ttk.Button(quick_frame, text="明日 20:00", command=lambda: self._set_publish_preset(1, "20:00")).pack(side=tk.LEFT, padx=3)
+        ttk.Button(quick_frame, text="後日 18:00", command=lambda: self._set_publish_preset(2, "18:00")).pack(side=tk.LEFT, padx=3)
+
+        input_frame = ttk.Frame(self.publish_schedule_frame)
+        input_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(input_frame, text="發布日期：").pack(side=tk.LEFT, padx=(0, 5))
+        taipei_now = datetime.now(timezone(timedelta(hours=8)))
+        date_options = [
+            (taipei_now + timedelta(days=i)).strftime("%Y-%m-%d")
+            for i in range(15)
+        ]
+        self.combo_publish_date = ttk.Combobox(
+            input_frame, textvariable=self.publish_date_var, values=date_options, width=14,
+        )
+        self.combo_publish_date.pack(side=tk.LEFT, padx=(0, 20))
+        self.combo_publish_date.bind("<<ComboboxSelected>>", lambda _: self._update_publish_preview())
+        self.combo_publish_date.bind("<KeyRelease>", lambda _: self._update_publish_preview())
+
+        ttk.Label(input_frame, text="發布時間：").pack(side=tk.LEFT, padx=(0, 5))
+        time_options = [
+            "00:00", "06:00", "08:00", "10:00", "12:00", "14:00", "16:00",
+            "17:30", "18:00", "18:30", "19:00", "19:30", "20:00", "20:30",
+            "21:00", "21:30", "22:00", "23:00",
+        ]
+        self.combo_publish_time = ttk.Combobox(
+            input_frame, textvariable=self.publish_time_var, values=time_options, width=10,
+        )
+        self.combo_publish_time.pack(side=tk.LEFT, padx=(0, 10))
+        self.combo_publish_time.bind("<<ComboboxSelected>>", lambda _: self._update_publish_preview())
+        self.combo_publish_time.bind("<KeyRelease>", lambda _: self._update_publish_preview())
+
+        ttk.Label(input_frame, text="（時:分，可自行輸入如 18:45）").pack(side=tk.LEFT)
+
+        status_frame = ttk.LabelFrame(frame, text="設定狀態與運作規則", padding=12)
+        status_frame.pack(fill=tk.X)
+
+        self.lbl_publish_preview = ttk.Label(
+            status_frame, textvariable=self.publish_preview_var, style="Header.TLabel", foreground="#0097e6",
+        )
+        self.lbl_publish_preview.pack(anchor=tk.W, pady=(0, 8))
+
+        rule_box = ttk.Frame(status_frame)
+        rule_box.pack(fill=tk.X)
+        ttk.Label(
+            rule_box,
+            text="💡 策略 A 保障：若因雲端排隊或 GitHub Actions 失敗重試，導致影片上傳成功時已超過排定時間，YouTube 將自動「立即公開」，絕不延遲至隔天。",
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=2)
+        ttk.Label(
+            rule_box,
+            text="💡 全集同步發布：無論整本小說最終切分為幾部 Part 影片，所有影片均會統一套用此公開時間，確保下班觀眾能一次收聽完整播放清單。",
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=2)
+        ttk.Label(
+            rule_box,
+            text="💡 時區對齊：介面已自動鎖定台灣時間 (UTC+8)，系統在送出上傳請求時會帶入完整時區，精準無誤。",
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=2)
+
+        self._on_publish_mode_changed()
+
+    def _on_publish_mode_changed(self):
+        is_scheduled = (self.publish_mode_var.get() == "scheduled")
+        state = tk.NORMAL if is_scheduled else tk.DISABLED
+        if hasattr(self, "publish_schedule_frame"):
+            for child in self.publish_schedule_frame.winfo_children():
+                for sub in child.winfo_children():
+                    if isinstance(sub, (ttk.Button, ttk.Combobox, ttk.Entry)):
+                        try:
+                            sub.configure(state=state)
+                        except Exception:
+                            pass
+        self._update_publish_preview()
+
+    def _set_publish_preset(self, days_offset, time_str="18:00"):
+        taipei_tz = timezone(timedelta(hours=8))
+        target_date = (datetime.now(taipei_tz) + timedelta(days=days_offset)).strftime("%Y-%m-%d")
+        self.publish_mode_var.set("scheduled")
+        self.publish_date_var.set(target_date)
+        self.publish_time_var.set(time_str)
+        self._on_publish_mode_changed()
+
+    def _update_publish_preview(self):
+        if self.publish_mode_var.get() != "scheduled":
+            self.publish_preview_var.set("📢 目前設定：【立即公開】（影片上傳完成後直接公開顯示，所有觀眾可見）")
+            return
+        iso_str = self._get_configured_publish_at()
+        if not iso_str:
+            self.publish_preview_var.set("⚠️ 日期或時間格式有誤，請輸入有效之 YYYY-MM-DD 與 HH:MM")
+            return
+        date_str = self.publish_date_var.get().strip()
+        time_str = self.publish_time_var.get().strip()
+        self.publish_preview_var.set(
+            f"📅 目前設定：【排定公開】將於 {date_str} {time_str}:00 (台灣時間 UTC+8) 自動向觀眾公開"
+        )
+
+    def _get_configured_publish_at(self):
+        if self.publish_mode_var.get() != "scheduled":
+            return ""
+        date_str = self.publish_date_var.get().strip()
+        time_str = self.publish_time_var.get().strip()
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+            return ""
+        if not re.match(r"^\d{1,2}:\d{2}$", time_str):
+            return ""
+        parts = time_str.split(":")
+        hour = int(parts[0])
+        minute = int(parts[1])
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            return ""
+        norm_time = f"{hour:02d}:{minute:02d}:00"
+        return f"{date_str}T{norm_time}+08:00"
+
+    def _set_configured_publish_at(self, iso_str):
+        if not iso_str or not str(iso_str).strip():
+            self.publish_mode_var.set("immediate")
+            self._on_publish_mode_changed()
+            return
+        iso_str = str(iso_str).strip()
+        try:
+            dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+            taipei_tz = timezone(timedelta(hours=8))
+            dt_taipei = dt.astimezone(taipei_tz)
+            self.publish_date_var.set(dt_taipei.strftime("%Y-%m-%d"))
+            self.publish_time_var.set(dt_taipei.strftime("%H:%M"))
+            self.publish_mode_var.set("scheduled")
+        except Exception:
+            self.publish_mode_var.set("immediate")
+        self._on_publish_mode_changed()
 
     def _update_chapter_selection_summary(self, start=None, end=None):
         try:

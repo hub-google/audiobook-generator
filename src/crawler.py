@@ -43,7 +43,7 @@ def fetch_chapter_text(url, timeout=15, source_id=None, html=None):
         from sources.http_client import fetch_page
     source = resolve_source(url, source_id)
     if html is None:
-        return source.load_chapter(url, lambda target: fetch_page(target, source, timeout).content)
+        html = fetch_page(url, source, timeout).content
     return source.parse_chapter(html, url)
 
 def load_config():
@@ -138,9 +138,10 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                jitter = source.worker_start_jitter
-                if jitter is not None:
-                    time.sleep(random.uniform(*jitter))
+                if source.source_id == "shuba69":
+                    # The previously successful 69shuba runs did not burst
+                    # requests immediately when workers started.
+                    time.sleep(random.uniform(2, 5))
                 title, raw_text = fetch_chapter_text(url, source_id=source.source_id)
                 edited_titles = config.get("chapter_title_by_index") or {}
                 title = str(edited_titles.get(str(global_idx), edited_titles.get(global_idx, title)))

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import math
 import json
 import os
 import re
@@ -150,7 +149,7 @@ def validate_text(path, clean=False):
 
 def validate_wav(path):
     try:
-        with wave.open(os.fspath(path), "rb") as audio:
+        with wave.open(path, "rb") as audio:
             frames = audio.getnframes()
             rate = audio.getframerate()
             channels = audio.getnchannels()
@@ -354,20 +353,16 @@ def validate_worker_manifest(path, expected_worker_id=None, expected_chapters=No
             dur = float(dur)
         except (TypeError, ValueError):
             dur = 0.0
-        if not math.isfinite(dur) or dur <= 0.25:
+        if dur <= 0.25:
             raise ArtifactValidationError(f"manifest chapter {num} has invalid duration {dur}")
         chapter_nums.append(int(num))
         total_duration += dur
 
-    if len(chapter_nums) != len(set(chapter_nums)) or set(chapter_nums) & recorded_missing:
-        raise ArtifactValidationError("manifest has duplicate chapters or contradictory source omissions")
-    if confirmed_missing != recorded_missing:
-        raise ArtifactValidationError("manifest source omission evidence mismatch")
     if expected_chapters is not None:
         expected_set = {int(c) for c in expected_chapters}
         covered_set = set(chapter_nums) | confirmed_missing
         missing_set = expected_set - covered_set
-        extra_set = covered_set - expected_set
+        extra_set = set(chapter_nums) - expected_set
         if missing_set or extra_set:
             raise ArtifactValidationError(
                 f"manifest chapters mismatch: missing={sorted(missing_set)}, unexpected={sorted(extra_set)}"

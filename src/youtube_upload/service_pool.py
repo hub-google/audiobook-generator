@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -17,7 +18,6 @@ from .state import (
     MAX_YOUTUBE_ACCOUNT_SLOTS,
     atomic_write_json as _atomic_write_json,
     configured_youtube_account_slots,
-    enabled_youtube_account_slots,
 )
 
 SCOPES = [
@@ -29,6 +29,12 @@ SCOPES = [
 EXIT_RETRY_LATER = 75
 YOUTUBE_SLOT_ROTATION_ROUNDS = 3
 
+
+def _get_symbol(name: str, fallback: Any) -> Any:
+    uploader = sys.modules.get("src.youtube_api_uploader") or sys.modules.get("youtube_api_uploader")
+    if uploader is not None and hasattr(uploader, name):
+        return getattr(uploader, name)
+    return fallback
 
 
 def _find_gh() -> str:
@@ -59,11 +65,9 @@ class YouTubeServicePool:
         BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         cs_dir = os.path.join(BASE_DIR, "client_secret")
 
-        # Use the shared standard OS module instead of reflection on
-        # a previously loaded uploader module.
-        path_exists_fn = os.path.exists
+        path_exists_fn = _get_symbol("os", os).path.exists
 
-        for slot in enabled_youtube_account_slots():
+        for slot in range(1, MAX_YOUTUBE_ACCOUNT_SLOTS + 1):
             # 1. 檔案路徑檢查
             cs_path = os.path.join(cs_dir, f"client_secret_{slot}.json")
             if slot == 1 and not path_exists_fn(cs_path):
@@ -101,10 +105,6 @@ class YouTubeServicePool:
 
     def require_expected_accounts(self):
         """Fail early in CI when the configured credential pool is incomplete."""
-        if os.environ.get("YOUTUBE_ACTIVE_SLOTS", "").strip() and (os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")):
-            missing = set(enabled_youtube_account_slots()) - configured_youtube_account_slots()
-            if missing:
-                raise RuntimeError(f"Enabled YouTube credential slots are incomplete: {sorted(missing)}")
         raw_expected = os.environ.get("YOUTUBE_EXPECTED_ACCOUNT_COUNT", "").strip()
         if not raw_expected:
             return
@@ -384,7 +384,7 @@ class YouTubeServicePool:
         )
         return False
 
-    def authorize_all_local(self, sync_github=True, repo="hub-google/audiobook-generator"):
+    def authorize_all_local(self, sync_github=True):
         """本地一次授權所有 client_secrets 並生成對應的 tokens"""
         logging.info("🚀 開始檢查並授權所有 YouTube 專案...")
         success_count = 0
@@ -394,20 +394,21 @@ class YouTubeServicePool:
             if srv and creds:
                 success_count += 1
                 logging.info(f"✅ 專案 #{slot} 授權有效！")
-                if sync_github:
+                if sync_github and creds.refresh_token and acc["cs_path"] and os.path.exists(acc["cs_path"]):
                     try:
-                        cid = creds.client_id
-                        csec = creds.client_secret
-                        if not all((cid, csec, creds.refresh_token)):
-                            raise RuntimeError("Incomplete authorized credential")
-                        gh_bin = _find_gh()
-                        for key, value in (("CLIENT_ID", cid), ("CLIENT_SECRET", csec), ("REFRESH_TOKEN", creds.refresh_token)):
-                            subprocess.run([gh_bin, "secret", "set", f"YOUTUBE_{key}_{slot}", "--repo", repo],
-                                           input=value, text=True, check=True, capture_output=True)
-                        logging.info("專案 #%s 已同步 GitHub Secrets", slot)
-                    except Exception as error:
-                        success_count -= 1
-                        logging.error("專案 #%s 同步失敗：%s", slot, type(error).__name__)
+                        with open(acc["cs_path"], "r", encoding="utf-8") as f:
+                            cs_info = json.load(f).get("installed", {})
+                        cid = cs_info.get("client_id", "")
+                        csec = cs_info.get("client_secret", "")
+                        if cid and csec:
+                            gh_bin = _find_gh()
+                            suffix = f"_{slot}"
+                            subprocess.run([gh_bin, "secret", "set", f"YOUTUBE_CLIENT_ID{suffix}", "--body", cid], check=False)
+                            subprocess.run([gh_bin, "secret", "set", f"YOUTUBE_CLIENT_SECRET{suffix}", "--body", csec], check=False)
+                            subprocess.run([gh_bin, "secret", "set", f"YOUTUBE_REFRESH_TOKEN{suffix}", "--body", creds.refresh_token], check=False)
+                            logging.info(f"☁️ 已自動將專案 #{slot} 憑證同步至 GitHub Secrets (YOUTUBE_*_{slot})！")
+                    except Exception as e:
+                        logging.warning(f"同步至 GitHub Secrets 失敗: {e}")
         logging.info(f"🎉 授權檢測完成：共 {success_count}/{len(self.accounts)} 個專案可用！")
         return success_count
 

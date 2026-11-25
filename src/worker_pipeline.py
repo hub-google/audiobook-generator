@@ -328,9 +328,9 @@ def run_resumable_chapter(config, checkpoint, chapter_url, chapter_num, worker_i
         for attempt in range(1, 4):
             try:
                 operation()
+                op_success = True
                 for stage in stage_names:
                     checkpoint.mark_completed(chapter_num, stage)
-                op_success = True
                 break
             except SourceMissingError as error:
                 if stage_names[0] != "crawler":
@@ -349,7 +349,6 @@ def run_resumable_chapter(config, checkpoint, chapter_url, chapter_num, worker_i
                     chapter_num, ",".join(stage_names), attempt, error,
                 )
                 if attempt < 3:
-                    checkpoint.prepare_for_run(chapter_num, stage_names)
                     time.sleep(3 * attempt)
 
         if not op_success:
@@ -383,8 +382,6 @@ def _copy_artifact_files_to_workspace(src_dir, workspace_dir, book_title):
                 dest_folder = "CleanText"
             elif "manifest-worker" in f and f.endswith(".json"):
                 dest_folder = "Manifests"
-            elif f == "silent-fallback-manifest.json" and os.path.basename(root) == "Audio":
-                dest_folder = "Audio"
             elif "source_missing" in f and f.endswith(".json"):
                 dest_folder = "SourceStatus"
             elif (
@@ -403,7 +400,6 @@ def _copy_artifact_files_to_workspace(src_dir, workspace_dir, book_title):
             if dest_folder and (
                 "chapter_" in f
                 or dest_folder in {"Manifests", "SourceStatus", "Checkpoints"}
-                or f == "silent-fallback-manifest.json"
             ):
                 target_dir = os.path.join(workspace_dir, dest_folder)
                 os.makedirs(target_dir, exist_ok=True)
@@ -415,7 +411,6 @@ def _copy_artifact_files_to_workspace(src_dir, workspace_dir, book_title):
                 # and force needless cleaner/TTS/video regeneration.
                 if (
                     dest_folder == "Checkpoints"
-                    or f == "silent-fallback-manifest.json"
                     or not os.path.exists(dest_path)
                     or os.path.getsize(dest_path) < os.path.getsize(src_path)
                 ):

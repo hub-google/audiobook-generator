@@ -1,12 +1,7 @@
-from .runtime import (
-    json, requests, threading, tk, ttk, messagebox, scrolledtext, io, zipfile, chunk_text, clean_text_content, book_profile_id, update_book_profile, validate_remove_patterns, start_reviewed_processing, cache_path, normalize_manual_cover, upload_github_cover, build_cover_information, PROJECT_ROOT,
-)
-from .ad_review_dialog import AdReviewDialogMixin
-from .cover_preflight_dialog import CoverPreflightDialogMixin
-from .batch_cover_dialog import BatchCoverDialogMixin
+from .runtime import *  # noqa: F401,F403
 
 
-class ReviewMixin(AdReviewDialogMixin, CoverPreflightDialogMixin, BatchCoverDialogMixin):
+class ReviewMixin:
     def _selected_task(self):
         tasks = self._selected_tasks()
         return tasks[0] if tasks else None
@@ -76,6 +71,286 @@ class ReviewMixin(AdReviewDialogMixin, CoverPreflightDialogMixin, BatchCoverDial
                         files[member.filename.replace("\\", "/")] = archive.read(member)
         return files
 
+    def open_ad_analysis_results(self):
+        task = self._selected_task()
+        if not task or not task.get("scrape_run_id"):
+            messagebox.showinfo("廣告分析", "TXT 抓取完成後才能查看。")
+            return
+        top = tk.Toplevel(self.root); top.title(f"文字清理／關鍵字審核｜《{task.get('book_title')}》"); top.geometry("1480x860"); top.minsize(1050, 650)
+        notebook = ttk.Notebook(top); notebook.pack(fill=tk.BOTH, expand=True)
+        analysis_page = ttk.Frame(notebook); sample_page = ttk.Frame(notebook)
+        notebook.add(analysis_page, text="候選詞句與排除設定")
+        notebook.add(sample_page, text="Raw／Clean 文字抽查")
+        status = tk.StringVar(value="正在下載廣告分析結果…")
+        status_bar = ttk.Frame(analysis_page, padding=8); status_bar.pack(fill=tk.X)
+        ttk.Label(status_bar, textvariable=status).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        retry_button = ttk.Button(status_bar, text="重新載入", state=tk.DISABLED)
+        retry_button.pack(side=tk.RIGHT)
+
+        filter_bar = ttk.LabelFrame(analysis_page, text="篩選與批次編輯", padding=6); filter_bar.pack(fill=tk.X, padx=8)
+        search_text = tk.StringVar(); decision_filter = tk.StringVar(value="全部狀態")
+        kind_filter = tk.StringVar(value="全部類型")
+        ttk.Label(filter_bar, text="搜尋：").pack(side=tk.LEFT)
+        search_entry = ttk.Entry(filter_bar, textvariable=search_text, width=28); search_entry.pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(filter_bar, text="處理狀態：").pack(side=tk.LEFT)
+        decision_combo = ttk.Combobox(filter_bar, textvariable=decision_filter,
+                                      values=("全部狀態", "僅顯示待去除", "僅顯示已保留"),
+                                      state="readonly", width=14)
+        decision_combo.pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(filter_bar, text="類型：").pack(side=tk.LEFT)
+        kind_combo = ttk.Combobox(
+            filter_bar, textvariable=kind_filter, values=("全部類型",),
+            state="readonly", width=16,
+        )
+        kind_combo.pack(side=tk.LEFT, padx=(0, 10))
+        count_label = ttk.Label(filter_bar, text="顯示：0 項｜去除：0 項｜保留：0 項")
+        count_label.pack(side=tk.RIGHT)
+
+        panes = ttk.Panedwindow(analysis_page, orient=tk.HORIZONTAL); panes.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        tree_frame = ttk.Frame(panes)
+        tree = ttk.Treeview(tree_frame, columns=("decision", "kind", "text", "count", "chapters", "score", "reason"),
+                            show="headings", selectmode="extended")
+        for key, title, width in (("decision", "處理狀態", 85), ("kind", "類型", 105), ("text", "疑似廣告詞句／重複行", 390),
+                                  ("count", "次數", 55), ("chapters", "影響章節", 130), ("score", "可疑度", 65), ("reason", "判定理由", 190)):
+            tree.heading(key, text=title); tree.column(key, width=width)
+        tree.column("text", anchor=tk.W); tree.column("reason", anchor=tk.W)
+        tree.tag_configure("remove", foreground="#9b0000"); tree.tag_configure("keep", foreground="#777777")
+        tree_y = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
+        tree_x = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=tree.xview)
+        tree.configure(yscrollcommand=tree_y.set, xscrollcommand=tree_x.set)
+        tree.grid(row=0, column=0, sticky="nsew"); tree_y.grid(row=0, column=1, sticky="ns"); tree_x.grid(row=1, column=0, sticky="ew")
+        tree_frame.rowconfigure(0, weight=1); tree_frame.columnconfigure(0, weight=1)
+        detail_frame = ttk.LabelFrame(panes, text="選定詞句的判定與原文上下文", padding=4)
+        detail = scrolledtext.ScrolledText(detail_frame, wrap=tk.WORD, font=("Microsoft JhengHei", 10))
+        detail.pack(fill=tk.BOTH, expand=True)
+        panes.add(tree_frame, weight=3); panes.add(detail_frame, weight=2)
+        rows = {}; row_order = []; review_identity = {}; chapter_texts = {}
+        sort_state = {"column": None, "reverse": False}
+        sample_refresh = {"callback": None}
+
+        def selected_patterns():
+            return sorted({item.get("text", "").strip() for item in rows.values()
+                           if item.get("approved_remove") and item.get("text", "").strip()}, key=len, reverse=True)
+
+        def refresh_samples():
+            if sample_refresh["callback"]:
+                sample_refresh["callback"](selected_patterns())
+
+        def row_values(item):
+            chapters = item.get("affected_chapters") or []
+            return ("☑ 去除" if item.get("approved_remove") else "☐ 保留", item.get("kind") or "", item.get("text") or "",
+                    item.get("count", "—"), ",".join(map(str, chapters[:15])) + ("…" if len(chapters) > 15 else ""),
+                    item.get("score", "—"), item.get("reason") or "")
+
+        def refresh_tree(*_args):
+            selected = set(tree.selection()); tree.delete(*tree.get_children())
+            keyword = search_text.get().strip().lower(); choice = decision_filter.get()
+            selected_kind = kind_filter.get()
+            visible = 0
+            visible_ids = list(row_order)
+            column = sort_state["column"]
+            if column:
+                visible_ids.sort(
+                    key=lambda iid: self._ad_review_sort_value(rows.get(iid) or {}, column),
+                    reverse=sort_state["reverse"],
+                )
+            for iid in visible_ids:
+                item = rows.get(iid)
+                if not item: continue
+                remove = bool(item.get("approved_remove"))
+                haystack = " ".join(str(item.get(key) or "") for key in ("text", "kind", "reason")).lower()
+                if keyword and keyword not in haystack: continue
+                if choice == "僅顯示待去除" and not remove: continue
+                if choice == "僅顯示已保留" and remove: continue
+                if selected_kind != "全部類型" and item.get("kind") != selected_kind: continue
+                tree.insert("", tk.END, iid=iid, values=row_values(item), tags=("remove" if remove else "keep",))
+                visible += 1
+                if iid in selected: tree.selection_add(iid)
+            remove_count = sum(bool(item.get("approved_remove")) for item in rows.values())
+            count_label.config(text=f"顯示：{visible}/{len(rows)} 項｜去除：{remove_count} 項｜保留：{len(rows) - remove_count} 項")
+
+        column_titles = {"decision": "處理狀態", "kind": "類型", "text": "疑似廣告詞句／重複行",
+                         "count": "次數", "chapters": "影響章節", "score": "可疑度", "reason": "判定理由"}
+        def sort_by(column):
+            if sort_state["column"] == column:
+                sort_state["reverse"] = not sort_state["reverse"]
+            else:
+                sort_state.update(column=column, reverse=False)
+            for key, title in column_titles.items():
+                marker = (" ▼" if sort_state["reverse"] else " ▲") if key == column else ""
+                tree.heading(key, text=title + marker, command=lambda value=key: sort_by(value))
+            refresh_tree()
+        for key, title in column_titles.items():
+            tree.heading(key, text=title, command=lambda value=key: sort_by(value))
+
+        search_text.trace_add("write", refresh_tree)
+        decision_combo.bind("<<ComboboxSelected>>", refresh_tree)
+        kind_combo.bind("<<ComboboxSelected>>", refresh_tree)
+        def select(_event=None):
+            if not tree.selection(): return
+            item = rows[tree.selection()[0]]; detail.delete("1.0", tk.END)
+            detail.insert("1.0", f"判定原因：{item.get('reason')}\n\n影響章節：{item.get('affected_chapters')}\n\n" + "\n\n---\n\n".join(item.get("samples") or []))
+        tree.bind("<<TreeviewSelect>>", select)
+        def set_selected(value=None):
+            for iid in tree.selection():
+                item = rows[iid]; item["approved_remove"] = (not item.get("approved_remove", False)) if value is None else value
+            refresh_tree(); select(); refresh_samples()
+        def toggle(_event=None):
+            set_selected()
+            return "break"
+        def click_status(event):
+            if tree.identify("region", event.x, event.y) == "cell" and tree.identify_column(event.x) == "#1":
+                iid = tree.identify_row(event.y)
+                if iid:
+                    tree.selection_set(iid); set_selected()
+        def edit_selected():
+            selected = tree.selection()
+            if len(selected) != 1:
+                messagebox.showinfo("編輯廣告詞句", "請先選取一筆候選。", parent=top); return
+            iid = selected[0]; item = rows[iid]; old_text = str(item.get("text") or "")
+            value = simpledialog.askstring("編輯廣告詞句", "要比對並刪除的文字：", initialvalue=old_text, parent=top)
+            if value is None: return
+            patterns = validate_remove_patterns([value])
+            if not patterns:
+                messagebox.showerror("無法儲存", "詞句不可為空白或無效內容。", parent=top); return
+            item["text"] = patterns[0]
+            if patterns[0] != old_text:
+                item["reason"] = f"人工編輯（原詞句：{old_text}）"
+            refresh_tree(); tree.selection_set(iid); tree.see(iid); select(); refresh_samples()
+        def remove_selected():
+            selected = list(tree.selection())
+            for iid in selected:
+                rows.pop(iid, None)
+                if iid in row_order: row_order.remove(iid)
+            refresh_tree(); detail.delete("1.0", tk.END); refresh_samples()
+        def double_click(event):
+            if tree.identify_column(event.x) == "#3": edit_selected()
+            else: toggle()
+            return "break"
+        tree.bind("<Button-1>", click_status, add="+")
+        tree.bind("<space>", toggle); tree.bind("<Delete>", lambda _event: (set_selected(False), "break")[1])
+        tree.bind("<Double-1>", double_click)
+        manual_bar = ttk.Frame(analysis_page, padding=8); manual_bar.pack(fill=tk.X)
+        manual_text = tk.StringVar()
+        ttk.Entry(manual_bar, textvariable=manual_text, width=35).pack(side=tk.LEFT, padx=(0, 8))
+        def add_manual():
+            patterns = validate_remove_patterns([manual_text.get()])
+            if not patterns: return
+            iid = f"manual-{time.time_ns()}"
+            rows[iid] = {"text": patterns[0], "approved_remove": True, "reason": "人工新增", "samples": []}
+            row_order.append(iid); manual_text.set(""); refresh_tree(); tree.selection_set(iid); tree.see(iid); refresh_samples()
+        ttk.Button(manual_bar, text="新增刪除文字", command=add_manual).pack(side=tk.LEFT)
+        actions = ttk.Frame(analysis_page, padding=(8, 0, 8, 8)); actions.pack(fill=tk.X)
+        ttk.Button(actions, text="☑ 設為去除", command=lambda: set_selected(True)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(actions, text="☐ 設為保留", command=lambda: set_selected(False)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(actions, text="反選", command=set_selected).pack(side=tk.LEFT, padx=2)
+        def set_visible(value):
+            for iid in tree.get_children():
+                rows[iid]["approved_remove"] = value
+            refresh_tree(); refresh_samples()
+        ttk.Button(actions, text="全選目前篩選", command=lambda: set_visible(True)).pack(side=tk.LEFT, padx=(12, 2))
+        ttk.Button(actions, text="全不選目前篩選", command=lambda: set_visible(False)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(actions, text="編輯詞句", command=edit_selected).pack(side=tk.LEFT, padx=(12, 2))
+        ttk.Button(actions, text="從名單移除", command=remove_selected).pack(side=tk.LEFT, padx=2)
+        ttk.Label(actions, text="點狀態欄或 Space 切換；雙擊詞句可編輯；Delete 設為保留。", foreground="#555").pack(side=tk.LEFT, padx=12)
+        approve_button = ttk.Button(actions, text="確認文字清理設定", style="Accent.TButton", state=tk.DISABLED)
+        approve_button.pack(side=tk.RIGHT)
+
+        def approve():
+            patterns = selected_patterns()
+            self.cleaner_remove_patterns = list(patterns)
+            approve_button.config(state=tk.DISABLED); status.set("正在將審核結果儲存到雲端…")
+            def save_worker():
+                try:
+                    profile_store, _, _ = self._profile_store()
+                    profile_store.mutate(
+                        lambda data: update_book_profile(data, task.get("catalog_url") or "", task.get("book_title") or "",
+                                                         cleaner_remove_patterns=patterns),
+                        f"Approve advertisement review for {task['task_id']}",
+                    )
+                    queue_store, _, _ = self._queue_store()
+                    reviewed_at = datetime.now().astimezone().isoformat()
+                    queue = queue_store.mutate(
+                        lambda data: confirm_preflight_review(data, task["task_id"], task["scrape_run_id"], task["cover_run_id"],
+                            {"status": "approved", "approved_at": reviewed_at, **review_identity,
+                             "remove_patterns": patterns,
+                             "keep_patterns": [item["text"] for item in rows.values() if not item.get("approved_remove")]}),
+                        f"Confirm text cleaning review for {task['task_id']}",
+                    )
+                    self.cloud_queue = queue
+                    self.root.after(0, lambda: (self._render_queue(queue), top.destroy(),
+                                                self.log(f"✓ 《{task.get('book_title')}》文字清理設定已儲存，等待開始第二階段後製。")))
+                except Exception as error:
+                    self.root.after(0, lambda detail=str(error): (status.set(f"儲存失敗：{detail}"), approve_button.config(state=tk.NORMAL)))
+            threading.Thread(target=save_worker, daemon=True).start()
+        approve_button.config(command=approve)
+        load_generation = {"value": 0}
+
+        def set_load_status(message, generation):
+            if generation == load_generation["value"] and top.winfo_exists():
+                status.set(message)
+
+        def worker(generation):
+            try:
+                progress = lambda message: self.root.after(0, lambda value=message: set_load_status(value, generation))
+                files = self._download_artifact_files(
+                    task["scrape_run_id"], f"scrape-review-{task['task_id']}", progress=progress,
+                )
+                reports = [json.loads(data.decode("utf-8")) for name, data in files.items()
+                           if name.endswith(".json") and "ad-candidates-" in name]
+                candidates = [item for report in reports for item in report.get("candidates", [])]
+                if len(reports) != 1 or reports[0].get("task_id") != task["task_id"]:
+                    raise RuntimeError("廣告報告任務身分不一致或報告缺失")
+                progress("正在載入已儲存的文字清理規則…")
+                profiles, _ = self._profile_store()[0].load()
+                _, profile = get_book_profile(profiles, task.get("catalog_url") or "", task.get("book_title") or "")
+                saved_patterns = set(profile.get("cleaner_remove_patterns") or [])
+                known = {item["text"] for item in candidates}
+                candidates.extend({"text": text, "kind": "已儲存規則", "score": 0, "count": 0} for text in saved_patterns - known)
+                def render():
+                    if generation != load_generation["value"] or not top.winfo_exists():
+                        return
+                    review_identity.update(
+                        raw_fingerprint=reports[0]["raw_fingerprint"],
+                        scrape_run_id=task["scrape_run_id"], cover_run_id=task.get("cover_run_id"),
+                    )
+                    rows.clear(); row_order.clear(); chapter_texts.clear()
+                    chapter_texts.update(reports[0].get("chapter_texts") or {})
+                    kinds = sorted({str(item.get("kind") or "") for item in candidates if item.get("kind")})
+                    kind_combo.config(values=("全部類型", *kinds))
+                    if kind_filter.get() not in kind_combo.cget("values"):
+                        kind_filter.set("全部類型")
+                    for index, item in enumerate(sorted(candidates, key=lambda x: -float(x.get("score") or 0))):
+                        iid = str(index); item["approved_remove"] = item["text"] in saved_patterns; rows[iid] = item; row_order.append(iid)
+                    refresh_tree()
+                    refresh_samples()
+                    approve_button.config(state=tk.NORMAL)
+                    retry_button.config(state=tk.NORMAL)
+                    status.set(f"已載入 {len(reports)} 份報告，共 {len(candidates)} 項候選。")
+                self.root.after(0, render)
+            except Exception as error:
+                def show_error(detail=str(error)):
+                    if generation != load_generation["value"] or not top.winfo_exists():
+                        return
+                    status.set(f"載入失敗：{detail}")
+                    retry_button.config(state=tk.NORMAL)
+                    approve_button.config(state=tk.DISABLED)
+                self.root.after(0, show_error)
+
+        def start_load():
+            load_generation["value"] += 1
+            generation = load_generation["value"]
+            retry_button.config(state=tk.DISABLED)
+            approve_button.config(state=tk.DISABLED)
+            status.set("正在下載廣告分析結果…")
+            threading.Thread(target=worker, args=(generation,), daemon=True).start()
+
+        retry_button.config(command=start_load)
+        sample_refresh["callback"] = self.open_text_sample(
+            parent=sample_page, task=task, chapter_texts=chapter_texts,
+        )
+        start_load()
+
     @staticmethod
     def _ad_review_sort_value(item, column):
         if column == "decision":
@@ -95,9 +370,168 @@ class ReviewMixin(AdReviewDialogMixin, CoverPreflightDialogMixin, BatchCoverDial
             return tuple(result)
         return str(item.get(column) or "").casefold()
 
+    def open_cover_preflight_review(self):
+        task = self._selected_task()
+        if not task or not task.get("cover_run_id"):
+            messagebox.showinfo("封面審核", "封面 Run 完成後才能查看。")
+            return
+        top = tk.Toplevel(self.root); top.title(f"封面圖與小說介紹／HF Prompt｜《{task.get('book_title')}》")
+        top.geometry("1440x900"); top.minsize(1120, 720)
+        status = tk.StringVar(value="正在下載封面審核資料…"); ttk.Label(top, textvariable=status, padding=8).pack(fill=tk.X)
+        panes = ttk.Panedwindow(top, orient=tk.HORIZONTAL); panes.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        image_frame = ttk.Frame(panes)
+        upload_status = tk.StringVar(value="正在載入本次產生的封面…")
+        upload_hint = ttk.Label(image_frame, textvariable=upload_status, wraplength=600, anchor=tk.CENTER)
+        upload_hint.pack(fill=tk.X, padx=8, pady=(8, 4))
+        image_label = ttk.Label(image_frame, text="載入中…", anchor=tk.CENTER)
+        image_label.pack(fill=tk.BOTH, expand=True)
+        upload_button = ttk.Button(image_frame, text="選擇圖片／更換封面", state=tk.DISABLED)
+        upload_button.pack(pady=(4, 8))
+        info_frame = ttk.Frame(panes)
+        info_tabs = ttk.Notebook(info_frame)
+        info_tabs.pack(fill=tk.BOTH, expand=True)
+        analysis_text = scrolledtext.ScrolledText(info_tabs, wrap=tk.WORD, font=("Microsoft JhengHei", 10))
+        prompt_text = scrolledtext.ScrolledText(info_tabs, wrap=tk.WORD, font=("Consolas", 10))
+        info_tabs.add(analysis_text, text="Gemini 小說介紹／視覺分析")
+        info_tabs.add(prompt_text, text="HF 生圖 Prompt")
+        panes.add(image_frame, weight=5); panes.add(info_frame, weight=7)
+
+        upload_in_progress = {"value": False}
+        review_ready = {"value": False}
+
+        def current_task():
+            if not self.cloud_queue:
+                return task
+            return next((item for item in self.cloud_queue.get("queue", []) + self.cloud_queue.get("completed", [])
+                         if item.get("task_id") == task.get("task_id")), task)
+
+        def manual_override_allowed():
+            return current_task().get("workflow_phase") == "preflight"
+
+        def show_preview(image):
+            shown = image.copy()
+            shown.thumbnail((620, 820))
+            photo = ImageTk.PhotoImage(shown)
+            image_label.config(image=photo, text="", cursor="hand2")
+            image_label.image = photo
+
+        def finish_upload_controls():
+            upload_in_progress["value"] = False
+            upload_button.config(state=tk.NORMAL if manual_override_allowed() else tk.DISABLED)
+            if hasattr(self, "btn_start_processing"):
+                self._update_queue_control_states(self._selected_tasks())
+
+        def process_upload(path):
+            if not review_ready["value"]:
+                upload_status.set("請等待本次封面審核資料載入完成後再更換圖片。")
+                return
+            if upload_in_progress["value"]:
+                return
+            if not manual_override_allowed():
+                messagebox.showinfo(
+                    "手動封面", "第二階段已經開始；這次執行的封面已鎖定，請重新排程後再更換。", parent=top,
+                )
+                return
+            title = task.get("book_title") or "待解析"
+            catalog_url = (task.get("catalog_url") or "").strip()
+            if not catalog_url:
+                messagebox.showerror("手動封面", "這項任務缺少小說來源網址，無法綁定手動封面。", parent=top)
+                return
+            upload_in_progress["value"] = True
+            upload_button.config(state=tk.DISABLED)
+            if hasattr(self, "btn_start_processing"):
+                self.btn_start_processing.config(state=tk.DISABLED)
+            upload_status.set(f"正在為《{title}》檢查、裁切、壓縮並同步封面…")
+
+            def upload_worker():
+                try:
+                    local_cover, profile_id, repo, details, cloud = self._upload_manual_cover(
+                        title, catalog_url, path,
+                    )
+
+                    def done():
+                        try:
+                            with Image.open(local_cover) as image:
+                                show_preview(image)
+                            upload_status.set(
+                                f"✓ 已改用手動封面｜1280×720 JPEG｜{details['bytes']/1024:.0f} KB｜"
+                                f"GitHub: {repo}@{cloud['branch']}/{cloud['remote_path']}"
+                            )
+                            status.set("手動封面已同步；右側 Gemini 分析與 HF Prompt 保持不變。")
+                            self.log(f"✓ 《{title}》手動封面已同步；第二階段將優先使用這張圖片。")
+                        finally:
+                            finish_upload_controls()
+
+                    self.root.after(0, done)
+                except Exception as error:
+                    def failed(detail=str(error)):
+                        upload_status.set("手動封面上傳失敗；仍保留原本產生的封面。")
+                        messagebox.showerror("手動封面", detail, parent=top)
+                        finish_upload_controls()
+                    self.root.after(0, failed)
+
+            threading.Thread(target=upload_worker, daemon=True).start()
+
+        def choose_upload():
+            if not review_ready["value"] or upload_in_progress["value"]:
+                return
+            path = filedialog.askopenfilename(parent=top, filetypes=[
+                ("圖片", "*.jpg *.jpeg *.png *.webp"), ("所有檔案", "*.*"),
+            ])
+            if path:
+                process_upload(path)
+
+        upload_button.config(command=choose_upload)
+        image_label.bind("<Button-1>", lambda _event: choose_upload() if manual_override_allowed() else None)
+
+        def accept_drop(event):
+            paths = top.tk.splitlist(event.data)
+            if paths:
+                process_upload(paths[0])
+            return "break"
+
+        drop_enabled = self._register_file_drop(
+            (image_frame, upload_hint, image_label, upload_button), accept_drop,
+        )
+
+        def worker():
+            try:
+                files = self._download_artifact_files(task["cover_run_id"], f"cover-review-{task['task_id']}")
+                image_data = next(data for name, data in files.items() if name.endswith("master_cover.jpg"))
+                prompt_data = next(data for name, data in files.items() if name.endswith("master_cover_prompt.json"))
+                record = json.loads(prompt_data.decode("utf-8"))
+                with Image.open(io.BytesIO(image_data)) as pil:
+                    preview_image = pil.copy()
+                brief = record.get("brief") if isinstance(record.get("brief"), dict) else record
+                def render():
+                    review_ready["value"] = True
+                    show_preview(preview_image)
+                    analysis_text.insert("1.0", self._format_cover_analysis(brief))
+                    prompt_text.insert("1.0", record.get("prompt") or brief.get("prompt", ""))
+                    status.set("封面圖、Gemini 小說介紹與 HF 生圖 Prompt 已分開載入。")
+                    if manual_override_allowed():
+                        upload_button.config(state=tk.NORMAL)
+                        upload_status.set(
+                            "目前顯示本次產生的封面；可將 JPG／PNG／WEBP 拖曳到左側，或選擇圖片覆蓋。"
+                            if drop_enabled else
+                            "目前顯示本次產生的封面；可按「選擇圖片／更換封面」覆蓋。"
+                        )
+                    else:
+                        upload_status.set("第二階段已開始，這次執行的封面已鎖定。")
+                self.root.after(0, render)
+            except Exception as error:
+                def failed(detail=str(error)):
+                    review_ready["value"] = True
+                    status.set(f"載入失敗：{detail}")
+                    if manual_override_allowed():
+                        upload_button.config(state=tk.NORMAL)
+                        upload_status.set("原封面載入失敗；仍可選擇或拖曳圖片作為手動封面。")
+                self.root.after(0, failed)
+        threading.Thread(target=worker, daemon=True).start()
+
     def _load_or_generate_cover_information(self, book_title, catalog_url, use_cache=True, progress_callback=None):
         """Load cached cover information or generate it for the batch GUI."""
-        project_root = PROJECT_ROOT
+        project_root = os.path.dirname(os.path.abspath(__file__))
         info_file = cache_path(project_root, book_profile_id(catalog_url)).parent / "cover_information.json"
         if use_cache and info_file.is_file():
             try:
@@ -113,7 +547,7 @@ class ReviewMixin(AdReviewDialogMixin, CoverPreflightDialogMixin, BatchCoverDial
 
     def _upload_manual_cover(self, book_title, catalog_url, source_path):
         """Normalize and sync a manual cover selected from the batch dialog."""
-        project_root = PROJECT_ROOT
+        project_root = os.path.dirname(os.path.abspath(__file__))
         profile_id = book_profile_id(catalog_url)
         local_cover = cache_path(project_root, profile_id)
         details = normalize_manual_cover(source_path, local_cover)
@@ -147,6 +581,228 @@ class ReviewMixin(AdReviewDialogMixin, CoverPreflightDialogMixin, BatchCoverDial
                 continue
         return registered
 
+    def open_batch_cover_information(self):
+        """Run the existing cover-information pipeline concurrently for selected queue rows."""
+        tasks = self._selected_tasks()
+        if not tasks:
+            messagebox.showinfo("批次封面資訊", "請先在上方佇列選取一本或多本小說。")
+            return
+
+        top = tk.Toplevel(self.root)
+        top.title(f"批次封面資訊＋手動封面｜{len(tasks)} 本")
+        top.geometry("1000x720")
+        top.minsize(760, 520)
+        top.transient(self.root)
+
+        status_var = tk.StringVar(value=f"準備處理 {len(tasks)} 本小說…")
+        ttk.Label(top, textvariable=status_var).pack(fill=tk.X, padx=10, pady=(10, 5))
+        progress = ttk.Progressbar(top, maximum=len(tasks), mode="determinate")
+        progress.pack(fill=tk.X, padx=10, pady=(0, 8))
+
+        body = ttk.Panedwindow(top, orient=tk.HORIZONTAL)
+        body.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 8))
+        list_frame, output_frame = ttk.Frame(body), ttk.Frame(body)
+        body.add(list_frame, weight=1)
+        body.add(output_frame, weight=3)
+
+        result_tree = ttk.Treeview(list_frame, columns=("book", "status"), show="headings", selectmode="browse")
+        result_tree.heading("book", text="小說")
+        result_tree.heading("status", text="結果")
+        result_tree.column("book", width=150, anchor=tk.W)
+        result_tree.column("status", width=90, anchor=tk.CENTER)
+        result_tree.pack(fill=tk.BOTH, expand=True)
+        for task in tasks:
+            result_tree.insert("", tk.END, iid=task["task_id"], values=(task.get("book_title") or "待解析", "準備啟動"))
+
+        output_tabs = ttk.Notebook(output_frame)
+        output_tabs.pack(fill=tk.BOTH, expand=True)
+        analysis_text = scrolledtext.ScrolledText(output_tabs, wrap=tk.WORD)
+        prompt_text = scrolledtext.ScrolledText(output_tabs, wrap=tk.WORD, font=("Consolas", 10))
+        upload_page = ttk.Frame(output_tabs, padding=10)
+        output_tabs.add(analysis_text, text="小說架構／視覺分析")
+        output_tabs.add(prompt_text, text="HF 生圖 Prompt")
+        output_tabs.add(upload_page, text="上傳封面圖片")
+        results = {}
+        task_map = {task["task_id"]: task for task in tasks}
+
+        upload_status = tk.StringVar(value="選取左側小說後，可選擇或拖曳 JPG／PNG／WEBP。")
+        upload_hint = ttk.Label(upload_page, textvariable=upload_status, wraplength=680)
+        upload_hint.pack(anchor=tk.W, pady=(0, 8))
+        preview = ttk.Label(upload_page, anchor=tk.CENTER, text="將圖片拖曳到這裡")
+        preview.pack(fill=tk.BOTH, expand=True, pady=8)
+
+        def show_result(_event=None):
+            selected = result_tree.selection()
+            if not selected:
+                return
+            data = results.get(selected[0]) or {}
+            analysis_text.delete("1.0", tk.END)
+            prompt_text.delete("1.0", tk.END)
+            analysis_text.insert("1.0", self._format_cover_analysis(data) if data.get("analysis") else data.get("error") or "尚未產生")
+            prompt_text.insert("1.0", data.get("prompt") or data.get("error") or "尚未產生")
+            task = task_map[selected[0]]
+            try:
+                local_cover = cache_path(os.path.dirname(os.path.abspath(__file__)), book_profile_id(task.get("catalog_url") or ""))
+                if local_cover.is_file():
+                    with Image.open(local_cover) as image:
+                        shown = image.copy(); shown.thumbnail((640, 360))
+                    preview.image = ImageTk.PhotoImage(shown)
+                    preview.config(image=preview.image, text="")
+                    upload_status.set(f"已讀取《{task.get('book_title')}》手動封面｜{local_cover.stat().st_size/1024:.0f} KB")
+                else:
+                    preview.config(image="", text="將圖片拖曳到這裡")
+                    preview.image = None
+                    upload_status.set(f"《{task.get('book_title')}》尚未上傳手動封面。")
+            except (OSError, ValueError):
+                preview.config(image="", text="將圖片拖曳到這裡")
+
+        result_tree.bind("<<TreeviewSelect>>", show_result)
+        first_id = tasks[0]["task_id"]
+        result_tree.selection_set(first_id)
+        show_result()
+
+        actions = ttk.Frame(top)
+        actions.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        def copy_current():
+            if output_tabs.index("current") == 2:
+                return
+            widget = analysis_text if output_tabs.index("current") == 0 else prompt_text
+            value = widget.get("1.0", tk.END).strip()
+            if value:
+                top.clipboard_clear()
+                top.clipboard_append(value)
+                status_var.set("已複製目前頁面。")
+
+        def copy_all():
+            blocks = []
+            for task in tasks:
+                data = results.get(task["task_id"]) or {}
+                if data.get("analysis") and data.get("prompt"):
+                    title = task.get("book_title") or "待解析"
+                    blocks.append(f"《{title}》\n\n【小說架構／視覺分析】\n{self._format_cover_analysis(data)}\n\n【HF 生圖 Prompt】\n{data['prompt']}")
+            if blocks:
+                top.clipboard_clear()
+                top.clipboard_append("\n\n" + ("\n\n" + "=" * 60 + "\n\n").join(blocks))
+                status_var.set(f"已複製 {len(blocks)} 本小說的全部結果。")
+
+        ttk.Button(actions, text="複製目前頁面", command=copy_current).pack(side=tk.LEFT)
+        copy_all_button = ttk.Button(actions, text="複製全部結果", command=copy_all, state=tk.DISABLED)
+        copy_all_button.pack(side=tk.LEFT, padx=8)
+        ttk.Button(actions, text="關閉", command=top.destroy).pack(side=tk.RIGHT)
+
+        def selected_upload_task():
+            selected = result_tree.selection()
+            return task_map.get(selected[0]) if selected else None
+
+        def process_upload(path):
+            task = selected_upload_task()
+            if not task:
+                return
+            title, catalog_url = task.get("book_title") or "待解析", (task.get("catalog_url") or "").strip()
+            upload_button.config(state=tk.DISABLED)
+            upload_status.set(f"正在為《{title}》檢查、裁切、壓縮並同步封面…")
+            def upload_worker():
+                try:
+                    local_cover, profile_id, repo, details, cloud = self._upload_manual_cover(title, catalog_url, path)
+                    def done():
+                        upload_button.config(state=tk.NORMAL)
+                        if selected_upload_task() is task:
+                            with Image.open(local_cover) as image:
+                                shown = image.copy(); shown.thumbnail((640, 360))
+                            preview.image = ImageTk.PhotoImage(shown)
+                            preview.config(image=preview.image, text="")
+                            upload_status.set(
+                                f"✓ 上傳成功｜1280×720 JPEG｜{details['bytes']/1024:.0f} KB｜"
+                                f"指紋 {profile_id}｜GitHub: {repo}@{cloud['branch']}/{cloud['remote_path']}"
+                            )
+                        self.log(f"✓ 《{title}》手動封面已同步；正式流程將跳過 Gemini 與 HF 生圖。")
+                    post(done)
+                except Exception as error:
+                    post(lambda detail=str(error): (
+                        upload_button.config(state=tk.NORMAL), upload_status.set("上傳失敗"),
+                        messagebox.showerror("手動封面", detail, parent=top),
+                    ))
+            threading.Thread(target=upload_worker, daemon=True).start()
+
+        def choose_upload():
+            path = filedialog.askopenfilename(parent=top, filetypes=[
+                ("圖片", "*.jpg *.jpeg *.png *.webp"), ("所有檔案", "*.*"),
+            ])
+            if path:
+                process_upload(path)
+
+        upload_button = ttk.Button(upload_page, text="選擇圖片檔案", command=choose_upload)
+        upload_button.pack(pady=5)
+
+        def accept_drop(event):
+            paths = top.tk.splitlist(event.data)
+            if paths:
+                process_upload(paths[0])
+            return "break"
+
+        if self._register_file_drop((upload_page, upload_hint, preview, upload_button), accept_drop):
+            upload_status.set("選取左側小說後，可選擇或拖曳 JPG／PNG／WEBP；將標準化為 1280×720 JPEG。")
+        else:
+            upload_status.set("目前環境未載入拖放元件，請先使用「選擇圖片檔案」。")
+
+        def post(callback):
+            def safe_callback():
+                if top.winfo_exists():
+                    callback()
+            self.root.after(0, safe_callback)
+
+        def worker():
+            completed_count = 0
+            success_count = 0
+            lock = threading.Lock()
+
+            def run_one(task):
+                task_id = task["task_id"]
+                title = task.get("book_title") or "待解析"
+                catalog_url = (task.get("catalog_url") or "").strip()
+                try:
+                    if not catalog_url:
+                        raise ValueError("佇列任務缺少目錄網址")
+                    def stage(value):
+                        post(lambda tid=task_id, text=value: result_tree.set(tid, "status", text))
+                    data, cache_hit = self._load_or_generate_cover_information(
+                        title, catalog_url, progress_callback=stage,
+                    )
+                    results[task_id] = data
+                    label = "已讀快取" if cache_hit else "完成"
+                    post(lambda tid=task_id, value=label: (result_tree.set(tid, "status", value), show_result()))
+                    return True
+                except Exception as error:
+                    results[task_id] = {"error": f"產生失敗：{error}"}
+                    post(lambda tid=task_id: (result_tree.set(tid, "status", "失敗"), show_result()))
+                    return False
+
+            post(lambda: (
+                [result_tree.set(task["task_id"], "status", "啟動中") for task in tasks],
+                status_var.set(f"已同時啟動 {len(tasks)} 本｜完成 0/{len(tasks)}"),
+            ))
+            with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+                future_map = {executor.submit(run_one, task): task for task in tasks}
+                for future in as_completed(future_map):
+                    succeeded = future.result()
+                    with lock:
+                        completed_count += 1
+                        success_count += int(succeeded)
+                        done, ok = completed_count, success_count
+                    post(lambda value=done, good=ok: (
+                        progress.configure(value=value),
+                        status_var.set(
+                            f"完成 {value}/{len(tasks)}｜執行中 {len(tasks)-value}｜成功 {good}｜失敗 {value-good}"
+                        ),
+                    ))
+            post(lambda: (
+                status_var.set(f"批次完成：成功 {success_count} 本，失敗 {len(tasks) - success_count} 本。"),
+                copy_all_button.config(state=tk.NORMAL if success_count else tk.DISABLED),
+            ))
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _on_queue_select(self, _event=None):
         tasks = self._selected_tasks()
         if not tasks:
@@ -155,9 +811,14 @@ class ReviewMixin(AdReviewDialogMixin, CoverPreflightDialogMixin, BatchCoverDial
         task = tasks[0]
         if task.get("run_id"):
             self.current_run_id = int(task["run_id"])
-            # Queue-specific cancel controls are handled by _update_queue_control_states.
+            try:
+                self.current_repo, self.current_token = self._github_settings()
+                self.btn_cancel.config(state=tk.NORMAL if task.get("workflow_phase") != "preflight" and task.get("status") in {"running", "dispatching", "processing", "waiting_retry"} else tk.DISABLED)
+            except Exception:
+                pass
         else:
             self.current_run_id = None
+            self.btn_cancel.config(state=tk.DISABLED)
         self._update_queue_control_states(tasks)
         if len(tasks) > 1:
             self.selected_status_var.set(f"已選取 {len(tasks)} 筆小說任務；可批次暫停、刪除或調整順位。")

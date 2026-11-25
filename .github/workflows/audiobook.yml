@@ -87,22 +87,6 @@ concurrency:
   group: youtube-resumable-upload
   cancel-in-progress: false
 
-env:
-  INPUT_CATALOG_URL: ${{ github.event.inputs.catalog_url }}
-  INPUT_START_CHAP: ${{ github.event.inputs.start_chap }}
-  INPUT_END_CHAP: ${{ github.event.inputs.end_chap }}
-  INPUT_CHAPTERS_PER_WORKER: ${{ github.event.inputs.chapters_per_worker }}
-  INPUT_EXCLUDE_CHAPTERS: ${{ github.event.inputs.exclude_chapters }}
-  INPUT_RENUMBER_SELECTED: ${{ github.event.inputs.renumber_selected }}
-  INPUT_CHAPTER_TITLE_OVERRIDES_B64: ${{ github.event.inputs.chapter_title_overrides_b64 }}
-  INPUT_CHAPTER_ORDER_B64: ${{ github.event.inputs.chapter_order_b64 }}
-  INPUT_BOOK_PROFILE_SNAPSHOT_B64: ${{ github.event.inputs.book_profile_snapshot_b64 }}
-  INPUT_BOOK_TITLE: ${{ github.event.inputs.book_title }}
-  INPUT_CHAPTER_LABEL: ${{ github.event.inputs.chapter_label }}
-  INPUT_QUEUE_TASK_ID: ${{ github.event.inputs.queue_task_id }}
-  INPUT_RESUME_SOURCE_RUN_ID: ${{ inputs.resume_source_run_id }}
-  INPUT_PUBLISH_AT: ${{ github.event.inputs.publish_at }}
-
 jobs:
   retry_failed_run:
     name: "Retry latest failed audiobook run"
@@ -281,18 +265,18 @@ jobs:
         id: fetch
         run: |
           set +e
-          python -m src.catalog_parser \
-            --url "$INPUT_CATALOG_URL" \
-            --start "$INPUT_START_CHAP" \
-            --end "$INPUT_END_CHAP" \
+          python src/catalog_parser.py \
+            --url "${{ github.event.inputs.catalog_url }}" \
+            --start ${{ github.event.inputs.start_chap }} \
+            --end ${{ github.event.inputs.end_chap }} \
             --output config.yaml \
-            --workers "$INPUT_CHAPTERS_PER_WORKER" \
+            --workers ${{ github.event.inputs.chapters_per_worker }} \
             --matrix-output matrix.json \
-            --exclude-chapters "$INPUT_EXCLUDE_CHAPTERS" \
-            --renumber-selected "$INPUT_RENUMBER_SELECTED" \
-            --chapter-title-overrides-b64 "$INPUT_CHAPTER_TITLE_OVERRIDES_B64" \
-            --chapter-order-b64 "$INPUT_CHAPTER_ORDER_B64" \
-            --book-profile-snapshot-b64 "$INPUT_BOOK_PROFILE_SNAPSHOT_B64" \
+            --exclude-chapters "${{ github.event.inputs.exclude_chapters }}" \
+            --renumber-selected "${{ github.event.inputs.renumber_selected }}" \
+            --chapter-title-overrides-b64 "${{ github.event.inputs.chapter_title_overrides_b64 }}" \
+            --chapter-order-b64 "${{ github.event.inputs.chapter_order_b64 }}" \
+            --book-profile-snapshot-b64 "${{ github.event.inputs.book_profile_snapshot_b64 }}" \
             2>&1 | tee catalog-fetch.log
           parser_status=${PIPESTATUS[0]}
           set -e
@@ -351,6 +335,7 @@ jobs:
     outputs:
       matrix: ${{ steps.gen_matrix.outputs.matrix }}
       book_profile_id: ${{ steps.gen_matrix.outputs.book_profile_id }}
+      source_max_parallel: ${{ steps.gen_matrix.outputs.source_max_parallel }}
       needs_browser_scrape: ${{ steps.gen_matrix.outputs.needs_browser_scrape }}
 
     steps:
@@ -396,15 +381,41 @@ jobs:
             echo "restored=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          python -m src.catalog_parser \
+          python src/catalog_parser.py \
             --restore-config restored_source/config.yaml \
             --output config.yaml \
             --matrix-output matrix.json
 
-          DISPATCH_BOOK_TITLE="$INPUT_BOOK_TITLE" \
-          DISPATCH_CHAPTER_LABEL="$INPUT_CHAPTER_LABEL" \
-          DISPATCH_QUEUE_TASK_ID="$INPUT_QUEUE_TASK_ID" \
-          python -m src.ci.audiobook_steps validate_resume_title
+          DISPATCH_BOOK_TITLE="${{ github.event.inputs.book_title }}" \
+          DISPATCH_CHAPTER_LABEL="${{ github.event.inputs.chapter_label }}" \
+          DISPATCH_QUEUE_TASK_ID="${{ github.event.inputs.queue_task_id }}" \
+          python - <<'PY'
+          import os
+          import yaml
+
+          with open("config.yaml", encoding="utf-8") as handle:
+              config = yaml.safe_load(handle) or {}
+
+          expected_title = str(config.get("book_title") or "").strip()
+          supplied_title = os.environ.get("DISPATCH_BOOK_TITLE", "").strip()
+          chapter_label = os.environ.get("DISPATCH_CHAPTER_LABEL", "").strip()
+          queue_task_id = os.environ.get("DISPATCH_QUEUE_TASK_ID", "").strip()
+          missing = [name for name, value in (
+              ("book_title", supplied_title),
+              ("chapter_label", chapter_label),
+              ("queue_task_id", queue_task_id),
+          ) if not value]
+          if missing:
+              raise SystemExit(
+                  "Strict resume dispatch validation failed: missing original input(s): "
+                  + ", ".join(missing)
+              )
+          if supplied_title != expected_title:
+              raise SystemExit(
+                  "Strict resume dispatch validation failed: book_title "
+                  f"{supplied_title!r} does not match source config {expected_title!r}"
+              )
+          PY
           echo "restored=true" >> "$GITHUB_OUTPUT"
 
       - name: Download catalog generated by the first successful runner
@@ -438,16 +449,63 @@ jobs:
           echo "" >> $GITHUB_OUTPUT
           echo 'EOF' >> $GITHUB_OUTPUT
           python -c "import yaml; print('book_profile_id=' + str((yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}).get('book_profile_id') or ''))" >> $GITHUB_OUTPUT
+          python -c "import yaml; print('source_max_parallel=' + str((yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}).get('source_max_parallel', 17)))" >> $GITHUB_OUTPUT
           python -c "import yaml; print('needs_browser_scrape=' + str((yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}).get('needs_browser_scrape', False)).lower())" >> $GITHUB_OUTPUT
 
       - name: Validate non-empty chapter matrix
         run: |
           jq -e 'type == "object" and (.include | type == "array" and length > 0)' matrix.json >/dev/null
-          python -m src.ci.audiobook_steps validate_chapter_matrix
+          python - <<'PY'
+          import json
+          import yaml
+
+          with open("config.yaml", encoding="utf-8") as handle:
+              config = yaml.safe_load(handle) or {}
+          with open("matrix.json", encoding="utf-8") as handle:
+              matrix = (json.load(handle) or {}).get("include") or []
+          selected = [int(value) for value in config.get("selected_indices") or []]
+          patterns = (config.get("cleaner") or {}).get("remove_patterns") or []
+          if not isinstance(patterns, list):
+              raise SystemExit("Strict success gate: cleaner remove_patterns must be a list")
+          if patterns and not (config.get("cleaner") or {}).get("fingerprint"):
+              raise SystemExit("Strict success gate: cleaner profile fingerprint is missing")
+          if not selected:
+              raise SystemExit("Strict success gate: no chapters were selected")
+          if not matrix:
+              raise SystemExit("Strict success gate: no workers were generated")
+          if len(matrix) > 17:
+              raise SystemExit(
+                  f"Strict success gate: matrix generated {len(matrix)} workers; maximum is 17"
+              )
+          worker_total = sum(int(item["end_chap"]) - int(item["start_chap"]) + 1 for item in matrix)
+          if worker_total < len(selected):
+              raise SystemExit(
+                  f"Strict success gate: matrix covers {worker_total} slots for {len(selected)} selected chapters"
+              )
+          PY
 
       - name: Generate Setup Summary
         run: |
-          python -m src.ci.audiobook_steps write_setup_summary
+          python - <<'PY'
+          import os, yaml, json
+          with open("config.yaml", encoding="utf-8") as handle:
+              config = yaml.safe_load(handle) or {}
+          with open("matrix.json", encoding="utf-8") as handle:
+              matrix = (json.load(handle) or {}).get("include") or []
+          cleaner = config.get("cleaner") or {}
+          selected = [int(value) for value in config.get("selected_indices") or []]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## 📚 Audiobook Pipeline Started\n")
+              summary.write(f"✅ **Book:** {config.get('book_title')}\n")
+              summary.write(f"✅ **Target URL:** {config.get('catalog_url')}\n")
+              summary.write(f"✅ **Chapter Range:** {min(selected)} ~ {max(selected)}\n")
+              summary.write(f"✅ **Actual Selected Chapters:** {len(selected)}\n")
+              summary.write(f"✅ **Workers Created:** {len(matrix)}\n")
+              summary.write(f"✅ **Resume Source Run:** {os.environ.get('SOURCE_RUN_ID') or 'none'}\n")
+              summary.write(f"✅ **Book Profile:** `{config.get('book_profile_id') or 'manual/default'}` revision {config.get('profile_revision', 0)}\n")
+              summary.write(f"✅ **Cleaner Rules:** {len(cleaner.get('remove_patterns') or [])}\n")
+              summary.write(f"✅ **Cleaner Fingerprint:** `{(cleaner.get('fingerprint') or 'none')[:12]}`\n")
+          PY
         env:
           SOURCE_RUN_ID: ${{ github.event.inputs.resume_source_run_id }}
 
@@ -465,7 +523,7 @@ jobs:
     if: always() && needs.setup.result == 'success'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker@sha256:4979e4cda14569f3d0b941341dd2ae819db5b2f8863c6738acf138f951feb9b1
+      image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -489,10 +547,10 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
         run: |
-          python -m src.resume_planner \
+          python src/resume_planner.py \
             --repo "${{ github.repository }}" \
             --run-id "${{ github.run_id }}" \
-            --source-run-id "$INPUT_RESUME_SOURCE_RUN_ID" \
+            --source-run-id "${{ inputs.resume_source_run_id }}" \
             --config config.yaml \
             --matrix matrix.json \
             --output-dir resume_bundle \
@@ -500,7 +558,21 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
       - name: Summarize selected resume work
         run: |
-          python -m src.ci.audiobook_steps write_resume_summary
+          python - <<'PY'
+          import json, os
+          plan = json.load(open("resume_bundle/resume-plan.json", encoding="utf-8"))
+          lines = ["## Global Resume Planner", "",
+                   f"- Selected source Run: {plan.get('source_run_id') or 'none'}",
+                   f"- Deepest resume mode: {plan.get('mode')}",
+                   f"- Reused worker IDs: {plan.get('reused_worker_ids', [])}",
+                   f"- Rerun worker IDs: {plan.get('rerun_worker_ids', [])}",
+                   f"- Reused Part numbers: {plan.get('reused_part_numbers', [])}",
+                   f"- Rerun Part numbers: {plan.get('rerun_part_numbers', [])}",
+                   f"- Publication resume position: {plan.get('publication_resume_position')}"]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write("\n".join(lines) + "\n")
+          print(" | ".join(lines[2:]))
+          PY
       - name: Preserve the verified cross-run resume bundle
         uses: actions/upload-artifact@v4
         with:
@@ -545,7 +617,7 @@ jobs:
       - name: Validate and restore only the locked failed Run
         id: artifact_restore
         run: |
-          python -m src.worker_pipeline \
+          python src/worker_pipeline.py \
             --stage restore_artifact \
             --worker-id ${{ matrix.worker_id }} \
             --artifact-dir "resume_bundle/workers/video-worker-${{ matrix.worker_id }}" \
@@ -554,12 +626,12 @@ jobs:
       - name: Scrape Assigned Chapters via HTTP
         if: steps.artifact_restore.outputs.complete != 'true'
         run: |
-          python -m src.worker_pipeline --stage crawl --worker-id ${{ matrix.worker_id }}
+          python src/worker_pipeline.py --stage crawl --worker-id ${{ matrix.worker_id }}
       - name: Build per-chapter advertisement review report
         if: steps.artifact_restore.outputs.complete != 'true'
         run: |
           RAW_DIR=$(find Workspace -type d -name RawText -print -quit)
-          python src/ad_review_report.py --raw-dir "$RAW_DIR" --output "Workspace/AdReview/ad-candidates-worker-${{ matrix.worker_id }}.json" --task-id "$INPUT_QUEUE_TASK_ID" --worker-id "${{ matrix.worker_id }}"
+          python src/ad_review_report.py --raw-dir "$RAW_DIR" --output "Workspace/AdReview/ad-candidates-worker-${{ matrix.worker_id }}.json" --task-id "${{ inputs.queue_task_id }}" --worker-id "${{ matrix.worker_id }}"
       - name: Upload RawText Checkpoint
         uses: actions/upload-artifact@v4
         with:
@@ -620,7 +692,7 @@ jobs:
         # Downloaded workers must exactly cover the locked selected chapters.
         run: |
           RAW_DIR=$(find all-scrape-workers -type d -name RawText -print -quit)
-          python src/ad_review_report.py --raw-dir "$RAW_DIR" --output "AdReview/ad-candidates-full-book.json" --task-id "$INPUT_QUEUE_TASK_ID" --worker-id -1 --config config.yaml
+          python src/ad_review_report.py --raw-dir "$RAW_DIR" --output "AdReview/ad-candidates-full-book.json" --task-id "${{ inputs.queue_task_id }}" --worker-id -1 --config config.yaml
       - name: Upload authoritative advertisement review report
         uses: actions/upload-artifact@v4
         with:
@@ -646,13 +718,13 @@ jobs:
       needs.resume_planner.outputs.mode != 'final_merge'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker@sha256:4979e4cda14569f3d0b941341dd2ae819db5b2f8863c6738acf138f951feb9b1
+      image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
-      max-parallel: 17
+      max-parallel: ${{ fromJSON(needs.setup.outputs.source_max_parallel || '1') }}
       matrix: ${{ fromJSON(needs.resume_planner.outputs.worker_matrix) }}
 
     steps:
@@ -671,7 +743,7 @@ jobs:
       - name: Validate and restore only the locked failed Run
         id: artifact_restore
         run: |
-          python -m src.worker_pipeline \
+          python src/worker_pipeline.py \
             --stage restore_artifact \
             --worker-id ${{ matrix.worker_id }} \
             --artifact-dir "resume_bundle/workers/video-worker-${{ matrix.worker_id }}" \
@@ -718,10 +790,10 @@ jobs:
           # Network-facing stages already implement their own bounded retries.
           # Retrying the whole worker repeats deterministic validation failures
           # and obscures the original error with duplicate tracebacks.
-          python -m src.worker_pipeline --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1
+          python src/worker_pipeline.py --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1
 
       - name: Save Worker Workspace Checkpoint
-        if: failure() || cancelled()
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: Workspace/
@@ -733,6 +805,19 @@ jobs:
         with:
           name: manifest-worker-${{ matrix.worker_id }}
           path: Workspace/*/Manifests/manifest-worker-${{ matrix.worker_id }}.json
+          if-no-files-found: error
+
+      - name: Upload MP4 Videos & Subtitles Only (Lightweight Artifact for YouTube Upload)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mp4-worker-${{ matrix.worker_id }}
+          path: |
+            Workspace/*/Video/
+            Workspace/*/Subtitles/
+            Workspace/*/SourceStatus/
+            Workspace/*/Manifests/
+            Upload_Subtitles/
           if-no-files-found: error
 
       - name: Upload full worker workspace artifact (attempt 1/3)
@@ -786,7 +871,42 @@ jobs:
             echo "- Reason: config.yaml is unavailable; inspect the first failed setup step." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          python -m src.ci.audiobook_steps write_worker_summary
+          python - <<'PY'
+          import os
+          import yaml
+          from src.pipeline_checkpoint import PipelineCheckpoint
+          from src.worker_pipeline import build_stage_settings, extract_chapter_sources
+
+          with open("config.yaml", encoding="utf-8") as config_file:
+              config = yaml.safe_load(config_file)
+          book_title = config["book_title"]
+          from src.source_identity import workspace_name
+          workspace = os.path.abspath(os.path.join(config["paths"]["workspace_base"], workspace_name(config)))
+          worker_id = int(os.environ["WORKER_ID"])
+          per_worker = int(config["chapters_per_worker"])
+          start = worker_id * per_worker
+          chapters = config["selected_indices"][start:start + per_worker]
+          sources = extract_chapter_sources(config)
+          checkpoint = PipelineCheckpoint(
+              workspace, book_title, worker_id, chapters,
+              cleaner_fingerprint=(config.get("cleaner") or {}).get("fingerprint", ""),
+              stage_settings=build_stage_settings(config),
+              validation_cache_enabled=(config.get("validation") or {}).get("cache_enabled", True),
+              chapter_sources=sources,
+              source_chapter_sources=sources,
+          )
+          incomplete = checkpoint.incomplete_chapters()
+          missing = checkpoint.source_missing_chapters()
+          print("[RUN_SUMMARY] " + __import__("json").dumps({
+              "kind": "worker", "worker": worker_id,
+              "completed": len(chapters) - len(incomplete) - len(missing),
+              "total": len(chapters),
+              "incomplete": incomplete,
+              "source_missing": missing,
+          }, ensure_ascii=False))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(checkpoint.markdown_summary())
+          PY
 
 # ─────────────────────────────────────────────────────────────
 # Plan and merge every Part before any external publication
@@ -797,7 +917,7 @@ jobs:
     if: always() && inputs.execution_phase != 'scrape_only' && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && (needs.process_chapters.result == 'success' || needs.process_chapters.result == 'skipped')
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker@sha256:4979e4cda14569f3d0b941341dd2ae819db5b2f8863c6738acf138f951feb9b1
+      image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -822,7 +942,7 @@ jobs:
         id: restore_plan
         if: needs.resume_planner.outputs.has_plan == 'true'
         run: |
-          python -m src.prepare_parts --mode restore-plan \
+          python src/prepare_parts.py --mode restore-plan \
             --source-dir resume_bundle/prepared-plan \
             --config prepared_source/config.yaml \
             --output-dir prepared_plan \
@@ -832,7 +952,7 @@ jobs:
         if: needs.resume_planner.outputs.has_plan != 'true'
         uses: actions/download-artifact@v4
         with:
-          pattern: video-worker-*
+          pattern: mp4-worker-*
           path: current_worker_inputs
 
       - name: Inventory every chapter and lock the complete plan
@@ -844,16 +964,10 @@ jobs:
           mkdir -p combined_worker_inputs
           if [ -d resume_bundle/workers ]; then cp -a resume_bundle/workers/. combined_worker_inputs/; fi
           # Current workers are downloaded in the preceding action step.
-          if [ -d current_worker_inputs ]; then
-            for worker in current_worker_inputs/video-worker-*; do
-              [ -d "$worker" ] || continue
-              rm -rf "combined_worker_inputs/$(basename "$worker")"
-              cp -a "$worker" combined_worker_inputs/
-            done
-          fi
+          if [ -d current_worker_inputs ]; then cp -a current_worker_inputs/. combined_worker_inputs/; fi
           for attempt in 1 2 3; do
             echo "Inventory and plan attempt $attempt/3"
-            if python -m src.prepare_parts \
+            if python src/prepare_parts.py \
               --mode plan \
               --run-id "${{ github.run_id }}" \
               --repo "${{ github.repository }}" \
@@ -888,7 +1002,7 @@ jobs:
       matrix: ${{ fromJSON(needs.plan_parts.outputs.matrix) }}
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker@sha256:4979e4cda14569f3d0b941341dd2ae819db5b2f8863c6738acf138f951feb9b1
+      image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -907,7 +1021,7 @@ jobs:
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
-          pattern: video-worker-*
+          pattern: mp4-worker-*
           path: resume_inputs/current-workers
       - name: Merge only assigned locked Parts
         env:
@@ -917,7 +1031,7 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             echo "Merge parts attempt $attempt/3"
-            if python -m src.prepare_parts \
+            if python src/prepare_parts.py \
               --mode merge \
               --repo "${{ github.repository }}" \
               --plan prepared_plan/parts-plan.json \
@@ -949,7 +1063,7 @@ jobs:
     if: always() && inputs.execution_phase != 'scrape_only' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.plan_parts.result == 'success' && (needs.merge_parts.result == 'success' || needs.merge_parts.result == 'skipped')
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker@sha256:4979e4cda14569f3d0b941341dd2ae819db5b2f8863c6738acf138f951feb9b1
+      image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -977,12 +1091,17 @@ jobs:
         run: |
           if [ "$RESUME_MODE" = "publication" ]; then
             cp -a resume_bundle/final-merge/. final_merge/
-            python -m src.ci.audiobook_steps check_final_merge
+            python - <<'PY'
+          import json
+          from src.resume_planner import validate_final_merge
+          plan = json.load(open("prepared_plan/parts-plan.json", encoding="utf-8"))
+          validate_final_merge("final_merge", plan)
+          PY
           else
             mkdir -p all_merge_results
             if [ -d resume_bundle/merge-results ]; then cp -a resume_bundle/merge-results/. all_merge_results/; fi
             if [ -d current_merge_results ]; then cp -a current_merge_results/. all_merge_results/; fi
-            python -m src.resume_planner --build-final \
+            python src/resume_planner.py --build-final \
               --run-id "${{ github.run_id }}" \
               --plan prepared_plan/parts-plan.json \
               --sidecar-dir all_merge_results \
@@ -1007,7 +1126,7 @@ jobs:
     if: always() && inputs.execution_phase != 'scrape_only' && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.final_merge.result == 'success'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/hub-google/audiobook-worker@sha256:4979e4cda14569f3d0b941341dd2ae819db5b2f8863c6738acf138f951feb9b1
+      image: ghcr.io/hub-google/audiobook-worker@sha256:8c6b974d2a62daa17234d0d05729db071c9bbb75ca88dbd18964f6f2cf7e7fb0
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -1058,7 +1177,46 @@ jobs:
           EXECUTION_RUN_ID: ${{ github.run_id }}
           SOURCE_RUN_ID: ${{ needs.resume_planner.outputs.source_run_id || github.run_id }}
         run: |
-          python -m src.ci.audiobook_steps validate_youtube_checkpoint
+          python - <<'PY'
+          import json, os, sys, yaml
+          from src.publication_checkpoint import PublicationCheckpoint, plan_structure_fingerprint
+          from src.youtube_upload.state import load_resume_state
+
+          state_file = "upload_resume_state/state.json"
+          state = load_resume_state(state_file)
+          if not state:
+              sys.exit(0)
+
+          config_path = "prepared_source/config.yaml"
+          book_profile_id = ""
+          if os.path.exists(config_path):
+              with open(config_path, encoding="utf-8") as f:
+                  cfg = yaml.safe_load(f) or {}
+                  book_profile_id = str(cfg.get("book_profile_id") or "").strip()
+
+          if book_profile_id and state.get("book_profile_id") and str(state["book_profile_id"]).strip() != book_profile_id:
+              print(f"::error title=Checkpoint rejected::Checkpoint book_profile_id {state['book_profile_id']!r} != expected {book_profile_id!r}")
+              sys.exit(1)
+
+          plan_path = "prepared_plan/parts-plan.json"
+          if os.path.exists(plan_path) and state.get("part_plan"):
+              with open(plan_path, encoding="utf-8") as f:
+                  locked = json.load(f)
+              expected_fp = plan_structure_fingerprint(locked.get("parts", []))
+              actual_fp = plan_structure_fingerprint(state["part_plan"])
+              if expected_fp != actual_fp:
+                  print("::error title=Checkpoint rejected::part_plan fingerprint differs from current prepared plan")
+                  sys.exit(1)
+
+          publication = PublicationCheckpoint(state_file)
+          if publication.is_locked():
+              valid, reason = publication.validate_task_identity(book_profile_id=book_profile_id)
+              if not valid:
+                  print(f"::error title=Checkpoint rejected::{reason}")
+                  sys.exit(1)
+
+          print("Restored YouTube upload checkpoint validated successfully.")
+          PY
 
       - name: Download approved preflight cover
         if: inputs.cover_source_run_id != ''
@@ -1071,7 +1229,7 @@ jobs:
           run-id: ${{ inputs.cover_source_run_id }}
       - name: Restore and validate approved cover
         if: inputs.cover_source_run_id != ''
-        run: python -m src.cover_preflight --restore approved_cover --config prepared_source/config.yaml --task-id "$INPUT_QUEUE_TASK_ID"
+        run: python src/cover_preflight.py --restore approved_cover --config prepared_source/config.yaml --task-id "${{ inputs.queue_task_id }}"
 
       # A cover uploaded from the review window is an explicit override made
       # after the preflight artifact was created.  Apply it last so the old
@@ -1108,7 +1266,7 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             echo "Fetch Parts from HF attempt $attempt/3"
-            if python -m src.prepare_parts \
+            if python src/prepare_parts.py \
               --mode fetch \
               --plan prepared_plan/parts-plan.json \
               --sidecar-dir prepared_sidecars \
@@ -1125,7 +1283,6 @@ jobs:
       - name: Run YouTube API Uploader
         env:
           YOUTUBE_REFRESH_TOKEN_1: ${{ secrets.YOUTUBE_REFRESH_TOKEN_1 }}
-          YOUTUBE_ACTIVE_SLOTS: ${{ vars.YOUTUBE_ACTIVE_SLOTS || '1' }}
           YOUTUBE_CLIENT_ID_1: ${{ secrets.YOUTUBE_CLIENT_ID_1 }}
           YOUTUBE_CLIENT_SECRET_1: ${{ secrets.YOUTUBE_CLIENT_SECRET_1 }}
           YOUTUBE_REFRESH_TOKEN_2: ${{ secrets.YOUTUBE_REFRESH_TOKEN_2 }}
@@ -1155,7 +1312,7 @@ jobs:
           YOUTUBE_REFRESH_TOKEN_10: ${{ secrets.YOUTUBE_REFRESH_TOKEN_10 }}
           YOUTUBE_CLIENT_ID_10: ${{ secrets.YOUTUBE_CLIENT_ID_10 }}
           YOUTUBE_CLIENT_SECRET_10: ${{ secrets.YOUTUBE_CLIENT_SECRET_10 }}
-          YOUTUBE_EXPECTED_ACCOUNT_COUNT: ${{ vars.YOUTUBE_EXPECTED_ACCOUNT_COUNT || '' }}
+          YOUTUBE_EXPECTED_ACCOUNT_COUNT: "10"
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -1174,7 +1331,7 @@ jobs:
           for attempt in 1 2 3; do
             echo "YouTube uploader attempt $attempt/3"
             set +e
-            python -m src.youtube_api_uploader --run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --source-run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --execution-run-id "${{ github.run_id }}" --input-dir prepared_parts --task-id "$INPUT_QUEUE_TASK_ID" --repo "${{ github.repository }}" --privacy "public" --publish-at "$INPUT_PUBLISH_AT" --state-file upload_resume_state/state.json
+            python src/youtube_api_uploader.py --run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --source-run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --execution-run-id "${{ github.run_id }}" --input-dir prepared_parts --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --publish-at "${{ github.event.inputs.publish_at }}" --state-file upload_resume_state/state.json
             code=$?
             set -e
 
@@ -1203,12 +1360,101 @@ jobs:
           EXECUTION_RUN_ID: ${{ github.run_id }}
           BOOK_PROFILE_ID: ${{ steps.gen_matrix.outputs.book_profile_id || needs.setup.outputs.book_profile_id }}
         run: |
-          python -m src.ci.audiobook_steps enforce_publication_evidence
+          python - <<'PY'
+          import os
+          from src.success_criteria import validate_upload_success
+
+          result = validate_upload_success(
+              "upload_resume_state/state.json",
+              expected_run_id=os.environ.get("SOURCE_RUN_ID"),
+              execution_run_id=os.environ.get("EXECUTION_RUN_ID"),
+              expected_book_profile_id=os.environ.get("BOOK_PROFILE_ID"),
+          )
+          print(
+              "Strict success gate passed: "
+              f"{result['parts']} Parts published to {result['playlist_url']}"
+          )
+          PY
 
       - name: Generate Job Summary
         if: always()
         run: |
-          python -m src.ci.audiobook_steps write_publication_summary
+          python - <<'PY'
+          import json, os
+          from src.publication_checkpoint import PublicationCheckpoint
+          
+          state_file = "upload_resume_state/state.json"
+          if not os.path.exists(state_file):
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+                  f.write("## YouTube Upload Status\nNo state file found.\n")
+              exit(0)
+              
+          with open(state_file, encoding="utf-8") as f:
+              state = json.load(f)
+          hf_state_file = "upload_resume_state/hf_archive_state.json"
+          hf_state = {}
+          if os.path.exists(hf_state_file):
+              with open(hf_state_file, encoding="utf-8") as f:
+                  hf_state = json.load(f)
+              
+          done = len(state.get("completed_titles", []))
+          total = len(state.get("part_plan", [])) or max(done, 1)
+          pending = len(state.get("pending_thumbnails", {}))
+          pending_playlist = len(state.get("pending_playlist", {}))
+          pending_captions = len(state.get("pending_captions", {}))
+          pending_publish = len(state.get("pending_publish", {}))
+          viewer_gate = state.get("final_playlist_validation") or {}
+          status = state.get("status", "unknown")
+          publication = PublicationCheckpoint(state_file)
+          book_title = publication.data.get("book_title", "")
+          books = hf_state.get("books", {})
+          hf_repo = hf_state.get("repo_id", "尚未建立")
+          hf_book_key = publication.data.get('source_fingerprint') or book_title
+          current_hf_book = books.get(hf_book_key, {}) if hf_book_key else {}
+          hf_parts = (current_hf_book.get("parts") or {}).values()
+          hf_done = sum(item.get("status") == "complete" for item in hf_parts)
+          print("[RUN_SUMMARY] " + json.dumps({
+              "kind": "youtube", "status": status, "completed": done, "total": total,
+              "pending_thumbnails": pending, "pending_playlist": pending_playlist,
+              "pending_captions": pending_captions, "pending_publish": pending_publish,
+              "reason": state.get("reason"), "retry_at": state.get("retry_at"),
+              "playlist_url": state.get("playlist_url"),
+              "viewer_playlist_gate": viewer_gate.get("status", "missing"),
+              "viewer_playlist_items": viewer_gate.get("item_count", 0),
+              "viewer_playlist_order": viewer_gate.get("ordered_parts", []),
+          }, ensure_ascii=False))
+          
+          status_icon = "⏸️"
+          if status == "complete": status_icon = "🎉"
+          elif status == "failed": status_icon = "❌"
+          elif status == "unknown": status_icon = "⚠️"
+          
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write(f"## {status_icon} YouTube Upload Status: {status.upper()}\n\n")
+              f.write(f"| 項目 | 狀態資訊 |\n|---|---|\n")
+              f.write(f"| **任務進度** | **{done} / {total} Parts** ({done/total*100:.1f}%) |\n")
+              f.write(f"| **Pending Thumbnails** | **{pending}** |\n")
+              f.write(f"| **Pending Playlist Inserts** | **{pending_playlist}** |\n")
+              f.write(f"| **Pending CC Captions** | **{pending_captions}** |\n")
+              f.write(f"| **Pending Final Publish** | **{pending_publish}** |\n")
+              f.write(f"| **使用者最終播放清單驗收** | **{viewer_gate.get('status', 'missing').upper()}** |\n")
+              f.write(f"| **播放清單實際項目數** | **{viewer_gate.get('item_count', 0)}** |\n")
+              f.write(f"| **Part 排序** | **{viewer_gate.get('ordered_parts', [])}** |\n")
+              f.write(f"| **Current Book Hugging Face Parts** | **{hf_done} / {total}** |\n")
+              if not book_title:
+                  f.write("| **Hugging Face Summary Warning** | `本次 checkpoint 缺少 book_title，無法統計本書 HF Parts` |\n")
+              f.write(f"| **Hugging Face Repo** | `{hf_repo}` |\n")
+              if "reason" in state and state["reason"]:
+                  f.write(f"| **Reason** | `{state['reason']}` |\n")
+              if "retry_at" in state and state["retry_at"]:
+                  f.write(f"| **Retry After** | `{state['retry_at']}` |\n")
+                  
+              playlist_url = state.get("playlist_url")
+              if playlist_url and playlist_url.startswith("http"):
+                  f.write(f"| **播放清單** | [點此開啟 YouTube 播放清單]({playlist_url}) |\n")
+              f.write("\n")
+              f.write(publication.markdown_summary())
+          PY
 
       - name: Save YouTube upload checkpoint
         if: always() && hashFiles('upload_resume_state/state.json') != ''

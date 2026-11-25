@@ -1,0 +1,146 @@
+{
+  "core_summary_zh": "葉修在陳果網吧工作，被聘為夜班網管，並被安排住在儲物間。",
+  "two_scene_feasibility": "可行",
+  "candidates": [
+    {
+      "event_id": "ch0003_p001_0",
+      "position": 0.2,
+      "event_type": "人物互動",
+      "summary_zh": "葉修在競技場擊敗了陳果的對手，陳果認出葉修的身份。",
+      "characters": [
+        "陳果",
+        "葉修"
+      ],
+      "location": "網吧",
+      "visible_action": "葉修退出游戲，陳果詢問葉修用時。",
+      "visible_emotion": "陳果驚訝，葉修略帶遺憾。",
+      "key_objects": [
+        "榮耀",
+        "身份證"
+      ],
+      "evidence": [
+        {
+          "chunk_id": "ch0003_p001",
+          "start_char": 0,
+          "end_char": 663,
+          "support_summary": "葉修在競技場擊敗了陳果的對手，陳果認出葉修的身份。"
+        }
+      ],
+      "scores": {
+        "narrative": 5,
+        "visual": 3,
+        "character": 4,
+        "emotion": 4,
+        "coverage": 4,
+        "evidence": 5
+      },
+      "uncertainties": [],
+      "not_depicted": []
+    },
+    {
+      "event_id": "ch0003_p002_1",
+      "position": 0.4,
+      "event_type": "人物決定",
+      "summary_zh": "葉修被陳果聘為網管，並被要求在夜班工作。",
+      "characters": [
+        "陳果",
+        "葉修"
+      ],
+      "location": "網吧",
+      "visible_action": "陳果聘請葉修為網管。",
+      "visible_emotion": "陳果激動，葉修苦笑。",
+      "key_objects": [
+        "身份證",
+        "網管職位"
+      ],
+      "evidence": [
+        {
+          "chunk_id": "ch0003_p002",
+          "start_char": 664,
+          "end_char": 1309,
+          "support_summary": "葉修被陳果聘為網管，並被要求在夜班工作。"
+        }
+      ],
+      "scores": {
+        "narrative": 5,
+        "visual": 3,
+        "character": 4,
+        "emotion": 4,
+        "coverage": 4,
+        "evidence": 5
+      },
+      "uncertainties": [],
+      "not_depicted": []
+    },
+    {
+      "event_id": "ch0003_p003_2",
+      "position": 0.6,
+      "event_type": "背景介紹",
+      "summary_zh": "葉修決定轉區到新區，並開始懷念過去。",
+      "characters": [
+        "葉修"
+      ],
+      "location": "網吧",
+      "visible_action": "葉修查看轉區頁面。",
+      "visible_emotion": "葉修苦笑。",
+      "key_objects": [
+        "轉區",
+        "賬號"
+      ],
+      "evidence": [
+        {
+          "chunk_id": "ch0003_p003",
+          "start_char": 1310,
+          "end_char": 1955,
+          "support_summary": "葉修決定轉區到新區，並開始懷念過去。"
+        }
+      ],
+      "scores": {
+        "narrative": 5,
+        "visual": 3,
+        "character": 4,
+        "emotion": 4,
+        "coverage": 4,
+        "evidence": 5
+      },
+      "uncertainties": [],
+      "not_depicted": []
+    },
+    {
+      "event_id": "ch0003_p004_3",
+      "position": 0.8,
+      "event_type": "工作安排",
+      "summary_zh": "葉修開始在網吧工作，陳果安排葉修搬鍵盤。",
+      "characters": [
+        "陳果",
+        "葉修"
+      ],
+      "location": "網吧",
+      "visible_action": "葉修搬鍵盤。",
+      "visible_emotion": "葉修滿意。",
+      "key_objects": [
+        "搬鍵盤",
+        "儲物間"
+      ],
+      "evidence": [
+        {
+          "chunk_id": "ch0003_p004",
+          "start_char": 1956,
+          "end_char": 2591,
+          "support_summary": "葉修開始在網吧工作，陳果安排葉修搬鍵盤。"
+        }
+      ],
+      "scores": {
+        "narrative": 5,
+        "visual": 3,
+        "character": 4,
+        "emotion": 4,
+        "coverage": 4,
+        "evidence": 5
+      },
+      "uncertainties": [],
+      "not_depicted": []
+    }
+  ],
+  "chapter": 3
+}

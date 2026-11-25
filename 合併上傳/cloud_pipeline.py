@@ -8,7 +8,6 @@ from zoneinfo import ZoneInfo
 
 import requests
 from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
-from huggingface_hub.errors import EntryNotFoundError
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -16,7 +15,6 @@ sys.path.insert(0, str(HERE.parent))
 from hf_catalog import HfCatalog
 from merge_plan import build_plan
 from src.artifact_validation import validate_video
-from src.youtube_upload.state import select_youtube_account_slot
 
 CHUNK = 8 * 1024 * 1024
 TRANSFER_RETRIES = 5
@@ -253,46 +251,9 @@ def make_plan(args):
     matrix={"include":[{"output_number":x["output_number"]} for x in plan["outputs"]]}
     with open(os.environ["GITHUB_OUTPUT"],"a",encoding="utf-8") as f: f.write("matrix="+json.dumps(matrix,separators=(",",":"))+"\nplan_id="+plan["plan_id"]+"\n")
 
-def optional_remote_json(path):
-    try:
-        return remote_json(path)
-    except EntryNotFoundError:
-        return None
-
-
-def reusable_merge_manifest(root, plan, item):
-    """Never replace the pinned object of an existing resumable upload."""
-    manifest = optional_remote_json(f"{root}/merge_manifest.json")
-    state = optional_remote_json(f"{root}/upload_state.json")
-    if manifest:
-        same_plan = (
-            manifest.get("status") == "merge_complete"
-            and manifest.get("plan_id") == plan["plan_id"]
-            and manifest.get("parts_revision") == plan["repo_revision"]
-            and manifest.get("output") == item
-            and manifest.get("video_path") == f"{root}/audiobook.mp4"
-            and int(manifest.get("bytes") or 0) > 0
-            and re.fullmatch(r"[0-9a-f]{64}", str(manifest.get("sha256") or ""))
-            and re.fullmatch(r"[0-9a-f]{40}", str(manifest.get("output_revision") or ""))
-        )
-        if same_plan:
-            if state and (state.get("source_revision") != source_revision(manifest)
-                          or int(state.get("total_size") or 0) != int(manifest["bytes"])
-                          or state.get("manifest_path") != f"{root}/merge_manifest.json"):
-                raise RuntimeError("Existing upload state does not match its pinned merge")
-            return manifest
-    if state:
-        raise RuntimeError("Existing upload session prevents rebuilding its pinned merge")
-    return None
-
-
 def merge_output(args):
     plan=json.loads(Path(args.plan).read_text(encoding="utf-8")); item=next(x for x in plan["outputs"] if x["output_number"]==args.output_number)
-    root=output_root(plan["plan_id"],args.output_number)
-    if reusable_merge_manifest(root, plan, item):
-        print("Reusing completed pinned merge; existing upload session is preserved", flush=True)
-        return
-    _, repo, token=api(); target=Path(args.bucket_mount)/root/"audiobook.mp4"; target.parent.mkdir(parents=True,exist_ok=True)
+    _, repo, token=api(); root=output_root(plan["plan_id"],args.output_number); target=Path(args.bucket_mount)/root/"audiobook.mp4"; target.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         source_dir=Path(tmp)/"source-parts"
         local_parts=[
@@ -322,91 +283,13 @@ def credentials(slot=None):
 
 def put_chunk(url,start,total,data): return requests.put(url,headers={"Content-Length":str(len(data)),"Content-Range":f"bytes {start}-{start+len(data)-1}/{total}"},data=data,timeout=180)
 def query(url,total,cred):
-    for attempt in range(TRANSFER_RETRIES):
-        try:
-            response=requests.put(url,headers={"Authorization":f"Bearer {cred.token}","Content-Length":"0","Content-Range":f"bytes */{total}"},timeout=60)
-            if response.status_code in (200,201) or response.status_code == 308:
-                return acknowledged_offset(response, total)
-            if response.status_code not in (408, 429, 500, 502, 503, 504):
-                raise RuntimeError(f"YouTube resume query failed: {response.status_code}")
-        except (requests.Timeout, requests.ConnectionError):
-            if attempt + 1 == TRANSFER_RETRIES:
-                raise
-        if attempt + 1 < TRANSFER_RETRIES:
-            time.sleep(min(2 ** attempt, 30))
-    raise RuntimeError("YouTube resume query failed after bounded retries")
-
-def acknowledged_offset(response, total):
-    if response.status_code in (200, 201):
-        video_id = (response.json() or {}).get("id")
-        if not video_id:
-            raise RuntimeError("YouTube completed response is missing video ID")
-        return total, video_id
-    if response.status_code!=308:
-        raise RuntimeError(f"YouTube chunk failed: {response.status_code}")
-    value = response.headers.get("Range", "")
-    if not value:
-        return 0, None
-    match = re.fullmatch(r"bytes=0-(\d+)", value.strip())
-    if not match or not 0 <= int(match.group(1)) < total:
-        raise RuntimeError("Invalid YouTube acknowledged byte range")
-    return int(match.group(1)) + 1, None
-
-
-def upload_range(session, source, total, target, sent, cred, video_id=None):
-    """Use server acknowledgements, not bytes merely sent by the client."""
-    no_progress = 0
-    while sent < target:
-        end = min(target - 1, sent + CHUNK - 1)
-        data = read_range(source, sent, end)
-        if len(data) != end - sent + 1:
-            raise RuntimeError("HF returned a truncated byte range")
-        try:
-            response = put_chunk(session, sent, total, data)
-            if response.status_code in (408, 429, 500, 502, 503, 504):
-                # The request may have reached YouTube despite the error.
-                time.sleep(min(2 ** (no_progress + 1), 30))
-                next_sent, found_id = query(session, total, cred)
-            else:
-                next_sent, found_id = acknowledged_offset(response, total)
-        except (requests.Timeout, requests.ConnectionError):
-            next_sent, found_id = query(session, total, cred)
-        if next_sent < 0 or next_sent > total:
-            raise RuntimeError("YouTube returned an invalid byte offset")
-        no_progress = no_progress + 1 if next_sent <= sent else 0
-        if no_progress >= TRANSFER_RETRIES:
-            raise RuntimeError("YouTube upload did not acknowledge progress")
-        if no_progress:
-            time.sleep(min(2 ** no_progress, 30))
-        sent = next_sent
-        video_id = found_id or video_id
-        if video_id:
-            return total, video_id
-    return sent, video_id
-
+    response=requests.put(url,headers={"Authorization":f"Bearer {cred.token}","Content-Length":"0","Content-Range":f"bytes */{total}"},timeout=60)
+    if response.status_code in (200,201): return total,(response.json() or {}).get("id")
+    if response.status_code!=308: raise RuntimeError(f"YouTube resume query failed: {response.status_code} {response.text[:300]}")
+    value=response.headers.get("Range",""); return (int(value.rsplit("-",1)[1])+1 if "-" in value else 0),None
 
 def phase1(args):
-    manifest=remote_json(args.manifest); total=int(manifest["bytes"]); source=verified_hf_source(manifest)
-    try:
-        state = remote_json(args.state_path)
-    except EntryNotFoundError:
-        state = None
-    if state:
-        if int(state["total_size"]) != total or state.get("source_revision") != source_revision(manifest) or state.get("manifest_path") != args.manifest:
-            raise RuntimeError("Existing YouTube upload session belongs to a different source revision")
-        if state.get("status") == "needs_attention":
-            raise RuntimeError("Existing upload requires attention; refusing to report success")
-        if state.get("status") in {"paused_at_98", "resume_dispatched", "complete"}:
-            if state.get("status") == "paused_at_98":
-                write_phase1_summary(state, str(state.get("youtube_title") or manifest.get("youtube_title")))
-            return
-        if state.get("status") != "phase1_uploading" or not state.get("session_url"):
-            raise RuntimeError("Existing upload state is not safe to restart")
-    # Never change the OAuth project for an already-created upload session.
-    slot = (state.get("credential_slot") or 1) if state else (
-        getattr(args, "credential_slot", None) or select_youtube_account_slot((manifest.get("output") or {}).get("output_number") or 1)
-    )
-    cred=credentials(slot)
+    manifest=remote_json(args.manifest); total=int(manifest["bytes"]); source=verified_hf_source(manifest); cred=credentials(getattr(args,"credential_slot",None))
     headers={"Authorization":f"Bearer {cred.token}","Content-Type":"application/json; charset=UTF-8","X-Upload-Content-Length":str(total),"X-Upload-Content-Type":"video/mp4"}
     title = str(args.title or manifest.get("youtube_title") or "").strip()
     description = str(manifest.get("youtube_description") or "").strip()
@@ -423,83 +306,41 @@ def phase1(args):
     if publish_at:
         status_body["publishAt"] = publish_at
     body = {"snippet": {"title": title, "description": description}, "status": status_body}
-    if not state:
-        response=requests.post("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",headers=headers,json=body,timeout=60)
-        response.raise_for_status()
-        session=response.headers["Location"]
-        state={"status":"phase1_uploading","book_title":manifest.get("book_title"),"youtube_title":manifest.get("youtube_title"),"plan_id":manifest.get("plan_id"),"output_number":(manifest.get("output") or {}).get("output_number"),"session_url":session,"session_id":hashlib.sha256(session.encode()).hexdigest()[:20],"manifest_path":args.manifest,"source_revision":source_revision(manifest),"total_size":total,"confirmed_bytes":0,"privacy":args.privacy,"publish_at":publish_at or None,"video_id":None,"credential_slot":int(slot)}
-        upload_json(args.state_path,state,"Persist YouTube session before transferring data")
-    session=state["session_url"]
-    target=(int(total*.98)//(256*1024))*(256*1024)
-    sent, video_id = query(session, total, cred)
-    confirmed, video_id = upload_range(session, source, total, target, sent, cred, video_id)
-    now=datetime.now(timezone.utc)
-    if confirmed < target:
-        raise RuntimeError("YouTube did not acknowledge phase one target")
-    state.update(status="paused_at_98", confirmed_bytes=confirmed, paused_at=now.isoformat(), target_resume_at=(now+timedelta(hours=24)).isoformat(), video_id=video_id)
+    response=requests.post("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",headers=headers,json=body,timeout=60); response.raise_for_status(); session=response.headers["Location"]
+    target=(int(total*.98)//(256*1024))*(256*1024); sent=0
+    while sent<target:
+        end=min(target-1,sent+CHUNK-1); data=read_range(source,sent,end)
+        result=put_chunk(session,sent,total,data)
+        if result.status_code not in (200,201,308): raise RuntimeError(f"YouTube chunk failed: {result.status_code}")
+        sent += len(data)
+    confirmed,video_id=query(session,total,cred); now=datetime.now(timezone.utc)
+    state={"status":"paused_at_98","book_title":manifest.get("book_title"),"youtube_title":manifest.get("youtube_title"),"plan_id":manifest.get("plan_id"),"output_number":(manifest.get("output") or {}).get("output_number"),"session_url":session,"session_id":hashlib.sha256(session.encode()).hexdigest()[:20],"manifest_path":args.manifest,"source_revision":source_revision(manifest),"total_size":total,"confirmed_bytes":confirmed,"paused_at":now.isoformat(),"target_resume_at":(now+timedelta(hours=24)).isoformat(),"privacy":args.privacy,"publish_at":publish_at or None,"video_id":video_id,"credential_slot":int(getattr(args,"credential_slot",None) or 1)}
     upload_json(args.state_path,state,"Save two-phase YouTube session")
     write_phase1_summary(state, title)
 
 def phase2(args):
-    state=remote_json(args.state_path)
-    if state.get("status") == "complete" and state.get("video_id"):
-        return
-    if state.get("status") not in {"paused_at_98", "resume_dispatched"}:
-        raise RuntimeError("Upload is not ready for phase 2")
-    target = datetime.fromisoformat(state["target_resume_at"])
-    if target.tzinfo is None or datetime.now(timezone.utc) < target:
-        raise RuntimeError("The required 24-hour pause has not elapsed")
-    manifest=remote_json(state["manifest_path"]); total=int(manifest["bytes"])
+    state=remote_json(args.state_path); manifest=remote_json(state["manifest_path"]); total=int(manifest["bytes"])
     if total!=int(state["total_size"]) or source_revision(manifest)!=state.get("source_revision"): raise RuntimeError("HF merged video changed")
-    cred=credentials(state.get("credential_slot"))
-    video_id=state.get("video_id")
-    sent=total if video_id else 0
-    if not video_id:
-        sent,video_id=query(state["session_url"],total,cred)
-    source=resolve_url(manifest["video_path"],source_revision(manifest)) if sent < total else None
-    sent, video_id = upload_range(state["session_url"], source, total, total, sent, cred, video_id)
+    cred=credentials(state.get("credential_slot")); sent,video_id=query(state["session_url"],total,cred); source=resolve_url(manifest["video_path"],source_revision(manifest))
+    while sent<total:
+        end=min(total-1,sent+CHUNK-1); data=read_range(source,sent,end)
+        response=put_chunk(state["session_url"],sent,total,data)
+        if response.status_code in (200,201): video_id=(response.json() or {}).get("id")
+        elif response.status_code!=308: raise RuntimeError(f"YouTube chunk failed: {response.status_code}")
+        sent += len(data)
     if not video_id: _,video_id=query(state["session_url"],total,cred)
     if not video_id: raise RuntimeError("Upload completed without a YouTube video id")
-    # Persist the video identity before thumbnail upload.
-    state.update(video_id=video_id, confirmed_bytes=total)
-    upload_json(args.state_path,state,"Confirm uploaded YouTube video before thumbnail")
-    cover=hf_hub_download(repo_token()[0],manifest["cover_path"],repo_type="dataset",token=repo_token()[1],revision=manifest.get("parts_revision") or source_revision(manifest))
+    cover=hf_hub_download(repo_token()[0],manifest["cover_path"],repo_type="dataset",token=repo_token()[1])
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
     build("youtube","v3",credentials=cred).thumbnails().set(videoId=video_id,media_body=MediaFileUpload(cover,mimetype="image/jpeg")).execute()
     state.update(status="complete",video_id=video_id,video_url=f"https://www.youtube.com/watch?v={video_id}",completed_at=datetime.now(timezone.utc).isoformat()); upload_json(args.state_path,state,"Complete two-phase YouTube upload")
-
-def resume_dispatch_stale(state, now):
-    if state.get("status") != "resume_dispatched":
-        return False
-    stamp = state.get("resume_dispatched_at")
-    if not stamp:
-        return True
-    return now - datetime.fromisoformat(stamp) >= timedelta(hours=8)
-
-
-def resume_workflow_active():
-    url = f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/resume-hf-upload.yml/runs"
-    headers = {"Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}", "Accept": "application/vnd.github+json"}
-    for status in ("queued", "in_progress", "waiting", "pending", "requested"):
-        response = requests.get(url, headers=headers, params={"status": status, "per_page": 1}, timeout=30)
-        response.raise_for_status()
-        if response.json().get("total_count", 0):
-            return True
-    return False
-
 
 def scan_due(_args):
     client, repo, token=api(); now=datetime.now(timezone.utc); files=client.list_repo_files(repo,repo_type="dataset")
     for path in files:
         if not path.startswith("_system/full_merges/") or not path.endswith("/upload_state.json"): continue
         state=remote_json(path)
-        if resume_dispatch_stale(state, now):
-            if resume_workflow_active():
-                continue
-            state["status"] = "needs_attention" if int(state.get("resume_attempts") or 0) >= 3 else "paused_at_98"
-            state["dispatch_error"] = "Previous dispatch was not confirmed within eight hours"
-            upload_json(path,state,"Recover stale phase 2 dispatch")
         if state.get("status")!="paused_at_98" or datetime.fromisoformat(state["target_resume_at"])>now: continue
         title = state.get("book_title")
         if not title and state.get("manifest_path"):
@@ -512,16 +353,11 @@ def scan_due(_args):
         state["status"]="resume_dispatched"; state["resume_attempts"]=int(state.get("resume_attempts") or 0)+1; state["resume_dispatched_at"]=now.isoformat(); upload_json(path,state,"Dispatch phase 2")
         response=requests.post(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/resume-hf-upload.yml/dispatches",headers={"Authorization":f"Bearer {os.environ['GITHUB_TOKEN']}","Accept":"application/vnd.github+json"},json={"ref":os.environ.get("GITHUB_REF_NAME","master"),"inputs":{"state_path":path,"book_title":str(state.get("book_title") or "")}},timeout=30)
         if response.status_code not in (204,):
-            state["status"] = "resume_dispatched" if response.status_code >= 500 else ("needs_attention" if state["resume_attempts"] >= 3 else "paused_at_98")
-            state["dispatch_error"]=f"HTTP {response.status_code}: {response.text[:300]}"
-            upload_json(path,state,"Record failed phase 2 dispatch")
+            state["status"]="paused_at_98"; state["dispatch_error"]=f"HTTP {response.status_code}: {response.text[:300]}"; upload_json(path,state,"Restore failed phase 2 dispatch")
             raise RuntimeError(f"resume dispatch failed: {response.status_code} {response.text}")
 
 def reset_resume(args):
-    state=remote_json(args.state_path)
-    if state.get("status") not in {"resume_dispatched", "paused_at_98"}:
-        return
-    attempts=int(state.get("resume_attempts") or 0)
+    state=remote_json(args.state_path); attempts=int(state.get("resume_attempts") or 0)
     state["status"]="needs_attention" if attempts>=3 else "paused_at_98"
     state["last_resume_failure_at"]=datetime.now(timezone.utc).isoformat()
     upload_json(args.state_path,state,"Record failed phase 2 attempt")

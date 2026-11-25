@@ -22,12 +22,38 @@ permissions:
 
 concurrency:
   group: audiobook-queue-dispatcher
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   dispatch_once:
     runs-on: ubuntu-latest
     steps:
+      - name: Delete older dispatcher run records
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh api --paginate "repos/$REPOSITORY/actions/workflows/queue-dispatcher.yml/runs?per_page=100" \
+            --jq ".workflow_runs[] | select(.id != ($CURRENT_RUN_ID | tonumber)) | [.id, .status] | @tsv" |
+          while IFS=$'\t' read -r old_run_id old_status; do
+            [ -n "$old_run_id" ] || continue
+            if [ "$old_status" != "completed" ]; then
+              gh api --method POST "repos/$REPOSITORY/actions/runs/$old_run_id/cancel" || true
+              for attempt in $(seq 1 15); do
+                old_status="$(gh api "repos/$REPOSITORY/actions/runs/$old_run_id" --jq .status)"
+                [ "$old_status" = "completed" ] && break
+                sleep 2
+              done
+            fi
+            if [ "$old_status" != "completed" ]; then
+              echo "Older dispatcher run $old_run_id is still stopping; it cannot be deleted yet."
+              continue
+            fi
+            gh api --method DELETE "repos/$REPOSITORY/actions/runs/$old_run_id"
+            echo "Deleted older dispatcher run $old_run_id."
+          done
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -44,8 +70,7 @@ jobs:
           QUEUE_STATE_BRANCH: automation-state
           FORCE_RETRY: ${{ github.event_name == 'workflow_dispatch' && inputs.force_retry && 'true' || 'false' }}
           TRIGGER_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || '' }}
-          TRIGGER_WORKFLOW_NAME: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.path == '.github/workflows/audiobook.yml' && 'Audiobook Automation Pipeline (Parallel)' || github.event.workflow_run.path == '.github/workflows/cover-preflight.yml' && 'Cover preflight' || github.event.workflow_run.name) || '' }}
-          TRIGGER_ATTEMPT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.run_attempt || '' }}
+          TRIGGER_WORKFLOW_NAME: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name || '' }}
           TRIGGER_CONCLUSION: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion || '' }}
           TRIGGER_COMPLETED_AT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.updated_at || '' }}
         shell: bash
@@ -57,7 +82,7 @@ jobs:
           fi
           for attempt in 1 2 3; do
             echo "Queue dispatcher attempt $attempt/3"
-            if python -m src.queue_dispatcher $EXTRA_ARGS 2>&1 | tee dispatcher-result.txt; then
+            if python src/queue_dispatcher.py $EXTRA_ARGS 2>&1 | tee dispatcher-result.txt; then
               break
             fi
             if [ "$attempt" -eq 3 ]; then

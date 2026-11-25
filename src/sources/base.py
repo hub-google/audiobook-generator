@@ -26,15 +26,13 @@ class SourceAdapter:
     version = "1"
     hosts = ()
     min_interval = 3.0
-    worker_start_jitter = None  # Optional per-chapter delay range, in seconds.
+    max_parallel = 17
     requires_browser = False
     opening_labels = ()
     encoding = None
-    plain_http = False
 
     def matches(self, url):
-        parts = urlsplit(url)
-        return parts.scheme in ("http", "https") and not parts.username and not parts.password and parts.hostname in self.hosts
+        return urlsplit(url).hostname in self.hosts
 
     def get_referer(self, url):
         return None
@@ -50,17 +48,14 @@ class SourceAdapter:
 
     def soup(self, html):
         if isinstance(html, bytes):
-            # Browser-saved HTML may be UTF-8 even for legacy GB18030 sites.
-            # Decode strictly; never substitute missing bytes with replacement characters.
-            try:
-                html = html.decode("utf-8-sig")
-            except UnicodeDecodeError:
-                if self.encoding:
-                    try:
-                        html = html.decode(self.encoding)
-                    except UnicodeDecodeError as exc:
-                        raise SourceParseError("來源正文編碼無法完整解讀") from exc
-                # Otherwise BeautifulSoup honors the declared legacy encoding.
+            if self.encoding:
+                html = html.decode(self.encoding, errors='replace')
+            else:
+                # Avoid statistical mis-detection on short UTF-8 Chinese pages.
+                try:
+                    html = html.decode('utf-8')
+                except UnicodeDecodeError:
+                    pass  # BeautifulSoup honors a declared legacy encoding.
         soup = BeautifulSoup(html, "html.parser")
         text = soup.get_text(" ", strip=True).lower()
         if any(x in text for x in ("just a moment", "captcha", "access denied", "人機驗證", "访问过于频繁", "訪問過於頻繁")):
@@ -87,12 +82,6 @@ class SourceAdapter:
         return {"title": meta("og:novel:book_name") or meta("og:title"),
                 "author": meta("og:novel:author"), "category": meta("og:novel:category"),
                 "description": meta("og:description"), "url": url}
-
-    def load_catalog(self, url, fetch):
-        return self.parse_catalog(fetch(url), url)
-
-    def load_chapter(self, url, fetch):
-        return self.parse_chapter(fetch(url), url)
 
     def parse_catalog(self, html, url):
         raise NotImplementedError

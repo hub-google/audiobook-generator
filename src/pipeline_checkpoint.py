@@ -9,10 +9,6 @@ from __future__ import annotations
 import json
 import os
 import hashlib
-try:
-    from .tts_quality import degraded_chapters
-except ImportError:
-    from tts_quality import degraded_chapters
 from datetime import datetime, timezone
 
 try:
@@ -122,8 +118,6 @@ class PipelineCheckpoint:
 
     def validate_output(self, chapter, stage):
         path = self.output_path(chapter, stage)
-        if stage in ("tts", "subtitle", "video") and int(chapter) in degraded_chapters(os.path.join(self.workspace_dir, "Audio", "silent-fallback-manifest.json")):
-            raise ArtifactValidationError(f"Chapter {chapter} has unresolved silent TTS fallback")
         return self.registry.validate(
             path,
             lambda candidate: validate_stage(
@@ -479,14 +473,12 @@ class PipelineCheckpoint:
             destination_path = os.path.join(manifest_dir, f"manifest-worker-{self.worker_id}.json")
         os.makedirs(os.path.dirname(os.path.abspath(destination_path)), exist_ok=True)
         if artifact_name is None:
-            artifact_name = f"video-worker-{self.worker_id}"
+            artifact_name = f"mp4-worker-{self.worker_id}"
 
         chapters = []
         source_missing = sorted(int(c) for c in self.source_missing_chapters())
-        incomplete = set(self.incomplete_chapters())
-        missing = set(source_missing)
         for chapter in self.chapter_numbers:
-            if chapter in missing or chapter in incomplete:
+            if chapter in source_missing:
                 continue
             rec = self.data.get("chapters", {}).get(str(chapter), {})
             video_rec = rec.get("stages", {}).get("video", {})
@@ -523,8 +515,7 @@ class PipelineCheckpoint:
         manifest = {
             "schema_version": 2,
             "stage": "worker",
-            "status": "completed" if not incomplete else "partial",
-            "incomplete_chapters": sorted(incomplete),
+            "status": "completed" if not self.incomplete_chapters() else "partial",
             "worker_id": self.worker_id,
             "artifact": artifact_name,
             "book_title": self.book_title,

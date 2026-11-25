@@ -35,24 +35,20 @@ def test_gui_does_not_resume_a_run_from_a_previous_process():
     assert "_save_active_run" not in source
 
 
-def test_gui_monitor_retries_network_errors_without_legacy_blocking_loop():
-    source = (GUI_COMPONENTS / "queue_monitor.py").read_text(encoding="utf-8")
-    assert "def sync_cloud_queue(self):" in source
-    assert "self.root.after(10000, self.sync_cloud_queue)" in source
-    assert "def _schedule_queue_refresh(self):" in source
-    assert "self.root.after(0, self._schedule_queue_refresh)" in source
+def test_network_recovery_remains_in_the_current_run_monitor():
+    source = all_gui_source()
+
+    assert "while True:" in source
+    assert "網路已恢復，正在重新同步雲端 Run、Jobs 與執行紀錄" in source
+    assert "GUI 將持續重試" in source
 
 
 def test_queue_sync_checks_bound_run_against_github():
     source = all_gui_source()
 
     assert "actions/runs/{run_id}" in source
-    # GUI observes only. Durable decisions now belong to queue_dispatcher.
-    reconcile = (GUI_SOURCE.parent / "src" / "dispatch_reconciliation.py").read_text(encoding="utf-8")
-    assert "run_not_found" in reconcile
-    assert "settle_interrupted_task(" in reconcile
-    observer = (GUI_COMPONENTS / "queue_monitor.py").read_text(encoding="utf-8")
-    assert "store.mutate(" not in observer.split("def sync_cloud_queue(self):", 1)[1].split("@staticmethod", 1)[0]
+    assert "run_not_found" in source
+    assert "mark_task_interrupted" in source
     assert "self.root.after(10000, self.sync_cloud_queue)" in source
     assert "observation_text" in source
     assert "GitHub 查證" in source
@@ -139,11 +135,11 @@ def test_deferred_gui_callbacks_do_not_capture_exception_targets():
     assert unsafe == []
 
 
-def test_run_discovery_binds_exact_task_id_in_dispatch_execution():
-    source = (GUI_SOURCE.parent / "src" / "dispatch_execution.py").read_text(encoding="utf-8")
-    assert "task_id_from_run_name" in source
-    assert "== task_id" in source
-    assert 'run_id = int(run["id"])' in source
+def test_run_discovery_callback_binds_the_discovered_run_id():
+    source = all_gui_source()
+
+    assert "lambda rid=run_id, s=status" in source
+    assert "Run ID #{rid}" in source
 
 
 def test_cleaner_pattern_dialog_only_applies_a_local_draft():

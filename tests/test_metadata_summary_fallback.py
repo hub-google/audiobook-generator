@@ -6,8 +6,7 @@ from src.sources import SourceAccessError
 
 BOOK_TITLE = "凛冬领主：从每日情报开始"
 CATALOG_URL = "https://www.69shuba.com/book/90427/"
-METADATA_URL = "https://69shuba.com/book/90427.htm"
-ACTUAL_CATALOG_URL = "https://69shuba.com/book/90427/"
+METADATA_URL = "https://www.69shuba.com/book/90427.htm"
 
 
 def test_summary_retries_catalog_when_metadata_page_is_restricted():
@@ -27,9 +26,9 @@ def test_summary_retries_catalog_when_metadata_page_is_restricted():
     ) as fetch:
         summary, source = fetch_book_summary_details(BOOK_TITLE, CATALOG_URL)
 
-    assert source == ACTUAL_CATALOG_URL
+    assert source == CATALOG_URL
     assert BOOK_TITLE in summary
-    assert [call.args[0] for call in fetch.call_args_list] == [METADATA_URL, ACTUAL_CATALOG_URL]
+    assert [call.args[0] for call in fetch.call_args_list] == [METADATA_URL, CATALOG_URL]
 
 
 def test_summary_reuses_catalog_snapshot_when_repeat_requests_are_restricted(monkeypatch):
@@ -47,7 +46,7 @@ def test_summary_reuses_catalog_snapshot_when_repeat_requests_are_restricted(mon
     ), patch("src.metadata_gen.requests.get") as web:
         summary, source = fetch_book_summary_details(BOOK_TITLE, CATALOG_URL)
 
-    assert source == ACTUAL_CATALOG_URL
+    assert source == CATALOG_URL
     assert "凜冬領地" in summary
     web.assert_not_called()
 

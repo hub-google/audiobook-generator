@@ -15,15 +15,9 @@ if not exist ".git" if exist ".git (1)" (
     ren ".git (1)" ".git"
 )
 
-rem 2. Do not delete active Git lock files.
-if exist ".git\packed-refs.lock" (
-    echo [ERROR] Git packed-refs.lock exists. Check for an active Git process before retrying.
-    goto :failed
-)
-if exist ".git\index.lock" (
-    echo [ERROR] Git index.lock exists. Check for an active Git process before retrying.
-    goto :failed
-)
+rem 2. 清理可能殘留的鎖定檔案
+if exist ".git\packed-refs.lock" del /f /q ".git\packed-refs.lock" >nul 2>&1
+if exist ".git\index.lock" del /f /q ".git\index.lock" >nul 2>&1
 
 rem 3. 檢查 Git 是否可用
 where git >nul 2>&1

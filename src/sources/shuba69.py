@@ -1,17 +1,14 @@
 import re
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 from .base import SourceAdapter, Chapter, SourceParseError
 
 
 class Shuba69Source(SourceAdapter):
     source_id = "shuba69"
-    version = "4"
-    plain_http = True
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    max_parallel = 17
     hosts = ("www.69shuba.com", "69shuba.com")
     encoding = "gb18030"
     min_interval = 0.5
-    worker_start_jitter = (2, 5)
 
     def book_id(self, url):
         match = re.search(r'/(?:book|txt)/(\d+)', urlsplit(url).path, re.I)
@@ -22,16 +19,16 @@ class Shuba69Source(SourceAdapter):
     def get_referer(self, url):
         try:
             bid = self.book_id(url)
-            return self.absolute_url(url, f'https://69shuba.com/book/{bid}/')
+            return self.absolute_url(url, f'/book/{bid}/')
         except Exception:
-            return "https://69shuba.com/"
+            return f"{urlsplit(url).scheme}://{urlsplit(url).netloc}/"
 
     def catalog_url(self, url):
         query = f'?{urlsplit(url).query}' if urlsplit(url).query else ''
-        return self.absolute_url(url, f'https://69shuba.com/book/{self.book_id(url)}/{query}')
+        return self.absolute_url(url, f'/book/{self.book_id(url)}/{query}')
 
     def metadata_url(self, url):
-        return self.absolute_url(url, f'https://69shuba.com/book/{self.book_id(url)}.htm')
+        return self.absolute_url(url, f'/book/{self.book_id(url)}.htm')
 
     def clean_title(self, title):
         return re.sub(r'^\s*\d+\s*[.．]\s*', '', title).strip()
@@ -51,21 +48,13 @@ class Shuba69Source(SourceAdapter):
         heading = root.find('h1') or soup.find('h1')
         title = re.sub(r'(最新章[節节]|章[節节]列表).*$', '', heading.get_text(strip=True)) if heading else ''
         entries = []
-        seen = set()
         book_id = self.book_id(url)
         for a in root.select('a[href]'):
-            original = self.absolute_url(url, a['href'])
-            parts = urlsplit(original)
-            match = re.fullmatch(r'/txt/' + re.escape(book_id) + r'/(\d+)/?', parts.path)
-            if match and match[1] not in seen:
+            href = self.absolute_url(url, a['href'])
+            match = re.fullmatch(r'/txt/' + re.escape(book_id) + r'/(\d+)/?', urlsplit(href).path)
+            if match:
                 label = a.get_text(strip=True)
-                if not label:
-                    raise SourceParseError('69 書吧章節標題空白')
-                seen.add(match[1])
-                # The published bare domain is reachable using ordinary HTTP.
-                # Never inherit a blocked www hostname from an absolute href.
-                target = self.absolute_url(url, urlunsplit(("https","69shuba.com",parts.path,parts.query,parts.fragment)))
-                entries.append((match[1], target, label))
+                entries.append((match[1], href, label))
         # DOM may be descending. IDs are site publication IDs, not title numbers.
         if len(entries) > 1 and int(entries[0][0]) > int(entries[-1][0]):
             entries.reverse()
@@ -82,18 +71,13 @@ class Shuba69Source(SourceAdapter):
         title = self.clean_title(heading.get_text(strip=True))
         for node in body.select('h1, .txtinfo, .bottom-ad, .contentadv, script, style, iframe, .page1'):
             node.decompose()
-        # HTML inline markup must not split a sentence into TTS fragments.
-        for node in body.select("br"):
-            node.replace_with("\n")
-        for node in body.select("p, div, blockquote"):
-            node.insert_after("\n")
-        text = "\n".join(line.strip() for line in body.get_text().splitlines() if line.strip())
+        text = body.get_text('\n', strip=True)
         text = re.sub(r'(?:\n|^)[（(]本章完[）)]\s*$', '', text).strip()
         if not text:
             raise SourceParseError('69 書吧正文空白')
         return title, text
 
-    def parse_full_novels(self, html, base_url="https://69shuba.com"):
+    def parse_full_novels(self, html, base_url="https://www.69shuba.com"):
         soup = self.soup(html)
         novels = []
         seen_ids = set()
@@ -134,7 +118,7 @@ class Shuba69Source(SourceAdapter):
                 cover = self.absolute_url(base_url, cover)
 
             # Strictly format as catalog URL ending in /
-            catalog_url = f"https://69shuba.com/book/{bid}/"
+            catalog_url = f"https://www.69shuba.com/book/{bid}/"
 
             novels.append({
                 'rank': rank,
@@ -151,7 +135,7 @@ class Shuba69Source(SourceAdapter):
             rank += 1
         return novels
 
-    def fetch_full_novels(self, url="https://69shuba.com/novels/full"):
+    def fetch_full_novels(self, url="https://www.69shuba.com/novels/full"):
         try:
             from .http_client import fetch_page
         except ImportError:

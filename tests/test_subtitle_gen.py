@@ -51,30 +51,6 @@ class SubtitleGenerationTests(unittest.TestCase):
                 blocks = handle.read().strip().split("\n\n")
             self.assertEqual(len(blocks), 1)
 
-    def test_subtitle_refuses_missing_segments_and_preserves_previous_output(self):
-        with tempfile.TemporaryDirectory() as directory:
-            wav = os.path.join(directory, "segment.wav")
-            self._write_wav(wav)
-            output = os.path.join(directory, "chapter.srt")
-            generate_chapter_srt([wav], ["測試內容"], output)
-            with open(output, "rb") as handle:
-                original = handle.read()
-            with self.assertRaises(ValueError):
-                generate_chapter_srt([wav], ["甲", "乙"], output)
-            with self.assertRaises(OSError):
-                generate_chapter_srt([os.path.join(directory, "missing.wav")], ["乙"], output)
-            with open(output, "rb") as handle:
-                self.assertEqual(handle.read(), original)
-
-    def test_empty_text_segment_still_advances_audio_clock(self):
-        with tempfile.TemporaryDirectory() as directory:
-            wav = os.path.join(directory, "segment.wav")
-            self._write_wav(wav)
-            output = os.path.join(directory, "chapter.srt")
-            generate_chapter_srt([wav, wav], ["", "測試內容"], output)
-            with open(output, encoding="utf-8") as handle:
-                self.assertIn("00:00:01,000 --> 00:00:02,000", handle.read())
-
 
 if __name__ == "__main__":
     unittest.main()

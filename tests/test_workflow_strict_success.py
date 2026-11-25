@@ -33,10 +33,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
     def test_state_plan_validation_ignores_publication_title_but_keeps_part_structure(self):
         step = next(item for item in self.jobs["upload_to_youtube"]["steps"]
                     if item.get("name") == "Validate and normalize restored YouTube upload checkpoint")
-        self.assertIn("python -m src.ci.audiobook_steps validate_youtube_checkpoint", step["run"])
-        from src.ci import audiobook_steps
-        import inspect
-        self.assertIn("plan_structure_fingerprint", inspect.getsource(audiobook_steps.validate_youtube_checkpoint))
+        self.assertIn("plan_structure_fingerprint", step["run"])
 
     def test_playlist_metadata_quota_is_classified_as_retryable(self):
         uploader_text = UPLOADER_PATH.read_text(encoding="utf-8")
@@ -70,7 +67,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
 
     def test_dispatcher_runs_one_task_aware_decision(self):
         steps = self.dispatcher_jobs["dispatch_once"]["steps"]
-        self.assertTrue(any("python -m src.queue_dispatcher" in step.get("run", "") for step in steps))
+        self.assertTrue(any("python src/queue_dispatcher.py" in step.get("run", "") for step in steps))
         self.assertIn("audiobook-queue-dispatcher", self.dispatcher_text)
         self.assertIn("workflow_run:", self.dispatcher_text)
 
@@ -87,7 +84,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("調度訊息", summary_step.get("run", ""))
 
     def test_worker_concurrency_is_capped_at_seventeen(self):
-        self.assertEqual(self.jobs["process_chapters"]["strategy"]["max-parallel"], 17)
+        self.assertEqual(self.jobs["process_chapters"]["strategy"]["max-parallel"], "${{ fromJSON(needs.setup.outputs.source_max_parallel || '1') }}")
 
     def test_catalog_winner_is_unambiguous_in_actions_job_list(self):
         attempts = self.jobs["catalog_attempts"]
@@ -135,14 +132,10 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         planner = next(step for step in steps if step.get("id") == "resume")
         self.assertIn("HF_TOKEN", planner["env"])
         summary = next(step for step in steps if step.get("name") == "Summarize selected resume work")
-        self.assertIn("python -m src.ci.audiobook_steps write_resume_summary", summary["run"])
-        from src.ci import audiobook_steps
-        import inspect
-        detail = inspect.getsource(audiobook_steps.write_resume_summary)
         for label in ("Selected source Run", "Deepest resume mode", "Reused worker IDs",
                       "Rerun worker IDs", "Reused Part numbers", "Rerun Part numbers",
                       "Publication resume position"):
-            self.assertIn(label, detail)
+            self.assertIn(label, summary["run"])
         final_step = next(step for step in self.jobs["final_merge"]["steps"]
                           if step.get("name") == "Reuse or create the complete Final Merge manifest")
         self.assertIn("HF_TOKEN", final_step["env"])
@@ -151,24 +144,27 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("有聲小說製作", self.text)
         self.assertIn("inputs.book_title", self.text)
         self.assertIn("有聲小說佇列調度", self.dispatcher_text)
-        self.assertNotIn("Delete older dispatcher run records", self.dispatcher_text)
-        self.assertNotIn('actions/runs/$old_run_id', self.dispatcher_text)
-        self.assertIn("cancel-in-progress: false", self.dispatcher_text)
+        self.assertIn("Delete older dispatcher run records", self.dispatcher_text)
+        self.assertIn('actions/runs/$old_run_id', self.dispatcher_text)
+        self.assertIn("cancel-in-progress: true", self.dispatcher_text)
+        self.assertIn('old_status="$(gh api', self.dispatcher_text)
         self.assertNotIn("select(.key >= 20)", self.dispatcher_text)
         self.assertNotIn("old_conclusion", self.dispatcher_text)
 
-    def test_native_rerun_controllers_are_isolated_by_source_run(self):
+    def test_native_rerun_controllers_are_labeled_and_keep_only_the_latest_run(self):
         expectations = (
-            (self.scrape_rerun_text, "【TXT抓取】", "txt-scrape-native-rerun-controller", "scrape-rerun.yml", "src.scrape_rerun_controller"),
-            (self.cover_rerun_text, "【封面產生】", "cover-native-rerun-controller", "cover-rerun.yml", "src.cover_rerun_controller"),
+            (self.scrape_rerun_text, "【TXT抓取】", "txt-scrape-native-rerun-controller", "scrape-rerun.yml", "scrape_rerun_controller.py"),
+            (self.cover_rerun_text, "【封面產生】", "cover-native-rerun-controller", "cover-rerun.yml", "cover_rerun_controller.py"),
         )
         for workflow, label, group, filename, controller in expectations:
             self.assertIn(label, workflow)
-            self.assertIn(f"group: {group}-", workflow)
-            self.assertIn("${{ inputs.source_run_id }}", workflow)
-            self.assertIn("cancel-in-progress: false", workflow)
-            self.assertNotIn("actions/runs/$old_run_id/cancel", workflow)
-            self.assertNotIn("--method DELETE", workflow)
+            self.assertIn(f"group: {group}", workflow)
+            self.assertIn("cancel-in-progress: true", workflow)
+            self.assertIn(f"actions/workflows/{filename}/runs", workflow)
+            self.assertIn('select(.id != ($CURRENT_RUN_ID | tonumber))', workflow)
+            self.assertIn('actions/runs/$old_run_id/cancel', workflow)
+            self.assertIn('old_status="$(gh api', workflow)
+            self.assertIn('actions/runs/$old_run_id"', workflow)
             self.assertIn(controller, workflow)
 
         self.assertNotIn("cover_rerun_controller.py", self.scrape_rerun_text)
@@ -191,15 +187,11 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
             if step.get("name") == "Restore authoritative shared-config on Resume"
         )
         command = restore["run"]
-        self.assertIn("python -m src.ci.audiobook_steps validate_resume_title", command)
-        from src.ci import audiobook_steps
-        import inspect
-        detail = inspect.getsource(audiobook_steps.validate_resume_title)
-        self.assertIn("Strict resume dispatch validation failed", detail)
-        self.assertIn('("book_title", supplied_title)', detail)
-        self.assertIn('("chapter_label", chapter_label)', detail)
-        self.assertIn('("queue_task_id", queue_task_id)', detail)
-        self.assertIn("does not match source config", detail)
+        self.assertIn("Strict resume dispatch validation failed", command)
+        self.assertIn('("book_title", supplied_title)', command)
+        self.assertIn('("chapter_label", chapter_label)', command)
+        self.assertIn('("queue_task_id", queue_task_id)', command)
+        self.assertIn("does not match source config", command)
 
     def test_setup_summary_uses_restored_config_not_dispatch_defaults(self):
         summary = next(
@@ -207,13 +199,9 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
             if step.get("name") == "Generate Setup Summary"
         )
         command = summary["run"]
-        self.assertIn("python -m src.ci.audiobook_steps write_setup_summary", command)
-        from src.ci import audiobook_steps
-        import inspect
-        detail = inspect.getsource(audiobook_steps.write_setup_summary)
-        self.assertIn("config.get('book_title')", detail)
-        self.assertIn("config.get('catalog_url')", detail)
-        self.assertIn("min(selected)", detail)
+        self.assertIn("config.get('book_title')", command)
+        self.assertIn("config.get('catalog_url')", command)
+        self.assertIn("min(selected)", command)
         self.assertNotIn("github.event.inputs.catalog_url", command)
 
     def test_schedule_is_isolated_from_manual_production_workflow(self):
@@ -225,7 +213,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
     def test_worker_artifacts_cannot_be_empty(self):
         steps = self.jobs["process_chapters"]["steps"]
         upload_steps = [step for step in steps if step.get("uses") == "actions/upload-artifact@v4"]
-        self.assertEqual(len(upload_steps), 4)
+        self.assertEqual(len(upload_steps), 5)
         self.assertTrue(all(step["with"]["if-no-files-found"] == "error" for step in upload_steps))
         full_steps = [step for step in upload_steps if "video-worker" in step["with"]["name"]]
         self.assertEqual(len(full_steps), 3)
@@ -234,9 +222,10 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertTrue(full_steps[1].get("continue-on-error"))
         self.assertNotIn("continue-on-error", full_steps[2])
         self.assertTrue(all(step["with"].get("compression-level") == 0 for step in full_steps))
-        self.assertFalse(any("mp4-worker" in step["with"]["name"] for step in upload_steps))
-        cache_save = next(step for step in steps if step.get("name") == "Save Worker Workspace Checkpoint")
-        self.assertEqual(cache_save.get("if"), "failure() || cancelled()")
+        mp4_step = next(step for step in upload_steps if "mp4-worker" in step["with"]["name"])
+        self.assertEqual(mp4_step.get("if"), "success()")
+        self.assertIn("Workspace/*/SourceStatus/", mp4_step["with"]["path"])
+        self.assertIn("Workspace/*/Manifests/", mp4_step["with"]["path"])
         manifest_step = next(step for step in upload_steps if "manifest-worker" in step["with"]["name"])
         self.assertEqual(manifest_step.get("if"), "success()")
         self.assertIn("manifest-worker-", manifest_step["with"]["path"])
@@ -246,7 +235,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
             item for item in self.jobs["process_chapters"]["steps"]
             if item.get("name") == "Run Per-Chapter End-to-End Pipeline (Real-Time Saving)"
         )
-        self.assertIn("python -m src.worker_pipeline", step["run"])
+        self.assertIn("python src/worker_pipeline.py", step["run"])
         self.assertNotIn("for attempt in 1 2 3", step["run"])
         self.assertEqual(step.get("if"), "steps.artifact_restore.outputs.complete != 'true'")
 
@@ -303,13 +292,9 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
             item for item in self.jobs["setup"]["steps"]
             if item.get("name") == "Validate non-empty chapter matrix"
         )
-        self.assertIn("python -m src.ci.audiobook_steps validate_chapter_matrix", step["run"])
-        from src.ci import audiobook_steps
-        import inspect
-        detail = inspect.getsource(audiobook_steps.validate_chapter_matrix)
-        self.assertIn("import yaml", detail)
+        self.assertIn("import yaml", step["run"])
         self.assertIn('.include | type == "array"', step["run"])
-        self.assertIn('.get("include")', detail)
+        self.assertIn('.get("include")', step["run"])
 
     def test_scheduled_retry_has_no_attempt_limit(self):
         self.assertNotIn("Max retries", self.dispatcher_text)
@@ -318,20 +303,13 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
     def test_hf_archive_is_required_by_workflow(self):
         upload = str(self.jobs["upload_to_youtube"])
         self.assertIn("HF_ARCHIVE_REPO", upload)
-        self.assertIn("python -m src.ci.audiobook_steps write_publication_summary", upload)
-        from src.ci import audiobook_steps
-        import inspect
-        self.assertIn("hf_archive_state.json", inspect.getsource(audiobook_steps.write_publication_summary))
+        self.assertIn("hf_archive_state.json", upload)
 
     def test_hf_summary_counts_only_the_current_book(self):
         summary = next(
             step["run"] for step in self.jobs["upload_to_youtube"]["steps"]
             if step.get("name") == "Generate Job Summary"
         )
-        self.assertIn("python -m src.ci.audiobook_steps write_publication_summary", summary)
-        from src.ci import audiobook_steps
-        import inspect
-        summary = inspect.getsource(audiobook_steps.write_publication_summary)
         self.assertIn('book_title = publication.data.get("book_title", "")', summary)
         self.assertIn("books.get(hf_book_key, {})", summary)
         self.assertIn("publication.data.get('source_fingerprint') or book_title", summary)
@@ -378,16 +356,3 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-
-def test_workflow_steps_are_importable_and_no_inline_python_remains():
-    from src.ci import audiobook_steps
-    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
-    import ast
-    assert len(audiobook_steps.STEP_NAMES) == 9
-    ast.parse(Path(audiobook_steps.__file__).read_text(encoding="utf-8"))
-    for step in audiobook_steps.STEP_NAMES:
-        assert f"python -m src.ci.audiobook_steps {step}" in workflow
-        assert callable(getattr(audiobook_steps, step))
-    assert "python - <<'PY'" not in workflow

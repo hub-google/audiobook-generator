@@ -1,0 +1,26 @@
+{
+  "run_id": "20260914T041558Z",
+  "hf_repo": "cit5055/quanzhigaoshou-chapter-images",
+  "hf_commit": null,
+  "chapters": 3,
+  "images": 6,
+  "status": "generated",
+  "timings": {
+    "bootstrap_dependencies_seconds": 190.037,
+    "text_model_load_seconds": 75.278,
+    "chapter_0001_analysis_seconds": 81.333,
+    "chapter_0001_compose_seconds": 27.439,
+    "chapter_0002_analysis_seconds": 34.613,
+    "chapter_0002_compose_seconds": 24.833,
+    "chapter_0003_analysis_seconds": 78.526,
+    "chapter_0003_compose_seconds": 26.26,
+    "image_model_load_seconds": 92.784,
+    "chapter_0001_scene_01_generation_seconds": 5.634,
+    "chapter_0001_scene_02_generation_seconds": 4.714,
+    "chapter_0002_scene_01_generation_seconds": 4.729,
+    "chapter_0002_scene_02_generation_seconds": 4.811,
+    "chapter_0003_scene_01_generation_seconds": 4.764,
+    "chapter_0003_scene_02_generation_seconds": 4.742,
+    "kernel_total_seconds": 661.245
+  }
+}

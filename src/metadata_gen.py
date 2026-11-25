@@ -20,18 +20,6 @@ except ImportError:
     from cover_template import COVER_TEMPLATE_VERSION, build_cover_prompt, validate_visual_brief
 
 load_dotenv()
-from .cover_inference import _hf_error_is_retryable, download_ai_image
-from .cover_research import (
-    _catalog_book_url, _decode_bing_result_url,
-    fetch_book_summary_details, fetch_book_summary_online,
-    collect_cover_research,
-)
-from .cover_ai import (
-    _validate_plot_source, finalize_cover_prompt,
-    generate_gemini_art_prompt, generate_gemini_book_introduction,
-    generate_gemini_cover_information, review_cover_information,
-)
-
 
 logging.basicConfig(
     level=logging.INFO,
@@ -91,6 +79,11 @@ def _validate_cover_config(config):
     if int(typography.get("title_max_lines", 2)) != 2:
         raise ValueError("viral-v1 的 title_max_lines 必須固定為 2")
     return width, height, steps, guidance
+
+
+def finalize_cover_prompt(visual_brief):
+    """Only structured story variables may enter the fixed viral template."""
+    return build_cover_prompt(visual_brief)
 
 
 FONT_PATHS = [
@@ -158,6 +151,191 @@ def clean_pure_plot_summary(text):
     if plot_focused:
         return "。".join(plot_focused) + "。"
     return text
+
+def _catalog_book_url(catalog_url):
+    if not catalog_url:
+        return ""
+    try:
+        from .sources import resolve_source
+    except ImportError:
+        from sources import resolve_source
+    return resolve_source(catalog_url).metadata_url(catalog_url)
+
+
+def _validate_plot_source(book_title, text, source):
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    rejected = ("可以指", "消歧義", "同名", "公司、遊戲", "disambiguation")
+    if len(cleaned) < 45:
+        raise ValueError(f"《{book_title}》封面資料不足：{source} 簡介只有 {len(cleaned)} 字")
+    if any(marker.lower() in cleaned.lower() for marker in rejected):
+        raise ValueError(f"《{book_title}》封面資料錯誤：{source} 回傳同名／消歧義內容")
+    return cleaned
+
+
+def fetch_book_summary_details(book_title, catalog_url=None):
+    """取得小說簡介及來源；找不到時明確回報，不製造替代劇情。"""
+    logging.info(f"正在搜尋《{book_title}》的整體小說劇情大綱與簡介...")
+    raw_summary = ""
+    source = ""
+
+    def validated_identity(details, source_url):
+        page_title = details['title']
+        description = details['description']
+        author = details['author']
+        category = details['category']
+        if page_title and book_title not in page_title and page_title not in book_title:
+            raise ValueError(f"目錄書名是「{page_title}」，不是「{book_title}」")
+        identity = f"書名：《{page_title or book_title}》；作者：{author or '未標示'}；類型：{category or '未標示'}；原始簡介：{description}"
+        return _validate_plot_source(book_title, identity, source_url), source_url
+
+    # The catalog selected by the user is the identity source for this exact
+    # book. Prefer its own OpenGraph description over title-only web lookups.
+    configured_catalog_url = catalog_url or os.getenv("BOOK_CATALOG_URL", "")
+    book_url = _catalog_book_url(configured_catalog_url)
+    if book_url:
+        try:
+            try:
+                from .sources import resolve_source
+                from .sources.http_client import fetch_page
+            except ImportError:
+                from sources import resolve_source
+                from sources.http_client import fetch_page
+            adapter = resolve_source(book_url)
+            fallback_catalog_url = adapter.catalog_url(configured_catalog_url or book_url)
+            source_urls = list(dict.fromkeys((book_url, fallback_catalog_url)))
+            for source_url in source_urls:
+                try:
+                    details = adapter.parse_metadata(
+                        fetch_page(source_url, adapter).content, source_url
+                    )
+                    return validated_identity(details, source_url)
+                except (requests.RequestException, ValueError, RuntimeError) as exc:
+                    logging.warning("小說來源簡介取得失敗 (%s): %s", source_url, exc)
+
+            # catalog_parser has already fetched this exact page successfully.
+            # Reuse its small metadata snapshot if a second request is rate-limited.
+            cached_metadata = os.getenv("BOOK_CATALOG_METADATA", "")
+            if cached_metadata:
+                try:
+                    return validated_identity(json.loads(cached_metadata), fallback_catalog_url)
+                except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+                    logging.warning("目錄簡介快照無法使用: %s", exc)
+        except (requests.RequestException, ValueError, RuntimeError) as exc:
+            # Source setup itself can fail. Continue to the existing Wikipedia
+            # and search fallbacks instead of aborting cover preflight.
+            logging.warning("無法建立小說來源簡介查詢: %s", exc)
+    
+    # 嘗試 1: 中文維基百科 REST API
+    try:
+        url = f"https://zh.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(book_title)}"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        res = requests.get(url, headers=headers, timeout=8)
+        if res.status_code == 200:
+            extract = res.json().get("extract", "")
+            if extract:
+                try:
+                    raw_summary = _validate_plot_source(book_title, extract, "zh.wikipedia.org")
+                    source = "zh.wikipedia.org"
+                except ValueError:
+                    raw_summary = ""
+    except Exception as e:
+        logging.debug(f"[維基百科略過]: {e}")
+
+    # 嘗試 2: DuckDuckGo 搜尋
+    if not raw_summary:
+        try:
+            ddg_url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(book_title + ' 小說 劇情簡介')}&format=json&no_html=1"
+            res = requests.get(ddg_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+            if res.status_code == 200:
+                extract = res.json().get("AbstractText", "")
+                if extract:
+                    raw_summary = _validate_plot_source(book_title, extract, "api.duckduckgo.com")
+                    source = "api.duckduckgo.com"
+        except Exception:
+            pass
+
+    pure_plot = _validate_plot_source(book_title, raw_summary, source) if raw_summary else ""
+    if not pure_plot:
+        raise RuntimeError(f"查不到《{book_title}》的可靠小說簡介；已停止，不會產生通用封面 Prompt")
+    return pure_plot, source
+
+
+def fetch_book_summary_online(book_title):
+    return fetch_book_summary_details(book_title)[0]
+
+
+def _decode_bing_result_url(url):
+    try:
+        encoded = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get("u", [""])[0]
+        if encoded.startswith("a1"):
+            payload = encoded[2:] + "=" * (-len(encoded[2:]) % 4)
+            return base64.urlsafe_b64decode(payload).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        pass
+    return url
+
+
+def collect_cover_research(book_title, synopsis, catalog_source):
+    """Collect web evidence first; explicitly label model-knowledge fallback."""
+    evidence = [{"id": "S1", "title": "目前小說目錄頁", "url": catalog_source, "text": synopsis}]
+    author_match = re.search(r"作者：([^；]+)", synopsis)
+    author = author_match.group(1).strip() if author_match else ""
+    author_variants = {author, author.replace("東", "东")}
+    queries = [
+        f'"{book_title}" "{author}" 小說 主角 世界觀',
+        f'"{book_title}" "{author}" 小說 法寶 場景',
+    ]
+    seen = {catalog_source}
+    for query in queries:
+        try:
+            response = requests.get(
+                "https://www.bing.com/search?q=" + urllib.parse.quote(query),
+                headers={"User-Agent": "Mozilla/5.0"}, timeout=15,
+            )
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, "html.parser")
+            for result in soup.select("li.b_algo"):
+                link, snippet_tag = result.select_one("h2 a"), result.select_one(".b_caption p")
+                if not link or not snippet_tag:
+                    continue
+                title = link.get_text(" ", strip=True)
+                snippet = snippet_tag.get_text(" ", strip=True)
+                combined = title + " " + snippet
+                if book_title not in combined or (author and not any(value and value in combined for value in author_variants)):
+                    continue
+                url = _decode_bing_result_url(str(link.get("href") or ""))
+                if not url.startswith("http") or url in seen or len(snippet) < 35:
+                    continue
+                detail = snippet
+                try:
+                    page = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+                    page.raise_for_status()
+                    page_soup = BeautifulSoup(page.content, "html.parser")
+                    summary_tag = page_soup.select_one(".J-summary")
+                    description_tag = page_soup.select_one('meta[name="description"]')
+                    expanded = (
+                        summary_tag.get_text(" ", strip=True) if summary_tag else
+                        str(description_tag.get("content") or "").strip() if description_tag else ""
+                    )
+                    if book_title in expanded and any(value and value in expanded for value in author_variants):
+                        detail = expanded[:6000]
+                except requests.RequestException:
+                    pass
+                seen.add(url)
+                evidence.append({"id": f"S{len(evidence)+1}", "title": title, "url": url, "text": detail})
+                if len(evidence) >= 5:
+                    break
+        except requests.RequestException:
+            continue
+        if len(evidence) >= 5:
+            break
+    external_chars = sum(len(item["text"]) for item in evidence[1:])
+    mode = (
+        "web_evidence" if external_chars >= 800 else
+        "hybrid_web_and_model_knowledge" if len(evidence) >= 2 else
+        "internal_knowledge_fallback"
+    )
+    return {"mode": mode, "sources": evidence}
 
 def get_calligraphy_font(size):
     """取得極具張力與狂草飛白筆觸的毛筆狂草字體 (Yuji Boku / 飛白勁道書法體)"""
@@ -227,6 +405,277 @@ def analyze_cover_brief(book_title, pure_plot, source="", workspace_dir=None, an
         "synopsis": pure_plot,
     }
 
+def generate_gemini_art_prompt(book_title, pure_plot, max_attempts=4, retry_base_seconds=15):
+    """
+    使用 Google AI Studio Gemini 藝術總監引擎，分析全本小說名稱與完整劇情簡介，
+    產出高質感、鮮豔震撼、具備核心主角與靈魂法寶/特徵的 8K 影視級英文 AI 生圖提示詞 (Art Prompt)。
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("❌ [CRITICAL] 缺少 GEMINI_API_KEY！無法啟動 Gemini LLM 藝術總監引擎，流程中斷。")
+
+    logging.info(f"🎨 啟動 Gemini 藝術總監引擎分析《{book_title}》劇情與視覺風格...")
+    
+    # URL will be generated dynamically per attempt
+    
+    sys_instruction = (
+        "You are a world-class Hollywood concept artist and master book-cover art director. "
+        "Carefully analyze the given book title and synopsis to create a breathtaking, ultra-vibrant, 16:9 cinematic 8K concept art prompt in English.\n"
+        "IMPORTANT RULES:\n"
+        "1. DYNAMIC STORY ANALYSIS: Fully analyze the unique setting, era, genre, core characters, iconic artifacts/objects, atmosphere, and major plot points from the provided title and synopsis. Customize every visual detail specifically for this book.\n"
+        "2. HIGH-AESTHETIC CHARACTER DESIGN: If the scene features a character, they MUST be exceptionally attractive and stylish according to mainstream visual standards (e.g. extremely handsome/stunningly gorgeous face, sharp refined facial features, idol-level facial structure, photogenic, high-end fashionable attire appropriate for the story's setting). NEVER generate plain, ordinary, or generic characters.\n"
+        "3. DYNAMIC FOCAL POINT & ENVIRONMENT: Feature the central hero or primary story conflict in a compelling 16:9 focal composition with atmospheric cinematic lighting.\n"
+        "4. VIBRANT COLORS & LIGHTING: Use vibrant, vivid color contrasts and dynamic lighting matching the story mood instead of dull, dark, or muddy colors.\n"
+        "5. QUALITY & BEAUTY KEYWORDS: MUST include: 'extremely handsome facial features, high aesthetic appealing face, hyperrealistic 8k resolution, crisp focus, epic cinematic lighting, masterpiece composition, highly detailed, trending on ArtStation'.\n"
+        "6. DO NOT include any text, title letters, logos, watermarks, or signatures in the visual.\n"
+        "7. Output ONLY the raw English prompt text, without any intro/outro, quotes, or markdown backticks."
+    )
+    
+    user_prompt = f"Book Title: 《{book_title}》\nSynopsis:\n{pure_plot}\n\nPlease generate a breathtaking cinematic masterpiece concept art prompt in English."
+    
+    payload = {
+        "contents": [{
+            "parts": [{"text": sys_instruction + "\n\n" + user_prompt}]
+        }]
+    }
+    
+    # 乒乓交替嘗試
+    max_total_attempts = max_attempts
+    last_error = None
+
+    for attempt in range(1, max_total_attempts + 1):
+        # 奇數次用 latest，偶數次用 3.5-flash
+        current_model = "gemini-flash-latest" if attempt % 2 != 0 else "gemini-3.5-flash"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={api_key}"
+        
+        try:
+            res = requests.post(url, json=payload, timeout=30)
+            if res.status_code == 200:
+                candidates = res.json().get("candidates", [])
+                if candidates and "content" in candidates[0]:
+                    prompt_text = candidates[0]["content"]["parts"][0]["text"].strip()
+                    prompt_text = re.sub(r"^```[a-zA-Z]*\n?", "", prompt_text).rstrip("`").strip()
+                    prompt_text = prompt_text.strip('"').strip("'")
+                    logging.info(f"✨ Gemini 藝術總監產出提示詞成功 (使用 {current_model}): {prompt_text[:120]}...")
+                    return prompt_text
+                last_error = "HTTP 200 但回應中沒有可用的提示詞"
+            else:
+                last_error = f"HTTP {res.status_code}: {res.text[:300]}"
+                
+        except requests.RequestException as exc:
+            last_error = f"網路錯誤: {exc}"
+        except Exception as exc:
+            last_error = f"例外錯誤: {exc}"
+
+        if attempt == max_total_attempts:
+            break
+            
+        # 每一輪（2次嘗試）遞增等待時間: 15, 15, 30, 30, 60, 60 (以 retry_base_seconds=15 為例)
+        delay = retry_base_seconds * (2 ** ((attempt - 1) // 2))
+        next_model = "gemini-3.5-flash" if attempt % 2 != 0 else "gemini-flash-latest"
+        logging.warning(
+            f"⚠️ 第 {attempt}/{max_total_attempts} 次 ({current_model}) 失敗: {last_error}；"
+            f"等待 {delay} 秒後，切換至 {next_model} 重試..."
+        )
+        time.sleep(delay)
+
+    raise RuntimeError(
+        f"❌ Gemini 藝術總監 Prompt 生成失敗，已交替重試 {max_total_attempts} 次全滅；流程中止: {last_error}"
+    )
+
+
+def generate_gemini_book_introduction(book_title, max_attempts=4, retry_base_seconds=15):
+    """Ask ordinary Gemini to introduce a book before the strict cover passes."""
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("缺少 GEMINI_API_KEY")
+    instruction = f"""你是熟悉中文網路小說的編輯。請直接使用模型內建知識介紹指定小說《{book_title}》，供後續封面分析使用。
+這一步沒有外部簡介；不要要求呼叫端補資料，也不要使用任何搜尋工具。請辨識這部作品並提供具體內容，禁止只依書名寫通用玄幻描述。
+只回傳有效 JSON，固定格式：
+{{"book_title":"{book_title}","author":"作者或未確定","genre":"具體類型","synopsis":"完整故事介紹","protagonist":"主角姓名、身分與處境","world_setting":"世界觀與時代","core_plot":"核心劇情與主要衝突","iconic_elements":["代表場景、能力、物件或人物"],"avoid_errors":["容易與其他作品混淆或不應畫入的內容"]}}
+synopsis 必須具體說明主角、世界觀、故事開端與核心衝突；iconic_elements 至少三項。不得加入 markdown。"""
+    errors = []
+    models = ("gemini-flash-latest", "gemini-3.5-flash")
+    for attempt in range(1, max_attempts + 1):
+        model = models[(attempt - 1) % len(models)]
+        try:
+            response = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
+                json={
+                    "contents": [{"parts": [{"text": instruction}]}],
+                    "generationConfig": {"responseMimeType": "application/json"},
+                },
+                timeout=60,
+            )
+            if response.status_code != 200:
+                try:
+                    message = (response.json().get("error") or {}).get("message") or response.text[:300]
+                except ValueError:
+                    message = response.text[:300]
+                raise RuntimeError(f"Gemini HTTP {response.status_code}: {message}")
+            text = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            result = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE))
+            required = ("synopsis", "protagonist", "world_setting", "core_plot")
+            if any(len(str(result.get(key) or "").strip()) < 12 for key in required):
+                raise ValueError("Gemini 書本介紹缺少具體故事欄位")
+            if len(result.get("iconic_elements") or []) < 3:
+                raise ValueError("Gemini 書本介紹缺少三項代表元素")
+            introduction = (
+                f"書名：《{book_title}》；作者：{result.get('author') or '未確定'}；"
+                f"類型：{result.get('genre') or '未確定'}；故事簡介：{result['synopsis']}；"
+                f"主角：{result['protagonist']}；世界觀：{result['world_setting']}；"
+                f"核心劇情：{result['core_plot']}；代表元素："
+                f"{'、'.join(map(str, result['iconic_elements']))}；"
+                f"避免畫錯：{'、'.join(map(str, result.get('avoid_errors') or []))}"
+            )
+            return _validate_plot_source(book_title, introduction, "Gemini 書本介紹")
+        except Exception as exc:
+            errors.append(f"{model}: {exc}")
+            if attempt < max_attempts:
+                delay = retry_base_seconds * (2 ** ((attempt - 1) // len(models)))
+                logging.warning(
+                    "Gemini 書本介紹失敗（第 %d/%d 次，%s）：%s；%d 秒後重試",
+                    attempt, max_attempts, model, exc, delay,
+                )
+                time.sleep(delay)
+    raise RuntimeError("Gemini 書本介紹失敗：" + " | ".join(errors))
+
+
+def generate_gemini_cover_information(book_title, pure_plot, research=None, max_attempts=4, retry_base_seconds=15):
+    """One on-demand Gemini call returning both the readable brief and HF prompt."""
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("缺少 GEMINI_API_KEY")
+    _validate_plot_source(book_title, pure_plot, "送交 Gemini 的簡介")
+    research = research or {"mode": "internal_knowledge_fallback", "sources": []}
+    research_json = json.dumps(research, ensure_ascii=False)
+    instruction = f"""你是熟悉中文網路小說的考據編輯。請依提供的聯網資料與目錄頁身分，嚴格分析《{book_title}》。你只負責填入故事變數，無權改變固定的熱門短劇縮圖構圖。
+目錄頁身分與簡介：{pure_plot}
+資料模式與來源：{research_json}
+只分析指定小說的原著版本。不得混入動畫、漫畫、遊戲、影視改編或其他同名作品新增、修改或特有的角色造型、場景、武器與設定；若改編內容與小說原著不同，一律以小說原著為準。不確定時必須回 insufficient_source，不得猜測。
+只回傳有效 JSON，格式：
+{{"status":"ok或insufficient_source","story_facts":[{{"fact":"本書具體事實1","source_ids":["S1"]}}],"analysis":{{"故事類型與時代":"...","世界觀":"...","主角外觀與身分":"...","代表性場景":"...","法寶武器或關鍵物件":"...","色彩氣氛與構圖":"...","應避免畫錯的內容":"..."}},"visual_brief":{{"genre":"英文題材","era_and_setting":"英文時代與場景","core_conflict":"英文核心衝突","main_character_identity":"英文主角身分","appearance":"英文外觀","clothing":"英文服裝","expression_and_action":"英文表情與動作","supporting_characters":["英文輔角一","英文輔角二"],"iconic_story_symbol":"英文巨大故事識別符號","iconic_prop_or_power":"英文代表物件或能力","genre_color_palette":"英文題材色盤","lighting_and_mood":"英文光線氣氛","avoid_story_errors":["英文禁畫錯誤"]}}}}
+至少五條 story_facts 必須是這一本小說的具體事實，且至少包含主角姓名、核心世界觀、代表場景與代表物件。每條 fact 的 source_ids 都不得為空：來自資料來源時使用其 S 編號，來自模型內建知識時使用 "MODEL_KNOWLEDGE"，同時受兩者支持時可同時列出。web_evidence 模式不得使用 MODEL_KNOWLEDGE；hybrid_web_and_model_knowledge 與 internal_knowledge_fallback 模式可使用資料中已有的 S 編號及 MODEL_KNOWLEDGE。不得捏造來源編號，不確定就必須 insufficient_source。
+宣傳文案中的任何誇飾或比喻不得直接畫成法寶或實體事件，除非資料明確證實它是故事中的真實代表物件。
+status=ok 時，各分析欄位及 visual_brief 不得填未知、未提供、無法判斷或通用抽象方案。supporting_characters 只能是 0 至 2 項。iconic_story_symbol 必須是資料支持且一眼可辨識的巨大人物、物件、生物、建築或環境標誌，不能只寫神秘力量。不得要求留白、文字安全區、遠景小人物、大片天空或極簡構圖。"""
+    errors = []
+    models = ("gemini-flash-latest", "gemini-3.5-flash")
+    if os.environ.get("COVER_REVIEW_OUTPUT"):
+        os.makedirs(os.environ["COVER_REVIEW_OUTPUT"], exist_ok=True)
+        with open(os.path.join(os.environ["COVER_REVIEW_OUTPUT"], "gemini_analysis_prompt.txt"), "w", encoding="utf-8") as handle:
+            handle.write(instruction)
+    for attempt in range(1, max_attempts + 1):
+        model = models[(attempt - 1) % len(models)]
+        try:
+            response = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
+                json={"contents": [{"parts": [{"text": instruction}]}], "generationConfig": {"responseMimeType": "application/json"}},
+                timeout=60,
+            )
+            if response.status_code != 200:
+                try:
+                    api_error = (response.json().get("error") or {}).get("message") or response.text[:300]
+                except ValueError:
+                    api_error = response.text[:300]
+                raise RuntimeError(f"Gemini HTTP {response.status_code}: {api_error}")
+            candidate = response.json()["candidates"][0]
+            text = candidate["content"]["parts"][0]["text"].strip()
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE)
+            result = json.loads(text)
+            if result.get("status") != "ok":
+                raise ValueError("Gemini 判定來源不足，拒絕產生 Prompt")
+            analysis = result.get("analysis")
+            required = {"故事類型與時代", "世界觀", "主角外觀與身分", "代表性場景", "法寶武器或關鍵物件", "色彩氣氛與構圖", "應避免畫錯的內容"}
+            if not isinstance(analysis, dict) or not required.issubset(analysis):
+                raise ValueError("Gemini JSON 缺少必要分析欄位")
+            bad_words = ("未知", "未提供", "未提及", "無法判斷", "查無", "通用")
+            if any(not str(analysis[key]).strip() or any(word in str(analysis[key]) for word in bad_words) for key in required):
+                raise ValueError("Gemini 分析包含未知或通用敷衍內容")
+            facts = result.get("story_facts") or []
+            if len(facts) < 5 or any(not isinstance(item, dict) or len(str(item.get("fact") or "").strip()) < 8 for item in facts[:5]):
+                raise ValueError("Gemini 沒有提供五條具體故事事實")
+            valid_source_ids = {item["id"] for item in research.get("sources") or []}
+            mode = research.get("mode")
+            for item in facts:
+                ids = set(item.get("source_ids") or [])
+                if mode == "internal_knowledge_fallback":
+                    if not ids or not ids.issubset(valid_source_ids | {"MODEL_KNOWLEDGE"}):
+                        raise ValueError("內建知識備援使用了空白或無效來源編號")
+                elif mode == "hybrid_web_and_model_knowledge":
+                    if not ids or not ids.issubset(valid_source_ids | {"MODEL_KNOWLEDGE"}):
+                        raise ValueError("混合資料模式使用了無效來源編號")
+                elif not ids or not ids.issubset(valid_source_ids):
+                    raise ValueError("Gemini 故事事實缺少有效聯網來源編號")
+            visual_brief = validate_visual_brief(result.get("visual_brief"))
+            result["prompt"] = finalize_cover_prompt(visual_brief)
+            result["template_version"] = COVER_TEMPLATE_VERSION
+            result["research"] = research
+            return result
+        except Exception as exc:
+            errors.append(f"{model}: {exc}")
+            if attempt < max_attempts:
+                delay = retry_base_seconds * (2 ** ((attempt - 1) // len(models)))
+                logging.warning(
+                    "Gemini 封面資訊失敗（第 %d/%d 次，%s）：%s；%d 秒後重試",
+                    attempt, max_attempts, model, exc, delay,
+                )
+                time.sleep(delay)
+    raise RuntimeError("Gemini 封面資訊產生失敗；已停止且未產生 Prompt：" + " | ".join(errors))
+
+
+def review_cover_information(book_title, pure_plot, research, draft, max_attempts=4, retry_base_seconds=15):
+    """A separate Gemini pass must audit and rewrite the draft before acceptance."""
+    api_key = os.getenv("GEMINI_API_KEY")
+    prompt = f"""你是嚴格的小說考據編輯與熱門縮圖規格審核員。請審核下列《{book_title}》封面草稿，使用你對該小說的知識以及提供的資料逐項糾錯，最後只輸出完整 JSON。
+目錄身分：{pure_plot}
+資料：{json.dumps(research, ensure_ascii=False)}
+草稿：{json.dumps(draft, ensure_ascii=False)}
+輸出格式與草稿相同，status 只能 ok 或 insufficient_source。只審核指定小說的原著版本，不得混入動畫、漫畫、遊戲、影視改編或其他同名作品新增、修改或特有的設定；若改編內容與小說原著不同，一律以小說原著為準。刪除所有無根據的年齡、髮型、服裝、武器與場景；辨識宣傳文案中的誇飾與比喻，不得把比喻直接畫成實體法寶或事件。只採用該作品有資料支持、公認且具辨識度的角色、地點與物件，不確定就回 insufficient_source。保留至少五條 story_facts 及合法來源編號。visual_brief 必須完整、最多兩位輔角，且不得要求遠景小人物、大片留白、文字安全區或極簡構圖。不要輸出或改寫最終英文 prompt，Python 會套用固定模板。"""
+    errors = []
+    models = ("gemini-flash-latest", "gemini-3.5-flash")
+    for attempt in range(1, max_attempts + 1):
+        model = models[(attempt - 1) % len(models)]
+        try:
+            response = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
+                json={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"responseMimeType": "application/json"}},
+                timeout=60,
+            )
+            if response.status_code != 200:
+                message = (response.json().get("error") or {}).get("message") or response.text[:300]
+                raise RuntimeError(f"Gemini HTTP {response.status_code}: {message}")
+            text = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            result = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE))
+            if result.get("status") != "ok" or len(result.get("story_facts") or []) < 5:
+                raise ValueError("審核器拒絕草稿或缺少五條事實")
+            valid_ids = {item["id"] for item in research.get("sources") or []} | {"MODEL_KNOWLEDGE"}
+            for fact in result.get("story_facts") or []:
+                ids = set(fact.get("source_ids") or []) if isinstance(fact, dict) else set()
+                if not isinstance(fact, dict) or not fact.get("fact") or not ids or not ids.issubset(valid_ids):
+                    raise ValueError("審核後故事事實缺少合法來源")
+            analysis = result.get("analysis") or {}
+            if len(analysis) < 7 or any(word in json.dumps(analysis, ensure_ascii=False) for word in ("未知", "未提供", "通用")):
+                raise ValueError("審核後分析仍不完整")
+            visual_brief = validate_visual_brief(result.get("visual_brief"))
+            final_prompt = finalize_cover_prompt(visual_brief)
+            if re.search(r"(?:blade|weapon|sword).{0,20}(?:grass|dust)|(?:grass|dust).{0,20}(?:blade|weapon|sword)", final_prompt, re.I):
+                raise ValueError("審核後仍把宣傳比喻誤畫成實體武器")
+            result["prompt"] = final_prompt
+            result["template_version"] = COVER_TEMPLATE_VERSION
+            result["research"] = research
+            return result
+        except Exception as exc:
+            errors.append(f"{model}: {exc}")
+            if attempt < max_attempts:
+                delay = retry_base_seconds * (2 ** ((attempt - 1) // len(models)))
+                logging.warning(
+                    "Gemini 二次品質審核失敗（第 %d/%d 次，%s）：%s；%d 秒後重試",
+                    attempt, max_attempts, model, exc, delay,
+                )
+                time.sleep(delay)
+    raise RuntimeError("Gemini 二次品質審核失敗；已停止且未產生 Prompt：" + " | ".join(errors))
+
+
 def build_cover_information(book_title, catalog_url=None, progress_callback=None):
     notify = progress_callback or (lambda _stage: None)
     notify("取得小說資料")
@@ -269,6 +718,386 @@ def auto_generate_prompt_from_summary(book_title, workspace_dir=None, analyzer=N
     brief["template_version"] = information["template_version"]
     brief["prompt"] = final_prompt
     return pure_plot, pure_plot, final_prompt, brief
+
+
+def _hf_error_is_retryable(error):
+    """Return whether an HF inference failure is likely temporary."""
+    retryable_statuses = {408, 425, 429, 500, 502, 503, 504}
+    current = error
+    while current is not None:
+        if isinstance(current, (requests.ConnectionError, requests.Timeout)):
+            return True
+        response = getattr(current, "response", None)
+        status = getattr(response, "status_code", None)
+        if status is not None:
+            return int(status) in retryable_statuses
+        current = current.__cause__ or current.__context__
+
+    message = str(error).lower()
+    return any(marker in message for marker in (
+        "name resolution", "failed to resolve", "temporary failure in name resolution",
+        "connection reset", "connection aborted", "timed out", "timeout",
+        "http 408", "http 425", "http 429", "http 500", "http 502",
+        "http 503", "http 504", "service unavailable", "rate limit",
+    ))
+
+
+def download_ai_image(prompt, width=1280, height=720, max_attempts=5, retry_base_seconds=15):
+    import io
+    cover_config = _cover_config()
+    model = str(cover_config.get("hf_model") or "black-forest-labs/FLUX.1-schnell")
+    width, height, steps, guidance = _validate_cover_config(cover_config)
+    logging.info(f"🖼️ 連線 Hugging Face AI 繪圖伺服器 ({model}) 生成封面底圖 ({width}x{height})...")
+    
+    hf_token = os.getenv("HF_TOKEN")
+    if not hf_token or not hf_token.startswith("hf_"):
+        raise ValueError("❌ [CRITICAL] 缺少有效 HF_TOKEN！無法啟動 Hugging Face 生圖，流程直接終止。")
+
+    if max_attempts < 1:
+        raise ValueError("max_attempts 必須至少為 1")
+
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        img = None
+        try:
+            from huggingface_hub import InferenceClient
+            client = InferenceClient(model=model, token=hf_token)
+            img = client.text_to_image(
+                prompt,
+                width=width,
+                height=height,
+                num_inference_steps=steps,
+                guidance_scale=guidance,
+            )
+        except Exception as hf_err:
+            logging.warning("⚠️ HF SDK 呼叫失敗；同輪改用 REST API: %s", hf_err)
+            api_url = f"https://api-inference.huggingface.co/models/{model}"
+            headers = {"Authorization": f"Bearer {hf_token}"}
+            try:
+                res = requests.post(
+                    api_url,
+                    headers=headers,
+                    json={
+                        "inputs": prompt,
+                        "parameters": {
+                            "width": width,
+                            "height": height,
+                            "num_inference_steps": steps,
+                            "guidance_scale": guidance,
+                        },
+                    },
+                    timeout=60,
+                )
+                if res.status_code == 200:
+                    img = Image.open(io.BytesIO(res.content))
+                else:
+                    raise RuntimeError(f"HTTP {res.status_code}: {res.text[:200]}")
+            except Exception as rest_err:
+                last_error = rest_err
+                if not _hf_error_is_retryable(rest_err) or attempt == max_attempts:
+                    break
+                delay = min(retry_base_seconds * (2 ** (attempt - 1)), 120)
+                logging.warning(
+                    "⚠️ HF 暫時性連線錯誤（第 %d/%d 次）：%s；%d 秒後重試",
+                    attempt, max_attempts, rest_err, delay,
+                )
+                time.sleep(delay)
+                continue
+
+        if img:
+            img = img.convert("RGB")
+            if img.size != (width, height):
+                raise RuntimeError(
+                    f"Hugging Face returned {img.size[0]}x{img.size[1]}; "
+                    f"expected {width}x{height}. Refusing to stretch the image."
+                )
+            logging.info("✅ 成功從 Hugging Face %s 生成底圖！", model)
+            return img
+        last_error = RuntimeError("Hugging Face 沒有回傳圖片")
+        break
+
+    raise RuntimeError(
+        f"❌ [CRITICAL] Hugging Face 生圖失敗（已嘗試 {max_attempts} 次）: "
+        f"{last_error}！流程直接終止，嚴禁降級使用低品質備用圖。"
+    ) from last_error
+
+
+
+def _create_youtube_cover_legacy(
+    bg_img, 
+    book_title, 
+    start_chap, 
+    end_chap, 
+    is_completed=True, 
+    output_filename="youtube_cover.jpg",
+    part_num=None
+):
+    """
+    自適應商業級 HD 封面合成引擎 (1280x720)
+    1. 支援 3~20 字任意長度小說書名，自動計算最佳字型大小與分行對齊 (右對齊排版)。
+    2. 100% 繁體無缺字 (使用 FZSTK / 微軟正黑體)。
+    3. 只保留書名與左上角集數徽章，無任何廢話標語或膠囊底板。
+    """
+    logging.info("正在合成 1280x720 自適應大氣小說封面 (動態字號 + 右對齊排版)...")
+    
+    W, H = bg_img.size
+    scale = W / 1920.0
+    img = bg_img.copy()
+    
+    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    
+    # 右側暗黑漸變陰影 (襯托金色標題)
+    for x in range(int(W * 0.25), W):
+        t = (x - W * 0.25) / (W * 0.75)
+        alpha = int(210 * t)
+        overlay_draw.line([(x, 0), (x, H)], fill=(0, 0, 0, alpha))
+        
+    top_mask_end = int(H * 0.25)
+    for y in range(0, top_mask_end):
+        alpha = int(140 * (1 - y / top_mask_end))
+        overlay_draw.line([(0, y), (W, y)], fill=(0, 0, 0, alpha))
+
+    bottom_mask_start = int(H * 0.70)
+    for y in range(bottom_mask_start, H):
+        alpha = int(160 * ((y - bottom_mask_start) / (H - bottom_mask_start)))
+        overlay_draw.line([(0, y), (W, y)], fill=(0, 0, 0, alpha))
+        
+    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+    draw = ImageDraw.Draw(img)
+    
+    def draw_thick_text(draw_obj, x, y, text, font, fill_color, stroke_color=(15, 10, 5), stroke_width=12):
+        draw_obj.text((x, y), text, font=font, fill=fill_color, stroke_width=stroke_width, stroke_fill=stroke_color)
+
+    # ── 1. 左上角：精緻章節與部數琉璃徽章 (加大高寬與呼吸感) ──
+    badge_x, badge_y = int(70 * scale), int(60 * scale)
+    if isinstance(start_chap, int) and isinstance(end_chap, int):
+        chap_text = f"第 {start_chap:03d} - {end_chap:03d} 集"
+    else:
+        chap_text = f"第 {start_chap} - {end_chap} 集"
+    
+    if part_num:
+        chap_text = f"【第 {part_num} 部】 " + chap_text
+        
+    font_badge = get_font(int(48 * scale))
+    try:
+        bbox = draw.textbbox((0, 0), chap_text, font=font_badge)
+        bw, bh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    except Exception:
+        bw, bh = 300, 48
+
+    pad_x1 = int(45 * scale)
+    pad_y1 = int(22 * scale)
+    badge_w = bw + pad_x1 * 2
+    badge_h = bh + pad_y1 * 2
+
+    draw.rounded_rectangle(
+        [badge_x, badge_y, badge_x + badge_w, badge_y + badge_h], 
+        radius=int(22 * scale), 
+        fill=(210, 25, 25),
+        outline=(255, 215, 0),
+        width=int(4 * scale)
+    )
+    draw.text((badge_x + pad_x1, badge_y + pad_y1 - int(4 * scale)), chap_text, font=font_badge, fill=(255, 255, 255))
+
+    # ── 2. 右側自適應書名排版引擎 (右邊距 120px 右對齊) ──
+    clean_title = book_title.replace("《", "").replace("》", "").strip()
+    title_len = len(clean_title)
+    right_margin_x = W - int(120 * scale)
+
+    # 分級處理字數：
+    # 級別 A：短書名 (<= 6 字，如《凡人修仙傳》) -> 單行或雙行 200pt 巨型大字
+    if title_len <= 6:
+        font_size = int(210 * scale)
+        font_title = get_calligraphy_font(font_size)
+        stroke_w = int(14 * scale)
+        
+        try:
+            bbox = draw.textbbox((0, 0), clean_title, font=font_title)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        except Exception:
+            tw, th = 800, 210
+            
+        start_x = right_margin_x - tw
+        start_y = int(320 * scale)
+        draw_thick_text(draw, start_x, start_y, clean_title, font_title, fill_color=(255, 220, 60), stroke_width=stroke_w)
+
+    # 級別 B：中等長度書名 (7 ~ 11 字) -> 自動切分為 2 行右對齊 (150pt)
+    elif title_len <= 11:
+        font_size = int(155 * scale)
+        font_title = get_calligraphy_font(font_size)
+        stroke_w = int(12 * scale)
+        
+        # 標點符號或對半切分
+        if "：" in clean_title:
+            lines = clean_title.split("：", 1)
+        elif " " in clean_title:
+            lines = clean_title.split(" ", 1)
+        else:
+            mid = (title_len + 1) // 2
+            lines = [clean_title[:mid], clean_title[mid:]]
+            
+        start_y = int(260 * scale)
+        for line in lines:
+            if not line:
+                continue
+            try:
+                bbox = draw.textbbox((0, 0), line, font=font_title)
+                lw, lh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            except Exception:
+                lw, lh = 600, 155
+            lx = right_margin_x - lw
+            draw_thick_text(draw, lx, start_y, line, font_title, fill_color=(255, 220, 60), stroke_width=stroke_w)
+            start_y += lh + int(35 * scale)
+
+    # 級別 C：長書名 (12 ~ 20 字) -> 自動切分為 2~3 行右對齊 (115pt)
+    else:
+        font_size = int(115 * scale)
+        font_title = get_calligraphy_font(font_size)
+        stroke_w = int(10 * scale)
+        
+        # 按照標點符號或每行 6-8 字拆分
+        parts = re.split(r'([：，,；\s])', clean_title)
+        lines = []
+        curr = ""
+        for p in parts:
+            if len(curr) + len(p) <= 8:
+                curr += p
+            else:
+                lines.append(curr)
+                curr = p
+        if curr:
+            lines.append(curr)
+            
+        start_y = int(240 * scale)
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                bbox = draw.textbbox((0, 0), line, font=font_title)
+                lw, lh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            except Exception:
+                lw, lh = 500, 115
+            lx = right_margin_x - lw
+            draw_thick_text(draw, lx, start_y, line, font_title, fill_color=(255, 220, 60), stroke_width=stroke_w)
+            start_y += lh + int(25 * scale)
+
+    # ── 3. 右下角醒目【已完結】/【連載中】標籤 (加大高寬防壓字，距離底部 140px 避開進度條) ──
+    if is_completed:
+        status_text = "【 已完結 】"
+        status_fill = (16, 185, 129)   # 翡翠綠 (極致醒目)
+    else:
+        status_text = "【 連載中 】"
+        status_fill = (245, 158, 11)   # 琥珀金
+        
+    font_status = get_font(int(48 * scale))
+    try:
+        bbox = draw.textbbox((0, 0), status_text, font=font_status)
+        sw, sh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    except Exception:
+        sw, sh = 260, 48
+
+    pad_x2 = int(45 * scale)
+    pad_y2 = int(22 * scale)
+    status_w = sw + pad_x2 * 2
+    status_h = sh + pad_y2 * 2
+    
+    # 放置於右下角 (距離底部 140px，避開播放進度條)
+    status_x = right_margin_x - status_w
+    status_y = H - int(140 * scale) - status_h
+    
+    draw.rounded_rectangle(
+        [status_x, status_y, status_x + status_w, status_y + status_h], 
+        radius=int(22 * scale), 
+        fill=status_fill, 
+        outline=(255, 255, 255), 
+        width=int(4 * scale)
+    )
+    draw.text((status_x + pad_x2, status_y + pad_y2 - int(4 * scale)), status_text, font=font_status, fill=(255, 255, 255))
+
+    # 存檔
+    os.makedirs(os.path.dirname(os.path.abspath(output_filename)), exist_ok=True)
+    q = 98
+    img.save(output_filename, quality=q, subsampling=0, optimize=False)
+
+    size_mb = os.path.getsize(output_filename) / (1024 * 1024)
+    logging.info(f"✅ 1280x720 自適應大氣封面合成完成: {output_filename} (品質 quality={q}, 大小 {size_mb:.2f} MB)")
+    return output_filename
+
+
+def _measure(draw, text, font):
+    box = draw.textbbox((0, 0), text, font=font)
+    return box[2] - box[0], box[3] - box[1]
+
+
+def _fit_font(draw, text, max_width, start_size, min_size=54):
+    for size in range(start_size, min_size - 1, -4):
+        font = get_calligraphy_font(size)
+        if _measure(draw, text, font)[0] <= max_width:
+            return font
+    return get_calligraphy_font(min_size)
+
+
+def _create_youtube_cover_redesign(
+    bg_img,
+    book_title,
+    start_chap,
+    end_chap,
+    is_completed=True,
+    output_filename="youtube_cover.jpg",
+    part_num=None,
+):
+    """在固定無文字主視覺上疊加一致的 Part 資訊版型。"""
+    width, height = YOUTUBE_COVER_SIZE
+    img = bg_img.convert("RGB").resize((width, height), Image.LANCZOS)
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    shade = ImageDraw.Draw(overlay)
+
+    # 僅使用局部漸層，不以大面積黑色矩形遮蔽主視覺。
+    for x in range(0, 1450):
+        alpha = int(178 * (1 - x / 1450) ** 1.7)
+        shade.line([(x, 0), (x, height)], fill=(4, 8, 22, alpha))
+    for y in range(920, height):
+        alpha = int(92 * (y - 920) / (height - 920))
+        shade.line([(0, y), (width, y)], fill=(3, 6, 16, alpha))
+    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+    draw = ImageDraw.Draw(img)
+
+    clean_title = book_title.replace("《", "").replace("》", "").strip()
+    title_font = _fit_font(draw, clean_title, 1340, 220, 92)
+    title_w, title_h = _measure(draw, clean_title, title_font)
+    title_x, title_y = 105, 245
+    # 輕量陰影取代粗黑描邊。
+    draw.text((title_x + 7, title_y + 9), clean_title, font=title_font, fill=(0, 0, 0))
+    draw.text((title_x, title_y), clean_title, font=title_font, fill=(255, 224, 118), stroke_width=2, stroke_fill=(102, 67, 16))
+    draw.line([(title_x, title_y + title_h + 45), (title_x + min(title_w, 760), title_y + title_h + 45)], fill=(222, 184, 76), width=5)
+
+    part_text = f"第 {part_num} 部" if part_num else "完整合集"
+    range_text = f"第 {int(start_chap):03d}–{int(end_chap):03d} 章" if str(start_chap).isdigit() and str(end_chap).isdigit() else f"第 {start_chap}–{end_chap} 章"
+    info_font = get_font(65)
+    info_text = f"{part_text}  ·  {range_text}"
+    info_w, info_h = _measure(draw, info_text, info_font)
+    info_x, info_y = 110, 690
+    draw.rounded_rectangle((info_x - 24, info_y - 18, info_x + info_w + 28, info_y + info_h + 30), radius=18, fill=(15, 24, 48), outline=(224, 187, 82), width=3)
+    draw.text((info_x, info_y), info_text, font=info_font, fill=(255, 255, 255))
+
+    status_text = "已完結" if is_completed else "連載中"
+    status_fill = (5, 143, 105) if is_completed else (185, 50, 38)
+    status_font = get_font(92)
+    status_w, status_h = _measure(draw, status_text, status_font)
+    pad_x, pad_y = 58, 34
+    box_w, box_h = status_w + pad_x * 2, status_h + pad_y * 2
+    status_x = width - box_w - 105
+    status_y = 92
+    draw.rounded_rectangle((status_x, status_y, status_x + box_w, status_y + box_h), radius=28, fill=status_fill, outline=(255, 232, 157), width=7)
+    draw.text((status_x + pad_x, status_y + pad_y - 9), status_text, font=status_font, fill=(255, 255, 255), stroke_width=2, stroke_fill=(0, 55, 42))
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_filename)), exist_ok=True)
+    quality = 98
+    img.save(output_filename, "JPEG", quality=quality, subsampling=0, optimize=False)
+    logging.info("✅ Part 封面完成（固定主視覺版型）: %s", output_filename)
+    return output_filename
 
 
 def create_youtube_cover(bg_img, book_title, start_chap, end_chap, is_completed=True, output_filename="youtube_cover.jpg", part_num=None):

@@ -2,8 +2,10 @@
 
 import logging
 import os
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from typing import Any
 
 from .ci_pipeline import run_ci_artifact_mode
 from .errors import UploadPaused
@@ -46,13 +48,19 @@ except ImportError:
     from publication_checkpoint import PublicationCheckpoint, plan_fingerprint
 
 
+def _get_symbol(name: str, fallback: Any) -> Any:
+    uploader = sys.modules.get("src.youtube_api_uploader") or sys.modules.get("youtube_api_uploader")
+    if uploader is not None and hasattr(uploader, name):
+        return getattr(uploader, name)
+    return fallback
+
 
 def run_upload_pipeline(args):
     """Main pipeline execution logic for YouTube video publishing."""
     if getattr(args, "auth_pool", False):
         pool = YouTubeServicePool()
-        authorized = pool.authorize_all_local(sync_github=not getattr(args, "no_sync_gh", False), repo=getattr(args, "repo", "hub-google/audiobook-generator"))
-        return 0 if pool.accounts and authorized == len(pool.accounts) else 1
+        pool.authorize_all_local(sync_github=not getattr(args, "no_sync_gh", False))
+        return 0
 
     publication = PublicationCheckpoint(args.state_file)
 

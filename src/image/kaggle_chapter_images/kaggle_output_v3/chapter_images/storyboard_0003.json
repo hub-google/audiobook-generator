@@ -1,0 +1,47 @@
+{
+  "book_id": "quanzhigaoshou",
+  "chapter": 3,
+  "title": "專職夜班",
+  "source_sha256": "fdfe759ab12bc86b6a5146acd5a311e873404f112a80e4d98c3d3a96c65af55f",
+  "pair_score": 83.78,
+  "scenes": [
+    {
+      "scene": 1,
+      "source_event_id": "ch0003_p001_0",
+      "evidence": [
+        {
+          "chunk_id": "ch0003_p001",
+          "start_char": 0,
+          "end_char": 663,
+          "support_summary": "葉修在競技場擊敗了陳果的對手，陳果認出葉修的身份。"
+        }
+      ],
+      "character_versions": {
+        "char_ye_xiu": "real_v1",
+        "char_chen_guo": "real_v1"
+      },
+      "summary_zh": "葉修在競技場擊敗了陳果的對手，陳果認出葉修的身份。",
+      "prompt": "Ye Xiu defeated Chen Guo's opponent in the arena, and Chen Guo recognized Ye Xiu's identity. Ye Xiu exited the game, and Chen Guo asked Ye Xiu about the time used. Chen Guo was surprised, while Ye Xiu seemed slightly regretful.. Character identity: Ye Xiu, Chinese man age 25, pale slightly tired face, lean average build, untidy short black hair, faint unshaven stubble, calm dark eyes, understated charcoal winter coat over a simple dark shirt; Chen Guo, Chinese woman in her mid-twenties, clear attractive face, expressive eyes, long dark hair tied in a high swinging ponytail, energetic athletic posture, practical warm red sweater and dark jeans. Style: high-detail semi-realistic cinematic digital animation illustration, grounded adult facial proportions, natural skin texture, finely rendered fabric and environment, restrained saturation, deep neutral blacks, soft volumetric winter lighting, subtle rim light, shallow cinematic depth of field, widescreen composition, consistent visual language. no written text",
+      "negative_prompt": "photograph, chibi, cartoon, manga, comic, watercolor, oil painting, 3d render, plastic skin, text, subtitles, watermark, logo, UI, low quality, blurry, deformed hands, extra fingers, duplicate people"
+    },
+    {
+      "scene": 2,
+      "source_event_id": "ch0003_p004_3",
+      "evidence": [
+        {
+          "chunk_id": "ch0003_p004",
+          "start_char": 1956,
+          "end_char": 2591,
+          "support_summary": "葉修開始在網吧工作，陳果安排葉修搬鍵盤。"
+        }
+      ],
+      "character_versions": {
+        "char_ye_xiu": "real_v1",
+        "char_chen_guo": "real_v1"
+      },
+      "summary_zh": "葉修在網吧工作，陳果安排他搬鍵盤。",
+      "prompt": "Ye Xiu starts working at the internet cafe, and Chen Guo arranges for him to move keyboards. Ye Xiu is a 25-year-old Chinese man with a slightly tired, pale face, messy short black hair, and a calm demeanor. Chen Guo is a 25-year-old Chinese woman with an attractive face, expressive eyes, long dark hair tied in a high ponytail, and an energetic posture.. Character identity: Ye Xiu, Chinese man age 25, pale slightly tired face, lean average build, untidy short black hair, faint unshaven stubble, calm dark eyes, understated charcoal winter coat over a simple dark shirt; Chen Guo, Chinese woman in her mid-twenties, clear attractive face, expressive eyes, long dark hair tied in a high swinging ponytail, energetic athletic posture, practical warm red sweater and dark jeans. Style: high-detail semi-realistic cinematic digital animation illustration, grounded adult facial proportions, natural skin texture, finely rendered fabric and environment, restrained saturation, deep neutral blacks, soft volumetric winter lighting, subtle rim light, shallow cinematic depth of field, widescreen composition, consistent visual language. no written text",
+      "negative_prompt": "photograph, chibi, cartoon, manga, comic, watercolor, oil painting, 3d render, plastic skin, text, subtitles, watermark, logo, UI, low quality, blurry, deformed hands, extra fingers, duplicate people"
+    }
+  ]
+}
