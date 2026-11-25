@@ -30,10 +30,10 @@
           "dispatched_at": "2026-11-25T10:11:58.352116+00:00"
         },
         "cover": {
-          "status": "running",
+          "status": "failed",
           "run_id": 45603377988,
           "run_attempt": 1,
-          "reason": null,
+          "reason": "failure",
           "completed_at": null,
           "dispatched_at": "2026-11-25T11:20:21.752Z"
         },
@@ -65,7 +65,7 @@
       "retry_requested_at": null,
       "run_history": [],
       "retry_at": null,
-      "reason": null,
+      "reason": "cover_rerun_pending",
       "hf_progress": {
         "completed": 0,
         "total": 0
