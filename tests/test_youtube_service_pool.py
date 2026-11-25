@@ -298,8 +298,6 @@ class YouTubeServicePoolTests(unittest.TestCase):
             add_video_to_playlist(pool, "playlist-1", "video-1", position=0)
         self.assertEqual(raised.exception.reason, "quotaExceeded")
 
-if __name__ == "__main__":
-    unittest.main()
 
     @patch.dict(os.environ, {
         "GITHUB_ACTIONS": "true",
@@ -321,3 +319,7 @@ if __name__ == "__main__":
     def test_future_multi_slot_assignment(self):
         from src.youtube_upload.state import select_youtube_account_slot
         self.assertEqual([select_youtube_account_slot(n) for n in range(1, 7)], [1,3,10,1,3,10])
+
+
+if __name__ == "__main__":
+    unittest.main()
