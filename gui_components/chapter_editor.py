@@ -31,10 +31,20 @@ class ChapterEditorMixin:
                     res, profile.get("chapter_title_overrides") or {},
                     profile.get("chapter_normalized_number_overrides") or {},
                 )
-                self.root.after(0, lambda: self._on_parse_success(res, profile) if token == self.catalog_load_token else None)
+                self.root.after(
+                    0,
+                    lambda: self._on_parse_success(res, profile)
+                    if token == self.catalog_load_token and self.url_entry.get().strip() == url
+                    else self.btn_parse.config(state=tk.NORMAL),
+                )
             except Exception as e:
                 error_message = str(e)
-                self.root.after(0, lambda message=error_message: self._on_parse_failed(message) if token == self.catalog_load_token else None)
+                self.root.after(
+                    0,
+                    lambda message=error_message: self._on_parse_failed(message)
+                    if token == self.catalog_load_token and self.url_entry.get().strip() == url
+                    else self.btn_parse.config(state=tk.NORMAL),
+                )
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -88,12 +98,68 @@ class ChapterEditorMixin:
         self.btn_parse.config(state=tk.NORMAL)
         if hasattr(self, "btn_add_queue"):
             self.btn_add_queue.config(state=tk.DISABLED)
+        if hasattr(self, "btn_preview_chapter"):
+            self.btn_preview_chapter.config(state=tk.DISABLED)
         if hasattr(self, "btn_update_queue"):
             self.btn_update_queue.config(state=tk.DISABLED)
         self.btn_filter.config(state=tk.DISABLED)
         self.lbl_status.config(text="解析失敗", foreground="#e74c3c")
         self.log(f"✗ 目錄解析失敗: {error_msg}")
         messagebox.showerror("解析失敗", f"無法讀取該目錄網址：\n{error_msg}")
+
+    def preview_first_chapter(self):
+        """Verify a real chapter, not just an HTML catalog, before queueing."""
+        if not catalog_matches_current(self.url_entry.get(), self.catalog_data):
+            messagebox.showwarning("試抓首章", "請先解析目前書籍目錄。")
+            return
+        chapters = self.catalog_data.get("chapters") or []
+        if not chapters:
+            messagebox.showwarning("試抓首章", "此書尚未取得可用章節。")
+            return
+        url = chapters[0]
+        source_id = self.catalog_data["source_id"]
+        book_title = self.catalog_data["book_title"]
+        self.btn_preview_chapter.config(state=tk.DISABLED)
+        self.log(f"試抓【{source_label(source_id)}】《{book_title}》第一章：{url}")
+
+        def worker():
+            try:
+                title, body = fetch_chapter_text(url, source_id=source_id)
+                if not body.strip():
+                    raise RuntimeError("來源正文為空")
+                self.root.after(0, lambda: self._show_first_chapter(title, body, book_title))
+            except Exception as error:
+                detail = str(error)
+                self.root.after(0, lambda: (
+                    self.log(f"✗ 試抓首章失敗：{detail}"),
+                    messagebox.showerror("試抓首章失敗", detail),
+                ))
+            finally:
+                self.root.after(0, lambda: self.btn_preview_chapter.config(
+                    state=tk.NORMAL if catalog_matches_current(
+                        self.url_entry.get(), self.catalog_data,
+                    ) else tk.DISABLED,
+                ))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_first_chapter(self, title, body, book_title):
+        """Text shown here is ephemeral and is not added to the queue."""
+        top = tk.Toplevel(self.root)
+        top.title(f"{book_title}｜試抓首章")
+        top.geometry("760x580")
+        top.minsize(520, 360)
+        frame = ttk.Frame(top, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        char_count = len(re.findall(r"[\u3400-\u9fff]", body))
+        ttk.Label(
+            frame, text=f"{title}｜{char_count:,} 個中文字｜僅供檢視，不自動加入佇列",
+        ).pack(anchor=tk.W, pady=(0, 8))
+        text = scrolledtext.ScrolledText(frame, wrap=tk.WORD, font=("Microsoft JhengHei", 11))
+        text.pack(fill=tk.BOTH, expand=True)
+        text.insert("1.0", body)
+        text.config(state=tk.DISABLED)
+        ttk.Button(frame, text="關閉", command=top.destroy).pack(anchor=tk.E, pady=(8, 0))
+        self.log(f"✓ 試抓首章成功：{title}，{char_count:,} 個中文字。")
 
     def _open_chapter_filter_dialog(self):
         if not self.catalog_data:

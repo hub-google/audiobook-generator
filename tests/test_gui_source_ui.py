@@ -48,7 +48,7 @@ def test_chapter_or_book_page_goes_to_source_specific_catalog(url, source_id):
     "", "hello", "https://evil.com/book/1",
     "https://www.69shuba.com.evil.com/book/53782/",
     "file:///etc/passwd", "https://user:pw@czbooks.net/n/c37492",
-    "https://czbooks.net/n/not-allowed?/../../",
+    "https://czbooks.net/n/not-allowed/read/1",
 ])
 def test_invalid_urls_never_go_to_network(bad):
     with pytest.raises(SourceParseError):
@@ -123,3 +123,27 @@ def test_gui_enqueuing_rejects_stale_or_wrong_chapter_range():
     with patch("gui_components.queue_operations.messagebox.showwarning") as warning:
         app.enqueue_current_task()
     warning.assert_called_once()
+
+
+def test_gui_preview_uses_actual_registered_chapter_parser():
+    app = object.__new__(AudiobookGUIApp)
+    app.catalog_data = {
+        "success": True, "catalog_url": "https://8book.com/novelbooks/168909/",
+        "source_id": "book8", "book_title": "紅樓夢",
+        "chapters": ["https://8book.com/read/168909/?39876"],
+    }
+    app.url_entry = Mock()
+    app.url_entry.get.return_value = app.catalog_data["catalog_url"]
+    app.btn_preview_chapter = Mock()
+    app.log = Mock()
+    app.root = Mock()
+    # Run the worker synchronously; Tk callbacks are still tested as callbacks.
+    def immediate_thread(target, daemon=True):
+        thread = Mock()
+        thread.start.side_effect = target
+        return thread
+    with patch("gui_components.chapter_editor.threading.Thread", side_effect=immediate_thread):
+        with patch("gui_components.chapter_editor.fetch_chapter_text", return_value=("第1章", "正文內容")) as fetch:
+            app.preview_first_chapter()
+    fetch.assert_called_once_with("https://8book.com/read/168909/?39876", source_id="book8")
+    assert app.root.after.call_count >= 2

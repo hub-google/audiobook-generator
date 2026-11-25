@@ -6,11 +6,11 @@ trust a user-entered host suffix, or fetch the network on the Tk main thread.
 from urllib.parse import urlsplit
 
 try:
-    from sources.registry import SOURCES, resolve_source
-    from sources.base import SourceParseError
-except ImportError:
     from src.sources.registry import SOURCES, resolve_source
     from src.sources.base import SourceParseError
+except ImportError:
+    from sources.registry import SOURCES, resolve_source
+    from sources.base import SourceParseError
 
 AUTO_SOURCE_LABEL = "自動辨識網站"
 SOURCE_NAMES = {

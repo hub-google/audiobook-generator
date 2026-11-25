@@ -173,6 +173,10 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
 
         self.btn_parse = ttk.Button(url_frame, text="🔍 解析章節", command=self.start_parse_catalog)
         self.btn_parse.pack(side=tk.LEFT)
+        self.btn_preview_chapter = ttk.Button(
+            url_frame, text="試抓首章", command=self.preview_first_chapter, state=tk.DISABLED,
+        )
+        self.btn_preview_chapter.pack(side=tk.LEFT, padx=(6, 0))
         self.source_hint_var = tk.StringVar(value="支援 9 個小說網站；貼上書籍、目錄或章節網址後自動辨識。")
         ttk.Label(section1, textvariable=self.source_hint_var, foreground="#475569").pack(
             anchor=tk.W, padx=4, pady=(0, 3),
@@ -516,10 +520,12 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         else:
             self.source_choice_var.set(source_label(source.source_id))
             self.source_hint_var.set(source_hint(source))
+        current = catalog_matches_current(raw, self.catalog_data)
         if hasattr(self, "btn_add_queue"):
-            active = (not self.editing_task_id and
-                      catalog_matches_current(raw, self.catalog_data))
+            active = not self.editing_task_id and current
             self.btn_add_queue.config(state=tk.NORMAL if active else tk.DISABLED)
+        if hasattr(self, "btn_preview_chapter"):
+            self.btn_preview_chapter.config(state=tk.NORMAL if current else tk.DISABLED)
         if self.editing_task_id and hasattr(self, "btn_update_queue") and self.catalog_data:
             self.btn_update_queue.config(
                 state=tk.NORMAL if catalog_matches_current(raw, self.catalog_data) else tk.DISABLED
@@ -550,6 +556,7 @@ class AudiobookGUIApp(ReviewMixin, QueueOperationsMixin, WorkflowMixin, QueueMon
         self.entry_end.insert(0, "10")
         self.chapter_selection_var.set("尚未解析章節")
         self.btn_filter.config(state=tk.DISABLED)
+        self.btn_preview_chapter.config(state=tk.DISABLED)
         self.btn_update_queue.pack_forget()
         self.btn_add_queue.pack(side=tk.RIGHT)
         self._set_configured_publish_at("")
