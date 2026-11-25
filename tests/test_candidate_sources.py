@@ -14,7 +14,10 @@ def test_twkan():
     url = src.catalog_url("https://www.twkan.cc/book/abc.html")
     result = src.parse_catalog('<h1>作品章節列表</h1><div id="allchapter"><a href="/chapter/abc/def.html">第一章</a></div>', url)
     assert result["chapter_titles"] == ["第一章"]
-    assert src.parse_chapter('<h1 class="pt10">第一章</h1><div id="content" class="readcontent"><p>正文</p></div>', result["chapters"][0]) == ("第一章", "正文")
+    body = "測試正文" * 100
+    assert src.parse_chapter(f'<h1 class="pt10">第一章</h1><div id="content" class="readcontent"><p>{body}</p></div>', result["chapters"][0]) == ("第一章", body)
+    with pytest.raises(SourceParseError, match="正文過短"):
+        src.parse_chapter('<h1 class="pt10">第一章</h1><div id="content" class="readcontent"><p>預告</p></div>', result["chapters"][0])
 
 
 def test_sixk():
@@ -61,3 +64,22 @@ def test_book8_rejects_unrelated_domain():
     src = Book8Source()
     with pytest.raises(SourceParseError):
         src.parse_catalog('<div id="chapters"><a href="https://example.org/read/1/?2">第一章</a></div>', "https://8book.com/novelbooks/1/")
+
+
+def test_moon_complete_pages_and_corrupt_rejection():
+    src = Moon17Source()
+    url = "https://www.17moon.com/book/abc/def.html"
+    pages = {
+        url: '<h1 class="reader-header__title">《作品》第1章(1)</h1><article id="article">第一段</article><nav class="reader-header__nav"><a href="def_2.html">下一頁</a></nav>',
+        url[:-5]+"_2.html": '<h1 class="reader-header__title">《作品》第1章(2)</h1><article id="article">第二段</article>',
+    }
+    assert src.load_chapter(url, pages.__getitem__) == ("第1章", "第一段\n第二段")
+    pages[url[:-5]+"_2.html"] = '<h1 class="reader-header__title">《作品》第1章(2)</h1><article id="article"><p>。甲</p><p>。乙</p><p>。丙</p></article>'
+    with pytest.raises(SourceParseError, match="文字順序異常"):
+        src.load_chapter(url, pages.__getitem__)
+
+
+def test_promoted_sources_are_registered():
+    from src.sources import resolve_source
+    for cls, url in [(SixKSource, "https://www.6ksu.app/novel/1.html"), (XszjSource, "https://xszj.tw/book/1"), (MetaNovelSource, "https://m.metanovel.org/book/1")]:
+        assert isinstance(resolve_source(url), cls)

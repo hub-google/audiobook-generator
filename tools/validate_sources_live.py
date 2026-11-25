@@ -22,8 +22,7 @@ from src.sources.moon17 import Moon17Source
 from src.sources.book8 import Book8Source
 
 # Test-only registration: candidates remain unavailable to production until validated.
-for candidate in (TwkanSource(), SixKSource(), XszjSource(), MetaNovelSource(), Moon17Source(), Book8Source()):
-    SOURCES.setdefault(candidate.source_id, candidate)
+CANDIDATE_ADAPTERS = {a.source_id: a for a in (TwkanSource(), SixKSource(), XszjSource(), MetaNovelSource(), Moon17Source(), Book8Source())}
 
 SAMPLES = {
     "hjwzw": "https://tw.hjwzw.com/Book/1889",
@@ -48,6 +47,8 @@ CANDIDATES = {
 
 def live_adapter(source_id):
     url = SAMPLES[source_id]
+    if source_id in CANDIDATE_ADAPTERS:
+        SOURCES.setdefault(source_id, CANDIDATE_ADAPTERS[source_id])
     adapter = resolve_source(url, source_id)
     result = {"source": source_id, "module": type(adapter).__name__, "url": url,
               "status": "FAIL", "chapters": [], "stage": "catalog"}

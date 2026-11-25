@@ -31,4 +31,10 @@ class TwkanSource(SourceAdapter):
         return self.catalog_result(url, name, records)
 
     def parse_chapter(self, html, url):
-        return read_body(self, self.soup(html), "#content.readcontent", "h1.pt10")
+        soup = self.soup(html)
+        title, body = read_body(self, soup, "#content.readcontent", "h1.pt10")
+        if any(re.search(r"下一[頁页]", a.get_text(strip=True)) for a in soup.select("a[href]")):
+            raise SourceParseError("台灣小說網正文分頁尚未完整取得")
+        if len(re.findall(r"[\u3400-\u9fff]", body)) < 300:
+            raise SourceParseError(f"台灣小說網正文過短，疑似預告、公告或缺文：{title}")
+        return title, body
