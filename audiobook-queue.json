@@ -1,20 +1,20 @@
 {
   "schema_version": 3,
-  "revision": 1177,
-  "updated_at": "2026-11-25T14:36:00.083753+00:00",
+  "revision": 1178,
+  "updated_at": "2026-11-25T14:36:10.797976+00:00",
   "queue": [
     {
       "task_id": "book-20261125-7fa2c918",
       "position": 1,
       "book_title": "萬古第一廢材",
       "catalog_url": "https://www.17moon.com/book/JFM/",
-      "catalog_identity": "",
+      "catalog_identity": "3b13e8df6caca77771a04b0ba140c479ae69718b9aeaa1a6692d7d19c87d6b28",
       "start_chapter": 1,
       "end_chapter": 4784,
       "excluded_chapters": [],
       "renumber_selected": true,
       "publish_at": null,
-      "duplicate_chapter_count": 6,
+      "duplicate_chapter_count": 0,
       "chapter_title_overrides": {
         "1947": "第1947章 神皇殿"
       },
@@ -4862,7 +4862,7 @@
         "total": 0
       },
       "created_at": "2026-11-25T09:56:00.540Z",
-      "updated_at": "2026-11-25T14:36:00.083753+00:00",
+      "updated_at": "2026-11-25T14:36:10.797976+00:00",
       "book_profile_id": "4735323f23f23777",
       "profile_snapshot": {
         "book_profile_id": "4735323f23f23777",
