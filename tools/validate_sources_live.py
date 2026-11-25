@@ -9,6 +9,7 @@ from pathlib import Path
 from src.catalog_parser import parse_catalog, parse_chapter_number
 from src.crawler import fetch_chapter_text
 from src.sources import resolve_source, SourceAccessError
+from src.sources.registry import SOURCES
 
 SAMPLES = {
     "hjwzw": "https://tw.hjwzw.com/Book/1889",
@@ -22,12 +23,17 @@ SAMPLES = {
     "book8": "https://8book.com/novelbooks/168909/",
 }
 def live_adapter(source_id):
+    # Production registration, not a test-only fallback, is authoritative.
+    if set(SAMPLES) != set(SOURCES):
+        raise ValueError("Live source samples and production registry have diverged")
     url = SAMPLES[source_id]
     adapter = resolve_source(url, source_id)
     result = {"source": source_id, "module": type(adapter).__name__, "url": url,
               "status": "FAIL", "chapters": [], "stage": "catalog"}
     try:
         catalog = parse_catalog(url)
+        if catalog.get("source_id") != source_id:
+            raise ValueError("parsed catalog source does not match selected adapter")
         count = catalog["total_chapters"]
         result["catalog_count"] = count
         result["book_title"] = catalog["book_title"]
@@ -55,7 +61,11 @@ def live_adapter(source_id):
                 detail["category"] = "ACCESS_RESTRICTED" if isinstance(exc, SourceAccessError) else "SOURCE_OR_PARSE_ERROR"
                 detail["error"] = f"{type(exc).__name__}: {exc}"
         if all(c["status"] == "PASS" for c in result["chapters"]):
-            result["status"] = "PASS"
+            unique_bodies = {c["sha256"] for c in result["chapters"]}
+            if len(unique_bodies) != len(result["chapters"]):
+                result["error"] = "different chapters returned identical body text"
+            else:
+                result["status"] = "PASS"
         else:
             result["error"] = "at least one chapter failed"
     except Exception as exc:

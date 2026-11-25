@@ -201,3 +201,27 @@ def test_live_validator_uses_only_production_source_registry():
         assert "sixk" not in SOURCES
     finally:
         SOURCES["sixk"] = original
+
+
+
+def test_live_validator_detects_repeated_placeholder_bodies():
+    from unittest.mock import patch
+    from tools.validate_sources_live import live_adapter, SAMPLES
+    url = SAMPLES["sixk"]
+    catalog = {
+        "source_id": "sixk", "book_title": "測試",
+        "total_chapters": 3,
+        "chapters": [
+            "https://www.6ksu.app/novel/5050292/1.html",
+            "https://www.6ksu.app/novel/5050292/2.html",
+            "https://www.6ksu.app/novel/5050292/3.html",
+        ],
+        "chapter_titles": ["第一章", "第二章", "第三章"],
+    }
+    with patch("tools.validate_sources_live.parse_catalog", return_value=catalog):
+        with patch("tools.validate_sources_live.fetch_chapter_text",
+                   return_value=("第一章", "測試正文" * 120)):
+            report = live_adapter("sixk")
+    assert report["status"] == "FAIL"
+    assert "identical body text" in report["error"]
+    assert all(c["status"] == "PASS" for c in report["chapters"])
