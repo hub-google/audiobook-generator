@@ -34,3 +34,20 @@ jobs:
           path: source-report.json
           if-no-files-found: warn
           retention-days: 7
+
+  reader-architecture:
+    name: reader-architecture-${{ matrix.source }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [book8, moon17, twkan, czbooks, shuba69]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install playwright beautifulsoup4 requests
+      - run: python -m playwright install chromium
+      - run: python -m tools.inspect_reader_architecture ${{ matrix.source }}
