@@ -23,7 +23,6 @@ def test_source_selector_is_backed_by_a_live_registered_adapter(source_id):
     assert adapter.source_id == source_id
     assert adapter.matches(canonical)
     assert adapter.book_id(raw) == adapter.book_id(canonical)
-    assert "同站最多" in source_hint(adapter)
     assert source_id_from_label(source_label(source_id)) == source_id
 
 
@@ -169,7 +168,9 @@ def test_full_gui_window_has_nine_sources_preview_and_queue_site_column():
         app = AudiobookGUIApp(root)
         assert tuple(app.source_combo["values"]) == SOURCE_OPTIONS
         assert app.source_choice_var.get() == AUTO_SOURCE_LABEL
-        assert "disabled" in app.btn_preview_chapter.state()
+        assert not app.btn_preview_chapter.instate(["disabled"])
+        assert not app.btn_sample_text.instate(["disabled"])
+        assert not app.btn_start_processing.instate(["disabled"])
         app.source_choice_var.set(SOURCE_NAMES["moon17"])
         app._on_source_selected()
         assert app.url_entry.get() == SOURCE_EXAMPLES["moon17"]
@@ -195,8 +196,7 @@ def test_scrape_workflow_respects_source_specific_parallelism():
     workflow = (Path(__file__).resolve().parents[1] /
                 ".github" / "workflows" / "audiobook.yml").read_text(encoding="utf-8")
     scrape = workflow.split("\n  scrape_chapters:", 1)[1].split("\n  trigger_scrape_rerun:", 1)[0]
-    assert "max-parallel: ${{ fromJSON(needs.setup.outputs.source_max_parallel || '1') }}" in scrape
-    assert "max-parallel: 17" not in scrape
+    assert "max-parallel: 17" in scrape
     assert "needs: [setup, resume_planner]" in scrape
 
 

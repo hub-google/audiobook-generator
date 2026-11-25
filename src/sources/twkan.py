@@ -9,7 +9,6 @@ class TwkanSource(SourceAdapter):
     version = "3"
     hosts = ("twkan.cc", "www.twkan.cc")
     plain_http = True
-    max_parallel = 1
     min_interval = 2.0
 
     def book_id(self, url):

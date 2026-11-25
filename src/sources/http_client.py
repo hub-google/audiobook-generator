@@ -40,7 +40,7 @@ def fetch_page(url, source, timeout=20):
     # Restrict retries to declared transient failures, never 403/429.
     timeout = max(float(timeout), min(60.0, float(getattr(source, "min_timeout", 0))))
     transient_retries = max(0, min(2, int(getattr(source, "transient_retries", 0))))
-    # Process-wide pacing. Workflow max-parallel also honors source.max_parallel.
+    # Process-wide pacing for requests made by this worker.
     with _lock:
         remaining = source.min_interval - (time.monotonic() - _last.get(source.source_id, 0))
         if remaining > 0:

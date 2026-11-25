@@ -6,7 +6,6 @@ from .base import SourceAdapter, Chapter, SourceParseError
 class HJWZWSource(SourceAdapter):
     source_id = "hjwzw"
     version = "2"
-    max_parallel = 17  # Preserve the established HJWZW production concurrency.
     hosts = ("tw.hjwzw.com", "www.hjwzw.com", "hjwzw.com")
     opening_labels = ("黃金屋", "黄金屋")
 

@@ -12,7 +12,6 @@ class CZBooksSource(SourceAdapter):
     plain_http = True
     hosts = ("czbooks.net", "www.czbooks.net")
     min_interval = 3.0
-    max_parallel = 1
 
     def book_id(self, url):
         match = re.fullmatch(r"/n/([A-Za-z0-9_-]+)(?:/[A-Za-z0-9_-]+)?/?", urlsplit(url).path)

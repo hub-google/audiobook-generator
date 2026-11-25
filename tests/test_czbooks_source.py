@@ -24,7 +24,6 @@ def test_czbooks_catalog_and_config(tmp_path):
     assert result["chapters"][0] == URL + "/xyz?chapterNumber=0"
     config = generate_config_yaml(URL, 1, 2, str(tmp_path / "config.yaml"), parsed_result=result)
     assert config["source_id"] == "czbooks"
-    assert config["source_max_parallel"] == 1
     assert config["chapter_records"][1]["source_chapter_id"] == "abc"
 
 

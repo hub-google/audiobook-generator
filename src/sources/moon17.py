@@ -12,7 +12,6 @@ class Moon17Source(SourceAdapter):
     plain_http = False
     min_timeout = 30.0
     transient_retries = 1
-    max_parallel = 1
     min_interval = 2.0
 
     def book_id(self, url):

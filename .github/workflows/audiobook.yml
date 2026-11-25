@@ -351,7 +351,6 @@ jobs:
     outputs:
       matrix: ${{ steps.gen_matrix.outputs.matrix }}
       book_profile_id: ${{ steps.gen_matrix.outputs.book_profile_id }}
-      source_max_parallel: ${{ steps.gen_matrix.outputs.source_max_parallel }}
       needs_browser_scrape: ${{ steps.gen_matrix.outputs.needs_browser_scrape }}
 
     steps:
@@ -439,7 +438,6 @@ jobs:
           echo "" >> $GITHUB_OUTPUT
           echo 'EOF' >> $GITHUB_OUTPUT
           python -c "import yaml; print('book_profile_id=' + str((yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}).get('book_profile_id') or ''))" >> $GITHUB_OUTPUT
-          python -c "import yaml; print('source_max_parallel=' + str((yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}).get('source_max_parallel', 17)))" >> $GITHUB_OUTPUT
           python -c "import yaml; print('needs_browser_scrape=' + str((yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}).get('needs_browser_scrape', False)).lower())" >> $GITHUB_OUTPUT
 
       - name: Validate non-empty chapter matrix
@@ -522,9 +520,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      # TXT workers must obey the same site-specific cap as processing workers.
-      # Source adapters set source_max_parallel via setup/config.yaml.
-      max-parallel: ${{ fromJSON(needs.setup.outputs.source_max_parallel || '1') }}
+      max-parallel: 17
       matrix: ${{ fromJSON(needs.resume_planner.outputs.worker_matrix) }}
     steps:
       - uses: actions/checkout@v4
@@ -656,7 +652,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
-      max-parallel: ${{ fromJSON(needs.setup.outputs.source_max_parallel || '1') }}
+      max-parallel: 17
       matrix: ${{ fromJSON(needs.resume_planner.outputs.worker_matrix) }}
 
     steps:

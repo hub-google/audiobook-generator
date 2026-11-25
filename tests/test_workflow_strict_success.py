@@ -87,7 +87,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         self.assertIn("調度訊息", summary_step.get("run", ""))
 
     def test_worker_concurrency_is_capped_at_seventeen(self):
-        self.assertEqual(self.jobs["process_chapters"]["strategy"]["max-parallel"], "${{ fromJSON(needs.setup.outputs.source_max_parallel || '1') }}")
+        self.assertEqual(self.jobs["process_chapters"]["strategy"]["max-parallel"], 17)
 
     def test_catalog_winner_is_unambiguous_in_actions_job_list(self):
         attempts = self.jobs["catalog_attempts"]

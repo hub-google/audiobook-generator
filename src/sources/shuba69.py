@@ -8,7 +8,6 @@ class Shuba69Source(SourceAdapter):
     version = "4"
     plain_http = True
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    max_parallel = 17
     hosts = ("www.69shuba.com", "69shuba.com")
     encoding = "gb18030"
     min_interval = 0.5

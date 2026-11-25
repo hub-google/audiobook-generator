@@ -11,7 +11,6 @@ class SixKSource(SourceAdapter):
     transient_retries = 2
     hosts = ("6ksu.app", "www.6ksu.app")
     plain_http = True
-    max_parallel = 1
     min_interval = 2.0
 
     def book_id(self, url):

@@ -8,7 +8,6 @@ class XszjSource(SourceAdapter):
     source_id = "xszj"
     hosts = ("xszj.tw", "www.xszj.tw")
     plain_http = True
-    max_parallel = 1
     min_interval = 2.0
 
     def book_id(self, url):

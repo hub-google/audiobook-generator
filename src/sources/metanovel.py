@@ -8,7 +8,6 @@ class MetaNovelSource(SourceAdapter):
     source_id = "metanovel"
     hosts = ("metanovel.org", "www.metanovel.org", "m.metanovel.org")
     plain_http = True
-    max_parallel = 1
     min_interval = 2.0
 
     def book_id(self, url):

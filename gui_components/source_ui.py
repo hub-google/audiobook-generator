@@ -87,7 +87,7 @@ def normalize_source_url(raw_url):
 def source_hint(source):
     label = source_label(source.source_id)
     note = SOURCE_NOTES.get(source.source_id, "自動解析來源目錄")
-    return f"{label}｜{note}｜同站最多 {source.max_parallel} 個抓文工作"
+    return f"{label}｜{note}"
 
 
 def catalog_matches_current(raw_url, catalog_data):

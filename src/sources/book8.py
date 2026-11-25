@@ -11,7 +11,6 @@ class Book8Source(SourceAdapter):
     version = "5"
     hosts = ("8book.com", "www.8book.com", "v.8book.com", "m.8book.com", "i.8book.com")
     plain_http = True
-    max_parallel = 1
     min_interval = 2.0
 
     def book_id(self, url):
