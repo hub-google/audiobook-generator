@@ -187,3 +187,17 @@ def test_book8_advertised_hosts_never_become_fetch_hosts():
     html = '<title>作品</title><div id="chapters"><a class="episode_li" href="//sport.thepaperbooks.com/read/168909/?39876">第一章</a></div>'
     catalog = src.parse_catalog(html,url)
     assert catalog["chapters"] == ["https://8book.com/read/168909/?39876"]
+
+
+def test_live_validator_uses_only_production_source_registry():
+    from src.sources.registry import SOURCES
+    from src.sources.base import SourceParseError
+    from tools.validate_sources_live import SAMPLES, live_adapter
+    assert set(SAMPLES) == set(SOURCES)
+    original = SOURCES.pop("sixk")
+    try:
+        with pytest.raises(SourceParseError, match="尚未支援"):
+            live_adapter("sixk")
+        assert "sixk" not in SOURCES
+    finally:
+        SOURCES["sixk"] = original
