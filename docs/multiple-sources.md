@@ -121,3 +121,7 @@ python tools/download_novel_txt.py https://www.69shuba.com/book/29590/ --count 3
 - 月亮小說網：依官方 reader.js 還原文字節點倒序，並將網站自訂字型 195 個字形轉為 Unicode，無須在 Git 中存放字型檔；[實測 546 章目錄、首中末正文成功](https://github.com/hub-google/audiobook-generator/actions/runs/45534921596)。已加入正式來源。
 - 無限小說：外站連結僅用於識別章節 ID，不直接請求體育或財經網站；依原站 inline JS 組合原站 /txt/ AJAX 章節實體網址，不執行來源腳本；[實測 47 章目錄、首中末正文成功](https://github.com/hub-google/audiobook-generator/actions/runs/45535104990)。已加入正式來源。
 - 站點連線可能因 HTTP 403 或原始章節缺文而暫時失敗；此類狀態明確回報，不與解析器 bug 混淆。僅處理公開可讀或已獲授權的內容。
+
+## 台灣小說網：區分來源健康度與個別缺章
+
+九站綜合 smoke check 的台灣小說網樣本改用交叉驗證中完整的 648 章作品（首頁／中頁／末頁都已實際取得可讀正文），持續保留 `tools/validate_twkan.py` 多書完整性驗證，明確報告其他作品存在原站正文 100／111 字的缺章。這不是自動填補或忽略缺章；特定缺文書籍仍不能製作完整有聲書。

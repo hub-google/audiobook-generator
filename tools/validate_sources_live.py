@@ -28,7 +28,7 @@ SAMPLES = {
     "hjwzw": "https://tw.hjwzw.com/Book/1889",
     "shuba69": "https://www.69shuba.com/book/53782/",
     "czbooks": "https://czbooks.net/n/c37492",
-    "twkan": "https://www.twkan.cc/book/2T9qchiJD4h31AQnZuI6gI.html",
+    "twkan": "https://www.twkan.cc/book/5xqpGOcl46z9RzbASUJWgx.html",
     "sixk": "https://www.6ksu.app/novel/5050292.html",
     "xszj": "https://xszj.tw/book/491274",
     "metanovel": "https://m.metanovel.org/book/480384",
