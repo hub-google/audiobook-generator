@@ -24,6 +24,7 @@ from .source_ui import (
     AUTO_SOURCE_LABEL, SOURCE_EXAMPLES, SOURCE_OPTIONS, SOURCE_NAMES,
     catalog_matches_current, detect_source, normalize_source_url,
     normalize_batch_urls, source_hint, source_id_from_label, source_label,
+    SourceParseError,
 )
 
 # 載入目錄解析器

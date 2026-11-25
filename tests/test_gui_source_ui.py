@@ -147,3 +147,12 @@ def test_gui_preview_uses_actual_registered_chapter_parser():
             app.preview_first_chapter()
     fetch.assert_called_once_with("https://8book.com/read/168909/?39876", source_id="book8")
     assert app.root.after.call_count >= 2
+
+
+def test_gui_invalid_url_reports_error_before_starting_network():
+    app = object.__new__(AudiobookGUIApp)
+    app.url_entry = Mock()
+    app.url_entry.get.return_value = "https://unsupported.example/novel/1"
+    with patch("gui_components.chapter_editor.messagebox.showwarning") as warn:
+        app.start_parse_catalog()
+    warn.assert_called_once()
