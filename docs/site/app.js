@@ -11,7 +11,7 @@ const SOURCES=[
 {id:"moon17",name:"月亮小說網",hosts:["17moon.com","www.17moon.com"]},
 {id:"book8",name:"無限小說",hosts:["8book.com","www.8book.com","v.8book.com","m.8book.com","i.8book.com"]}
 ];
-let token="",queue=null,queueSha=null,latestRuns=[],parsedCatalog=null,editorTaskId=null,reviewTaskId=null,chapterPickerExcluded=null,chapterPickerOrder=null;
+let token="",queue=null,queueSha=null,latestRuns=[],parsedCatalog=null,editorTaskId=null,reviewTaskId=null,chapterPickerExcluded=null,chapterPickerOrder=null,rankingNovels=[],rankingSelected=new Set();
 const $=id=>document.getElementById(id), text=(node,value)=>{node.textContent=value==null?"":String(value)};
 function notice(message,kind="ok"){const n=$("message");text(n,message);n.className="notice"+(kind==="error"?" error":"");}
 const dateLabel=v=>v?new Date(v).toLocaleString("zh-TW",{timeZone:"Asia/Taipei",hour12:false}):"—";
@@ -80,6 +80,7 @@ function renderQueue(){
 async function refresh(){
  try{const res=await readQueue();queue=res.data;queueSha=res.sha;renderQueue();
   try{const data=await request("/actions/runs?per_page=35");latestRuns=data.workflow_runs||[];renderRuns();}catch(error){if(token)notice("Actions 紀錄載入失敗："+error.message,"error");}
+  renderRanking();
   $("connection-pill").textContent=token?"已連線":"唯讀模式";$("connection-pill").className="pill "+(token?"ok":"warn");
  }catch(e){notice("同步失敗："+e.message,"error");}
 }
@@ -276,6 +277,57 @@ async function batchAdd(){
  const lines=$("batch-urls").value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(!lines.length)throw Error("請貼上批次小說資料");
  const tasks=lines.map((line,i)=>{const parts=line.split("|").map(x=>x.trim());if(parts.length<2)throw Error("第 "+(i+1)+" 行格式錯誤");return buildTask({title:parts[0],url:parts[1],start:Number(parts[2]||1),end:Number(parts[3]||10)});});await addTasks(tasks);$("batch-urls").value="";
 }
+function filteredRanking(){
+ const term=$("rank-search").value.trim().toLocaleLowerCase(),category=$("rank-category").value;
+ return rankingNovels.filter(n=>(!category||n.category===category)&&(!term||[n.title,n.author,n.latest_chapter].some(v=>String(v||"").toLocaleLowerCase().includes(term))));
+}
+function renderRanking(){
+ const data=filteredRanking(),body=$("rank-body");body.replaceChildren();
+ text($("rank-count"),"顯示 "+data.length+" 本／總計 "+rankingNovels.length+" 本；已選 "+rankingSelected.size+" 本");
+ $("rank-add").disabled=!token||rankingSelected.size===0;
+ $("rank-copy").disabled=rankingSelected.size===0;
+ if(!data.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=6;td.className="empty";td.textContent=rankingNovels.length?"沒有符合條件的小說":"尚無可用排行資料";tr.append(td);body.append(tr);return;}
+ for(const novel of data.slice(0,500)){
+  const tr=document.createElement("tr"),url=novel.catalog_url;
+  const pick=document.createElement("td"),check=document.createElement("input");check.type="checkbox";check.checked=rankingSelected.has(url);
+  check.setAttribute("aria-label","選取 "+novel.title);
+  check.addEventListener("change",()=>{if(check.checked)rankingSelected.add(url);else rankingSelected.delete(url);renderRanking();});
+  pick.append(check);tr.append(pick);
+  for(const value of [novel.rank,novel.title,novel.author,novel.category,novel.latest_chapter]){
+   const td=document.createElement("td");td.textContent=value||"—";tr.append(td);
+  }body.append(tr);
+ }
+}
+async function loadRanking(){
+ try{
+  const res=await fetch("./full-novels.json",{cache:"no-store"});
+  if(!res.ok)throw Error("HTTP "+res.status);
+  const data=await res.json();
+  if(!Array.isArray(data.novels))throw Error("排行資料格式不合法");
+  rankingNovels=data.novels.filter(n=>n.catalog_url&&n.title&&/^https:\/\/69shuba\.com\/book\/\d+\/$/.test(n.catalog_url));
+  const select=$("rank-category");select.replaceChildren();
+  const opt=document.createElement("option");opt.value="";opt.textContent="全部分類";select.append(opt);
+  for(const category of [...new Set(rankingNovels.map(n=>n.category).filter(Boolean))].sort()){
+   const item=document.createElement("option");item.value=category;item.textContent=category;select.append(item);
+  }
+  renderRanking();
+ }catch(e){rankingNovels=[];renderRanking();text($("rank-count"),"目前無法讀取完本排行："+e.message);}
+}
+function chosenRanking(){return rankingNovels.filter(n=>rankingSelected.has(n.catalog_url));}
+async function copyRankingUrls(){
+ const lines=chosenRanking().map(n=>n.catalog_url);
+ if(!lines.length)throw Error("請先選取小說");
+ await navigator.clipboard.writeText(lines.join("\n"));
+ notice("已複製 "+lines.length+" 個小說網址");
+}
+async function addRankingToQueue(){
+ const chosen=chosenRanking();if(!chosen.length)throw Error("請先選取小說");
+ if(!token)throw Error("GitHub Pages 無法在未經授權的情況下修改佇列；請勿把 Token 放入前端程式碼");
+ // Unlike the desktop Python GUI, a static web page cannot synchronously
+ // crawl each entire book. Do not fabricate end_chapter=10 as a full novel.
+ throw Error("全書批次加入需先由 GitHub Actions 逐本解析完整章數；此項尚未完成，為避免漏章不會送出不完整的任務");
+}
+
 function renderRuns(){const body=$("runs-body");body.replaceChildren();if(!latestRuns.length){const tr=document.createElement("tr");tr.innerHTML='<td colspan="4" class="empty">目前沒有 Actions 紀錄</td>';body.append(tr);return;}
  latestRuns.forEach(run=>{const tr=document.createElement("tr");let td=document.createElement("td");td.textContent=run.display_title||run.name;tr.append(td);td=document.createElement("td");td.textContent=dateLabel(run.created_at);tr.append(td);td=document.createElement("td");const badge=document.createElement("span");badge.className="status "+(run.conclusion==="success"?"done":run.conclusion==="failure"?"error":"running");badge.textContent=run.conclusion||run.status;td.append(badge);tr.append(td);td=document.createElement("td");const link=document.createElement("a");link.href=run.html_url;link.target="_blank";link.rel="noopener noreferrer";link.textContent="查看 Run #"+run.id;td.append(link);tr.append(td);body.append(tr);});
 }
@@ -500,6 +552,11 @@ document.addEventListener("DOMContentLoaded",()=>{
  bind("publish-at","change",renderPublish);
  document.querySelectorAll("[data-publish-day]").forEach(b=>b.addEventListener("click",()=>setPublishPreset(Number(b.dataset.publishDay),b.dataset.publishHour)));
  renderPublish();
+ bind("rank-search","input",renderRanking);bind("rank-category","change",renderRanking);
+ bind("rank-select-all","click",()=>{for(const n of filteredRanking())rankingSelected.add(n.catalog_url);renderRanking();});
+ bind("rank-select-none","click",()=>{rankingSelected.clear();renderRanking();});
+ bind("rank-copy","click",copyRankingUrls);bind("rank-add","click",addRankingToQueue);
+ loadRanking();
  bind("catalog-url","input",()=>{parsedCatalog=null;$("catalog-preview").classList.add("hidden");$("chapter-selection-tools").classList.add("hidden");});
  refresh();
 });

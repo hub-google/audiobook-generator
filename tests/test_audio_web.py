@@ -126,3 +126,16 @@ def test_public_read_only_progress_does_not_require_browser_token():
     assert 'function makeBtn(label,action,id,disabled=false,authRequired=true)' in js
     assert 'async function renderRunJobDetails(task)' in js
     assert 'id="progress-jobs"' in html
+
+
+def test_69shuba_ranking_has_real_data_export_and_read_only_browser_view():
+    exporter=(ROOT/"tools/export_69shuba_ranking.py").read_text(encoding="utf-8")
+    workflow=(ROOT/".github/workflows/audio-web-pages.yml").read_text(encoding="utf-8")
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    assert "fetch_69shuba_full_novels()" in exporter
+    assert "python -m tools.export_69shuba_ranking" in workflow
+    assert 'id="rank-search"' in html
+    assert 'id="rank-body"' in html
+    assert "async function loadRanking()" in js
+    assert "全書批次加入需先由 GitHub Actions" in js

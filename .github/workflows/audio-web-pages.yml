@@ -29,6 +29,15 @@ jobs:
           node --check docs/site/app.js
           test -s docs/site/index.html
           test -s docs/site/style.css
+      - name: Prepare Python crawler for 69shuba public ranking
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Generate 69shuba finished-novel ranking
+        continue-on-error: true
+        run: |
+          python -m pip install -q requests beautifulsoup4 curl_cffi pyyaml
+          python -m tools.export_69shuba_ranking
       - uses: actions/configure-pages@v5
         with:
           enablement: true

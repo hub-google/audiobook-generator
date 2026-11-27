@@ -11,3 +11,5 @@
 .duplicate-controls{display:flex;flex-wrap:wrap;gap:14px;margin:9px 0 13px}.duplicate-controls .toggle{font-size:12px;font-weight:500}.chapter-item>span:nth-child(2){flex:1;min-width:0}.chapter-reorder{display:flex;gap:3px;align-self:center}.chapter-reorder button{font-size:12px;padding:3px 8px}.duplicate-reason{display:block;color:#b7503e;margin-top:4px}.chapter-item:has(.duplicate-reason){background:#fff8f4}
 
 .progress-job-section{margin:12px 0;padding:13px;border:1px solid #e2e8f2;border-radius:12px}.progress-job-section>a{font-size:13px;font-weight:600}.progress-job-list{font:12px/1.8 ui-monospace,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:10px;color:#495771}
+
+.ranking-list{max-height:420px;overflow:auto}.ranking-list table{min-width:700px}.ranking-list th{position:sticky;top:0;z-index:1}.ranking-list td{padding:10px 12px}.ranking-list tr:hover{background:#f7faff}.ranking-list input[type=checkbox]{width:16px;height:16px}

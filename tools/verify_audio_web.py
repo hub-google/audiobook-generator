@@ -100,6 +100,15 @@ def main():
                 route.fulfill(status=status, content_type="application/json",
                               body=json.dumps(result, ensure_ascii=False))
             desktop.route("https://api.github.com/**", github_mock)
+            desktop.route("**/full-novels.json", lambda route: route.fulfill(
+                status=200, content_type="application/json",
+                body=json.dumps({"novels":[
+                    {"rank":1,"title":"完本示例甲","author":"測試甲","category":"玄幻","latest_chapter":"第100章",
+                     "catalog_url":"https://69shuba.com/book/111/"},
+                    {"rank":2,"title":"完本示例乙","author":"測試乙","category":"都市","latest_chapter":"第200章",
+                     "catalog_url":"https://69shuba.com/book/222/"}
+                ]}, ensure_ascii=False)))
+
             desktop.on("dialog", lambda dialog: dialog.accept())
             desktop.goto(f"http://127.0.0.1:{port}/", wait_until="domcontentloaded", timeout=20000)
             assert desktop.title() == "AUDIO · 有聲小說製作平台"
@@ -115,6 +124,12 @@ def main():
             desktop.locator('[data-tab="create"]').click()
             assert desktop.locator("#create").is_visible()
             assert desktop.locator("#source option").count() == 9
+            desktop.locator("#rank-body tr").first.get_by_text("完本示例甲").wait_for()
+            desktop.locator("#rank-search").fill("完本示例乙")
+            assert desktop.locator("#rank-body tr").count() == 1
+            desktop.locator("#rank-body tr").first.locator("input[type=checkbox]").check()
+            assert desktop.locator("#rank-copy").is_enabled()
+            desktop.locator("#rank-search").fill("")
             desktop.locator("#catalog-url").fill("https://czbooks.net/n/demo")
             desktop.locator("#book-title").fill("驗收示範")
             desktop.locator("#start-chapter").fill("1")
