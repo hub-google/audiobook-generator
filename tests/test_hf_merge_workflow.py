@@ -96,7 +96,7 @@ def test_scheduler_and_resume_workflows_parse():
 def test_resume_run_is_identifiable_by_book_and_scheduler_passes_title():
     resume = (ROOT / ".github" / "workflows" / "resume-hf-upload.yml").read_text(encoding="utf-8")
     pipeline = (ROOT / "合併上傳" / "cloud_pipeline.py").read_text(encoding="utf-8")
-    assert 'run-name: "【HF 續傳】${{ inputs.book_title || inputs.state_path }}"' in resume
+    assert 'run-name: "【YouTube 影片續傳】${{ inputs.book_title || inputs.state_path }}"' in resume
     assert 'book_title: {description: "Human-readable audiobook title for progress tracking"' in resume
     assert '"book_title":str(state.get("book_title") or "")' in pipeline
 
@@ -105,7 +105,7 @@ def test_resume_scheduler_runs_hourly_and_keeps_only_latest_run_record():
     text = (ROOT / ".github" / "workflows" / "hf-upload-resume-scheduler.yml").read_text(encoding="utf-8")
     parsed = workflow("hf-upload-resume-scheduler.yml")
     assert parsed[True]["schedule"] == [{"cron": "17 * * * *"}]
-    assert "Delete older resume scheduler run records" in text
+    assert "清除舊續傳排程紀錄" in text
     assert "actions/workflows/hf-upload-resume-scheduler.yml/runs?per_page=100" in text
     assert 'select(.id != ($CURRENT_RUN_ID | tonumber))' in text
     assert 'actions/runs/$old_run_id/cancel' in text

@@ -143,8 +143,8 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
     def test_run_names_are_readable_and_dispatcher_deletes_older_runs(self):
         self.assertIn("有聲小說製作", self.text)
         self.assertIn("inputs.book_title", self.text)
-        self.assertIn("有聲小說佇列調度", self.dispatcher_text)
-        self.assertIn("Delete older dispatcher run records", self.dispatcher_text)
+        self.assertIn("任務調度｜小說製作佇列", self.dispatcher_text)
+        self.assertIn("清除舊調度紀錄", self.dispatcher_text)
         self.assertIn('actions/runs/$old_run_id', self.dispatcher_text)
         self.assertIn("cancel-in-progress: true", self.dispatcher_text)
         self.assertIn('old_status="$(gh api', self.dispatcher_text)
@@ -153,8 +153,8 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
 
     def test_native_rerun_controllers_are_labeled_and_keep_only_the_latest_run(self):
         expectations = (
-            (self.scrape_rerun_text, "【TXT抓取】", "txt-scrape-native-rerun-controller", "scrape-rerun.yml", "scrape_rerun_controller.py"),
-            (self.cover_rerun_text, "【封面產生】", "cover-native-rerun-controller", "cover-rerun.yml", "cover_rerun_controller.py"),
+            (self.scrape_rerun_text, "【抓文失敗重跑】", "txt-scrape-native-rerun-controller", "scrape-rerun.yml", "scrape_rerun_controller.py"),
+            (self.cover_rerun_text, "【封面失敗重跑】", "cover-native-rerun-controller", "cover-rerun.yml", "cover_rerun_controller.py"),
         )
         for workflow, label, group, filename, controller in expectations:
             self.assertIn(label, workflow)
@@ -196,7 +196,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
     def test_setup_summary_uses_restored_config_not_dispatch_defaults(self):
         summary = next(
             step for step in self.jobs["setup"]["steps"]
-            if step.get("name") == "Generate Setup Summary"
+            if step.get("name") == "彙整工作設定"
         )
         command = summary["run"]
         self.assertIn("config.get('book_title')", command)
