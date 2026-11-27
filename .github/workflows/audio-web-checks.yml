@@ -21,8 +21,10 @@ jobs:
         run: python -m compileall -q src tools gui_components
       - name: Browser JavaScript syntax
         run: node --check docs/site/app.js
+      - name: Install virtual display for desktop compatibility tests
+        run: sudo apt-get update -qq && sudo apt-get install -y xvfb
       - name: Complete regression tests
-        run: python -m pytest -q tests
+        run: xvfb-run -a python -m pytest -q tests
   cover-live-probe:
     if: github.ref == 'refs/heads/feature/audio-web-nine-sources-gemini-20261127'
     needs: regression
