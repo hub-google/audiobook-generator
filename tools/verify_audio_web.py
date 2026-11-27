@@ -209,7 +209,8 @@ def main():
             assert desktop.evaluate("window.__issueUrls") == [], "加入待新增清單不可開新分頁"
             desktop.screenshot(path=str(OUTPUT / "audio-search-multiselect-desktop.png"),full_page=True)
             desktop.locator("#novel-search-add-queue").click()
-            assert len(desktop.evaluate("window.__issueUrls")) >= 2
+            # Search itself creates no Issue; the explicit batch-add action creates one.
+            assert len(desktop.evaluate("window.__issueUrls")) == 1
             desktop.locator("#novel-search-edit-one").click()
             assert desktop.locator("#book-title").input_value() == "詭秘之主"
             assert desktop.locator("#catalog-url").input_value() == "https://69shuba.com/book/123/"
