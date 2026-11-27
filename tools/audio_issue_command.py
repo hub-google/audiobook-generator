@@ -7,6 +7,8 @@ from __future__ import annotations
 import base64
 import gzip
 import json
+import tempfile
+from pathlib import Path
 import os
 import re
 from datetime import datetime, timezone
@@ -28,7 +30,7 @@ CLOSE = ":AUDIO-COMMAND-V1 -->"
 ALLOWED = {
     "enqueue", "batch_add", "edit", "move", "status", "delete",
     "complete", "restore", "requeue", "cancel", "review", "dispatch",
-    "preview", "ping",
+    "preview", "ping", "manual_cover",
 }
 TASK_FIELDS = {
     "book_title", "start_chapter", "end_chapter", "excluded_chapters",
@@ -297,6 +299,55 @@ def apply_command(command, store, profiles, issue_number, token, repo):
     }
 
 
+def cover_attachment_url(issue_body):
+    # Only accept native GitHub image uploads, not caller-controlled URLs.
+    matches = re.findall(
+        r"https://(?:github\.com/user-attachments/assets/[0-9a-fA-F-]{30,}"
+        r"|user-images\.githubusercontent\.com/[A-Za-z0-9_./-]+)",
+        issue_body or "",
+    )
+    if len(matches) != 1:
+        raise ValueError("Attach exactly one image to the GitHub issue before submitting")
+    return matches[0]
+
+
+def upload_manual_cover_request(command, issue, token, repo):
+    from src.book_profiles import book_profile_id
+    from src.cover_assets import normalize_manual_cover, upload_github_cover
+    data = command.get("data") or {}
+    task_id = valid_id(data.get("task_id"))
+    q, _ = GitHubQueueStore(repo, token).load()
+    task = next((t for t in q.get("queue", []) if t.get("task_id") == task_id), None)
+    if task is None:
+        raise ValueError("Task is no longer pending")
+    if task.get("workflow_phase") not in {"queued", "preflight", None} or task.get("status") in {"processing", "running", "completed"}:
+        raise ValueError("Cannot replace cover during video processing")
+    url = cover_attachment_url(issue.get("body", ""))
+    response = requests.get(url, timeout=60, stream=True)
+    response.raise_for_status()
+    chunks = []
+    total = 0
+    for chunk in response.iter_content(chunk_size=128 * 1024):
+        total += len(chunk)
+        if total > 20_000_000:
+            raise ValueError("Manual cover exceeds 20 MB")
+        chunks.append(chunk)
+    with tempfile.TemporaryDirectory(prefix="audio-cover-") as path:
+        raw = Path(path) / "input_image"
+        target = Path(path) / "master_cover.jpg"
+        raw.write_bytes(b"".join(chunks))
+        details = normalize_manual_cover(raw, target)
+        profile_id = book_profile_id(task["catalog_url"])
+        cloud = upload_github_cover(target, profile_id, repo, token)
+    record = {"source": "manual_upload", **cloud, **details}
+    GitHubBookProfileStore(repo, token).mutate(
+        lambda data: update_book_profile(
+            data, task["catalog_url"], task["book_title"], manual_cover=record,
+        ), f"AUDIO manual cover issue {issue['number']}"
+    )
+    return "Manual cover verified and saved to book profile"
+
+
 def execute(event, token, repo):
     issue = event.get("issue") or {}
     issue_id = issue.get("number")
@@ -306,6 +357,8 @@ def execute(event, token, repo):
     if not authorized(author, token, repo):
         raise PermissionError("Only a repository collaborator with write access can request AUDIO operations")
     command = decode_command(issue.get("body"))
+    if command["op"] == "manual_cover":
+        return upload_manual_cover_request(command, issue, token, repo)
     store = GitHubQueueStore(repo, token)
     profiles = GitHubBookProfileStore(repo, token)
     result, should_dispatch = apply_command(command,store,profiles,issue_id,token,repo)

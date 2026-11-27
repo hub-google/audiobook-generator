@@ -43,3 +43,13 @@ def test_new_book_uses_full_catalog_not_first_ten_chapters():
     assert book["end_chapter"]==2000
     assert book["request_issue"]==105
     assert len(book["chapter_order"])==2000
+
+
+def test_manual_cover_accepts_only_github_native_image_uploads():
+    from tools.audio_issue_command import cover_attachment_url
+    valid="![cover](https://github.com/user-attachments/assets/12345678-1234-1234-1234-123456789abc)"
+    assert cover_attachment_url(valid).startswith("https://github.com/user-attachments/assets/")
+    with pytest.raises(ValueError):
+        cover_attachment_url("https://untrusted.invalid/my.jpg")
+    with pytest.raises(ValueError):
+        cover_attachment_url(valid+" "+valid)
