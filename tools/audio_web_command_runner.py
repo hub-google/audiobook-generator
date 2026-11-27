@@ -351,6 +351,33 @@ def process(row, gh_token):
     return message
 
 
+def public_command_error(exc):
+    """Give a useful, secret-free reason in AUDIO instead of a bare class name."""
+    message = str(exc)
+    code = re.search(r"\\bHTTP\\s+(401|403|429|500|502|503|504)\\b", message)
+    status = code.group(1) if code else ""
+    if "Gemini" in message:
+        if status in ("429", "500", "502", "503", "504"):
+            return f"封面 Gemini 暫時無法服務（HTTP {status}），請稍後重新執行"
+        if "來源不足" in message or "insufficient_source" in message:
+            return "封面故事資料不足，Gemini 拒絕產生無根據的封面；請先補充故事介紹"
+        return "封面 Gemini 資訊產生失敗，請確認小說介紹及模型狀態"
+    if status in ("401", "403", "429") and (
+        "Source" in type(exc).__name__ or "來源" in message or "Crawler" in message
+    ):
+        return f"來源網站拒絕存取（HTTP {status}）；該章節未抓取，請改用可存取來源或稍後重試"
+    if "SourceAccessError" in type(exc).__name__:
+        return "小說來源網站拒絕存取；未成功取得完整章節"
+    if "SourceParseError" in type(exc).__name__:
+        return "來源網站目錄或章節格式無法解析；請檢查來源網址"
+    if isinstance(exc, requests.exceptions.Timeout):
+        return "雲端讀取逾時，請在 AUDIO 重新操作"
+    if isinstance(exc, ValueError):
+        # Values are untrusted: never echo a submitted URL, token or payload.
+        return f"操作資料驗證失敗（{type(exc).__name__}）；請檢查輸入設定"
+    return f"後端操作失敗（{type(exc).__name__}）；請在 AUDIO 查看本次操作狀態"
+
+
 def main():
     token = os.environ["GITHUB_TOKEN"]
     rows = edge("POST", "/claim", payload={}).get("commands") or []
@@ -364,11 +391,12 @@ def main():
             print(f"Command #{job_id}: completed {row['op']}")
         except Exception as exc:
             failed += 1
-            print(f"Command #{job_id}: failed {row['op']} ({type(exc).__name__})")
+            safe_error = public_command_error(exc)
+            print(f"Command #{job_id}: failed {row['op']} ({safe_error})")
             try:
                 edge("POST", "/finish", payload={
                     "id": job_id, "ok": False, "result": "",
-                    "error": type(exc).__name__,
+                    "error": safe_error[:200],
                 })
             except Exception:
                 print("Could not acknowledge failed operation; it will be retried")
