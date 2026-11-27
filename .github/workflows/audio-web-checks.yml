@@ -40,6 +40,11 @@ jobs:
         with: {python-version: '3.11'}
       - name: "安裝瀏覽器驅動"
         run: pip install playwright
+      - name: "安裝繁體中文字型，確保驗收截圖可閱讀"
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+          fc-match -f "%{family}\n" "Noto Sans CJK TC" | grep -q "Noto Sans CJK"
       - name: "檢查電腦與手機網頁"
         run: python -m tools.verify_audio_web
       - uses: actions/upload-artifact@v4

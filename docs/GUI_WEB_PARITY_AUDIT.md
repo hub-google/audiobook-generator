@@ -9,13 +9,13 @@
 
 | 原 GUI 功能 | 已實際開發的 Pages / Actions 能力 | 目前尚未一致之處 |
 | --- | --- | --- |
-| 九個來源目錄 | 使用同 Python catalog_parser；69 書吧實測 120 章 | 九站逐站最新實抓驗收 |
+| 九個來源目錄 | 使用同 Python catalog_parser；69 書吧實測 120 章 | 2026-11-27 九站已各以第一／中間／最後章實抓 PASS；仍須長篇完整驗證 |
 | 全書章節篩選、章號、UUID | 全書分頁、UUID/原章號/正規化章號、逐章編輯、多選移動、拖曳重排、Ctrl+方向鍵／空白鍵 | 仍需在真實大型目錄與多種瀏覽器逐項比對桌面快捷鍵 |
 | 三種重複條件及直接比對 | 已可選條件、看直接匹配理由、排除重複 | 真實大型目錄同值驗收 |
 | 新增、批次、編輯書籍及保存 Profile | 網頁可操作；GitHub Actions 用相同 cloud_queue/book_profiles 核心，條件保存 | 仍須 Github Issues 確認、Profile/Queue 交易失敗回復 |
 | 佇列排序、暫停、恢復、刪除、完成、移回及中止 | 單本、多選功能已實作；Issue idempotency、取消等待 GitHub 確認 | 完整多使用者並發與動態狀態機驗收 |
 | 製作進度與記錄 | GitHub Run/Job/Step 顯示 | 完整 marker 日誌、即時進度推播 |
-| 批次 Gemini 封面資訊 | 已用原 build_cover_information 函式執行於 Actions；網站切換小說、匯入結果、複製目前與全部 Prompt | 真正 Gemini API 配額不足；匯入 Artifact 仍需人工動作 |
+| 批次 Gemini 封面資訊 | 已用原 build_cover_information 函式執行於 Actions；網站可自動讀取研究結果、切換小說、匯入備用結果、複製目前與全部 Prompt | 結果已可透過 request_id 自動同步到 Pages，亦保留 Artifact 手動匯入；正式 Gemini API 配額仍限制生產能力 |
 | 手動圖片、拖放、裁切、恢復封面 | 已有 JPG/PNG/WEBP、拖放、1280×720、剪貼簿、Issue 上傳、Profile；Cloud 驗證由原 cover_assets 執行 | 必須在 GitHub Issue 附圖再提交，不能直接由純 Pages 私密上傳 |
 | Raw/Clean 與廣告候選 | 可匯入真實審核 Artifact、篩選候選及去除/保留、原始逐章與分段；瀏覽器 Clean 和 Python 清理程式跨語言測試 | 全部大型章節與上下文審核的真實同等性 |
 | 後製門檻 | Actions 會重新下載對應 TXT Artifact，比對小說 ID 與 Raw SHA256，保存去除與保留詞句，才可以開始後製 | 真正小說完整後製與輸出驗收 |
@@ -31,3 +31,13 @@
 - 正式資料不得用 Playwright mock 代替端對端驗收證據。
 - 每次修改必須完成 main CI 與桌面／手機 Chromium 測試，必要時截圖並檢查 GitHub Actions。
 - 不得以「大部分項目完成」或「單元測試全過」宣稱 100% 同等操作。
+
+## 2026-11-27 補充修正與執行驗證
+- 修正解析後預設選取全書，而非前十章；沿用桌面 GUI 的已儲存書籍 Profile 與章節編輯設定。
+- 拒絕重複 Issue 覆寫新版 Profile，防止失敗的編輯先污染 Profile；禁止排除全部章節。
+- 「只儲存文字清理規則」不會改變待審狀態、不會核准或啟動後製。
+- 大型目錄透過磁碟檔案提交 GitHub Contents API，不再將整個 base64 傳入作業系統命令列參數。
+- 批次封面資訊已開發自動結果發佈和輪詢，免人工下載匯入（仍需登入 GitHub 送出 Issue）。
+- 九個來源的實際章節抽驗：GitHub Run 45922908704，九個獨立 Job 全數通過（非九站全站或全書 100% 保證）。
+- CI 第 85 次 Run 45934541601：Python 完整回歸、桌面／手機 Chromium 全數成功；網站部署第 36 次 Run 45934459877 成功。
+- GitHub 測試機截圖曾缺繁中字型，已為 UI 驗收工作安裝 Noto Sans CJK；需以後續成功 Run 的截圖覆驗。
