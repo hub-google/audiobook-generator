@@ -378,10 +378,20 @@ def public_command_error(exc):
     return f"後端操作失敗（{type(exc).__name__}）；請在 AUDIO 查看本次操作狀態"
 
 
+def _step_summary(line):
+    """Internal Actions diagnostics; never write command payloads or credentials."""
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(line + "\\n")
+
+
 def main():
     token = os.environ["GITHUB_TOKEN"]
     rows = edge("POST", "/claim", payload={}).get("commands") or []
     print(f"AUDIO web runner: {len(rows)} claim(s); processing queued site requests")
+    _step_summary(f"## AUDIO 站內操作：領取 {len(rows)} 筆待辦")
     failed = 0
     for row in rows:
         job_id = row["id"]
@@ -389,10 +399,12 @@ def main():
             outcome = process(row, token)
             edge("POST", "/finish", payload={"id": job_id, "ok": True, "result": outcome})
             print(f"Command #{job_id}: completed {row['op']}")
+            _step_summary(f"- 成功：指令 #{job_id}（{row['op']}）")
         except Exception as exc:
             failed += 1
             safe_error = public_command_error(exc)
             print(f"Command #{job_id}: failed {row['op']} ({safe_error})")
+            _step_summary(f"- 失敗：指令 #{job_id}（{row['op']}）｜{safe_error}")
             try:
                 edge("POST", "/finish", payload={
                     "id": job_id, "ok": False, "result": "",
