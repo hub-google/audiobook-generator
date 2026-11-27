@@ -7,6 +7,7 @@
    "complete","restore","requeue","cancel","review","manual_cover"]);
  let pendingWatcher=0;
  const outstanding=new Map();
+ const awaitingExports=new Set();
 
  function ensurePanel(){
   if(document.getElementById("audio-operation-panel"))return;
@@ -72,7 +73,11 @@
   const groups=groupAssetParts(assets);
   if(groups.length!==1)throw Error("需要指定單一 ZIP 檔案");
   const blobs=[];
-  for(const item of groups[0].parts)blobs.push(await binaryAsset(item.id));
+  for(const item of groups[0].parts){
+   const blob=await binaryAsset(item.id);
+   if(blob.size!==Number(item.bytes))throw Error("ZIP 分片大小不符："+item.filename);
+   blobs.push(blob);
+  }
   return new Blob(blobs,{type:blobs[0]?.type||"application/zip"});
  };
  window.audioSaveAssetGroup=async function(group){
@@ -89,6 +94,7 @@
    try{
     for(let i=0;i<group.parts.length;i++){
      const data=await binaryAsset(group.parts[i].id);
+     if(data.size!==Number(group.parts[i].bytes))throw Error("下載分片大小不符："+group.parts[i].filename);
      await output.write(data);
      notice("AUDIO 下載中："+(i+1)+"/"+group.parts.length+" 片");
     }
@@ -137,9 +143,11 @@
    const assets=await window.audioAssetsFor(row.request_id);
    const groups=groupAssetParts(assets);
    if(!groups.length){
+    if(row.op==="export_artifacts")awaitingExports.add(row.request_id);
     const p=document.createElement("small");p.textContent="檔案尚未同步完成；請稍後點選「更新操作狀態」。";
     container.append(p);return;
    }
+   awaitingExports.delete(row.request_id);
    for(const group of groups){
     if(!container.isConnected)break;
     const btn=document.createElement("button");btn.type="button";btn.className="secondary";
@@ -204,9 +212,13 @@
   const watcher=++pendingWatcher;
   let polls=0;
   async function check(){
-   if(watcher!==pendingWatcher||polls++>=120)return;
+   if(watcher!==pendingWatcher)return;
+   if(polls++>=120){
+    if(awaitingExports.size)notice("匯出仍未取得完整 ZIP；請在操作狀態重新整理或檢查匯出 Run。","error");
+    awaitingExports.clear();return;
+   }
    if(!document.hidden)await syncOperations();
-   if(outstanding.size===0)return;
+   if(outstanding.size===0&&awaitingExports.size===0)return;
    setTimeout(check,10000);
   }
   setTimeout(check,2500);
@@ -217,6 +229,7 @@
    const id=response.request?.request_id;
    if(!id)throw Error("雲端沒有回傳操作識別碼");
    outstanding.set(id,{label,updateQueue:QUEUE_CHANGING.has(op)});
+   if(op==="export_artifacts")awaitingExports.add(id);
    ensurePanel();
    document.getElementById("audio-operation-panel").classList.remove("hidden");
    notice("已送出「"+label+"」，請留在 AUDIO 查看執行結果；不需開啟 GitHub。");
