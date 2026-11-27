@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>AUDIO · 有聲小說製作平台</title>
-<link rel="stylesheet" href="./style.css?v=20261127-gui-parity6">
+<link rel="stylesheet" href="./style.css?v=20261127-gui-parity7">
 </head>
 <body>
 <div class="layout">
@@ -18,11 +18,9 @@
 <div class="sidebar-bottom"><small>GitHub Actions 雲端工作流程</small><small>小說來源：9 個網站</small><a href="https://github.com/hub-google/audiobook-generator" target="_blank" rel="noopener noreferrer">開啟原始碼</a></div>
 </aside>
 <main class="main">
-<header class="topbar"><div><h1 id="page-title">製作總覽</h1><p class="muted" id="page-subtitle">同步 GitHub 雲端佇列與製作進度</p></div><div class="toolbar"><span id="connection-pill" class="pill">尚未連線</span><button type="button" id="refresh-btn" class="secondary">重新整理</button></div></header>
+<header class="topbar"><div><h1 id="page-title">製作總覽</h1><p class="muted" id="page-subtitle">同步 GitHub 雲端佇列與製作進度</p></div><div class="toolbar"><span id="connection-pill" class="pill">尚未連線</span><button id="audio-operations-show" type="button" class="secondary">操作狀態</button><button type="button" id="refresh-btn" class="secondary">立即同步</button></div></header>
 <div id="message" role="status" aria-live="polite" class="notice hidden"></div>
-<section class="access-panel"><div><strong>免 API Token · 站內安全操作</strong>
-<p class="muted">新增、編輯、取消與審核都在本頁操作，無須開啟 GitHub Issue。此瀏覽器會保留管理員登入。API 金鑰保留於後端；GitHub Actions 在背景依序處理。</p></div>
-<div class="inline-actions"><span id="audio-auth-status" class="muted">尚未登入</span><button id="audio-operations-show" type="button" class="secondary">查看操作狀態</button></div></section>
+
 <section id="overview" class="tab active">
 <div class="metrics"><article class="metric"><span>排隊中</span><strong id="count-queued">—</strong></article><article class="metric"><span>進行中 / 待審</span><strong id="count-active">—</strong></article><article class="metric"><span>已完成</span><strong id="count-completed">—</strong></article><article class="metric"><span>最近更新</span><strong class="smaller" id="updated-at">—</strong></article></div>
 <div class="section-head"><div><h2>小說工作佇列</h2><p>依雲端排程順序排列。正在執行的作業不可直接刪除或移動。</p></div><button id="dispatch-btn" class="secondary">執行一次調度檢查</button></div>
@@ -48,9 +46,9 @@
 <button type="button" class="secondary" id="selected-task-edit" disabled>編輯章節設定</button></div></div>
 <p class="muted" id="selected-task-status" aria-live="polite">請先從佇列勾選一本小說。</p>
 </section>
-<div id="queue-table-wrap" class="table-wrap"><table><thead><tr><th>順位</th><th>小說</th><th>章節</th><th>重複章節</th><th>狀態</th><th>GitHub 查證</th><th>HF</th><th>YouTube</th><th>Run</th><th>操作</th></tr></thead><tbody id="queue-body"><tr><td colspan="10" class="empty">連線後載入佇列</td></tr></tbody></table></div>
-<div class="section-head"><h2>已完成作品</h2><div class="inline-actions"><button id="batch-export-completed" class="secondary">下載勾選成品</button>
-<button id="batch-cover-completed" class="secondary">批次封面資訊</button><button id="batch-restore" class="secondary">將勾選作品移回待製作</button></div></div><div id="completed-list" class="completed"><p class="muted">尚無資料</p></div>
+<div class="gui-tabs queue-view-tabs" aria-label="雲端佇列分頁"><button type="button" id="gui-queue-pending-tab" class="secondary" aria-pressed="true">進行中／尚未完成</button><button type="button" id="gui-queue-completed-tab" class="secondary" aria-pressed="false">已完成（Success）</button></div><div id="gui-pending-pane"><div id="queue-table-wrap" class="table-wrap"><table><colgroup><col class="q-position"><col class="q-book"><col class="q-chapter"><col class="q-duplicate"><col class="q-status"><col class="q-verified"><col class="q-hf"><col class="q-youtube"><col class="q-run"><col class="q-actions"></colgroup><thead><tr><th>順位</th><th>小說</th><th>章節</th><th>重複章節</th><th>狀態</th><th>GitHub 查證</th><th>HF</th><th>YouTube</th><th>Run</th><th>操作</th></tr></thead><tbody id="queue-body"><tr><td colspan="10" class="empty">連線後載入佇列</td></tr></tbody></table></div></div>
+<div id="gui-completed-pane" class="hidden"><div class="section-head"><h2>已完成作品</h2><div class="inline-actions"><button id="batch-export-completed" class="secondary">下載勾選成品</button>
+<button id="batch-cover-completed" class="secondary">批次封面資訊</button><button id="batch-restore" class="secondary">將勾選作品移回待製作</button></div></div><div id="completed-table-wrap" class="table-wrap"><table><colgroup><col class="q-position"><col class="q-book"><col class="q-chapter"><col class="q-duplicate"><col class="q-status"><col class="q-verified"><col class="q-hf"><col class="q-youtube"><col class="q-run"><col class="q-actions"></colgroup><thead><tr><th>順位</th><th>小說</th><th>章節</th><th>重複章節</th><th>狀態</th><th>GitHub 查證</th><th>HF</th><th>YouTube</th><th>Run</th><th>操作</th></tr></thead><tbody id="completed-list"><tr><td colspan="10" class="empty">尚無資料</td></tr></tbody></table></div></div>
 </section>
 <section id="create" class="tab">
 <div class="section-head"><div><h2>新增小說至製作佇列</h2><p>可先從指定網站解析目錄，檢查書名、章數與章節排序，再正式新增。</p></div></div>
@@ -313,5 +311,5 @@
 <footer>資料由 GitHub API 即時讀取；GitHub Pages 不會在瀏覽器執行 Python、TTS 或影片轉檔。</footer>
 </main>
 </div>
-<script src="./app.js?v=20261127-gui-parity6" defer></script><script src="./auth.js?v=20261127-gui-parity6" defer></script><script src="./bridge.js?v=20261127-gui-parity6" defer></script><script src="./novel-search.js?v=20261127-gui-parity6" defer></script><script src="./cleaner-parity.js?v=20261127-gui-parity6" defer></script><script src="./review-inspector.js?v=20261127-gui-parity6" defer></script><script src="./manual-cover.js?v=20261127-gui-parity6" defer></script><script src="./batch-cover.js?v=20261127-gui-parity6" defer></script><script src="./external-info.js?v=20261127-gui-parity6" defer></script><script src="./draft-cover-info.js?v=20261127-gui-parity6" defer></script><script src="./cloud-log.js?v=20261127-gui-parity6" defer></script>
+<script src="./app.js?v=20261127-gui-parity7" defer></script><script src="./auth.js?v=20261127-gui-parity7" defer></script><script src="./bridge.js?v=20261127-gui-parity7" defer></script><script src="./novel-search.js?v=20261127-gui-parity7" defer></script><script src="./cleaner-parity.js?v=20261127-gui-parity7" defer></script><script src="./review-inspector.js?v=20261127-gui-parity7" defer></script><script src="./manual-cover.js?v=20261127-gui-parity7" defer></script><script src="./batch-cover.js?v=20261127-gui-parity7" defer></script><script src="./external-info.js?v=20261127-gui-parity7" defer></script><script src="./draft-cover-info.js?v=20261127-gui-parity7" defer></script><script src="./cloud-log.js?v=20261127-gui-parity7" defer></script>
 </body></html>

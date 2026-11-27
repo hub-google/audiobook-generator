@@ -37,7 +37,9 @@ STATE = {
     ],
     "completed": [
         {"task_id": "book-audit-completed", "book_title": "測試小說 D", "catalog_url": "https://czbooks.net/n/completed",
-         "start_chapter": 1, "end_chapter": 3, "status": "completed", "stages": {}}
+         "start_chapter": 1, "end_chapter": 3, "status": "completed", "stages": {}},
+        {"task_id": "book-audit-completed-long", "book_title": "這是一個特別長的測試小說名稱用於檢查已完成清單欄位不會位移", "catalog_url": "https://czbooks.net/n/long",
+         "start_chapter": 1, "end_chapter": 300, "status": "completed", "stages": {}}
     ]
 }
 
@@ -282,6 +284,15 @@ def main():
                 page.locator("#audio-reference-close").click()
                 passed.append("in-page Github link")
             page.locator('[data-tab="overview"]').click()
+            page.locator("#gui-queue-completed-tab").click()
+            assert page.locator("#gui-completed-pane").is_visible()
+            assert not page.locator("#gui-pending-pane").is_visible()
+            assert page.locator(".access-panel").count()==0
+            for column in (1,4,5,9):
+                a=page.locator("#completed-list tr").nth(0).locator("td").nth(column).bounding_box()
+                b=page.locator("#completed-list tr").nth(1).locator("td").nth(column).bounding_box()
+                assert abs(a["x"]-b["x"])<1 and abs(a["width"]-b["width"])<1, "Completed column moved with book title"
+            page.screenshot(path=str(OUTPUT/"audio-completed-aligned.png"),full_page=True)
             completed=page.locator("#completed-list .completed-item").first
             if completed.count():
                 completed.locator('input[type="checkbox"]').check()
@@ -294,6 +305,8 @@ def main():
                         verify_stayed("completed "+name)
                         passed.append("completed "+name)
                         page.evaluate('document.querySelectorAll("dialog[open]").forEach(d=>d.close())')
+            page.locator("#gui-queue-pending-tab").click()
+            assert page.locator("#gui-pending-pane").is_visible()
             attempt_button('#queue-body tr:first-child button:has-text("進度")',keep_dialog=True)
             attempt_button("#progress-refresh-now",keep_dialog=True)
             page.locator("#progress-log-search").fill("ERROR")

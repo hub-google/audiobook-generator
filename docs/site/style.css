@@ -133,3 +133,20 @@
 
 #queue-table-wrap{max-width:100%;overflow:auto}.completed-item.gui-selected-row{background:#e8efff}.gui-candidate-scroll tr{cursor:pointer}.gui-candidate-scroll input[type=checkbox]{margin-right:3px}.gui-candidate-scroll td:first-child{white-space:nowrap}.gui-context pre,.gui-cover-info pre{font-family:inherit;font-size:13px;line-height:1.6}.review-wide .review-texts pre{white-space:pre-wrap;overflow-wrap:anywhere}
 @media(max-width:680px){#queue-table-wrap table{min-width:0;width:100%}#queue-body td:nth-child(n)::before{color:#718096;font-size:12px}#queue-body td:nth-child(2)::before{content:"小說　"}#queue-body td:nth-child(3)::before{content:"章節　"}#queue-body td:nth-child(4)::before{content:"重複章節　"}#queue-body td:nth-child(5)::before{content:"狀態　"}#queue-body td:nth-child(6)::before{content:"GitHub 查證　"}#queue-body td:nth-child(7)::before{content:"HF　"}#queue-body td:nth-child(8)::before{content:"YouTube　"}#queue-body td:nth-child(9)::before{content:"Run　"}#queue-body td:nth-child(9){max-width:none}.completed-item{flex-wrap:wrap}.sidebar nav{flex-wrap:wrap}}
+
+/* Fixed shared queue columns. Book length never changes the position of dates or buttons. */
+#queue-table-wrap,#completed-table-wrap{width:100%;max-width:100%;min-width:0;overflow:auto;max-height:54vh;scrollbar-gutter:stable}
+#queue-table-wrap table,#completed-table-wrap table{table-layout:fixed;width:100%;min-width:1120px;border-collapse:collapse}
+.q-position{width:64px}.q-book{width:19%}.q-chapter{width:85px}.q-duplicate{width:70px}.q-status{width:140px}.q-verified{width:91px}.q-hf{width:60px}.q-youtube{width:76px}.q-run{width:145px}.q-actions{width:230px}
+#queue-table-wrap th,#completed-table-wrap th{position:sticky;top:0;z-index:1;white-space:nowrap;font-size:12px;background:#f4f6fa}
+#queue-table-wrap td,#completed-table-wrap td{padding:8px 9px;min-width:0;overflow-wrap:anywhere;vertical-align:middle}
+#completed-table-wrap .completed-item{display:table-row;padding:0;border:0}
+#completed-table-wrap .completed-item td{border-bottom:1px solid #edf1f6}
+#completed-table-wrap .completed-item .secondary{margin-left:0;padding:6px 9px;font-size:12px;white-space:nowrap}
+#completed-table-wrap .completed-item .actions{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-start;max-width:none}
+#completed-table-wrap .completed-item td:nth-child(2){font-weight:650;text-align:left}
+#completed-table-wrap .completed-item td:nth-child(5) small{font-size:11px;white-space:normal}
+#completed-table-wrap .completed-item.gui-selected-row{background:#e8efff}
+.queue-view-tabs{margin:8px 0 0;gap:4px}.queue-view-tabs button{border-radius:7px 7px 0 0;padding:7px 14px;font-size:13px}
+.topbar>.toolbar{flex:0 0 auto;justify-content:flex-end;gap:6px}.topbar>.toolbar button{white-space:nowrap;font-size:13px;padding:8px 12px}.topbar>div:first-child{min-width:0}
+@media(max-width:680px){#queue-table-wrap,#completed-table-wrap{max-height:none;overflow:visible;scrollbar-gutter:auto}#queue-table-wrap table,#completed-table-wrap table{display:block;table-layout:auto;min-width:0;width:100%}#queue-table-wrap colgroup,#completed-table-wrap colgroup,#completed-table-wrap thead{display:none}#completed-list{display:grid;gap:10px}#completed-table-wrap .completed-item{display:flex;flex-direction:column;align-items:stretch;gap:0;border:1px solid #dfe6f0;border-radius:8px}#completed-table-wrap td{display:block;width:100%;padding:5px 12px;border-bottom:0!important}#completed-table-wrap td:nth-child(2)::before{content:"小說　"}#completed-table-wrap td:nth-child(3)::before{content:"章節　"}#completed-table-wrap td:nth-child(4)::before{content:"重複章節　"}#completed-table-wrap td:nth-child(5)::before{content:"狀態　"}#completed-table-wrap td:nth-child(6)::before{content:"GitHub 查證　"}#completed-table-wrap td:nth-child(7)::before{content:"HF　"}#completed-table-wrap td:nth-child(8)::before{content:"YouTube　"}#completed-table-wrap td:nth-child(9)::before{content:"Run　"}#completed-table-wrap td:nth-child(n)::before{color:#718096;font-size:12px}.topbar>.toolbar{flex-wrap:wrap;justify-content:flex-start}}

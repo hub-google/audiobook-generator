@@ -302,14 +302,15 @@ def test_batch_cover_gui_supports_copy_current_all_and_manual_upload():
     assert '"batch_cover_info"' in js
 
 
-def test_gui_chapter_drag_and_keyboard_reorder_and_double_click_edit():
+def test_gui_chapter_drag_and_keyboard_reorder_and_double_click_progress():
     js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
     assert 'label.draggable=true' in js
     assert 'addEventListener("drop"' in js
     assert 'event.dataTransfer.effectAllowed="move"' in js
     assert 'bind("chapter-list","keydown"' in js
     assert 'tr.addEventListener("dblclick"' in js
-    assert 'openEditor(task.task_id)' in js
+    assert 'showProgress(task.task_id);' in js
+    assert 'makeBtn("編輯",openEditor,task.task_id' in js
 
 
 def test_catalog_preview_restores_saved_desktop_profile():
@@ -366,8 +367,11 @@ def test_review_candidate_edit_remove_and_manual_add_match_desktop_gui():
     bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
     for element in ("review-manual-pattern","review-add-manual"):
         assert f'id="{element}"' in html
-    assert 'edit.textContent="編輯詞句"' in js
-    assert 'remove.textContent="從名單移除"' in js
+    assert 'id="gui-edit-selected"' in html
+    assert 'id="gui-delete-selected"' in html
+    assert 'editCandidate(rows[0])' in js
+    assert 'modifySelected(action)' in js
+    assert 'affected_chapters' in js and 'c.samples' in js
     assert "window.audioReviewCandidateEdits=function()" in js
     assert "candidate_overrides:" in bridge
 
@@ -492,3 +496,13 @@ def test_review_zip_reader_bounds_decompressed_size_before_decode():
     assert 'uncompressed=dv.getUint32(off+24,true)' in script
     assert 'if(totalSize>80_000_000)' in script
     assert 'if(start+size>bytes.length)' in script
+
+
+def test_gui_queue_uses_shared_columns_without_auth_explanation_card():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    css=(ROOT/"docs/site/style.css").read_text(encoding="utf-8")
+    assert 'class="access-panel"' not in html
+    assert 'id="audio-operations-show"' in html
+    assert html.count('<col class="q-book">') == 2
+    assert 'id="gui-queue-completed-tab"' in html
+    assert 'table-layout:fixed' in css

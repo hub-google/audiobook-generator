@@ -146,6 +146,7 @@ function updateBatchStatus(){
  for(const row of $("completed-list").querySelectorAll("[data-task-id]")){const on=selectedCompleted.has(row.dataset.taskId);row.classList.toggle("gui-selected-row",on);row.querySelector("input[type=checkbox]").checked=on;}
  renderSelectedTaskStatus();
 }
+function setQueueView(view){const done=view==="completed";$("gui-pending-pane").classList.toggle("hidden",done);$("gui-completed-pane").classList.toggle("hidden",!done);$("gui-queue-pending-tab").setAttribute("aria-pressed",String(!done));$("gui-queue-completed-tab").setAttribute("aria-pressed",String(done));if(done)selectedPending.clear();else selectedCompleted.clear();updateBatchStatus();}
 function selectedPendingTasks(){return queueTasks().filter(t=>selectedPending.has(t.task_id));}
 let guiVerification=new Map();
  function renderGuiVerification(){const at=new Date().toLocaleTimeString("zh-TW",{hour12:false});for(const task of [...queueTasks(),...(queue?.completed||[])]){const ids=[task.scrape_run_id,task.cover_run_id,task.processing_run_id||task.run_id].filter(Boolean).map(String);if(ids.length&&ids.every(id=>latestRuns.some(run=>String(run.id)===id)))guiVerification.set(task.task_id,{ids:ids.join(","),at});}
@@ -159,23 +160,21 @@ let guiVerification=new Map();
  selectedPending=new Set([...selectedPending].filter(id=>tasks.some(t=>t.task_id===id)));
  tasks.forEach((t,i)=>tbody.append(buildTaskRow(t,i)));renderGuiVerification();
  const list=$("completed-list");list.replaceChildren();
- if(!completed.length){const p=document.createElement("p");p.className="muted";p.textContent="尚無已完成作品";list.append(p);}
+ if(!completed.length){const tr=list.insertRow(),td=tr.insertCell();td.colSpan=10;td.className="empty";td.textContent="尚無已完成作品";}
  selectedCompleted=new Set([...selectedCompleted].filter(id=>completed.some(t=>t.task_id===id)));
- completed.forEach(t=>{const row=document.createElement("div");row.className="completed-item";row.dataset.taskId=t.task_id;
+ completed.forEach((t,index)=>{const row=document.createElement("tr");row.className="completed-item";row.dataset.taskId=t.task_id;const col=value=>{const td=row.insertCell();td.textContent=value;return td;};
  const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.checked=selectedCompleted.has(t.task_id);
  checkbox.setAttribute("aria-label","選取已完成 "+(t.book_title||"小說"));
  checkbox.addEventListener("change",()=>{if(checkbox.checked){selectedCompleted.add(t.task_id);selectedPending.clear();}else selectedCompleted.delete(t.task_id);updateBatchStatus();});
  row.addEventListener("click",e=>{if(e.target.closest("button,input,a"))return;selectedPending.clear();if(!e.ctrlKey&&!e.metaKey)selectedCompleted.clear();if((e.ctrlKey||e.metaKey)&&selectedCompleted.has(t.task_id))selectedCompleted.delete(t.task_id);else selectedCompleted.add(t.task_id);updateBatchStatus();});row.addEventListener("dblclick",e=>{if(!e.target.closest("button,input,a"))showProgress(t.task_id);});
- const name=document.createElement("strong");name.textContent=t.book_title||"未知小說";const status=document.createElement("span");status.className="muted";status.textContent=dateLabel(t.completed_at||t.updated_at);const restore=makeBtn("移回佇列",window.restoreCompleted,t.task_id);const download=makeBtn("成品下載",showProgress,t.task_id,false,false);
- const bundle=makeBtn("整包下載",window.exportArtifacts,t.task_id,false,false);
- row.append(checkbox,name,status,download,bundle,restore);list.append(row);});
- updateBatchStatus();
+ const pos=col("");pos.append(checkbox,document.createTextNode(" "+(t.position??index+1)));col(t.book_title||"未知小說");col((t.start_chapter||1)+"–"+(t.end_chapter||"全部"));col(t.duplicate_chapter_count??"—");const status=col(statusName(t.status));const stamp=document.createElement("small");stamp.textContent=dateLabel(t.completed_at||t.updated_at);status.append(stamp);const verified=col("—");verified.dataset.guiVerify=t.task_id;col((t.hf_progress?.completed??0)+"/"+(t.hf_progress?.total??0));col((t.youtube_progress?.completed??0)+"/"+(t.youtube_progress?.total??0));col([["TXT",t.scrape_run_id],["封面",t.cover_run_id],["後製",t.processing_run_id||t.run_id]].filter(x=>x[1]).map(x=>x.join(" ")).join(" / ")||"—");const actions=document.createElement("div");actions.className="actions";actions.append(makeBtn("成品下載",showProgress,t.task_id),makeBtn("整包下載",window.exportArtifacts,t.task_id),makeBtn("移回佇列",window.restoreCompleted,t.task_id));col("").append(actions);list.append(row);});
+ renderGuiVerification();updateBatchStatus();
 }
 async function refresh(){
  try{const res=await readQueue();queue=res.data;queueSha=res.sha;renderQueue();
   try{const data=await request("/actions/runs?per_page=35");latestRuns=data.workflow_runs||[];renderRuns();renderGuiVerification();}catch(error){notice("Actions 紀錄載入失敗："+error.message,"error");}
   renderRanking();
-  $("connection-pill").textContent="GitHub 登入操作";$("connection-pill").className="pill ok";
+  $("connection-pill").textContent="雲端已同步";$("connection-pill").className="pill ok";
  }catch(e){notice("同步失敗："+e.message,"error");}
 }
 let overviewPollInFlight=false;
@@ -886,7 +885,8 @@ document.addEventListener("DOMContentLoaded",()=>{
  document.addEventListener("visibilitychange",()=>{
   if(!document.hidden)void syncOverviewQueue();
  });
- bind("queue-all","change",()=>{const on=$("queue-all").checked;selectedPending=new Set(on?queueTasks().map(t=>t.task_id):[]);renderQueue();});
+ bind("gui-queue-pending-tab","click",()=>setQueueView("pending"));bind("gui-queue-completed-tab","click",()=>setQueueView("completed"));
+ bind("queue-all","change",()=>{const on=$("queue-all").checked;setQueueView("pending");selectedPending=new Set(on?queueTasks().map(t=>t.task_id):[]);renderQueue();});
  bind("rank-search","input",renderRanking);bind("rank-category","change",renderRanking);
  bind("rank-select-all","click",()=>{for(const n of filteredRanking())rankingSelected.add(n.catalog_url);renderRanking();});
  bind("rank-select-none","click",()=>{rankingSelected.clear();renderRanking();});

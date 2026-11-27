@@ -124,6 +124,7 @@ def main():
             desktop.goto(f"http://127.0.0.1:{port}/", wait_until="domcontentloaded", timeout=20000)
             assert desktop.title() == "AUDIO · 有聲小說製作平台"
             assert desktop.locator("#overview").is_visible()
+            assert desktop.locator(".access-panel").count()==0
             assert desktop.locator("#connection-pill").count() == 1
             desktop.screenshot(path=str(OUTPUT / "audio-dashboard-desktop.png"), full_page=True)
             desktop.locator("#queue-body tr").first.get_by_role("button", name="進度").wait_for()
