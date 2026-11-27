@@ -82,7 +82,7 @@ def check_original_media():
             timeout=45, check=True,
         )
         print("Media stage: validate WAV", flush=True)
-        validate_wav(wav)
+        validate_wav(str(wav))
         print("Media stage: generate SRT", flush=True)
         generate_chapter_srt([str(wav)], [original], str(root / "Subtitles/Acceptance_chapter_1.srt"))
         (root / "RawText/Acceptance_chapter_1_raw.txt").write_text(
