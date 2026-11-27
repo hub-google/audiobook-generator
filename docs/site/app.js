@@ -57,6 +57,7 @@ function buildTaskRow(task,index){
  const rid=task.run_id||task.scrape_run_id||task.cover_run_id;if(rid){const small=document.createElement("small"),a=document.createElement("a");a.href="https://github.com/"+REPO+"/actions/runs/"+encodeURIComponent(rid);a.target="_blank";a.rel="noopener noreferrer";a.textContent="Run #"+rid;small.append(a);stages.append(small);}
  const controls=col(""),div=document.createElement("div");div.className="actions";controls.append(div);
  div.append(makeBtn("進度",showProgress,task.task_id,false,false));
+ div.append(makeBtn("成品下載",showProgress,task.task_id,false,false));
  if(["queued","paused","waiting_review","preparing_assets","needs_attention"].includes(task.status))div.append(makeBtn("手動封面",openManualCover,task.task_id));
  if(live(task))div.append(makeBtn("取消本次 Run",cancelRunningTask,task.task_id));
  if(task.status==="waiting_review"){div.append(makeBtn("查看審核資料",async()=>{window.open("https://github.com/"+REPO+"/actions/runs/"+(task.cover_run_id||task.run_id),"_blank","noopener");},task.task_id,false,false));div.append(makeBtn("確認審核並繼續",openReview,task.task_id,false));}
@@ -92,7 +93,7 @@ function renderQueue(){
  const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.checked=selectedCompleted.has(t.task_id);
  checkbox.setAttribute("aria-label","選取已完成 "+(t.book_title||"小說"));
  checkbox.addEventListener("change",()=>{if(checkbox.checked)selectedCompleted.add(t.task_id);else selectedCompleted.delete(t.task_id);updateBatchStatus();});
- const name=document.createElement("strong");name.textContent=t.book_title||"未知小說";const status=document.createElement("span");status.className="muted";status.textContent=dateLabel(t.completed_at||t.updated_at);const restore=makeBtn("移回佇列",restoreCompleted,t.task_id);row.append(checkbox,name,status,restore);list.append(row);});
+ const name=document.createElement("strong");name.textContent=t.book_title||"未知小說";const status=document.createElement("span");status.className="muted";status.textContent=dateLabel(t.completed_at||t.updated_at);const restore=makeBtn("移回佇列",restoreCompleted,t.task_id);const download=makeBtn("成品下載",showProgress,t.task_id,false,false);row.append(checkbox,name,status,download,restore);list.append(row);});
  updateBatchStatus();
 }
 async function refresh(){
@@ -129,6 +130,7 @@ async function moveTask(id,delta){await mutate(q=>{const i=q.queue.findIndex(t=>
 async function setTaskState(id,state){await mutate(q=>{const t=q.queue.find(x=>x.task_id===id);if(!t||!canEdit(t))throw Error("該工作目前不允許修改");t.status=state;t.reason=null;t.retry_at=null;t.updated_at=new Date().toISOString();return q;},"Web UI: update audiobook task status");notice("已更新任務狀態");if(state==="queued")await triggerDispatcher();}
 async function renderRunJobDetails(task){
  const container=$("progress-jobs");container.replaceChildren();
+ const artifactsBox=$("progress-artifacts");artifactsBox.replaceChildren();
  const ids=[...new Set([task.scrape_run_id,task.cover_run_id,task.processing_run_id,task.run_id].filter(Boolean))];
  if(!ids.length){text(container,"目前尚無已啟動的 GitHub Actions");return;}
  for(const runId of ids){
@@ -146,6 +148,16 @@ async function renderRunJobDetails(task){
     for(const step of job.steps||[])lines.push("   "+(step.conclusion==="success"?"✓":step.conclusion==="failure"?"✕":"·")+" "+step.name+"　"+(step.conclusion||step.status||""));
    }
    display.textContent=lines.join("\n");
+   try{
+    const res=await request("/actions/runs/"+encodeURIComponent(runId)+"/artifacts?per_page=100");
+    for(const item of (res.artifacts||[]).filter(x=>!x.expired)){
+     const link=document.createElement("a");
+     link.href="https://github.com/"+REPO+"/actions/runs/"+encodeURIComponent(runId)+"/artifacts/"+encodeURIComponent(item.id);
+     link.target="_blank";link.rel="noopener noreferrer";
+     link.textContent=(item.name||"Artifact")+" · "+(item.size_in_bytes/1024/1024).toFixed(1)+" MB";
+     artifactsBox.append(link);
+    }
+   }catch(error){const p=document.createElement("p");p.textContent="請從 GitHub Run 頁下載 Artifact";artifactsBox.append(p);}
   }catch(e){display.textContent="Job 詳細資料目前無法公開讀取："+e.message;}
  }
 }

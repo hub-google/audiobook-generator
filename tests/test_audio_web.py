@@ -187,3 +187,11 @@ def test_manual_cover_gui_uses_native_github_attachment_and_local_crop():
     assert "window.openManualCover=function(id)" in js
     assert "createImageBitmap" in js and "1280" in js and "720" in js
     assert 'audioIssueAction("manual_cover"' in js
+
+
+def test_artifact_download_links_use_github_native_pages():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    assert 'id="progress-artifacts"' in html
+    assert 'makeBtn("成品下載",showProgress' in js
+    assert '/artifacts/"+encodeURIComponent(item.id)' in js
