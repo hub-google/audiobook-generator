@@ -18,16 +18,22 @@
   let eocd=-1;
   for(let i=bytes.length-22;i>=Math.max(0,bytes.length-66000);i--){if(dv.getUint32(i,true)===0x06054b50){eocd=i;break;}}
   if(eocd<0)throw Error("ZIP 格式無效");
-  let off=dv.getUint32(eocd+16,true),count=dv.getUint16(eocd+10,true),out=[];
+  let off=dv.getUint32(eocd+16,true),count=dv.getUint16(eocd+10,true),out=[],totalSize=0;
+  if(count>5000)throw Error("ZIP 項目數過多");
   for(let i=0;i<count;i++){
    if(dv.getUint32(off,true)!==0x02014b50)throw Error("ZIP 目錄損毀");
-   const method=dv.getUint16(off+10,true),size=dv.getUint32(off+20,true),len=dv.getUint16(off+28,true),
+   const method=dv.getUint16(off+10,true),size=dv.getUint32(off+20,true),
+   uncompressed=dv.getUint32(off+24,true),len=dv.getUint16(off+28,true),
    extra=dv.getUint16(off+30,true),comment=dv.getUint16(off+32,true),local=dv.getUint32(off+42,true);
    const name=new TextDecoder().decode(bytes.slice(off+46,off+46+len));off+=46+len+extra+comment;
-   if(size>50_000_000)throw Error("ZIP 單一檔案過大");
+   if(size>50_000_000||uncompressed>50_000_000||size===0xffffffff||
+      uncompressed===0xffffffff)throw Error("ZIP 單一檔案過大");
    if(!/(?:ad-candidates-.*\.json|master_cover_prompt\.json|master_cover\.jpg|cover-preflight-manifest\.json)$/.test(name))continue;
+   totalSize+=uncompressed;
+   if(totalSize>80_000_000)throw Error("ZIP 審核資料解壓後總量過大");
    if(dv.getUint32(local,true)!==0x04034b50)throw Error("ZIP 檔案項目錯誤");
    const start=local+30+dv.getUint16(local+26,true)+dv.getUint16(local+28,true);
+   if(start+size>bytes.length)throw Error("ZIP 檔案資料不完整");
    out.push({name,method,bytes:bytes.slice(start,start+size)});
   }
   return out;

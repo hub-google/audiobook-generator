@@ -467,3 +467,10 @@ def test_overview_auto_poll_reads_only_public_state_and_preserves_forms():
     assert 'setInterval(()=>{void syncOverviewQueue();},45000)' in app
     assert 'document.addEventListener("visibilitychange"' in app
     assert 'latest.revision>Number(queue.revision||0)' in app
+
+
+def test_review_zip_reader_bounds_decompressed_size_before_decode():
+    script=(ROOT/"docs/site/review-inspector.js").read_text(encoding="utf-8")
+    assert 'uncompressed=dv.getUint32(off+24,true)' in script
+    assert 'if(totalSize>80_000_000)' in script
+    assert 'if(start+size>bytes.length)' in script

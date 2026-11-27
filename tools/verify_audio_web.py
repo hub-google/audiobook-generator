@@ -285,7 +285,7 @@ def main():
             import hashlib
             from PIL import Image
             cover_png=io.BytesIO()
-            Image.new("RGB",(128,72)).save(cover_png,format="JPEG")
+            Image.new("RGB",(128,72),(67,116,176)).save(cover_png,format="JPEG")
             cover_bytes=cover_png.getvalue()
             prompt_bytes=json.dumps({
                 "book_title":"封面審核測試",
@@ -319,6 +319,22 @@ def main():
                 "mimeType":"application/zip","buffer":tampered_zip}])
             desktop.get_by_text("封面或 Prompt 的 SHA-256 驗證失敗",exact=False).wait_for(timeout=8000)
             assert desktop.locator("#review-cover-preview").is_visible()
+            desktop.screenshot(path=str(OUTPUT / "audio-review-rejected-tampering.png"),full_page=True)
+            # ZIP-bomb protection checks the uncompressed size from the central directory.
+            fake_size=bytearray(valid_cover_zip)
+            central=fake_size.find(b"PK\\x01\\x02")
+            assert central >= 0
+            import struct
+            struct.pack_into("<I",fake_size,central+24,200_000_000)
+            desktop.locator("#review-drop-files").set_input_files([{
+                "name":"cover-review-oversized.zip",
+                "mimeType":"application/zip","buffer":bytes(fake_size)}])
+            desktop.get_by_text("ZIP 單一檔案過大",exact=False).wait_for(timeout=8000)
+            # Leave the acceptance screenshot with a validated, correct cover.
+            desktop.locator("#review-drop-files").set_input_files([{
+                "name":"cover-review-book-smoke-review.zip",
+                "mimeType":"application/zip","buffer":valid_cover_zip}])
+            desktop.get_by_text("已匯入 TXT 0 份、封面 1 份",exact=False).wait_for(timeout=8000)
             assert "本段為測試廣告" in desktop.locator("#review-raw").inner_text()
             desktop.locator("#review-patterns").fill("本段為測試廣告")
             assert "本段為測試廣告" not in desktop.locator("#review-clean").inner_text()
