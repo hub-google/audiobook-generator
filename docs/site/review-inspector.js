@@ -90,9 +90,9 @@
   let clean=AudioCleaner.chunkText(AudioCleaner.cleanTextContent(body,title,bookTitle,patterns()));
   text($("review-clean"),clean);
   // Match gui_components/review.py: count Unicode characters, not non-whitespace.
-  // Python uses len(raw_text.strip()) and len(clean_text.replace("\\n", "").strip()).
+  // Python uses len(raw_text.strip()) and len(clean_text.replace("\n", "").strip()).
   const original=Array.from(raw.trim()).length;
-  const after=Array.from(clean.replace(/\\n/g,"").trim()).length;
+  const after=Array.from(clean.replace(/\n/g,"").trim()).length;
   const removed=Math.max(0,original-after);
   const ratio=original?(removed/original*100):0;
   let warning=!clean.trim()?"　⚠ Clean 為空":ratio>=50?"　⚠ 清除比例偏高":"";
