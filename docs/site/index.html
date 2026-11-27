@@ -148,6 +148,10 @@
 <label>排定公開時間（台灣時間）<input id="edit-publish" type="datetime-local"></label>
 <label class="wide">自訂標題（每行：索引 | 標題）<textarea id="edit-titles" rows="3"></textarea></label>
 <label class="wide">自訂章號（每行：索引 | 章號）<textarea id="edit-numbers" rows="3"></textarea></label>
+<div class="wide"><strong>此書的重複判斷條件</strong><div class="duplicate-controls">
+<label class="toggle"><input type="checkbox" id="edit-duplicate-number" checked> 正規化章號</label>
+<label class="toggle"><input type="checkbox" id="edit-duplicate-name" checked> 章節名稱</label>
+<label class="toggle"><input type="checkbox" id="edit-duplicate-pair"> 章號及章名同時符合</label></div></div>
 <label class="wide">章節播放順序（以逗號分隔，留空為原始順序）<textarea id="edit-order" rows="2"></textarea></label>
 </div>
 <div class="dialog-actions"><button type="button" class="secondary" id="edit-cancel">取消</button><button type="submit">儲存任務</button></div>

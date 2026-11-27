@@ -83,8 +83,14 @@
    publish_at:publishValue($("edit-publish").value),
    chapter_title_overrides:readOverrides($("edit-titles").value,start,end),
    chapter_normalized_number_overrides:readOverrides($("edit-numbers").value,start,end,true),
-   chapter_order:readOrder($("edit-order").value,start,end,excluded)
+   chapter_order:readOrder($("edit-order").value,start,end,excluded),
+   duplicate_detection:{
+     use_normalized_number:$("edit-duplicate-number").checked,
+     use_chapter_name:$("edit-duplicate-name").checked,
+     use_number_and_name:$("edit-duplicate-pair").checked
+   }
   };
+  if(!Object.values(changes.duplicate_detection).some(Boolean))throw Error("至少需選一種重複判斷條件");
   if(!changes.book_title)throw Error("書名不可空白");
   send("edit",{task_id:id,changes},"編輯小說章節");
   $("edit-dialog").close();editorTaskId=null;
@@ -97,7 +103,8 @@
    excluded_chapters:t.excluded_chapters||[],renumber_selected:t.renumber_selected,
    chapter_title_overrides:t.chapter_title_overrides||{},
    chapter_normalized_number_overrides:t.chapter_normalized_number_overrides||{},
-   chapter_order:t.chapter_order||[],publish_at:t.publish_at||null
+   chapter_order:t.chapter_order||[],publish_at:t.publish_at||null,
+   duplicate_detection:t.duplicate_detection||null
   }));
   send(books.length===1?"enqueue":"batch_add",{books},
    books.length===1?"新增小說":"批次新增 "+books.length+" 本小說");
@@ -117,6 +124,9 @@
    numbers:readOverrides($("number-overrides").value,start,end,true),
    order:readOrder($("chapter-order").value,start,end,excluded)
   });
+  task.duplicate_detection={use_normalized_number:$("duplicate-number").checked,
+   use_chapter_name:$("duplicate-name").checked,use_number_and_name:$("duplicate-pair").checked};
+  if(!Object.values(task.duplicate_detection).some(Boolean))throw Error("至少需選一種重複判斷條件");
   if($("publish-scheduled").checked&&!task.publish_at)throw Error("排定公開時間尚未設定");
   await window.addTasks([task]);
  };

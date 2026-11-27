@@ -180,6 +180,10 @@ function openEditor(id){
  editorTaskId=id;text($("edit-book-url"),task.catalog_url);$("edit-name").value=task.book_title||"";$("edit-start").value=task.start_chapter||1;$("edit-end").value=task.end_chapter||10;
  $("edit-excluded").value=(task.excluded_chapters||[]).join(",");$("edit-renumber").checked=!!task.renumber_selected;$("edit-publish").value=formatPublish(task.publish_at);
  $("edit-titles").value=formatOverrides(task.chapter_title_overrides);$("edit-numbers").value=formatOverrides(task.chapter_normalized_number_overrides);
+ const detection=task.duplicate_detection||task.profile_snapshot?.duplicate_detection||{};
+ $("edit-duplicate-number").checked=detection.use_normalized_number!==false;
+ $("edit-duplicate-name").checked=detection.use_chapter_name!==false;
+ $("edit-duplicate-pair").checked=!!detection.use_number_and_name;
  $("edit-order").value=(task.chapter_order||[]).join(",");$("edit-dialog").showModal();
 }
 function openReview(id){const task=queueTasks().find(t=>t.task_id===id);if(!task||task.status!=="waiting_review")throw Error("任務不在待審核狀態");
