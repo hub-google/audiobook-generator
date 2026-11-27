@@ -81,3 +81,29 @@
 .staged-item button{font-size:12px;padding:3px 7px;background:#fff;color:#425570;border-color:#d7dfed}
 .novel-search .form-foot{flex-wrap:wrap}
 @media(max-width:700px){.novel-search-form{grid-template-columns:1fr}.novel-search-form button{width:100%}.search-toolbar{align-items:stretch}.search-result-table{min-width:620px}}
+
+/* AUDIO in-page administrator auth and operation status */
+.audio-auth-dialog,.audio-reference-dialog{box-sizing:border-box;border:1px solid #dce4f0;border-radius:16px;
+ padding:26px;max-width:min(560px,calc(100vw - 32px));width:100%;max-height:85vh;overflow:auto;
+ background:#fff;color:#22334c;box-shadow:0 20px 80px #13213f44}
+.audio-auth-dialog::backdrop,.audio-reference-dialog::backdrop{background:#101a2e88}
+.audio-auth-form{display:grid;gap:14px}.audio-auth-form h2,.audio-reference-dialog h2{margin:0;font-size:21px}
+.audio-auth-form label{display:grid;gap:7px;font-weight:600;font-size:14px}
+.audio-auth-form input{min-height:44px;width:100%;border:1px solid #cfd9e9;border-radius:9px;
+ padding:9px 11px;color:#26364c;background:#fff}
+.audio-auth-form .inline-actions,.audio-reference-dialog .inline-actions{display:flex;flex-wrap:wrap;gap:10px}
+.audio-operation-panel{box-sizing:border-box;position:fixed;bottom:18px;right:18px;z-index:1100;
+ width:min(440px,calc(100vw - 30px));max-height:min(65vh,620px);overflow:auto;background:#fff;
+ border:1px solid #cbd8ef;border-radius:15px;box-shadow:0 12px 60px #13213f33;padding:17px}
+.audio-operation-panel.hidden{display:none}
+.audio-operation-panel .section-head{display:flex;align-items:center;justify-content:space-between;gap:9px}
+.audio-operation-panel .section-head h3{font-size:17px;margin:0}
+.audio-operation-panel p{font-size:13px;line-height:1.5}
+.audio-operation-item{padding:10px 0;border-bottom:1px solid #e1e7f0;display:grid;gap:4px}
+.audio-operation-item strong{font-size:13px}
+.audio-operation-item small{color:#7586a0;font-size:12px;line-height:1.45}
+.audio-reference-content{margin:16px 0;white-space:pre-wrap;word-break:break-word;max-height:45vh;overflow:auto}
+.audio-reference-list{display:grid;grid-template-columns:auto 1fr;gap:8px 16px}
+.audio-reference-list dt{font-weight:650;color:#526783}.audio-reference-list dd{margin:0}
+@media(max-width:650px){.audio-operation-panel{bottom:8px;right:8px;width:calc(100vw - 16px)}
+.audio-auth-dialog,.audio-reference-dialog{padding:18px}}
