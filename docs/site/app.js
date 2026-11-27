@@ -68,7 +68,7 @@ function buildTaskRow(task,index){
  div.append(makeBtn("整包下載",window.exportArtifacts,task.task_id,false,false));
  if(["queued","paused","waiting_review","preparing_assets","needs_attention"].includes(task.status))div.append(makeBtn("手動封面",window.openManualCover,task.task_id));
  if(live(task))div.append(makeBtn("取消本次 Run",window.cancelRunningTask,task.task_id));
- if(task.status==="waiting_review"){div.append(makeBtn("查看審核資料",async()=>{window.open("https://github.com/"+REPO+"/actions/runs/"+(task.cover_run_id||task.run_id),"_blank","noopener");},task.task_id,false,false));div.append(makeBtn("確認審核並繼續",window.openReview,task.task_id,false));}
+ if(task.status==="waiting_review"){div.append(makeBtn("查看審核資料",async()=>{window.audioShowExternalInfo("https://github.com/"+REPO+"/actions/runs/"+(task.cover_run_id||task.run_id));},task.task_id,false,false));div.append(makeBtn("確認審核並繼續",window.openReview,task.task_id,false));}
  if(["queued","paused","interrupted","stopped"].includes(task.status)){
   div.append(makeBtn("編輯",openEditor,task.task_id,!canEdit(task)));
   div.append(makeBtn("↑",id=>window.moveTask(id,-1),task.task_id,index===0||!canEdit(task)||!canEdit(queueTasks()[index-1])));
