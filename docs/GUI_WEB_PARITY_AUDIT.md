@@ -70,3 +70,7 @@
 ## 封面實際審核門檻
 - 進入第二階段後製前，瀏覽器必須已驗證 TXT Raw 指紋及 Cover Manifest／原圖／Prompt 兩組 SHA-256；僅「儲存清理規則」不用核准封面。
 - 後端 Issue Actions 在核准時另以 GitHub 授權下載該書 cover-review Artifact，再次核對 task_id、manifest、圖片與 Prompt SHA-256；不得僅信任瀏覽器提供的指紋。所有驗證失敗仍在 waiting_review，不啟動後製。
+
+## 總覽自動同步
+- 參照桌面 GUI 的佇列定期同步行為，Pages 總覽每 45 秒從公開 automation-state JSON 讀取修訂版本，出現較新 revision 才更新列表；使用者回到頁面時也可同步。
+- 編輯或審核視窗開啟時暫停總覽重繪，避免異步更新污染編輯表單；讀取失敗保留現有清單，不誤報任務清空，也不需要瀏覽器 Token。

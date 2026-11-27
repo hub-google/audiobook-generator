@@ -120,6 +120,31 @@ async function refresh(){
   $("connection-pill").textContent="GitHub 登入操作";$("connection-pill").className="pill ok";
  }catch(e){notice("同步失敗："+e.message,"error");}
 }
+let overviewPollInFlight=false;
+async function syncOverviewQueue(){
+ if(!queue||document.hidden||document.querySelector("dialog[open]")||overviewPollInFlight)
+  return false;
+ overviewPollInFlight=true;
+ try{
+  const url="https://raw.githubusercontent.com/"+REPO+"/"+QUEUE_BRANCH+"/"+QUEUE_PATH+
+   "?_="+Date.now();
+  const response=await fetch(url,{cache:"no-store"});
+  if(!response.ok)throw Error("HTTP "+response.status);
+  const latest=await response.json();
+  if(!Array.isArray(latest.queue)||!Array.isArray(latest.completed)||
+     !Number.isSafeInteger(latest.revision))throw Error("Invalid AUDIO queue payload");
+  if(document.hidden||document.querySelector("dialog[open]"))return false;
+  if(latest.revision>Number(queue.revision||0)){
+   queue=latest;queueSha=null;renderQueue();
+   return true;
+  }
+  return false;
+ }catch(error){
+  // The user's manual refresh button remains available. A brief CDN outage
+  // must not overwrite the live page with a misleading empty queue.
+  return false;
+ }finally{overviewPollInFlight=false;}
+}
 async function renderRunJobDetails(task){
  const container=$("progress-jobs");container.replaceChildren();
  const artifactsBox=$("progress-artifacts");artifactsBox.replaceChildren();
@@ -728,6 +753,12 @@ document.addEventListener("DOMContentLoaded",()=>{
  bind("publish-at","change",renderPublish);
  document.querySelectorAll("[data-publish-day]").forEach(b=>b.addEventListener("click",()=>setPublishPreset(Number(b.dataset.publishDay),b.dataset.publishHour)));
  renderPublish();
+ // Desktop GUI periodically synchronizes the queue without a manual click.
+ // Use the public state JSON instead of unauthenticated REST API calls every 45s.
+ setInterval(()=>{void syncOverviewQueue();},45000);
+ document.addEventListener("visibilitychange",()=>{
+  if(!document.hidden)void syncOverviewQueue();
+ });
  bind("queue-all","change",()=>{const on=$("queue-all").checked;selectedPending=new Set(on?queueTasks().map(t=>t.task_id):[]);renderQueue();});
  bind("rank-search","input",renderRanking);bind("rank-category","change",renderRanking);
  bind("rank-select-all","click",()=>{for(const n of filteredRanking())rankingSelected.add(n.catalog_url);renderRanking();});

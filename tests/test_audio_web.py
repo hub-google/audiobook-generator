@@ -458,3 +458,12 @@ def test_issue_bridge_does_not_claim_success_when_popup_blocked():
     assert 'tab.opener=null' in bridge
     assert 'const tab=openIssueTab();' in bridge
     assert 'if(url)$("review-dialog").close()' in review
+
+
+def test_overview_auto_poll_reads_only_public_state_and_preserves_forms():
+    app=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    assert "async function syncOverviewQueue()" in app
+    assert 'document.querySelector("dialog[open]")' in app
+    assert 'setInterval(()=>{void syncOverviewQueue();},45000)' in app
+    assert 'document.addEventListener("visibilitychange"' in app
+    assert 'latest.revision>Number(queue.revision||0)' in app

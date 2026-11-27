@@ -145,6 +145,9 @@ def main():
             assert "原創測試小說" in desktop.locator("#progress-detail").inner_text()
             desktop.locator("#progress-close").click()
 
+            desktop.evaluate("queue.revision=0")
+            assert desktop.evaluate("syncOverviewQueue()") is True
+            assert desktop.locator("#count-queued").inner_text() == "1"
             desktop.locator('[data-tab="create"]').click()
             assert desktop.locator("#create").is_visible()
             assert desktop.locator("#source option").count() == 9
