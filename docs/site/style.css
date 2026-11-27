@@ -65,3 +65,19 @@
 .review-drop-zone label{display:block;font-weight:650;cursor:pointer;margin-bottom:7px}
 .review-drop-zone input{max-width:100%;font-size:12px}
 .review-drop-zone small{display:block;margin-top:7px;color:#66758d}
+
+/* Keyword discovery and multi-select staging */
+.novel-search{margin-bottom:22px}.novel-search h3{margin:0 0 8px;font-size:18px}
+.novel-search-form{display:grid;grid-template-columns:minmax(220px,2fr) minmax(150px,1fr) auto;align-items:end;gap:14px;margin:18px 0}
+.novel-search-form label{display:grid;gap:7px;font-size:13px;font-weight:650;color:#46566e}
+.novel-search-form input,.novel-search-form select{min-height:43px;width:100%;border:1px solid #d7dfed;border-radius:9px;padding:9px 12px;background:#fff;color:#26364c}
+.novel-search-form button{min-height:43px}.novel-search-status{min-height:19px;margin:12px 0}
+.search-toolbar{padding:12px 0;flex-wrap:wrap}.search-result-table{min-width:660px}
+.search-result-table td{padding:12px}.search-result-table td:nth-child(2){font-weight:650}
+.search-result-table a{word-break:break-word}.search-source-status{padding:12px 0;color:#73829a;font-size:12px;line-height:1.8}
+.search-staging{margin-top:22px;padding-top:12px;border-top:1px solid #e3e8f0}
+.staged-list{display:flex;flex-wrap:wrap;gap:9px;margin:15px 0}
+.staged-item{display:flex;align-items:center;gap:7px;padding:8px 10px;background:#f5f7fc;border:1px solid #dce5f2;border-radius:8px;font-size:13px}
+.staged-item button{font-size:12px;padding:3px 7px;background:#fff;color:#425570;border-color:#d7dfed}
+.novel-search .form-foot{flex-wrap:wrap}
+@media(max-width:700px){.novel-search-form{grid-template-columns:1fr}.novel-search-form button{width:100%}.search-toolbar{align-items:stretch}.search-result-table{min-width:620px}}
