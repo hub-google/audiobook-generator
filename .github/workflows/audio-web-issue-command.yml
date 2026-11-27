@@ -1,0 +1,30 @@
+name: "AUDIO｜GitHub 網頁操作（無需 PAT）"
+run-name: "【AUDIO 網頁操作】Issue #${{ github.event.issue.number }}"
+on:
+  issues:
+    types: [opened]
+permissions:
+  contents: write
+  issues: write
+  actions: write
+concurrency:
+  group: audio-web-issue-commands
+  cancel-in-progress: false
+jobs:
+  apply:
+    name: "驗證身份、執行操作並同步佇列"
+    if: startsWith(github.event.issue.title, '[AUDIO] ')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: "安裝後端套件"
+        run: pip install -r requirements.txt
+      - name: "檢查操作者 GitHub Repo 寫入權限並執行"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python -m tools.audio_issue_command
