@@ -52,6 +52,8 @@ function buildTaskRow(task,index){
  const stages=col("TXT "+stageBadge(task,"scrape")+" · 封面 "+stageBadge(task,"cover")+" · 影片 "+stageBadge(task,"processing"));
  const rid=task.run_id||task.scrape_run_id||task.cover_run_id;if(rid){const small=document.createElement("small"),a=document.createElement("a");a.href="https://github.com/"+REPO+"/actions/runs/"+encodeURIComponent(rid);a.target="_blank";a.rel="noopener noreferrer";a.textContent="Run #"+rid;small.append(a);stages.append(small);}
  const controls=col(""),div=document.createElement("div");div.className="actions";controls.append(div);
+ div.append(makeBtn("進度",showProgress,task.task_id));
+ if(live(task))div.append(makeBtn("取消本次 Run",cancelRunningTask,task.task_id));
  if(task.status==="waiting_review"){div.append(makeBtn("查看審核資料",async()=>{window.open("https://github.com/"+REPO+"/actions/runs/"+(task.cover_run_id||task.run_id),"_blank","noopener");},task.task_id,false));div.append(makeBtn("確認審核並繼續",openReview,task.task_id,false));}
  if(["queued","paused","interrupted","stopped"].includes(task.status)){
   div.append(makeBtn("編輯",openEditor,task.task_id,!canEdit(task)));
@@ -59,6 +61,7 @@ function buildTaskRow(task,index){
   div.append(makeBtn("↓",id=>moveTask(id,1),task.task_id,index===queueTasks().length-1||!canEdit(task)||!canEdit(queueTasks()[index+1])));
   if(task.status==="queued")div.append(makeBtn("暫停",id=>setTaskState(id,"paused"),task.task_id));
   else div.append(makeBtn("重新排程",id=>setTaskState(id,"queued"),task.task_id));
+  if(["paused","interrupted","stopped"].includes(task.status))div.append(makeBtn("標為已完成",markCompleted,task.task_id));
   div.append(makeBtn("刪除",deleteTask,task.task_id));
  }
  return tr;
@@ -72,7 +75,7 @@ function renderQueue(){
  tasks.forEach((t,i)=>tbody.append(buildTaskRow(t,i)));
  const list=$("completed-list");list.replaceChildren();
  if(!completed.length){const p=document.createElement("p");p.className="muted";p.textContent="尚無已完成作品";list.append(p);}
- completed.slice(0,40).forEach(t=>{const row=document.createElement("div");row.className="completed-item";const name=document.createElement("strong");name.textContent=t.book_title||"未知小說";const status=document.createElement("span");status.className="muted";status.textContent=dateLabel(t.completed_at||t.updated_at);row.append(name,status);list.append(row);});
+ completed.slice(0,40).forEach(t=>{const row=document.createElement("div");row.className="completed-item";const name=document.createElement("strong");name.textContent=t.book_title||"未知小說";const status=document.createElement("span");status.className="muted";status.textContent=dateLabel(t.completed_at||t.updated_at);const restore=makeBtn("移回佇列",restoreCompleted,t.task_id);row.append(name,status,restore);list.append(row);});
 }
 async function refresh(){
  try{const res=await readQueue();queue=res.data;queueSha=res.sha;renderQueue();
@@ -105,6 +108,63 @@ async function triggerDispatcher(){
 }
 async function moveTask(id,delta){await mutate(q=>{const i=q.queue.findIndex(t=>t.task_id===id),j=i+delta;if(i<0||j<0||j>=q.queue.length||!canEdit(q.queue[i])||!canEdit(q.queue[j]))throw Error("無法移動正在執行的工作");[q.queue[i],q.queue[j]]=[q.queue[j],q.queue[i]];return q;},"Web UI: reorder audiobook queue");notice("已更新工作順序");}
 async function setTaskState(id,state){await mutate(q=>{const t=q.queue.find(x=>x.task_id===id);if(!t||!canEdit(t))throw Error("該工作目前不允許修改");t.status=state;t.reason=null;t.retry_at=null;t.updated_at=new Date().toISOString();return q;},"Web UI: update audiobook task status");notice("已更新任務狀態");if(state==="queued")await triggerDispatcher();}
+function showProgress(id){
+ const t=[...queueTasks(),...(queue?.completed||[])].find(x=>x.task_id===id);
+ if(!t)throw Error("找不到任務");
+ const detail=[
+  "書名："+(t.book_title||"待解析"),
+  "狀態："+statusName(t.status),
+  "章節："+(t.start_chapter||1)+"–"+(t.end_chapter||"全部"),
+  "最後更新："+dateLabel(t.updated_at),
+  "TXT："+stageBadge(t,"scrape")+"｜封面："+stageBadge(t,"cover")+"｜影片："+stageBadge(t,"processing")+"｜上傳："+stageBadge(t,"publication"),
+  "HF進度："+(t.hf_progress?.completed||0)+"/"+(t.hf_progress?.total||0),
+  "YouTube進度："+(t.youtube_progress?.completed||0)+"/"+(t.youtube_progress?.total||0),
+  "執行 Run："+(t.run_id||"尚未建立"),
+  "工作 ID："+t.task_id,
+  "異常或原因："+(t.reason||"無"),
+ ].join("\n");
+ text($("progress-detail"),detail);$("progress-dialog").showModal();
+}
+async function cancelRunningTask(id){
+ const task=queueTasks().find(t=>t.task_id===id);
+ if(!task||!live(task))throw Error("目前沒有正在執行的工作");
+ const ids=[...new Set([task.run_id,task.cover_run_id,task.scrape_run_id,task.processing_run_id].filter(Boolean))];
+ if(!ids.length)throw Error("任務正在啟動，尚無可取消的 Run ID");
+ if(!confirm("確定取消 "+(task.book_title||"此任務")+" 的本次 GitHub Actions 執行？"))return;
+ let requested=0;
+ for(const id of ids){
+  const state=await request("/actions/runs/"+encodeURIComponent(id));
+  if(state.status==="completed")continue;
+  await request("/actions/runs/"+encodeURIComponent(id)+"/cancel",{method:"POST"});
+  requested++;
+ }
+ if(!requested){notice("這些 Run 已結束，請先同步狀態");await refresh();return;}
+ await mutate(q=>{const t=q.queue.find(x=>x.task_id===task.task_id);
+  if(!t)throw Error("取消的任務已不在佇列");
+  t.status="canceling";t.reason="user_cancelled";t.updated_at=new Date().toISOString();return q;
+ },"Web UI: cancel active audiobook run");
+ notice("已提交取消請求；稍後請同步確認 Run 結果");
+}
+async function markCompleted(id){
+ if(!confirm("確定將這本小說標記為已完成？只會修改佇列狀態，不會自動上傳影片。"))return;
+ await mutate(q=>{const index=q.queue.findIndex(t=>t.task_id===id);
+  if(index<0||!["paused","interrupted","stopped"].includes(q.queue[index].status))throw Error("只能手動完成已暫停或中斷的任務");
+  const t=q.queue.splice(index,1)[0],now=new Date().toISOString();
+  t.status="completed";t.run_conclusion=t.run_conclusion||"manual";t.run_completed_at=now;t.completed_at=now;
+  t.reason=null;t.updated_at=now;delete t.position;
+  q.completed.push(t);return q;
+ },"Web UI: manually complete audiobook");notice("已標記完成");
+}
+async function restoreCompleted(id){
+ if(!confirm("將這本小說移回未完成佇列（暫停狀態）？"))return;
+ await mutate(q=>{const index=q.completed.findIndex(t=>t.task_id===id);
+  if(index<0)throw Error("找不到已完成任務");
+  const t=q.completed.splice(index,1)[0];Object.assign(t,{
+    status:"paused",run_id:null,run_conclusion:null,run_completed_at:null,
+    reason:null,retry_at:null,updated_at:new Date().toISOString()
+  });q.queue.push(t);return q;
+ },"Web UI: restore completed audiobook");notice("已移回佇列（暫停）");
+}
 async function deleteTask(id){if(!confirm("確定刪除此尚未執行的任務？"))return;await mutate(q=>{const i=q.queue.findIndex(x=>x.task_id===id);if(i<0||!canEdit(q.queue[i]))throw Error("不能刪除正在執行的作業");q.queue.splice(i,1);return q;},"Web UI: remove queued audiobook");notice("任務已從佇列移除");}
 function readOverrides(value,start,end,isNumber=false){
  const out={};for(const line of value.split(/\r?\n/)){if(!line.trim())continue;const pos=line.indexOf("|");if(pos<0)throw Error("進階章節設定必須使用「索引 | 內容」格式："+line);
@@ -258,7 +318,7 @@ document.addEventListener("DOMContentLoaded",()=>{
  bind("refresh-btn","click",refresh);bind("dispatch-btn","click",triggerDispatcher);bind("book-form","submit",submitBook);
  bind("batch-btn","click",batchAdd);bind("parse-btn","click",parseCatalog);
  bind("edit-form","submit",saveEditor);bind("review-form","submit",saveReview);
- bind("edit-cancel","click",()=>{$("edit-dialog").close();editorTaskId=null;});bind("review-cancel","click",()=>{$("review-dialog").close();reviewTaskId=null;});
+ bind("progress-close","click",()=>$("progress-dialog").close());bind("edit-cancel","click",()=>{$("edit-dialog").close();editorTaskId=null;});bind("review-cancel","click",()=>{$("review-dialog").close();reviewTaskId=null;});
  bind("catalog-url","input",()=>{parsedCatalog=null;$("catalog-preview").classList.add("hidden");});
  refresh();
 });

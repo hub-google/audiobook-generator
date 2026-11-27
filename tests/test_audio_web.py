@@ -73,3 +73,12 @@ def test_workflow_allows_single_youtube_account_with_expandable_pool():
     workflow=(ROOT/".github/workflows/audiobook.yml").read_text(encoding="utf-8")
     assert 'YOUTUBE_EXPECTED_ACCOUNT_COUNT: "1"' in workflow
     assert "YOUTUBE_REFRESH_TOKEN_10:" in workflow
+
+
+def test_web_progress_and_completion_controls():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    assert 'id="progress-dialog"' in html
+    for label in ("cancelRunningTask","markCompleted","restoreCompleted","showProgress"):
+        assert "function "+label+"(" in js or "async function "+label+"(" in js
+    assert '"/actions/runs/"+encodeURIComponent(id)+"/cancel"' in js
