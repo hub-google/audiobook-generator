@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>AUDIO · 有聲小說製作平台</title>
-<link rel="stylesheet" href="./style.css?v=20261127-audio-no-login-1">
+<link rel="stylesheet" href="./style.css?v=20261127-audio-gui-parity-2">
 </head>
 <body>
 <div class="layout">
@@ -24,6 +24,11 @@
 <section id="overview" class="tab active">
 <div class="metrics"><article class="metric"><span>排隊中</span><strong id="count-queued">—</strong></article><article class="metric"><span>進行中 / 待審</span><strong id="count-active">—</strong></article><article class="metric"><span>已完成</span><strong id="count-completed">—</strong></article><article class="metric"><span>最近更新</span><strong class="smaller" id="updated-at">—</strong></article></div>
 <div class="section-head"><div><h2>小說工作佇列</h2><p>依雲端排程順序排列。正在執行的作業不可直接刪除或移動。</p></div><button id="dispatch-btn" class="secondary">執行一次調度檢查</button></div>
+<section id="audio-submitted-books" class="audio-submitted-books hidden" aria-label="新增小說送出狀態">
+<h3>剛新增的小說（等待正式佇列確認）</h3>
+<p class="muted">這裡立即顯示已送出的小說。GitHub 工作機確認成功後會進入下方正式佇列；失敗會顯示原因。</p>
+<div id="audio-submitted-list" class="audio-submitted-list" aria-live="polite"></div>
+</section>
 <div class="batch-toolbar" id="batch-toolbar">
 <label class="toggle"><input type="checkbox" id="queue-all"> 全選待製作</label><button id="queue-invert" type="button" class="secondary">反選待製作</button><button id="queue-clear" type="button" class="secondary">清除勾選</button>
 <span class="muted" id="queue-selected-count">已選 0 本</span>
@@ -311,5 +316,5 @@
 <footer>資料由 GitHub API 即時讀取；GitHub Pages 不會在瀏覽器執行 Python、TTS 或影片轉檔。</footer>
 </main>
 </div>
-<script src="./app.js?v=20261127-audio-no-login-1" defer></script><script src="./bridge.js?v=20261127-audio-no-login-1" defer></script><script src="./novel-search.js?v=20261127-audio-no-login-1" defer></script><script src="./cleaner-parity.js?v=20261127-audio-no-login-1" defer></script><script src="./review-inspector.js?v=20261127-audio-no-login-1" defer></script><script src="./manual-cover.js?v=20261127-audio-no-login-1" defer></script><script src="./batch-cover.js?v=20261127-audio-no-login-1" defer></script><script src="./external-info.js?v=20261127-audio-no-login-1" defer></script><script src="./draft-cover-info.js?v=20261127-audio-no-login-1" defer></script><script src="./cloud-log.js?v=20261127-audio-no-login-1" defer></script>
+<script src="./app.js?v=20261127-audio-gui-parity-2" defer></script><script src="./bridge.js?v=20261127-audio-gui-parity-2" defer></script><script src="./novel-search.js?v=20261127-audio-gui-parity-2" defer></script><script src="./cleaner-parity.js?v=20261127-audio-gui-parity-2" defer></script><script src="./review-inspector.js?v=20261127-audio-gui-parity-2" defer></script><script src="./manual-cover.js?v=20261127-audio-gui-parity-2" defer></script><script src="./batch-cover.js?v=20261127-audio-gui-parity-2" defer></script><script src="./external-info.js?v=20261127-audio-gui-parity-2" defer></script><script src="./draft-cover-info.js?v=20261127-audio-gui-parity-2" defer></script><script src="./cloud-log.js?v=20261127-audio-gui-parity-2" defer></script>
 </body></html>
