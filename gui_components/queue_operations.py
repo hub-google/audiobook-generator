@@ -337,7 +337,7 @@ class QueueOperationsMixin:
         response = requests.post(
             f"https://api.github.com/repos/{repo}/actions/workflows/queue-dispatcher.yml/dispatches",
             headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}", "X-GitHub-Api-Version": "2022-11-28"},
-            json={"ref": "master"}, timeout=15,
+            json={"ref": "main"}, timeout=15,
         )
         if response.status_code not in (200, 204):
             raise RuntimeError(f"無法啟動雲端調度器 ({response.status_code}): {response.text}")

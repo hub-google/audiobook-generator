@@ -99,7 +99,7 @@ async function mutate(transform,message){
 }
 async function triggerDispatcher(){
  if(!token)throw Error("請先連線 GitHub");
- await request("/actions/workflows/queue-dispatcher.yml/dispatches",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ref:"master",inputs:{force_retry:"false"}})});
+ await request("/actions/workflows/queue-dispatcher.yml/dispatches",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ref:"main",inputs:{force_retry:"false"}})});
  notice("已向 GitHub 提交調度檢查，實際啟動狀態請至製作紀錄查看。");
 }
 async function moveTask(id,delta){await mutate(q=>{const i=q.queue.findIndex(t=>t.task_id===id),j=i+delta;if(i<0||j<0||j>=q.queue.length||!canEdit(q.queue[i])||!canEdit(q.queue[j]))throw Error("無法移動正在執行的工作");[q.queue[i],q.queue[j]]=[q.queue[j],q.queue[i]];return q;},"Web UI: reorder audiobook queue");notice("已更新工作順序");}
@@ -172,7 +172,7 @@ async function parseCatalog(){
  const btn=$("parse-btn");btn.disabled=true;
  try{
  text($("parse-status"),"已提交雲端目錄解析，正在取得結果…");
- await request("/actions/workflows/web-catalog-preview.yml/dispatches",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ref:"master",inputs:{catalog_url:url,request_id:requestId}})});
+ await request("/actions/workflows/web-catalog-preview.yml/dispatches",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ref:"main",inputs:{catalog_url:url,request_id:requestId}})});
  let run=null;for(let i=0;i<45;i++){
   await new Promise(resolve=>setTimeout(resolve,4000));
   const data=await request("/actions/workflows/web-catalog-preview.yml/runs?event=workflow_dispatch&per_page=30");

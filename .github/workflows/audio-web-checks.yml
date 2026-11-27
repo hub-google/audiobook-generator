@@ -2,8 +2,7 @@ name: AUDIO Web and Sources CI
 on:
   push:
     branches:
-      - master
-      - feature/audio-web-nine-sources-gemini-20261127
+      - main
   workflow_dispatch:
 concurrency:
   group: audio-web-ci-${{ github.ref }}
@@ -48,7 +47,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
   cover-live-probe:
-    if: github.ref == 'refs/heads/feature/audio-web-nine-sources-gemini-20261127'
+    if: github.event_name == 'workflow_dispatch'
     needs: regression
     runs-on: ubuntu-latest
     timeout-minutes: 12

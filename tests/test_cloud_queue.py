@@ -978,12 +978,12 @@ Part 2/2 | Ch 51-100
         dispatcher.store.save = Mock(return_value="sha-2")
         dispatcher.profile_store.load = Mock(return_value=({"books": {}}, None))
         dispatcher.reconcile = Mock(return_value=(queue, False))
-        dispatcher.run_uses_current_master = Mock(return_value=False)
+        dispatcher.run_uses_current_main = Mock(return_value=False)
         dispatch_next.side_effect = lambda value: (value, "fresh")
 
         dispatcher.run()
 
-        dispatcher.run_uses_current_master.assert_called_once_with(123)
+        dispatcher.run_uses_current_main.assert_called_once_with(123)
         dispatched_queue = dispatch_next.call_args.args[0]
         self.assertEqual(dispatched_queue["queue"][0]["status"], "queued")
 

@@ -40,13 +40,13 @@ if not defined CURRENT_BRANCH (
     echo [ERROR] Git 目前處於 detached HEAD 狀態，請先切換至分支。
     goto :failed
 )
-if /i not "%CURRENT_BRANCH%"=="master" (
-    echo [ERROR] 當前分支為 [%CURRENT_BRANCH%]，並非 master 分支。
-    echo [ERROR] 請先切換至 master 分支後再執行 deploy.bat。
+if /i not "%CURRENT_BRANCH%"=="main" (
+    echo [ERROR] 當前分支為 [%CURRENT_BRANCH%]，並非 main 分支。
+    echo [ERROR] 請先切換至 main 分支後再執行 deploy.bat。
     goto :failed
 )
 
-set "DEPLOY_BRANCH=master"
+set "DEPLOY_BRANCH=main"
 
 set "DEPLOY_MESSAGE=%~1"
 if not defined DEPLOY_MESSAGE set "DEPLOY_MESSAGE=Deploy all workspace changes"

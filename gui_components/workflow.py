@@ -981,7 +981,7 @@ class WorkflowMixin:
                 )
                 dispatch_url = f"https://api.github.com/repos/{repo}/actions/workflows/audiobook.yml/dispatches"
                 payload = {
-                    "ref": "master",
+                    "ref": "main",
                     "inputs": {
                         "book_title": self.catalog_data.get("book_title", "待解析書名"),
                         "chapter_label": chapter_label,

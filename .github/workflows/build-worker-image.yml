@@ -3,7 +3,7 @@ name: Build Audiobook Worker Image
 on:
   workflow_dispatch:
   push:
-    branches: [master]
+    branches: [main]
     paths:
       - Dockerfile.worker
       - requirements.txt

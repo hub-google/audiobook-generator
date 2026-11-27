@@ -217,14 +217,14 @@ class Dispatcher:
             return int(run_id)
         return None
 
-    def run_uses_current_master(self, run_id):
+    def run_uses_current_main(self, run_id):
         """Only rerun in place when GitHub would execute the current code."""
         run = self.run_by_id(run_id)
         if not run or not run.get("head_sha"):
             return False
-        master = self.request("GET", "/git/ref/heads/master").json()
-        master_sha = ((master.get("object") or {}).get("sha") or "").strip()
-        return bool(master_sha and run["head_sha"] == master_sha)
+        main_ref = self.request("GET", "/git/ref/heads/main").json()
+        main_sha = ((main_ref.get("object") or {}).get("sha") or "").strip()
+        return bool(main_sha and run["head_sha"] == main_sha)
 
     def run_jobs(self, run_id):
         try:
@@ -657,9 +657,9 @@ class Dispatcher:
         dispatch_requested_at = datetime.now(timezone.utc)
         try:
             if need_scrape or is_processing:
-                self.request("POST", "/actions/workflows/audiobook.yml/dispatches", json={"ref": "master", "inputs": inputs})
+                self.request("POST", "/actions/workflows/audiobook.yml/dispatches", json={"ref": "main", "inputs": inputs})
             if need_cover:
-                self.request("POST", "/actions/workflows/cover-preflight.yml/dispatches", json={"ref": "master", "inputs": cover_inputs})
+                self.request("POST", "/actions/workflows/cover-preflight.yml/dispatches", json={"ref": "main", "inputs": cover_inputs})
         except Exception as error:
             latest, latest_sha = self.store.load()
             # Preserve the successfully submitted sibling when the second
@@ -830,7 +830,7 @@ class Dispatcher:
             is_ready = self.force or not retry_at or (datetime.now(timezone.utc) >= retry_at)
             if is_ready:
                 run_id = active.get("run_id")
-                if run_id and not self.force and self.run_uses_current_master(run_id):
+                if run_id and not self.force and self.run_uses_current_main(run_id):
                     try:
                         self.request("POST", f"/actions/runs/{run_id}/rerun-failed-jobs")
                         updated = update_task(queue, active["task_id"], status="running", run_attempt=int(active.get("run_attempt") or 1) + 1, retry_at=None, reason=None)
@@ -839,7 +839,7 @@ class Dispatcher:
                     except Exception as rerun_err:
                         logging.warning("Rerun failed; will dispatch fresh run: %s", rerun_err)
                 elif run_id and not self.force:
-                    logging.info("Run %s does not use current master; dispatching a fresh run.", run_id)
+                    logging.info("Run %s does not use current main; dispatching a fresh run.", run_id)
                 # If rerun failed or self.force, unblock to queued for immediate fresh dispatch
                 queue = update_task(queue, active["task_id"], status="queued", retry_at=None, reason=None)
                 sha = self.store.save(queue, sha=sha, message=f"Unblock task {active['task_id']} for immediate dispatch")
