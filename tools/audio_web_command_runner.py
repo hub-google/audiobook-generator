@@ -378,3 +378,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# AUDIO smoke: a no-login `ping` request must be claimed via OIDC without changing the book queue.
