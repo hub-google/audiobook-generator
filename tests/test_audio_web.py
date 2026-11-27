@@ -218,7 +218,11 @@ def test_click_handlers_explicitly_bind_new_tokenless_issue_bridge():
 def test_no_legacy_pat_or_direct_github_writes_remain_in_pages():
     js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
     html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
-    assert "Token" not in js and "Authorization" not in js
+    # Pages may send a short-lived Supabase user JWT to the protected live log
+    # API, but must never ship a GitHub PAT or write directly to GitHub.
+    assert "ghp_" not in js and "github_pat_" not in js and "GITHUB_TOKEN" not in js
+    assert 'fetch(endpoint,{headers:{"Authorization":"Bearer "+token}' in js
+    assert "api.github.com/repos/" not in js or 'const REPO=' in js
     assert 'id="token"' not in html
     assert "async function mutate(" not in js
     assert "async function connect(" not in js
