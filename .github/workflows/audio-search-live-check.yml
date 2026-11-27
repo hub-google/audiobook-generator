@@ -1,0 +1,21 @@
+name: "小說搜尋｜即時服務驗收"
+run-name: "【小說搜尋驗收】原頁搜尋／九站｜第 ${{ github.run_number }} 次"
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/site/novel-search.js"
+      - "tools/probe_audio_search_api.py"
+      - ".github/workflows/audio-search-live-check.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live-search:
+    name: "實際呼叫無 Token 搜尋服務"
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: "查詢書名、九站、CORS 與輸入檢查"
+        run: python tools/probe_audio_search_api.py
