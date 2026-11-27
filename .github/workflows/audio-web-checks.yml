@@ -1,0 +1,41 @@
+name: AUDIO Web and Sources CI
+on:
+  push:
+    branches:
+      - master
+      - feature/audio-web-nine-sources-gemini-20261127
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11', cache: pip}
+      - name: Install runtime and tests
+        run: pip install -r requirements.txt pytest
+      - name: Python syntax
+        run: python -m compileall -q src tools gui_components
+      - name: Browser JavaScript syntax
+        run: node --check docs/site/app.js
+      - name: Complete regression tests
+        run: python -m pytest -q tests
+  cover-live-probe:
+    if: github.ref == 'refs/heads/feature/audio-web-nine-sources-gemini-20261127'
+    needs: regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11', cache: pip}
+      - run: pip install -r requirements.txt
+      - name: Request actual HF cover; try Gemini if unavailable
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_IMAGE_MODEL: gemini-2.5-flash-image
+        run: python -m tools.cover_provider_probe
