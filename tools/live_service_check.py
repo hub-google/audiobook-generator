@@ -84,7 +84,10 @@ def check_original_media():
         print("Media stage: validate WAV", flush=True)
         validate_wav(str(wav))
         print("Media stage: generate SRT", flush=True)
-        generate_chapter_srt([str(wav)], [original], str(root / "Subtitles/Acceptance_chapter_1.srt"))
+        subtitle = root / "Subtitles/Acceptance_chapter_1.srt"
+        generate_chapter_srt([str(wav)], [original], str(subtitle))
+        if not subtitle.is_file() or "-->" not in subtitle.read_text(encoding="utf-8-sig"):
+            raise RuntimeError("Generated subtitle is missing valid SRT timing lines")
         (root / "RawText/Acceptance_chapter_1_raw.txt").write_text(
             "第一章 原創測試\\n" + original, encoding="utf-8"
         )
