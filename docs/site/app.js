@@ -59,6 +59,7 @@ function buildTaskRow(task,index){
  const controls=col(""),div=document.createElement("div");div.className="actions";controls.append(div);
  div.append(makeBtn("進度",showProgress,task.task_id,false,false));
  div.append(makeBtn("成品下載",showProgress,task.task_id,false,false));
+ div.append(makeBtn("整包下載",window.exportArtifacts,task.task_id,false,false));
  if(["queued","paused","waiting_review","preparing_assets","needs_attention"].includes(task.status))div.append(makeBtn("手動封面",window.openManualCover,task.task_id));
  if(live(task))div.append(makeBtn("取消本次 Run",window.cancelRunningTask,task.task_id));
  if(task.status==="waiting_review"){div.append(makeBtn("查看審核資料",async()=>{window.open("https://github.com/"+REPO+"/actions/runs/"+(task.cover_run_id||task.run_id),"_blank","noopener");},task.task_id,false,false));div.append(makeBtn("確認審核並繼續",window.openReview,task.task_id,false));}
@@ -94,7 +95,9 @@ function renderQueue(){
  const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.checked=selectedCompleted.has(t.task_id);
  checkbox.setAttribute("aria-label","選取已完成 "+(t.book_title||"小說"));
  checkbox.addEventListener("change",()=>{if(checkbox.checked)selectedCompleted.add(t.task_id);else selectedCompleted.delete(t.task_id);updateBatchStatus();});
- const name=document.createElement("strong");name.textContent=t.book_title||"未知小說";const status=document.createElement("span");status.className="muted";status.textContent=dateLabel(t.completed_at||t.updated_at);const restore=makeBtn("移回佇列",window.restoreCompleted,t.task_id);const download=makeBtn("成品下載",showProgress,t.task_id,false,false);row.append(checkbox,name,status,download,restore);list.append(row);});
+ const name=document.createElement("strong");name.textContent=t.book_title||"未知小說";const status=document.createElement("span");status.className="muted";status.textContent=dateLabel(t.completed_at||t.updated_at);const restore=makeBtn("移回佇列",window.restoreCompleted,t.task_id);const download=makeBtn("成品下載",showProgress,t.task_id,false,false);
+ const bundle=makeBtn("整包下載",window.exportArtifacts,t.task_id,false,false);
+ row.append(checkbox,name,status,download,bundle,restore);list.append(row);});
  updateBatchStatus();
 }
 async function refresh(){

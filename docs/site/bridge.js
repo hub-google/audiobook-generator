@@ -16,6 +16,11 @@
   return url;
  }
  window.audioIssueAction=send;
+ window.exportArtifacts=async function(taskId){
+  if(!taskId)throw Error("請先選擇小說");
+  send("export_artifacts",{task_ids:[taskId]},"整包下載小說成品");
+ };
+
  function selectedActive(){
   const books=selectedPendingTasks();
   if(!books.length)throw Error("請先勾選小說");
@@ -191,6 +196,14 @@
     multi("complete",{task_ids:selectedPermitted(["queued","paused","interrupted","stopped"])},"批次標記完成");}],
    ["batch-delete",()=>{if(confirm("確定刪除所有選取的待製作小說？"))
     multi("delete",{task_ids:selectedPermitted(["queued","paused","interrupted","stopped"])},"批次刪除小說");}],
+   ["batch-export",()=>{
+      const ids=selectedActive().map(t=>t.task_id);
+      multi("export_artifacts",{task_ids:ids},"批次匯出 "+ids.length+" 本小說成品");
+   }],
+   ["batch-export-completed",()=>{
+      if(!selectedCompleted.size)throw Error("請先選擇已完成小說");
+      multi("export_artifacts",{task_ids:[...selectedCompleted]},"批次匯出已完成作品");
+   }],
    ["batch-restore",()=>{if(!selectedCompleted.size)throw Error("請選擇已完成小說");
     multi("restore",{task_ids:[...selectedCompleted]},"批次移回未完成");}],
   ];

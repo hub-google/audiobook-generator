@@ -241,3 +241,17 @@ def test_duplicate_conditions_are_persisted_for_new_and_edited_book_profiles():
         assert f'id="{field}"' in html
     assert "task.duplicate_detection={" in bridge
     assert "duplicate_detection:t.duplicate_detection||null" in bridge
+
+
+def test_one_click_bulk_download_requests_github_artifact_export():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    app=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    workflow=(ROOT/".github/workflows/audio-export-artifacts.yml").read_text(encoding="utf-8")
+    for id in ("batch-export","batch-export-completed"):
+        assert f'id="{id}"' in html
+    assert 'makeBtn("整包下載",window.exportArtifacts' in app
+    assert 'window.exportArtifacts=async function' in bridge
+    assert 'multi("export_artifacts"' in bridge
+    assert "secrets.GITHUB_TOKEN" in workflow
+    assert "tools.export_run_artifacts" in workflow

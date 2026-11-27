@@ -85,3 +85,22 @@ def test_duplicate_detection_cannot_disable_all_conditions():
         checked_detection({"use_normalized_number":False,"use_chapter_name":False,
                            "use_number_and_name":False})
     assert checked_detection({"use_chapter_name":True})["use_chapter_name"] is True
+
+
+def test_batch_export_uses_only_authorized_task_runs():
+    from src.cloud_queue import empty_queue,new_task
+    from tools.audio_issue_command import apply_command
+    q=empty_queue()
+    t=new_task("https://69shuba.com/book/123/","Demo",1,2)
+    t["run_id"]=101;t["scrape_run_id"]=102;t["cover_run_id"]=103
+    q["queue"].append(t)
+    class Store:
+        def load(self):return q,None
+    called=[]
+    def api_mock(method,path,token,repo,**kwargs):
+        called.append((method,path,kwargs));return {}
+    with patch("tools.audio_issue_command.api",side_effect=api_mock):
+        result,should_dispatch=apply_command({"op":"export_artifacts","data":{"task_ids":[t["task_id"]]}},Store(),None,365,"dummy","hub-google/audiobook-generator")
+    assert "3 Runs" in result and should_dispatch is False
+    assert called[0][1]=="actions/workflows/audio-export-artifacts.yml/dispatches"
+    assert called[0][2]["json"]["inputs"]["source_run_ids"]=="101,102,103"
