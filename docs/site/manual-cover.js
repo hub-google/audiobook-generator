@@ -1,19 +1,55 @@
 "use strict";
 (function(){
- let currentTaskId=null,blob=null;
+ let currentTaskId=null,draftBook=null,blob=null;
  const $id=id=>document.getElementById(id);
+ function openDialog(title){
+  blob=null;
+  $id("manual-cover-file").value="";
+  $id("manual-cover-download").disabled=true;
+  $id("manual-cover-copy").disabled=true;$id("manual-cover-submit").disabled=true;
+  text($id("manual-cover-book"),"《"+title+"》");
+  text($id("manual-cover-status"),"選擇 JPG／PNG／WEBP；會在本機中央裁切成 1280×720。");
+  const canvas=$id("manual-cover-canvas");
+  canvas.getContext("2d").clearRect(0,0,canvas.width,canvas.height);
+  $id("manual-cover-dialog").showModal();
+ }
  window.openManualCover=function(id){
   const task=queueTasks().find(t=>t.task_id===id);
   if(!task)throw Error("找不到小說");
   if(!["queued","paused","waiting_review","preparing_assets","needs_attention"].includes(task.status))
-   throw Error("第二階段開始後封面已鎖定，請先重新排程");
-  currentTaskId=id;blob=null;
-  $id("manual-cover-file").value="";
-  $id("manual-cover-download").disabled=true;$id("manual-cover-copy").disabled=true;$id("manual-cover-submit").disabled=true;
-  text($id("manual-cover-book"),"《"+(task.book_title||"待解析")+"》");
-  text($id("manual-cover-status"),"請選擇圖片，會在本機中央裁切成 1280×720。");
-  $id("manual-cover-dialog").showModal();
+   throw Error("第二階段已開始，封面不可直接變更");
+  currentTaskId=id;draftBook=null;
+  openDialog(task.book_title||"待解析");
+  void restoreExisting(task.catalog_url);
  };
+ window.openDraftManualCover=function(){
+  const catalog_url=$id("catalog-url").value.trim(),book_title=$id("book-title").value.trim();
+  getSource(catalog_url);
+  if(!book_title)throw Error("請先解析目錄或輸入小說名稱");
+  currentTaskId=null;draftBook={catalog_url,book_title};
+  openDialog(book_title);
+  void restoreExisting(catalog_url);
+ };
+ async function restoreExisting(url){
+  const targetUrl=url;
+  try{
+   const response=await fetch("https://raw.githubusercontent.com/hub-google/audiobook-generator/automation-state/audiobook-book-profiles.json?_="+Date.now(),{cache:"no-store"});
+   if(!response.ok)return;
+   const json=await response.json();
+   const book=Object.values(json.books||{}).find(b=>b.catalog_url===targetUrl);
+   const entry=book?.manual_cover||{};
+   if(entry.provider!=="github"||entry.repo!=="hub-google/audiobook-generator"||
+      !["automation-state","main"].includes(entry.branch)||!/^manual-covers\/[A-Za-z0-9_/-]+\/master_cover\.jpg$/.test(entry.remote_path))return;
+   const ref="https://raw.githubusercontent.com/"+entry.repo+"/"+entry.branch+"/"+entry.remote_path;
+   const image=await fetch(ref,{cache:"no-store"});
+   if(!image.ok)return;
+   const existing=await image.blob();
+   if((draftBook?.catalog_url||queueTasks().find(t=>t.task_id===currentTaskId)?.catalog_url)!==targetUrl)return;
+   if(blob)return; // never overwrite a user-selected new image
+   await prepare(new File([existing],"previous-cover.jpg",{type:"image/jpeg"}));
+   text($id("manual-cover-status"),"已從雲端載入此書原有手動封面；可直接保留或更換圖片。");
+  }catch{ /* Missing old cover does not prevent manual upload. */ }
+ }
  async function prepare(file){
   if(!file)return;
   if(!["image/jpeg","image/png","image/webp"].includes(file.type))throw Error("只接受 JPG、PNG 或 WEBP");
@@ -30,9 +66,9 @@
   text($id("manual-cover-status"),"已完成 1280×720 中央裁切；JPEG "+(blob.size/1024).toFixed(0)+" KB。可直接按下「送出並套用封面」，無須下載或開啟其他網站。");
  }
  function download(){
-  if(!blob||!currentTaskId)throw Error("請先選擇圖片");
+  if(!blob)throw Error("請先選擇圖片");
   const url=URL.createObjectURL(blob),a=document.createElement("a");
-  a.href=url;a.download="audiobook-"+currentTaskId+"-manual-cover.jpg";
+  a.href=url;a.download="audiobook-"+(currentTaskId||"new-book")+"-manual-cover.jpg";
   document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);
  }
  async function copyImage(){
@@ -46,12 +82,14 @@
   notice("封面已複製到剪貼簿");
  }
  async function submit(){
-  if(!blob||!currentTaskId)throw Error("請先產生手動封面");
+  if(!blob||(!currentTaskId&&!draftBook))throw Error("請先產生手動封面");
   const button=$id("manual-cover-submit");button.disabled=true;
   try{
    text($id("manual-cover-status"),"正在安全上傳封面…");
    const cover_key=await window.audioUploadCover(blob);
-   const request=await window.audioIssueAction("manual_cover",{task_id:currentTaskId,cover_key},"儲存手動封面");
+   const op=currentTaskId?"manual_cover":"manual_cover_prequeue";
+   const payload=currentTaskId?{task_id:currentTaskId,cover_key}:{...draftBook,cover_key};
+   const request=await window.audioIssueAction(op,payload,"儲存手動封面");
    if(!request)throw Error("封面已上傳但尚未送入後端指令");
    $id("manual-cover-dialog").close();
    notice("封面已排入套用工作，請在本頁「雲端操作狀態」查看結果");
