@@ -27,6 +27,8 @@ jobs:
           test -s docs/site/index.html
           test -s docs/site/style.css
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs/site
