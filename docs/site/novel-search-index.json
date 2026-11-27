@@ -1,0 +1,18 @@
+{
+  "updated_at": "2026-11-27",
+  "description": "已核對原網站的小說目錄索引；按書名或作者供唯讀搜尋，不代表已下載章節。",
+  "novels": [
+    {
+      "source_id": "moon17",
+      "title": "萬古第一廢材",
+      "author": "愛哭的小十七",
+      "catalog_url": "https://www.17moon.com/book/JFM/"
+    },
+    {
+      "source_id": "twkan",
+      "title": "萬古第一廢材",
+      "author": "愛哭的小十七",
+      "catalog_url": "https://twkan.com/book/29813.html"
+    }
+  ]
+}
