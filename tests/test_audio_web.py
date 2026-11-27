@@ -140,3 +140,15 @@ def test_69shuba_ranking_has_real_data_export_and_read_only_browser_view():
     assert "async function loadRanking()" in js
     assert "async function copyRankingUrls()" in js
     assert "async function addRankingToQueue()" not in js
+
+
+def test_github_pages_only_uses_issue_bridge_no_browser_pat():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    assert 'id="token"' not in html
+    assert 'src="./bridge.js"' in html
+    assert 'headers.Authorization="Bearer "' not in js
+    assert 'AUDIO-COMMAND-V1' in bridge
+    assert "hub-google/audiobook-generator/issues/new" in bridge
+    assert 'window.addRankingToQueue=async function()' in bridge
