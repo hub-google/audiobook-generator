@@ -73,13 +73,17 @@ def check_original_media():
             (root / folder).mkdir()
         mp3 = root / "voice.mp3"
         wav = root / "Audio/Acceptance_chapter_1.wav"
+        print("Media stage: Edge TTS", flush=True)
         asyncio.run(speak(mp3))
+        print("Media stage: FFmpeg audio", flush=True)
         subprocess.run(
             ["ffmpeg", "-v", "error", "-y", "-i", str(mp3), "-ar", "24000",
              "-ac", "1", str(wav)],
             timeout=45, check=True,
         )
+        print("Media stage: validate WAV", flush=True)
         validate_wav(wav)
+        print("Media stage: generate SRT", flush=True)
         generate_chapter_srt([str(wav)], [original], str(root / "Subtitles/Acceptance_chapter_1.srt"))
         (root / "RawText/Acceptance_chapter_1_raw.txt").write_text(
             "第一章 原創測試\\n" + original, encoding="utf-8"
@@ -87,6 +91,7 @@ def check_original_media():
         Image.new("RGB", (1280, 720), "navy").save(
             root / "Images/Acceptance_chapter_1.jpg", "JPEG"
         )
+        print("Media stage: generate MP4", flush=True)
         video, duration = generate_chapter_video(
             "Acceptance", str(wav), str(root), str(root / "Video"), []
         )
@@ -107,6 +112,8 @@ def main():
             # Do not include untrusted external response messages, which can
             # sometimes echo HTTP headers or account data.
             failures.append(name)
+            if name == "TTS and video" and isinstance(exc, FileNotFoundError):
+                print("Missing media executable/file: " + str(exc.filename or exc)[:160], flush=True)
             print(f"{name}: FAIL ({type(exc).__name__})", flush=True)
     if failures:
         raise SystemExit("External verification incomplete: " + ", ".join(failures))
