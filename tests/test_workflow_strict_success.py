@@ -235,7 +235,8 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
             item for item in self.jobs["process_chapters"]["steps"]
             if item.get("name") == "Run Per-Chapter End-to-End Pipeline (Real-Time Saving)"
         )
-        self.assertIn("python src/worker_pipeline.py", step["run"])
+        self.assertIn("python -m tools.audio_live_capture", step["run"])
+        self.assertIn("python -u src/worker_pipeline.py --stage pipeline", step["run"])
         self.assertNotIn("for attempt in 1 2 3", step["run"])
         self.assertEqual(step.get("if"), "steps.artifact_restore.outputs.complete != 'true'")
 
