@@ -53,3 +53,35 @@ def test_manual_cover_accepts_only_github_native_image_uploads():
         cover_attachment_url("https://untrusted.invalid/my.jpg")
     with pytest.raises(ValueError):
         cover_attachment_url(valid+" "+valid)
+
+
+def test_queue_mutations_are_idempotent_by_issue_number():
+    from src.cloud_queue import empty_queue,new_task
+    from tools.audio_issue_command import apply_command
+    task=new_task("https://69shuba.com/book/100/","Sample",1,3)
+    class Store:
+        def __init__(self):
+            self.queue=empty_queue()
+            self.queue["queue"]=[task]
+        def load(self):
+            return self.queue,None
+        def mutate(self,fn,msg):
+            self.queue=fn(self.queue)
+    store=Store()
+    request={"op":"status","data":{"task_id":task["task_id"],"status":"paused"}}
+    first,dispatch=apply_command(request,store,None,239,"none","owner/repo")
+    assert dispatch is True
+    revision=store.queue["revision"]
+    assert 239 in store.queue["web_applied_issue_ids"]
+    second,dispatch=apply_command(request,store,None,239,"none","owner/repo")
+    assert dispatch is False
+    assert store.queue["revision"]==revision
+    assert "Already processed" in second
+
+
+def test_duplicate_detection_cannot_disable_all_conditions():
+    from tools.audio_issue_command import checked_detection
+    with pytest.raises(ValueError):
+        checked_detection({"use_normalized_number":False,"use_chapter_name":False,
+                           "use_number_and_name":False})
+    assert checked_detection({"use_chapter_name":True})["use_chapter_name"] is True

@@ -36,9 +36,26 @@ TASK_FIELDS = {
     "book_title", "start_chapter", "end_chapter", "excluded_chapters",
     "renumber_selected", "chapter_title_overrides", "chapter_normalized_number_overrides",
     "chapter_order", "publish_at", "duplicate_chapter_count",
+    "duplicate_detection",
     "catalog_identity",
 }
 WRITE_ROLES = {"admin", "maintain", "write"}
+
+
+def checked_detection(value):
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("Duplicate detection conditions must be an object")
+    result = {
+        "use_normalized_number": bool(value.get("use_normalized_number", True)),
+        "use_chapter_name": bool(value.get("use_chapter_name", True)),
+        "use_number_and_name": bool(value.get("use_number_and_name", False)),
+    }
+    if not any(result.values()):
+        raise ValueError("Select at least one duplicate detection condition")
+    return result
+
 
 
 def decode_command(body):
@@ -151,6 +168,9 @@ def build_book(entry, issue_number):
         publish_at=entry.get("publish_at"),
     )
     task["request_issue"] = issue_number
+    detection = checked_detection(entry.get("duplicate_detection"))
+    if detection is not None:
+        task["duplicate_detection"] = detection
     return task
 
 
@@ -186,7 +206,7 @@ def apply_command(command, store, profiles, issue_number, token, repo):
     if operation in {"edit", "requeue", "review", "cancel"} and len(ids) != 1:
         raise ValueError("This operation requires one task")
 
-    def mutate(q):
+    def apply_mutation(q):
         q = normalize_queue(q)
         if any(t.get("request_issue") == issue_number for t in q.get("queue", []) + q.get("completed", [])):
             return q
@@ -250,6 +270,8 @@ def apply_command(command, store, profiles, issue_number, token, repo):
             )
             if "book_title" in changes:
                 q = update_task(q,ids[0],book_title=str(changes["book_title"])[:160])
+            if "duplicate_detection" in changes:
+                q = update_task(q,ids[0],duplicate_detection=checked_detection(changes["duplicate_detection"]))
             return q
         if operation == "review":
             task = targets[0]
@@ -270,13 +292,29 @@ def apply_command(command, store, profiles, issue_number, token, repo):
             run_ids = {v for v in (
                 task.get("run_id"),task.get("scrape_run_id"),task.get("cover_run_id"),task.get("processing_run_id")
             ) if isinstance(v,int) and v>0}
+            if not run_ids:
+                raise ValueError("No GitHub Actions run exists to cancel")
             for run_id in run_ids:
+                current = api("GET", f"actions/runs/{run_id}", token, repo)
+                if current.get("status") == "completed":
+                    continue
                 try:
-                    api("POST",f"actions/runs/{run_id}/force-cancel",token,repo)
+                    api("POST", f"actions/runs/{run_id}/cancel", token, repo)
                 except RuntimeError:
-                    pass # a completed Run returns 409; queue state is still settled
-            return update_task(q,ids[0],status="stopped",reason="user_cancelled")
+                    api("POST", f"actions/runs/{run_id}/force-cancel", token, repo)
+            # The dispatcher observes terminal Runs and settles the final state;
+            # never claim stopped before GitHub confirms the cancellation.
+            return update_task(q,ids[0],status="canceling",reason="user_cancelled")
         raise ValueError("Unsupported operation")
+
+    def mutate(q):
+        q = normalize_queue(q)
+        applied = q.get("web_applied_issue_ids") or []
+        if issue_number in applied:
+            return q
+        result = apply_mutation(q)
+        result["web_applied_issue_ids"] = applied + [issue_number]
+        return result
 
     # Save profile first for edits/reviews, as the desktop GUI persists the
     # same text-cleaner rules for future runs of this book.
@@ -287,13 +325,26 @@ def apply_command(command, store, profiles, issue_number, token, repo):
             raise ValueError("Task not found")
         profile_changes = (values.get("changes") or {}) if operation=="edit" else {}
         profiles.mutate(lambda p: update_book_profile(
-            p,task["catalog_url"],task["book_title"],
+            p,task["catalog_url"],profile_changes.get("book_title",task["book_title"]),
             cleaner_remove_patterns=values.get("remove_patterns") if operation=="review" else None,
             chapter_title_overrides=profile_changes.get("chapter_title_overrides") if operation=="edit" else None,
             chapter_normalized_number_overrides=profile_changes.get("chapter_normalized_number_overrides") if operation=="edit" else None,
-            duplicate_detection=values.get("duplicate_detection") if operation=="edit" else None,
+            duplicate_detection=checked_detection(profile_changes.get("duplicate_detection")) if operation=="edit" else None,
         ),f"AUDIO issue #{issue_number} update profile")
+    old, _ = store.load()
+    already_applied = issue_number in (old.get("web_applied_issue_ids") or [])
+    if already_applied:
+        return f"Already processed issue #{issue_number}", False
     store.mutate(mutate,f"AUDIO issue #{issue_number}: {operation}")
+    if operation in {"enqueue", "batch_add"}:
+        for task in new_books:
+            if task.get("duplicate_detection") or task.get("chapter_title_overrides") or task.get("chapter_normalized_number_overrides"):
+                profiles.mutate(lambda p, t=task: update_book_profile(
+                    p, t["catalog_url"], t["book_title"],
+                    duplicate_detection=t.get("duplicate_detection"),
+                    chapter_title_overrides=t.get("chapter_title_overrides"),
+                    chapter_normalized_number_overrides=t.get("chapter_normalized_number_overrides"),
+                ), f"AUDIO issue #{issue_number} persist chapter profile")
     return f"Completed {operation} ({len(ids) if ids else len(new_books)} book(s))",operation in {
         "enqueue","batch_add","requeue","status","review"
     }
