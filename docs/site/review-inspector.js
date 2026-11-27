@@ -52,7 +52,7 @@
   const q=$("review-search").value.trim().toLowerCase(),kind=$("review-kind").value,status=$("review-state").value;
   const rows=editedCandidates().filter(c=>{
    const removed=patterns().includes(c.text);
-   return (!q||String(c.text+" "+c.reason).toLowerCase().includes(q))&&
+   return (!q||String([c.text,c.kind,c.reason].filter(Boolean).join(" ")).toLowerCase().includes(q))&&
      (!kind||kind===c.kind)&&(!status||(status==="remove"?removed:!removed));
   });
   if(sortKey){const value=c=>sortKey==="decision"?Number(patterns().includes(c.text)):sortKey==="chapters"?(c.affected_chapters||[]).map(n=>String(n).padStart(8,"0")).join(","):c[sortKey]??"";rows.sort((a,b)=>{const x=value(a),y=value(b);return (sortDescending?-1:1)*(typeof x==="number"&&typeof y==="number"?x-y:String(x).localeCompare(String(y),"zh-Hant",{numeric:true}));});}return rows;
