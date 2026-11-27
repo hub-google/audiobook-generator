@@ -20,10 +20,9 @@
 <main class="main">
 <header class="topbar"><div><h1 id="page-title">製作總覽</h1><p class="muted" id="page-subtitle">同步 GitHub 雲端佇列與製作進度</p></div><div class="toolbar"><span id="connection-pill" class="pill">尚未連線</span><button type="button" id="refresh-btn" class="secondary">重新整理</button></div></header>
 <div id="message" role="status" aria-live="polite" class="notice hidden"></div>
-<section class="access-panel">
-<div><strong>GitHub 授權</strong><p class="muted">請輸入有此 Repo「Contents 讀寫、Actions 讀寫」權限的 Fine-grained Token。只保留在此頁的記憶體中，重新整理即清除，不會儲存在 Pages。</p></div>
-<div class="token-row"><input type="password" id="token" aria-label="GitHub Token" placeholder="github_pat_... 或 ghp_..." autocomplete="off" spellcheck="false"><button id="connect-btn">連線</button><button id="disconnect-btn" class="secondary">登出</button></div>
-</section>
+<section class="access-panel"><div><strong>免 Token · GitHub 安全登入操作</strong>
+<p class="muted">不需要輸入任何 API 金鑰。按下新增、編輯、取消或審核時，開啟 GitHub 操作確認頁；請按「Submit new issue」，後端 Actions 會核對你的 Repo 權限並執行。此頁只讀取公開進度，沒有可被 F12 查出的金鑰。</p></div>
+<a class="github-signin secondary" href="https://github.com/hub-google/audiobook-generator/issues" target="_blank" rel="noopener noreferrer">查看操作結果</a></section>
 <section id="overview" class="tab active">
 <div class="metrics"><article class="metric"><span>排隊中</span><strong id="count-queued">—</strong></article><article class="metric"><span>進行中 / 待審</span><strong id="count-active">—</strong></article><article class="metric"><span>已完成</span><strong id="count-completed">—</strong></article><article class="metric"><span>最近更新</span><strong class="smaller" id="updated-at">—</strong></article></div>
 <div class="section-head"><div><h2>小說工作佇列</h2><p>依雲端排程順序排列。正在執行的作業不可直接刪除或移動。</p></div><button id="dispatch-btn" class="secondary">執行一次調度檢查</button></div>
@@ -74,7 +73,7 @@
 <div class="table-wrap ranking-list"><table><thead><tr><th>選取</th><th>排名</th><th>小說</th><th>作者</th><th>分類</th><th>最新章節</th></tr></thead>
 <tbody id="rank-body"><tr><td colspan="6" class="empty">正在讀取公開排行…</td></tr></tbody></table></div>
 <div class="form-foot"><p class="muted">可選取多本作品；複製網址不需要任何授權。</p>
-<div class="inline-actions"><button id="rank-copy" type="button" class="secondary">複製已選網址</button>
+<div class="inline-actions"><button id="rank-copy" type="button" class="secondary">複製已選網址</button><button id="rank-add" type="button">將已選小說加入完整製作佇列</button>
 </div></div>
 </section>
 <section class="form-card"><h3>批次加入小說</h3><p class="muted">每行一個「書名 | 網址 | 起始章 | 結束章」。未填章數時預設 1–10。</p><textarea rows="5" id="batch-urls" placeholder="測試小說 | https://czbooks.net/n/xxxxx | 1 | 10"></textarea><div class="form-foot"><span></span><button id="batch-btn" class="secondary" type="button">批次加入</button></div></section>
@@ -135,5 +134,5 @@
 <footer>資料由 GitHub API 即時讀取；GitHub Pages 不會在瀏覽器執行 Python、TTS 或影片轉檔。</footer>
 </main>
 </div>
-<script src="./app.js" defer></script>
+<script src="./app.js" defer></script><script src="./bridge.js" defer></script>
 </body></html>

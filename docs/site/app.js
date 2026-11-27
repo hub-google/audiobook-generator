@@ -21,7 +21,7 @@ function fromB64(value){const raw=atob(value.replace(/\s/g,""));return new TextD
 function getSource(url){let parsed;try{parsed=new URL(url)}catch{throw new Error("請輸入有效的小說網址");}if(!["http:","https:"].includes(parsed.protocol)||parsed.username||parsed.password)throw new Error("僅接受 HTTP(S) 網址");const source=SOURCES.find(s=>s.hosts.includes(parsed.hostname.toLowerCase()));if(!source)throw new Error("目前不支援此網址的網站");return source;}
 async function request(path,options={}){
  const headers={"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28",...(options.headers||{})};
- if(token)headers.Authorization="Bearer "+token;
+ // Repository reads are public; no browser credentials.
  const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),35000);
  let response;
  try{response=await fetch(path.startsWith("https://")?path:API+path,{...options,headers,signal:controller.signal,cache:"no-store"});}
@@ -43,7 +43,7 @@ function statusName(s){return({queued:"排隊中",paused:"已暫停",preparing_a
 function statusClass(s){return s==="completed"?"done":["waiting_review","needs_attention"].includes(s)?"review":["stopped","interrupted"].includes(s)?"error":live({status:s})?"running":"";}
 function stageBadge(task,name){const s=task.stages?.[name]?.status||"pending";return({completed:"✓",running:"進行中",dispatching:"啟動中",failed:"失敗",pending:"待執行",skipped:"略過"})[s]||s;}
 function canEdit(task){return !active(task)&&["queued","paused","interrupted","stopped"].includes(task.status);}
-function makeBtn(label,action,id,disabled=false,authRequired=true){const b=document.createElement("button");b.type="button";b.textContent=label;b.className="secondary";b.disabled=disabled||(authRequired&&!token);b.addEventListener("click",()=>Promise.resolve().then(()=>action(id)).catch(e=>notice(e.message,"error")));return b;}
+function makeBtn(label,action,id,disabled=false,authRequired=true){const b=document.createElement("button");b.type="button";b.textContent=label;b.className="secondary";b.disabled=disabled;b.addEventListener("click",()=>Promise.resolve().then(()=>action(id)).catch(e=>notice(e.message,"error")));return b;}
 function buildTaskRow(task,index){
  const tr=document.createElement("tr"),col=(value)=>{const td=document.createElement("td");td.textContent=value;tr.append(td);return td;};
  const first=col((index+1)+". "+(task.book_title||"待解析"));const url=document.createElement("small");url.textContent=task.catalog_url||"";first.append(url);
@@ -60,7 +60,7 @@ function buildTaskRow(task,index){
   div.append(makeBtn("↑",id=>moveTask(id,-1),task.task_id,index===0||!canEdit(task)||!canEdit(queueTasks()[index-1])));
   div.append(makeBtn("↓",id=>moveTask(id,1),task.task_id,index===queueTasks().length-1||!canEdit(task)||!canEdit(queueTasks()[index+1])));
   if(task.status==="queued")div.append(makeBtn("暫停",id=>setTaskState(id,"paused"),task.task_id));
-  else div.append(makeBtn("重新排程",id=>setTaskState(id,"queued"),task.task_id));
+  else div.append(makeBtn("重新排程",requeueTask,task.task_id));
   if(["paused","interrupted","stopped"].includes(task.status))div.append(makeBtn("標為已完成",markCompleted,task.task_id));
   div.append(makeBtn("刪除",deleteTask,task.task_id));
  }
@@ -79,9 +79,9 @@ function renderQueue(){
 }
 async function refresh(){
  try{const res=await readQueue();queue=res.data;queueSha=res.sha;renderQueue();
-  try{const data=await request("/actions/runs?per_page=35");latestRuns=data.workflow_runs||[];renderRuns();}catch(error){if(token)notice("Actions 紀錄載入失敗："+error.message,"error");}
+  try{const data=await request("/actions/runs?per_page=35");latestRuns=data.workflow_runs||[];renderRuns();}catch(error){notice("Actions 紀錄載入失敗："+error.message,"error");}
   renderRanking();
-  $("connection-pill").textContent=token?"已連線":"唯讀模式";$("connection-pill").className="pill "+(token?"ok":"warn");
+  $("connection-pill").textContent="GitHub 登入操作";$("connection-pill").className="pill ok";
  }catch(e){notice("同步失敗："+e.message,"error");}
 }
 async function connect(){
@@ -525,11 +525,11 @@ function switchTab(which){
  const headings={overview:["製作總覽","同步 GitHub 雲端佇列與製作進度"],create:["新增小說","支援九個來源，透過雲端解析章節與排程"],runs:["製作紀錄","GitHub Actions 即時執行狀態"]};
  text($("page-title"),headings[which][0]);text($("page-subtitle"),headings[which][1]);
 }
-function bind(id,event,fn){$(id).addEventListener(event,e=>Promise.resolve().then(()=>fn(e)).catch(err=>notice(err.message,"error")));}
+function bind(id,event,fn){const el=$(id);if(el)el.addEventListener(event,e=>Promise.resolve().then(()=>fn(e)).catch(err=>notice(err.message,"error")));}
 document.addEventListener("DOMContentLoaded",()=>{
  const select=$("source");SOURCES.forEach(s=>{const opt=document.createElement("option");opt.value=s.id;opt.textContent=s.name;select.append(opt);});
  document.querySelectorAll(".nav").forEach(b=>b.addEventListener("click",()=>switchTab(b.dataset.tab)));
- bind("connect-btn","click",connect);bind("disconnect-btn","click",()=>{token="";$("token").value="";notice("已清除本頁 GitHub Token");refresh();});
+ // No PAT input; GitHub itself confirms every write operation.
  bind("refresh-btn","click",refresh);bind("dispatch-btn","click",triggerDispatcher);bind("book-form","submit",submitBook);
  bind("batch-btn","click",batchAdd);bind("parse-btn","click",parseCatalog);
  bind("edit-form","submit",saveEditor);bind("review-form","submit",saveReview);
