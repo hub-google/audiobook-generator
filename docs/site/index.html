@@ -20,9 +20,9 @@
 <main class="main">
 <header class="topbar"><div><h1 id="page-title">製作總覽</h1><p class="muted" id="page-subtitle">同步 GitHub 雲端佇列與製作進度</p></div><div class="toolbar"><span id="connection-pill" class="pill">尚未連線</span><button type="button" id="refresh-btn" class="secondary">重新整理</button></div></header>
 <div id="message" role="status" aria-live="polite" class="notice hidden"></div>
-<section class="access-panel"><div><strong>免 Token · GitHub 安全登入操作</strong>
-<p class="muted">不需要輸入任何 API 金鑰。按下新增、編輯、取消或審核時，開啟 GitHub 操作確認頁；請按「Submit new issue」，後端 Actions 會核對你的 Repo 權限並執行。此頁只讀取公開進度，沒有可被 F12 查出的金鑰。</p></div>
-<a class="github-signin secondary" href="https://github.com/hub-google/audiobook-generator/issues" target="_blank" rel="noopener noreferrer">查看操作結果</a></section>
+<section class="access-panel"><div><strong>免 API Token · 站內安全操作</strong>
+<p class="muted">新增、編輯、取消與審核都在本頁操作，無須開啟 GitHub Issue。首次修改雲端資料需透過授權 Email 驗證管理員身分；API 金鑰保留於後端，GitHub Actions 在背景依序處理。</p></div>
+<div class="inline-actions"><span id="audio-auth-status" class="muted">尚未登入</span><button id="audio-operations-show" type="button" class="secondary">查看操作狀態</button></div></section>
 <section id="overview" class="tab active">
 <div class="metrics"><article class="metric"><span>排隊中</span><strong id="count-queued">—</strong></article><article class="metric"><span>進行中 / 待審</span><strong id="count-active">—</strong></article><article class="metric"><span>已完成</span><strong id="count-completed">—</strong></article><article class="metric"><span>最近更新</span><strong class="smaller" id="updated-at">—</strong></article></div>
 <div class="section-head"><div><h2>小說工作佇列</h2><p>依雲端排程順序排列。正在執行的作業不可直接刪除或移動。</p></div><button id="dispatch-btn" class="secondary">執行一次調度檢查</button></div>
@@ -70,7 +70,7 @@
 </section>
 <form id="book-form" class="form-card">
 <div class="form-grid"><label>小說來源<select id="source" required></select></label><label class="wide">小說網址<input type="url" id="catalog-url" placeholder="貼上書籍、目錄或章節網址" required></label></div>
-<div class="inline-actions"><button type="button" id="parse-btn" class="secondary">解析網站目錄</button><span class="muted" id="parse-status">解析將交由 GitHub Actions 執行；按鈕會開啟 GitHub 登入確認頁</span></div>
+<div class="inline-actions"><button type="button" id="parse-btn" class="secondary">解析網站目錄</button><span class="muted" id="parse-status">解析由雲端 Actions 背景執行，結果將自動顯示在本頁</span></div>
 <div id="catalog-preview" class="catalog-preview hidden"></div>
 <div id="chapter-selection-tools" class="inline-actions hidden">
 <button id="open-chapter-picker" type="button" class="secondary">從完整目錄勾選／排除章節</button>
@@ -198,7 +198,7 @@
 <div class="inline-actions"><button id="batch-cover-generate" type="button">產生選取小說的封面資訊</button>
 <label>備用：手動匯入 Actions 結果 JSON／ZIP<input id="batch-cover-result-file" type="file" accept=".json,.zip,application/json,application/zip"></label>
 <a href="https://github.com/hub-google/audiobook-generator/actions/workflows/audio-batch-cover-info.yml" target="_blank" rel="noopener noreferrer">查看封面資訊執行紀錄</a></div>
-<p id="batch-cover-summary" class="muted">GitHub 送出操作後將自動載入封面資訊，重新開啟此視窗仍可接續查詢。</p>
+<p id="batch-cover-summary" class="muted">站內送出操作後將自動載入封面資訊，重新開啟此視窗仍可接續查詢。</p>
 <div class="batch-cover-layout"><div id="batch-cover-book-list" class="batch-cover-list" aria-label="選取小說"></div>
 <div class="batch-cover-right"><h3 id="batch-cover-selected-title">小說資訊</h3><div class="review-texts">
 <div><strong>Gemini 小說架構／視覺分析</strong><pre id="batch-cover-analysis">等待資料</pre></div>
@@ -210,14 +210,14 @@
 <dialog id="manual-cover-dialog" class="editor-dialog" aria-labelledby="manual-cover-title">
 <h2 id="manual-cover-title">手動封面 · 1280×720</h2>
 <p id="manual-cover-book" class="muted"></p>
-<p class="muted">圖片只在此瀏覽器本機中央裁切、轉成 JPEG。為避免把 GitHub 寫入權限交給網頁，請將下載的 JPEG 拖到 GitHub Issue 編輯器內，再送出。後端 Actions 驗證並儲存至書籍 Profile，影片製作會優先使用此圖。</p>
+<p class="muted">圖片在瀏覽器本機裁切成 JPEG，按「送出並套用封面」後會安全上傳至後端，再由 GitHub Actions 套用至小說設定。不須開啟 GitHub 或手動附圖。</p>
 <label>選取 JPG、PNG、WEBP 圖片<input type="file" accept="image/jpeg,image/png,image/webp" id="manual-cover-file"></label>
 <canvas id="manual-cover-canvas" width="1280" height="720" aria-label="手動封面中央裁切預覽"></canvas>
 <p id="manual-cover-status" class="muted">請先選擇封面圖片</p>
 <div class="dialog-actions"><button id="manual-cover-close" type="button" class="secondary">取消</button>
 <button id="manual-cover-download" type="button" class="secondary" disabled>下載裁切後 JPEG</button>
-<button id="manual-cover-copy" type="button" class="secondary" disabled>複製圖片以貼到 GitHub</button>
-<button id="manual-cover-submit" type="button" disabled>前往 GitHub 送出封面</button></div>
+<button id="manual-cover-copy" type="button" class="secondary" disabled>複製 JPEG 圖片</button>
+<button id="manual-cover-submit" type="button" disabled>送出並套用封面</button></div>
 </dialog>
 <dialog id="review-dialog" class="editor-dialog review-wide" aria-labelledby="review-title">
 <form id="review-form"><h2 id="review-title">文字清理、Raw/Clean 抽查與封面審核</h2>
@@ -275,5 +275,5 @@
 <footer>資料由 GitHub API 即時讀取；GitHub Pages 不會在瀏覽器執行 Python、TTS 或影片轉檔。</footer>
 </main>
 </div>
-<script src="./app.js?v=20261127-search3" defer></script><script src="./bridge.js" defer></script><script src="./novel-search.js?v=20261127-search3" defer></script><script src="./cleaner-parity.js" defer></script><script src="./review-inspector.js" defer></script><script src="./manual-cover.js" defer></script><script src="./batch-cover.js" defer></script>
+<script src="./app.js?v=20261127-ops3" defer></script><script src="./auth.js?v=20261127-ops3" defer></script><script src="./bridge.js?v=20261127-ops3" defer></script><script src="./novel-search.js?v=20261127-ops3" defer></script><script src="./cleaner-parity.js" defer></script><script src="./review-inspector.js?v=20261127-ops3" defer></script><script src="./manual-cover.js?v=20261127-ops3" defer></script><script src="./batch-cover.js?v=20261127-ops3" defer></script><script src="./external-info.js?v=20261127-ops3" defer></script>
 </body></html>
