@@ -195,3 +195,11 @@ def test_artifact_download_links_use_github_native_pages():
     assert 'id="progress-artifacts"' in html
     assert 'makeBtn("成品下載",showProgress' in js
     assert '/artifacts/"+encodeURIComponent(item.id)' in js
+
+
+def test_click_handlers_explicitly_bind_new_tokenless_issue_bridge():
+    js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    for name in ("triggerDispatcher","submitBook","batchAdd","parseCatalog","saveEditor","saveReview"):
+        assert "window."+name in js
+    for name in ("cancelRunningTask","markCompleted","restoreCompleted","deleteTask","setTaskState","requeueTask"):
+        assert "window."+name in js

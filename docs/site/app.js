@@ -58,17 +58,17 @@ function buildTaskRow(task,index){
  const controls=col(""),div=document.createElement("div");div.className="actions";controls.append(div);
  div.append(makeBtn("進度",showProgress,task.task_id,false,false));
  div.append(makeBtn("成品下載",showProgress,task.task_id,false,false));
- if(["queued","paused","waiting_review","preparing_assets","needs_attention"].includes(task.status))div.append(makeBtn("手動封面",openManualCover,task.task_id));
- if(live(task))div.append(makeBtn("取消本次 Run",cancelRunningTask,task.task_id));
- if(task.status==="waiting_review"){div.append(makeBtn("查看審核資料",async()=>{window.open("https://github.com/"+REPO+"/actions/runs/"+(task.cover_run_id||task.run_id),"_blank","noopener");},task.task_id,false,false));div.append(makeBtn("確認審核並繼續",openReview,task.task_id,false));}
+ if(["queued","paused","waiting_review","preparing_assets","needs_attention"].includes(task.status))div.append(makeBtn("手動封面",window.openManualCover,task.task_id));
+ if(live(task))div.append(makeBtn("取消本次 Run",window.cancelRunningTask,task.task_id));
+ if(task.status==="waiting_review"){div.append(makeBtn("查看審核資料",async()=>{window.open("https://github.com/"+REPO+"/actions/runs/"+(task.cover_run_id||task.run_id),"_blank","noopener");},task.task_id,false,false));div.append(makeBtn("確認審核並繼續",window.openReview,task.task_id,false));}
  if(["queued","paused","interrupted","stopped"].includes(task.status)){
   div.append(makeBtn("編輯",openEditor,task.task_id,!canEdit(task)));
-  div.append(makeBtn("↑",id=>moveTask(id,-1),task.task_id,index===0||!canEdit(task)||!canEdit(queueTasks()[index-1])));
-  div.append(makeBtn("↓",id=>moveTask(id,1),task.task_id,index===queueTasks().length-1||!canEdit(task)||!canEdit(queueTasks()[index+1])));
-  if(task.status==="queued")div.append(makeBtn("暫停",id=>setTaskState(id,"paused"),task.task_id));
-  else div.append(makeBtn("重新排程",requeueTask,task.task_id));
-  if(["paused","interrupted","stopped"].includes(task.status))div.append(makeBtn("標為已完成",markCompleted,task.task_id));
-  div.append(makeBtn("刪除",deleteTask,task.task_id));
+  div.append(makeBtn("↑",id=>window.moveTask(id,-1),task.task_id,index===0||!canEdit(task)||!canEdit(queueTasks()[index-1])));
+  div.append(makeBtn("↓",id=>window.moveTask(id,1),task.task_id,index===queueTasks().length-1||!canEdit(task)||!canEdit(queueTasks()[index+1])));
+  if(task.status==="queued")div.append(makeBtn("暫停",id=>window.setTaskState(id,"paused"),task.task_id));
+  else div.append(makeBtn("重新排程",window.requeueTask,task.task_id));
+  if(["paused","interrupted","stopped"].includes(task.status))div.append(makeBtn("標為已完成",window.markCompleted,task.task_id));
+  div.append(makeBtn("刪除",window.deleteTask,task.task_id));
  }
  return tr;
 }
@@ -93,7 +93,7 @@ function renderQueue(){
  const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.checked=selectedCompleted.has(t.task_id);
  checkbox.setAttribute("aria-label","選取已完成 "+(t.book_title||"小說"));
  checkbox.addEventListener("change",()=>{if(checkbox.checked)selectedCompleted.add(t.task_id);else selectedCompleted.delete(t.task_id);updateBatchStatus();});
- const name=document.createElement("strong");name.textContent=t.book_title||"未知小說";const status=document.createElement("span");status.className="muted";status.textContent=dateLabel(t.completed_at||t.updated_at);const restore=makeBtn("移回佇列",restoreCompleted,t.task_id);const download=makeBtn("成品下載",showProgress,t.task_id,false,false);row.append(checkbox,name,status,download,restore);list.append(row);});
+ const name=document.createElement("strong");name.textContent=t.book_title||"未知小說";const status=document.createElement("span");status.className="muted";status.textContent=dateLabel(t.completed_at||t.updated_at);const restore=makeBtn("移回佇列",window.restoreCompleted,t.task_id);const download=makeBtn("成品下載",showProgress,t.task_id,false,false);row.append(checkbox,name,status,download,restore);list.append(row);});
  updateBatchStatus();
 }
 async function refresh(){
@@ -560,9 +560,9 @@ document.addEventListener("DOMContentLoaded",()=>{
  const select=$("source");SOURCES.forEach(s=>{const opt=document.createElement("option");opt.value=s.id;opt.textContent=s.name;select.append(opt);});
  document.querySelectorAll(".nav").forEach(b=>b.addEventListener("click",()=>switchTab(b.dataset.tab)));
  // No PAT input; GitHub itself confirms every write operation.
- bind("refresh-btn","click",refresh);bind("dispatch-btn","click",triggerDispatcher);bind("book-form","submit",submitBook);
- bind("batch-btn","click",batchAdd);bind("parse-btn","click",parseCatalog);
- bind("edit-form","submit",saveEditor);bind("review-form","submit",saveReview);
+ bind("refresh-btn","click",refresh);bind("dispatch-btn","click",window.triggerDispatcher);bind("book-form","submit",window.submitBook);
+ bind("batch-btn","click",window.batchAdd);bind("parse-btn","click",window.parseCatalog);
+ bind("edit-form","submit",window.saveEditor);bind("review-form","submit",window.saveReview);
  bind("open-chapter-picker","click",openChapterPicker);bind("chapter-search","input",renderChapterPicker);
  bind("chapter-all","click",()=>pickerBulk("all"));bind("chapter-none","click",()=>pickerBulk("none"));bind("chapter-invert","click",()=>pickerBulk("invert"));
  bind("chapter-picker-save","click",saveChapterPicker);
