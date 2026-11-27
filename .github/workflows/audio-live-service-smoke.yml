@@ -21,6 +21,8 @@ jobs:
         with: {python-version: '3.11', cache: pip}
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Install FFmpeg required by production media pipeline
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
       - name: Check HF archive, YouTube OAuth, and original TTS/MP4 production
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
