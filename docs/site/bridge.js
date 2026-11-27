@@ -107,7 +107,10 @@
   ensurePanel();document.getElementById("audio-operation-panel").classList.remove("hidden");
   void syncOperations();
  };
- document.addEventListener("DOMContentLoaded",ensurePanel);
+ document.addEventListener("DOMContentLoaded",()=>{
+  ensurePanel();
+  document.getElementById("audio-operations-show")?.addEventListener("click",window.audioShowOperationPanel);
+ });
  window.exportArtifacts=async function(taskId){
   if(!taskId)throw Error("請先選擇小說");
   send("export_artifacts",{task_ids:[taskId]},"整包下載小說成品");
