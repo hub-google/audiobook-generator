@@ -18,6 +18,7 @@ from src.book_profiles import GitHubBookProfileStore, book_profile_id, update_bo
 from src.cloud_queue import GitHubQueueStore
 from src.cover_assets import normalize_manual_cover, upload_github_cover
 from tools.audio_issue_command import api, apply_command, valid_id, valid_url
+from tools.stage_audio_export import chunk_names, CHUNK_SIZE
 
 # All commands remain in the site; GitHub OIDC verifies the processing workflow.
 # Live integration smoke: download one existing tiny Artifact and its Run logs with protected staging.
@@ -180,14 +181,38 @@ def fetch_artifact(row, token):
     if not matching:
         raise ValueError("No matching, non-expired GitHub Artifact exists for this book")
     item = sorted(matching, key=lambda a: a.get("created_at", ""), reverse=True)[0]
-    if int(item.get("size_in_bytes") or 0) > 45_000_000:
-        raise ValueError("Artifact larger than 45 MB: requires a future chunked download flow")
-    content = _download_run_bytes(f"actions/artifacts/{item['id']}/zip", token)
-    if not zipfile.is_zipfile(io.BytesIO(content)):
-        raise RuntimeError("GitHub Artifact was not a valid ZIP")
     name = f"audio-{kind}-run-{run_id}-artifact-{item['id']}.zip"
-    asset_id = _stage(row["id"], name, "application/zip", content)
-    return f"已取得 {item.get('name')}（{len(content)} bytes）；站內檔案編號 {asset_id}"
+    url = f"https://api.github.com/repos/{REPO}/actions/artifacts/{item['id']}/zip"
+    with tempfile.TemporaryDirectory(prefix="audio-artifact-") as temporary:
+        archive = Path(temporary) / "original.zip"
+        # The original GUI downloads the ZIP directly; write to temporary disk
+        # rather than retaining the whole raw artifact in memory.
+        with requests.get(url, headers={
+            "Authorization": "Bearer " + token,
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }, stream=True, timeout=(20, 120)) as response:
+            response.raise_for_status()
+            with archive.open("wb") as output:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        output.write(chunk)
+        if not zipfile.is_zipfile(archive):
+            raise RuntimeError("GitHub Artifact was not a valid ZIP")
+        size = archive.stat().st_size
+        chunks = list(chunk_names(name, size, CHUNK_SIZE))
+        # Every private asset belongs to the original authenticated user.
+        # Keep an ordered file for Chrome/Edge stream-to-disk downloads.
+        with archive.open("rb") as stream:
+            for index, (filename, offset, count) in enumerate(chunks, 1):
+                if stream.tell() != offset:
+                    raise RuntimeError("Artifact split offset mismatch")
+                contents = stream.read(count)
+                if len(contents) != count:
+                    raise RuntimeError("Artifact unexpectedly truncated")
+                _stage(row["id"], filename, "application/zip", contents)
+                print(f"AUDIO Artifact staged {index}/{len(chunks)}", flush=True)
+    return f"已取得 {item.get('name')}（{size} bytes，{len(chunks)} 片）；可直接在 AUDIO 下載"
 
 
 def fetch_logs(row, token):
