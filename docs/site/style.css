@@ -52,9 +52,9 @@
   border-radius:12px;background:#fff;overflow:hidden}
  #queue-body td{display:block;width:100%;padding:9px 13px;border:0;overflow-wrap:anywhere}
  #queue-body td:first-child{font-size:14px;font-weight:650;padding-top:15px}
- #queue-body td:nth-child(2)::before{content:"章節　";font-size:12px;color:#718096}
- #queue-body td:nth-child(3)::before{content:"狀態　";font-size:12px;color:#718096}
- #queue-body td:nth-child(4)::before{content:"進度　";font-size:12px;color:#718096}
+ #queue-body td:nth-child(2)::before{content:"小說　";font-size:12px;color:#718096}
+ #queue-body td:nth-child(3)::before{content:"章節　";font-size:12px;color:#718096}
+ #queue-body td:nth-child(4)::before{content:"重複章節　";font-size:12px;color:#718096}
  #queue-body td:last-child{padding-top:4px;padding-bottom:15px}
  #queue-body td .actions{max-width:none;flex-wrap:wrap;gap:7px}
  #queue-body td .actions button{white-space:normal}
@@ -149,3 +149,11 @@
 .queue-view-tabs{margin:8px 0 0;gap:4px}.queue-view-tabs button{border-radius:7px 7px 0 0;padding:7px 14px;font-size:13px}
 .topbar>.toolbar{flex:0 0 auto;justify-content:flex-end;gap:6px}.topbar>.toolbar button{white-space:nowrap;font-size:13px;padding:8px 12px}.topbar>div:first-child{min-width:0}
 @media(max-width:680px){#queue-table-wrap,#completed-table-wrap{max-height:none;overflow:visible;scrollbar-gutter:auto}#queue-table-wrap table,#completed-table-wrap table{display:block;table-layout:auto;min-width:0;width:100%}#queue-table-wrap colgroup,#completed-table-wrap colgroup,#completed-table-wrap thead{display:none}#completed-list{display:grid;gap:10px}#completed-table-wrap .completed-item{display:flex;flex-direction:column;align-items:stretch;gap:0;border:1px solid #dfe6f0;border-radius:8px}#completed-table-wrap td{display:block;width:100%;padding:5px 12px;border-bottom:0!important}#completed-table-wrap td:nth-child(2)::before{content:"小說　"}#completed-table-wrap td:nth-child(3)::before{content:"章節　"}#completed-table-wrap td:nth-child(4)::before{content:"重複章節　"}#completed-table-wrap td:nth-child(5)::before{content:"狀態　"}#completed-table-wrap td:nth-child(6)::before{content:"GitHub 查證　"}#completed-table-wrap td:nth-child(7)::before{content:"HF　"}#completed-table-wrap td:nth-child(8)::before{content:"YouTube　"}#completed-table-wrap td:nth-child(9)::before{content:"Run　"}#completed-table-wrap td:nth-child(n)::before{color:#718096;font-size:12px}.topbar>.toolbar{flex-wrap:wrap;justify-content:flex-start}}
+
+/* Clearly separate submitted requests from confirmed queue entries. */
+.audio-submitted-books{border:1px solid #d6e3f5;border-radius:12px;background:#f8fbff;padding:15px 17px;margin:12px 0 18px}
+.audio-submitted-books h3{font-size:15px;margin:0 0 6px}
+.audio-submitted-list{display:grid;gap:8px;margin-top:12px}
+.audio-submitted-item{display:flex;flex-wrap:wrap;align-items:center;gap:10px;background:#fff;border:1px solid #e1e7f0;border-radius:9px;padding:10px 12px;overflow-wrap:anywhere}
+.audio-submitted-item strong{font-size:13px;min-width:0;flex:1 1 160px}
+.audio-submitted-item small{font-size:12px;color:#a33b42;width:100%}
