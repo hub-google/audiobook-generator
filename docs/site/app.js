@@ -454,8 +454,8 @@ function pickerBulk(mode){
 function saveChapterPicker(){
  if(!chapterPickerExcluded)throw Error("尚未開啟選章視窗");
  $("excluded").value=[...chapterPickerExcluded].sort((a,b)=>a-b).join(",");
- const result=chapterPickerOrder.filter(i=>!chapterPickerExcluded.has(i));
  const start=Number($("start-chapter").value),end=Number($("end-chapter").value);
+ const result=chapterPickerOrder.filter(i=>i>=start&&i<=end&&!chapterPickerExcluded.has(i));
  const expected=Array.from({length:end-start+1},(_,i)=>i+start).filter(i=>!chapterPickerExcluded.has(i));
  $("chapter-order").value=result.every((n,i)=>n===expected[i])?"":result.join(",");
  $("renumber").checked=true;

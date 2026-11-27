@@ -227,3 +227,8 @@ def test_chapter_editor_gui_has_full_book_paging_inline_edit_and_duplicate_detai
     assert "chapterPickerOrder=selectedOrder.concat(" in js
     assert 'text($("chapter-page-label")' in js
     assert '$("renumber").checked=true' in js
+
+
+def test_full_book_picker_saves_only_selected_chapter_range():
+    js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    assert "chapterPickerOrder.filter(i=>i>=start&&i<=end&&!chapterPickerExcluded.has(i))" in js
