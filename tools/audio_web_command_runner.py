@@ -235,11 +235,11 @@ def manual_cover_prequeue(row, token):
     values=row["payload"]
     url,title=_draft_cover_data(values)
     key=str(values.get("cover_key") or "")
-    if len(key)>180 or not re.fullmatch(r"[0-9a-f-]{36}/[0-9a-f-]{36}\\.jpg",key):
+    if len(key)>180 or not re.fullmatch(r"[0-9a-f-]{36}/[0-9a-f-]{36}\.jpg",key):
         raise ValueError("Invalid draft cover key")
     from urllib.parse import quote
     content=edge("GET","/cover?key="+quote(key,safe=""),binary=True)
-    if not content.startswith(b"\\xff\\xd8") or len(content)>10_000_000:
+    if not content.startswith(b"\xff\xd8") or len(content)>10_000_000:
         raise ValueError("Invalid JPEG")
     with tempfile.TemporaryDirectory(prefix="audio-draft-cover-") as folder:
         raw=Path(folder)/"input.jpg"
