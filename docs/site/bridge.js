@@ -45,6 +45,69 @@
   setTimeout(()=>URL.revokeObjectURL(url),15000);
   notice("已在 AUDIO 下載："+anchor.download);
  };
+ function groupAssetParts(assets){
+  const groups=new Map();
+  for(const asset of assets){
+   const match=String(asset.filename||"").match(/^(.*\.zip)\.part(\d{5})-of-(\d{5})$/);
+   const base=match?match[1]:asset.filename;
+   if(!groups.has(base))groups.set(base,[]);
+   groups.get(base).push({...asset,_part:match?Number(match[2]):1,
+    _total:match?Number(match[3]):1});
+  }
+  const completed=[];
+  for(const [name,parts] of groups){
+   const count=parts[0]._total;
+   if(parts.some(p=>p._total!==count)||parts.length!==count||
+     parts.some(p=>p._part<1||p._part>count)||
+     new Set(parts.map(p=>p._part)).size!==count)
+    throw Error("整包檔案 "+name+" 尚未完整到達（目前 "+parts.length+"/"+count+" 片）");
+   parts.sort((a,b)=>a._part-b._part);
+   if(parts.some((part,i)=>part._part!==i+1))throw Error("整包 ZIP 分片編號不連續");
+   completed.push({name,parts,bytes:parts.reduce((v,p)=>v+Number(p.bytes||0),0)});
+  }
+  return completed;
+ }
+ window.audioAssetGroups=groupAssetParts;
+ window.audioCombineAssetBlobs=async function(assets){
+  const groups=groupAssetParts(assets);
+  if(groups.length!==1)throw Error("需要指定單一 ZIP 檔案");
+  const blobs=[];
+  for(const item of groups[0].parts)blobs.push(await binaryAsset(item.id));
+  return new Blob(blobs,{type:blobs[0]?.type||"application/zip"});
+ };
+ window.audioSaveAssetGroup=async function(group){
+  if(!group||!group.name||!Array.isArray(group.parts))throw Error("檔案群組無效");
+  let handle=null;
+  // Ask for a file while still inside the original button-click gesture.
+  if(typeof window.showSaveFilePicker==="function"){
+   handle=await window.showSaveFilePicker({suggestedName:group.name,
+    types:[{description:"AUDIO ZIP 或文字檔案",accept:{
+     "application/zip":[".zip"],"text/plain":[".txt"]}}]});
+  }
+  if(handle){
+   const output=await handle.createWritable();
+   try{
+    for(let i=0;i<group.parts.length;i++){
+     const data=await binaryAsset(group.parts[i].id);
+     await output.write(data);
+     notice("AUDIO 下載中："+(i+1)+"/"+group.parts.length+" 片");
+    }
+    await output.close();
+   }catch(error){
+    try{await output.abort()}catch{}
+    throw error;
+   }
+   notice("已下載完整 "+group.name+"（"+(group.bytes/1024/1024).toFixed(1)+" MB）");
+   return;
+  }
+  if(group.bytes>300_000_000)
+    throw Error("目前瀏覽器不支援大型檔案串流儲存；請使用最新版 Chrome／Edge");
+  const zip=await window.audioCombineAssetBlobs(group.parts);
+  const url=URL.createObjectURL(zip),a=document.createElement("a");
+  a.href=url;a.download=group.name;document.body.append(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),30000);
+  notice("已下載完整 "+group.name);
+ };
  window.audioWaitForAsset=async function(requestId,shouldContinue=()=>true){
   for(let i=0;i<240;i++){
    if(!shouldContinue())throw Error("已停止等待本次檔案");
@@ -72,16 +135,21 @@
   if(!["fetch_artifact","fetch_logs","export_artifacts"].includes(row.op)||row.status!=="completed")return;
   try{
    const assets=await window.audioAssetsFor(row.request_id);
-   for(const item of assets){
+   const groups=groupAssetParts(assets);
+   if(!groups.length){
+    const p=document.createElement("small");p.textContent="檔案尚未同步完成；請稍後點選「更新操作狀態」。";
+    container.append(p);return;
+   }
+   for(const group of groups){
     if(!container.isConnected)break;
     const btn=document.createElement("button");btn.type="button";btn.className="secondary";
-    btn.textContent="在 AUDIO 下載 "+item.filename+"（"+(item.bytes/1024/1024).toFixed(1)+"MB）";
-    btn.addEventListener("click",()=>window.audioSaveAsset(item).catch(e=>notice(e.message,"error")));
+    btn.textContent="在 AUDIO 下載完整 "+group.name+"（"+(group.bytes/1024/1024).toFixed(1)+"MB，"+group.parts.length+"片）";
+    btn.addEventListener("click",()=>window.audioSaveAssetGroup(group).catch(e=>notice(e.message,"error")));
     container.append(btn);
    }
-  }catch(e){const p=document.createElement("small");p.textContent="檔案讀取失敗："+e.message;container.append(p);}
+  }catch(e){const p=document.createElement("small");p.textContent="檔案尚未完整："+e.message;container.append(p);}
  }
- function renderOperations(rows){
+  function renderOperations(rows){
   ensurePanel();
   const list=document.getElementById("audio-operation-list");list.replaceChildren();
   const visible=rows.slice(0,15);
