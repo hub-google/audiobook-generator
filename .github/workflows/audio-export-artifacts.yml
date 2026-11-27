@@ -21,6 +21,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.11"}
+      - name: "安裝 ZIP 匯出所需 HTTP 套件"
+        run: python -m pip install requests
       - name: "讀取 GitHub Run Artifacts 並串流打包"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
