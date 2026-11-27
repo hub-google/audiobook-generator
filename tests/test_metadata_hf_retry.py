@@ -9,7 +9,7 @@ from src.metadata_gen import download_ai_image
 
 
 class MetadataHfRetryTests(unittest.TestCase):
-    @patch.dict("os.environ", {"HF_TOKEN": "hf_test-token"})
+    @patch.dict("os.environ", {"HF_TOKEN": "hf_test-token", "COVER_IMAGE_PROVIDER": "hf"})
     @patch("src.metadata_gen.time.sleep")
     @patch("src.metadata_gen.requests.post")
     def test_dns_failure_retries_then_succeeds(self, mock_post, mock_sleep):
@@ -30,7 +30,7 @@ class MetadataHfRetryTests(unittest.TestCase):
         self.assertEqual(mock_post.call_count, 2)
         mock_sleep.assert_called_once_with(1)
 
-    @patch.dict("os.environ", {"HF_TOKEN": "hf_test-token"})
+    @patch.dict("os.environ", {"HF_TOKEN": "hf_test-token", "COVER_IMAGE_PROVIDER": "hf"})
     @patch("src.metadata_gen.time.sleep")
     @patch("src.metadata_gen.requests.post")
     def test_auth_failure_does_not_retry(self, mock_post, mock_sleep):

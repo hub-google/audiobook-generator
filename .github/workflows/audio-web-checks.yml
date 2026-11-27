@@ -65,7 +65,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: '3.11', cache: pip}
       - run: pip install -r requirements.txt
-      - name: "實際測試封面生成（依已設定的服務）"
+      - name: "實際測試 Cloudflare 免費封面生成"
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -73,7 +73,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_WORKERS_FREE_CONFIRMED: ${{ vars.CLOUDFLARE_WORKERS_FREE_CONFIRMED }}
-          COVER_IMAGE_PROVIDER: ${{ vars.COVER_IMAGE_PROVIDER || 'auto' }}
+          COVER_IMAGE_PROVIDER: cloudflare
         run: python -m tools.cover_provider_probe
       - uses: actions/upload-artifact@v4
         if: success()

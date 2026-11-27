@@ -50,6 +50,7 @@ def generate_cloudflare_cover(prompt, width=1280, height=720):
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             json={"prompt": prepare_prompt(prompt), "steps": 4},
             timeout=(10, 120),
+            allow_redirects=False,
         )
     except requests.RequestException:
         raise RuntimeError("Cloudflare 生圖連線失敗") from None

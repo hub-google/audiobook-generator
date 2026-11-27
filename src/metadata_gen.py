@@ -894,47 +894,24 @@ def _gemini_generate_cover(prompt, width, height, max_attempts=3, retry_base_sec
 
 
 def download_ai_image(prompt, width=1280, height=720, max_attempts=5, retry_base_seconds=15):
-    """Auto: try HF once first; use Gemini when HF credit or access fails.
-
-    COVER_IMAGE_PROVIDER=hf|gemini|cloudflare|auto controls routing. A failed image request
-    never silently degrades to a low-quality placeholder.
-    """
-    provider = os.getenv("COVER_IMAGE_PROVIDER", "auto").strip().lower()
-    if provider not in ("auto", "hf", "gemini", "cloudflare"):
-        raise ValueError("COVER_IMAGE_PROVIDER 必須為 auto、hf、gemini 或 cloudflare")
-    # Explicit activation, or automatically use Cloudflare when its credentials
-    # are present. Never fall back to paid image providers after activation.
-    if provider == "cloudflare" or (provider == "auto" and (
-        os.getenv("CLOUDFLARE_API_TOKEN") or os.getenv("CLOUDFLARE_WORKERS_FREE_CONFIRMED", "").lower() == "true"
-    )):
+    """Cloudflare is the free-only default. Legacy providers require explicit opt-in."""
+    provider = os.getenv("COVER_IMAGE_PROVIDER", "cloudflare").strip().lower()
+    if max_attempts < 1:
+        raise ValueError("max_attempts 必須至少為 1")
+    if provider in ("auto", "cloudflare"):
         try:
             from .cloudflare_cover import generate_cloudflare_cover
         except ImportError:
             from cloudflare_cover import generate_cloudflare_cover
         return generate_cloudflare_cover(prompt, width, height)
-    if max_attempts < 1:
-        raise ValueError("max_attempts 必須至少為 1")
+    if provider == "hf":
+        return _hf_download_ai_image(
+            prompt, width=width, height=height, max_attempts=max_attempts,
+            retry_base_seconds=retry_base_seconds,
+        )
     if provider == "gemini":
         return _gemini_generate_cover(prompt, width, height, max_attempts=min(max_attempts, 3))
-    hf_error = None
-    # In auto mode a missing HF token is not fatal when Gemini is configured.
-    if os.getenv("HF_TOKEN", "").startswith("hf_") or provider == "hf":
-        try:
-            return _hf_download_ai_image(
-                prompt, width=width, height=height, max_attempts=max_attempts,
-                retry_base_seconds=retry_base_seconds,
-            )
-        except Exception as exc:
-            hf_error = exc
-            logging.warning("HF 封面生成失敗；%s", type(exc).__name__)
-            if provider == "hf":
-                raise
-    else:
-        hf_error = RuntimeError("未設定 HF_TOKEN")
-    if not os.getenv("GEMINI_API_KEY"):
-        raise RuntimeError(f"HF 生圖失敗，Gemini 備援未設定 GEMINI_API_KEY: {hf_error}") from hf_error
-    logging.info("改由 Gemini 圖片模型生成封面")
-    return _gemini_generate_cover(prompt, width, height, max_attempts=min(max_attempts, 3))
+    raise ValueError("COVER_IMAGE_PROVIDER 必須為 cloudflare、auto、hf 或 gemini")
 
 
 def _create_youtube_cover_legacy(

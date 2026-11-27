@@ -75,3 +75,24 @@ def test_router_never_uses_old_providers_when_cloudflare_enabled(monkeypatch):
         cf.assert_called_once()
         hf.assert_not_called()
         gemini.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ["auto", "cloudflare", None])
+def test_missing_configuration_never_uses_legacy_providers(monkeypatch, mode):
+    from src import metadata_gen
+    for key in ("CLOUDFLARE_WORKERS_FREE_CONFIRMED", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("HF_TOKEN", "hf_test")
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    if mode is None:
+        monkeypatch.delenv("COVER_IMAGE_PROVIDER", raising=False)
+    else:
+        monkeypatch.setenv("COVER_IMAGE_PROVIDER", mode)
+    with patch("src.cloudflare_cover.requests.post") as request, \
+         patch("src.metadata_gen._hf_download_ai_image") as hf, \
+         patch("src.metadata_gen._gemini_generate_cover") as gemini:
+        with pytest.raises(RuntimeError, match="Free"):
+            metadata_gen.download_ai_image("test")
+        request.assert_not_called()
+        hf.assert_not_called()
+        gemini.assert_not_called()
