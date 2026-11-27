@@ -40,6 +40,30 @@ async function readQueue(){
  catch(e){if(e.status===404)return{data:{schema_version:3,revision:0,updated_at:new Date().toISOString(),queue:[],completed:[]},sha:null};throw e;}
 }
 function queueTasks(){return Array.isArray(queue?.queue)?queue.queue:[];}
+/* Show a submitted book immediately without pretending GitHub has already accepted it. */
+window.audioShowSubmittedBooks=function(items){
+ const panel=$("audio-submitted-books"),list=$("audio-submitted-list");
+ if(!panel||!list)return;
+ list.replaceChildren();
+ const existing=[...queueTasks(),...(Array.isArray(queue?.completed)?queue.completed:[])];
+ for(const item of Array.isArray(items)?items:[]){
+  const alreadyListed=existing.some(task=>
+   item.url&&task.catalog_url===item.url);
+  if(alreadyListed)continue;
+  const row=document.createElement("div");row.className="audio-submitted-item";
+  const title=document.createElement("strong");
+  title.textContent=item.title||item.url||"未命名小說";
+  const state=document.createElement("span");
+  state.className="status "+(item.status==="failed"?"error":item.status==="completed"?"done":"running");
+  state.textContent=({pending:"等待後端處理",processing:"後端處理中",
+   completed:"已處理，等待主清單同步",failed:"新增失敗"})[item.status]||"等待確認";
+  const detail=document.createElement("small");
+  detail.textContent=item.status==="failed"?(item.error||"請查看操作狀態"):"";
+  row.append(title,state,detail);list.append(row);
+ }
+ panel.classList.toggle("hidden",!list.children.length);
+};
+
 function active(task){return ["dispatching","preparing_assets","waiting_review","processing","running","waiting_retry","needs_attention","canceling"].includes(task.status)||Boolean(task.run_id&&!task.run_conclusion&&!["paused","interrupted","stopped","completed"].includes(task.status));}
 function live(task){return ["dispatching","preparing_assets","processing","running","canceling"].includes(task.status)||Boolean(task.run_id&&!task.run_conclusion&&!["paused","interrupted","stopped","completed","waiting_review","waiting_retry","needs_attention"].includes(task.status));}
 function statusName(s){return({queued:"排隊中",paused:"已暫停",preparing_assets:"TXT / 封面製作中",waiting_review:"等待審核",processing:"影片製作中",running:"執行中",dispatching:"調度中",waiting_retry:"等待重試",needs_attention:"需要處理",completed:"已完成",interrupted:"已中斷",stopped:"已停止",canceling:"取消中"})[s]||s||"未知";}
@@ -148,6 +172,7 @@ let guiVerification=new Map();
  for(const el of document.querySelectorAll("[data-gui-verify]")){const task=[...queueTasks(),...(queue?.completed||[])].find(t=>t.task_id===el.dataset.guiVerify),ids=[task?.scrape_run_id,task?.cover_run_id,task?.processing_run_id||task?.run_id].filter(Boolean).map(String).join(","),entry=guiVerification.get(el.dataset.guiVerify);el.textContent=entry&&entry.ids===ids?entry.at:"—";}}
  function renderQueue(){
  const tasks=queueTasks(),completed=Array.isArray(queue?.completed)?queue.completed:[];
+ if(window.audioRefreshSubmittedBooks)window.audioRefreshSubmittedBooks();
  text($("count-queued"),tasks.filter(t=>t.status==="queued"||t.status==="paused").length);
  text($("count-active"),tasks.filter(t=>active(t)).length);text($("count-completed"),completed.length);
  text($("updated-at"),dateLabel(queue?.updated_at));
