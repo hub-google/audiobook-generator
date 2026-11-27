@@ -7,7 +7,7 @@ from .paging import merge_catalog, single_catalog, next_page, read_body
 class TwkanSource(SourceAdapter):
     source_id = "twkan"
     version = "3"
-    hosts = ("twkan.cc", "www.twkan.cc")
+    hosts = ("twkan.cc", "www.twkan.cc", "twkan.com", "www.twkan.com")
     plain_http = True
     min_interval = 2.0
 
