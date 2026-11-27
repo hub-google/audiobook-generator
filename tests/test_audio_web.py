@@ -104,3 +104,16 @@ def test_publish_mode_matches_desktop_preset_and_taipei_strategy_a():
     assert 'timeZone:"Asia/Taipei"' in js
     assert 'function renderPublish()' in js
     assert 'function setPublishPreset(day,hours)' in js
+
+
+def test_web_chapter_duplicate_logic_matches_python_catalog_parser():
+    parser=(ROOT/"tools/web_catalog_preview.py").read_text(encoding="utf-8")
+    js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    assert "split_chapter_title" in parser
+    assert "normalize_chapter_name_for_comparison" in parser
+    assert "function analyzePickerDuplicates()" in js
+    assert "function sortPickerOrder(mode)" in js
+    assert "function movePickerChapter(index,delta)" in js
+    for id in ("duplicate-number","duplicate-name","duplicate-pair","duplicate-only","chapter-exclude-duplicates","chapter-sort-number","chapter-sort-original"):
+        assert f'id="{id}"' in html

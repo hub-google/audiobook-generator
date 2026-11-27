@@ -78,6 +78,15 @@
 <button type="button" id="chapter-all" class="secondary">全選搜尋結果</button>
 <button type="button" id="chapter-none" class="secondary">全部排除搜尋結果</button>
 <button type="button" id="chapter-invert" class="secondary">反選搜尋結果</button>
+<button type="button" id="chapter-exclude-duplicates" class="secondary">排除重複章節</button>
+<button type="button" id="chapter-sort-number" class="secondary">依正規化章號排列</button>
+<button type="button" id="chapter-sort-original" class="secondary">還原原序</button>
+</div>
+<div class="duplicate-controls">
+<label class="toggle"><input type="checkbox" id="duplicate-number" checked> 網站章節數正規化</label>
+<label class="toggle"><input type="checkbox" id="duplicate-name" checked> 章節名稱（去除空白）</label>
+<label class="toggle"><input type="checkbox" id="duplicate-pair"> 章號與章名同時符合</label>
+<label class="toggle"><input type="checkbox" id="duplicate-only"> 只看重複章節</label>
 </div>
 <p id="chapter-picker-status" class="muted"></p>
 <div id="chapter-list" class="chapter-list"></div>

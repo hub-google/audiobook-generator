@@ -3,7 +3,7 @@ import argparse
 import json
 import re
 from pathlib import Path
-from src.catalog_parser import parse_catalog
+from src.catalog_parser import parse_catalog, split_chapter_title, normalize_chapter_name_for_comparison
 
 def main():
     p=argparse.ArgumentParser()
@@ -17,6 +17,19 @@ def main():
         raise RuntimeError("Catalog is incomplete")
     preview={key:result[key] for key in ("catalog_url","book_title","source_id","total_chapters","catalog_identity")}
     preview.update(requested_url=a.url,request_id=a.request_id,chapter_titles=result["chapter_titles"])
+    # Parse chapter identity with the SAME Python function the desktop GUI uses.
+    # This avoids inconsistent Chinese-number parsing in JavaScript.
+    parts = [split_chapter_title(title) for title in result["chapter_titles"]]
+    preview["chapter_parts"] = [
+        {
+            "n": part["normalized_number"],
+            "d": part["display_number"],
+            "name": part["chapter_name"],
+            "c": normalize_chapter_name_for_comparison(part["chapter_name"]),
+        }
+        for part in parts
+    ]
+    preview["duplicate_chapter_count"] = result.get("duplicate_chapter_count", 0)
     Path("catalog-preview.json").write_text(json.dumps(preview,ensure_ascii=False,indent=2),encoding="utf-8")
     print(f"Catalog parsed: {preview['source_id']} {preview['total_chapters']} chapters")
 

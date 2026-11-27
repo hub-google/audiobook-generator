@@ -125,13 +125,21 @@ def main():
                 parsedCatalog = {
                     catalog_url: "https://czbooks.net/n/demo",
                     book_title: "驗收小說", total_chapters: 3,
-                    chapter_titles: ["第一章", "第二章", "第三章"]
+                    chapter_titles: ["第一章 開始", "第二章 進行", "第三章 開始"],
+                    chapter_parts: [
+                        {n:"1",d:"第一章",c:"開始"},
+                        {n:"2",d:"第二章",c:"進行"},
+                        {n:"3",d:"第三章",c:"開始"}
+                    ]
                 };
                 document.querySelector("#chapter-selection-tools").classList.remove("hidden");
             }""")
             desktop.locator("#open-chapter-picker").click()
             assert desktop.locator("#chapter-dialog").is_visible()
             assert desktop.locator("#chapter-list .chapter-item").count() == 3
+            desktop.locator("#duplicate-only").check()
+            assert desktop.locator("#chapter-list .chapter-item").count() == 1
+            desktop.locator("#duplicate-only").uncheck()
             desktop.locator("#chapter-list .chapter-item").nth(1).locator("input").uncheck()
             desktop.locator("#chapter-picker-save").click()
             assert desktop.locator("#excluded").input_value() == "2"
