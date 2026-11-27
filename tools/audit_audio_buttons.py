@@ -204,6 +204,8 @@ def main():
             attempt_button("#novel-search-stage")
             for name in ["novel-search-edit-one","novel-search-add-queue"]:
                 attempt_button("#"+name)
+            # The queue-add operation returns to the overview; reopen the create tab.
+            page.locator('[data-tab="create"]').click()
             page.locator("#catalog-url").fill("https://czbooks.net/n/demo")
             page.locator("#source").select_option("czbooks")
             page.locator("#book-title").fill("驗收小說")
