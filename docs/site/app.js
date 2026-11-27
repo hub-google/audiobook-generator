@@ -43,7 +43,7 @@ function statusName(s){return({queued:"排隊中",paused:"已暫停",preparing_a
 function statusClass(s){return s==="completed"?"done":["waiting_review","needs_attention"].includes(s)?"review":["stopped","interrupted"].includes(s)?"error":live({status:s})?"running":"";}
 function stageBadge(task,name){const s=task.stages?.[name]?.status||"pending";return({completed:"✓",running:"進行中",dispatching:"啟動中",failed:"失敗",pending:"待執行",skipped:"略過"})[s]||s;}
 function canEdit(task){return !active(task)&&["queued","paused","interrupted","stopped"].includes(task.status);}
-function makeBtn(label,action,id,disabled=false){const b=document.createElement("button");b.type="button";b.textContent=label;b.className="secondary";b.disabled=disabled||!token;b.addEventListener("click",()=>action(id).catch(e=>notice(e.message,"error")));return b;}
+function makeBtn(label,action,id,disabled=false){const b=document.createElement("button");b.type="button";b.textContent=label;b.className="secondary";b.disabled=disabled||!token;b.addEventListener("click",()=>Promise.resolve().then(()=>action(id)).catch(e=>notice(e.message,"error")));return b;}
 function buildTaskRow(task,index){
  const tr=document.createElement("tr"),col=(value)=>{const td=document.createElement("td");td.textContent=value;tr.append(td);return td;};
  const first=col((index+1)+". "+(task.book_title||"待解析"));const url=document.createElement("small");url.textContent=task.catalog_url||"";first.append(url);
