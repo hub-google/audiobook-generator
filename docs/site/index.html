@@ -43,7 +43,7 @@
 <div class="section-head"><div><h2>新增小說至製作佇列</h2><p>可先從指定網站解析目錄，檢查書名、章數與章節排序，再正式新增。</p></div></div>
 <form id="book-form" class="form-card">
 <div class="form-grid"><label>小說來源<select id="source" required></select></label><label class="wide">小說網址<input type="url" id="catalog-url" placeholder="貼上書籍、目錄或章節網址" required></label></div>
-<div class="inline-actions"><button type="button" id="parse-btn" class="secondary">解析網站目錄</button><span class="muted" id="parse-status">需要 GitHub Token，解析會在 GitHub Actions 執行</span></div>
+<div class="inline-actions"><button type="button" id="parse-btn" class="secondary">解析網站目錄</button><span class="muted" id="parse-status">解析將交由 GitHub Actions 執行；按鈕會開啟 GitHub 登入確認頁</span></div>
 <div id="catalog-preview" class="catalog-preview hidden"></div>
 <div id="chapter-selection-tools" class="inline-actions hidden">
 <button id="open-chapter-picker" type="button" class="secondary">從完整目錄勾選／排除章節</button>

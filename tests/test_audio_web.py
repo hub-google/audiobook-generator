@@ -64,8 +64,8 @@ def test_advanced_web_editor_and_review_inputs():
     for field in ("title-overrides", "number-overrides", "chapter-order", "edit-dialog", "edit-form", "review-dialog", "review-patterns"):
         assert f'id="{field}"' in html
     assert "function openEditor(id)" in js
-    assert "async function saveEditor(event)" in js
-    assert "async function saveReview(event)" in js
+    assert "window.saveEditor=async function(event)" in (ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    assert "window.saveReview=async function(event)" in (ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
     assert 'ref:"master"' not in js
 
 
@@ -79,9 +79,10 @@ def test_web_progress_and_completion_controls():
     html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
     js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
     assert 'id="progress-dialog"' in html
-    for label in ("cancelRunningTask","markCompleted","restoreCompleted","showProgress"):
-        assert "function "+label+"(" in js or "async function "+label+"(" in js
-    assert '"/actions/runs/"+encodeURIComponent(id)+"/cancel"' in js
+    assert "async function showProgress(id)" in js
+    bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    for label in ("cancelRunningTask","markCompleted","restoreCompleted"):
+        assert "window."+label+"=async function" in bridge
 
 
 def test_full_chapter_picker_keeps_complete_catalog():
@@ -123,7 +124,7 @@ def test_public_read_only_progress_does_not_require_browser_token():
     js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
     html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
     assert 'div.append(makeBtn("進度",showProgress,task.task_id,false,false));' in js
-    assert 'function makeBtn(label,action,id,disabled=false,authRequired=true)' in js
+    assert 'function makeBtn(label,action,id,disabled=false)' in js
     assert 'async function renderRunJobDetails(task)' in js
     assert 'id="progress-jobs"' in html
 
@@ -203,3 +204,13 @@ def test_click_handlers_explicitly_bind_new_tokenless_issue_bridge():
         assert "window."+name in js
     for name in ("cancelRunningTask","markCompleted","restoreCompleted","deleteTask","setTaskState","requeueTask"):
         assert "window."+name in js
+
+
+def test_no_legacy_pat_or_direct_github_writes_remain_in_pages():
+    js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    assert "Token" not in js and "Authorization" not in js
+    assert "Token" not in html
+    assert "async function mutate(" not in js
+    assert "async function connect(" not in js
+    assert 'options.method.toUpperCase()!=="GET"' in js
