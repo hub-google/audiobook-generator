@@ -44,6 +44,30 @@
 </section>
 <section id="create" class="tab">
 <div class="section-head"><div><h2>新增小說至製作佇列</h2><p>可先從指定網站解析目錄，檢查書名、章數與章節排序，再正式新增。</p></div></div>
+<section class="form-card novel-search" id="novel-search-panel" aria-labelledby="novel-search-heading">
+<h3 id="novel-search-heading">搜尋小說／作者</h3>
+<p class="muted">輸入書名或作者，從九個支援來源搜尋可加入的小說。可跨站多選；搜尋不會直接啟動製作。</p>
+<div class="novel-search-form">
+<label class="search-keyword">關鍵字<input id="novel-search-keyword" type="search" maxlength="80" autocomplete="off" placeholder="例如：萬古第一廢材、愛哭的小十七"></label>
+<label>搜尋來源<select id="novel-search-source"><option value="">全部 9 個網站</option></select></label>
+<button id="novel-search-go" type="button">搜尋小說</button>
+</div>
+<p class="muted novel-search-status" id="novel-search-status" aria-live="polite">請輸入書名或作者後開始搜尋。</p>
+<div id="novel-search-results" class="search-results hidden">
+<div class="inline-actions search-toolbar"><span id="novel-search-result-count" class="muted"></span>
+<button type="button" class="secondary" id="novel-search-select-all">全選本次結果</button>
+<button type="button" class="secondary" id="novel-search-select-none">取消本次勾選</button>
+<button type="button" id="novel-search-stage">加入待新增清單</button></div>
+<div class="table-wrap"><table class="search-result-table"><thead><tr><th>選取</th><th>書名</th><th>作者</th><th>來源網站</th><th>小說網址</th></tr></thead>
+<tbody id="novel-search-body"></tbody></table></div>
+<div class="search-source-status" id="novel-search-source-status"></div>
+</div>
+<div id="novel-search-staging" class="search-staging hidden">
+<div class="section-head"><h3>待新增小說</h3><span id="novel-search-staged-count" class="muted"></span></div>
+<div id="novel-search-staged-list" class="staged-list"></div>
+<div class="form-foot"><p class="muted">可先單本帶入下方表單設定章節，或一次將多本小說的全部章節加入雲端佇列。</p><div class="inline-actions"><button id="novel-search-edit-one" type="button" class="secondary">選取一本並設定章節</button><button id="novel-search-add-queue" type="button">批次加入雲端佇列</button></div></div>
+</div>
+</section>
 <form id="book-form" class="form-card">
 <div class="form-grid"><label>小說來源<select id="source" required></select></label><label class="wide">小說網址<input type="url" id="catalog-url" placeholder="貼上書籍、目錄或章節網址" required></label></div>
 <div class="inline-actions"><button type="button" id="parse-btn" class="secondary">解析網站目錄</button><span class="muted" id="parse-status">解析將交由 GitHub Actions 執行；按鈕會開啟 GitHub 登入確認頁</span></div>
@@ -251,5 +275,5 @@
 <footer>資料由 GitHub API 即時讀取；GitHub Pages 不會在瀏覽器執行 Python、TTS 或影片轉檔。</footer>
 </main>
 </div>
-<script src="./app.js" defer></script><script src="./bridge.js" defer></script><script src="./cleaner-parity.js" defer></script><script src="./review-inspector.js" defer></script><script src="./manual-cover.js" defer></script><script src="./batch-cover.js" defer></script>
+<script src="./app.js" defer></script><script src="./bridge.js" defer></script><script src="./novel-search.js" defer></script><script src="./cleaner-parity.js" defer></script><script src="./review-inspector.js" defer></script><script src="./manual-cover.js" defer></script><script src="./batch-cover.js" defer></script>
 </body></html>
