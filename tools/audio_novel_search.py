@@ -17,6 +17,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from src.sources.registry import SOURCES
+from src.sources.http_client import fetch_page
 
 SOURCE_NAMES = {
     "hjwzw": "黃金屋", "shuba69": "69 書吧", "czbooks": "小說狂人",
@@ -98,6 +99,20 @@ def search_source(keyword, source_id):
         })
         if len(results) >= 8:
             break
+    # Enrich a few leading matches from the source's own book metadata, not chapters.
+    for item in results[:3]:
+        try:
+            metadata_url = source.metadata_url(item["catalog_url"])
+            page = fetch_page(metadata_url, source, timeout=9)
+            metadata = source.parse_metadata(page.content, metadata_url)
+            if metadata.get("title"):
+                item["title"] = str(metadata["title"]).strip()[:160]
+            if metadata.get("author"):
+                item["author"] = str(metadata["author"]).strip()[:120]
+            item["metadata_verified"] = bool(metadata.get("title"))
+        except Exception:
+            # A blocked details page must not discard an otherwise valid link.
+            pass
     return {"source_id": source_id, "source_name": SOURCE_NAMES[source_id],
             "results": results,
             "status": "ok" if results else ("unavailable" if errors else "no_results")}
