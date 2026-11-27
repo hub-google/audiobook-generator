@@ -130,6 +130,7 @@ def main():
             desktop.locator("#rank-body tr").first.locator("input[type=checkbox]").check()
             assert desktop.locator("#rank-copy").is_enabled()
             desktop.locator("#rank-search").fill("")
+            desktop.locator("#source").select_option("czbooks")
             desktop.locator("#catalog-url").fill("https://czbooks.net/n/demo")
             desktop.locator("#book-title").fill("驗收示範")
             desktop.locator("#start-chapter").fill("1")
@@ -164,8 +165,9 @@ def main():
             desktop.locator("#chapter-list .chapter-item").nth(1).locator("input").uncheck()
             desktop.locator("#chapter-picker-save").click()
             assert desktop.locator("#excluded").input_value() == "2"
+            assert desktop.locator("#book-form").evaluate("(el) => el.checkValidity()"), "Create form is incomplete"
             desktop.locator("#book-form button[type=submit]").click()
-            desktop.wait_for_function("window.__issueUrls.length >= 1")
+            desktop.wait_for_function("window.__issueUrls.length >= 1", timeout=7000)
             assert any("/issues/new?" in x["url"] for x in desktop.evaluate("window.__issueUrls")), repr(desktop.evaluate("window.__issueUrls"))
             assert any("AUDIO-COMMAND-V1" in x["url"] for x in desktop.evaluate("window.__issueUrls"))
             desktop.locator('[data-tab="overview"]').click()
