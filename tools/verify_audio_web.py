@@ -365,6 +365,7 @@ def main():
             assert not desktop.locator("#review-drop-zone").is_visible(), "Original GUI never shows upload-first ZIP instructions"
             assert not desktop.locator("#review-report-file").is_visible(), "Manual Artifact import must not be a visible primary flow"
             desktop.wait_for_function("document.querySelector('#review-patterns').value.includes('已儲存廣告詞')",timeout=10000)
+            desktop.screenshot(path=str(OUTPUT / "audio-original-gui-text-review.png"), full_page=True)
             desktop.locator("#gui-text-raw-tab").click()
             assert desktop.locator("#gui-raw-pane").is_visible()
             desktop.locator("#review-cancel").click()
