@@ -82,6 +82,7 @@ permissions:
   contents: write
   actions: write
   packages: read
+  id-token: write
 
 concurrency:
   group: youtube-resumable-upload
@@ -626,7 +627,7 @@ jobs:
       - name: 抓取指定小說章節
         if: steps.artifact_restore.outputs.complete != 'true'
         run: |
-          python src/worker_pipeline.py --stage crawl --worker-id ${{ matrix.worker_id }}
+          python -m tools.audio_live_capture --task-id "${{ inputs.queue_task_id }}" --job "scrape-worker-${{ matrix.worker_id }}" -- python -u src/worker_pipeline.py --stage crawl --worker-id ${{ matrix.worker_id }}
       - name: 整理逐章廣告檢查
         if: steps.artifact_restore.outputs.complete != 'true'
         run: |
@@ -790,7 +791,7 @@ jobs:
           # Network-facing stages already implement their own bounded retries.
           # Retrying the whole worker repeats deterministic validation failures
           # and obscures the original error with duplicate tracebacks.
-          python src/worker_pipeline.py --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1
+          python -m tools.audio_live_capture --task-id "${{ inputs.queue_task_id }}" --job "processing-worker-${{ matrix.worker_id }}" -- python -u src/worker_pipeline.py --stage pipeline --worker-id ${{ matrix.worker_id }} --batch-size 1
 
       - name: Save Worker Workspace Checkpoint
         if: always()
@@ -1335,7 +1336,7 @@ jobs:
           for attempt in 1 2 3; do
             echo "YouTube uploader attempt $attempt/3"
             set +e
-            python src/youtube_api_uploader.py --run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --source-run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --execution-run-id "${{ github.run_id }}" --input-dir prepared_parts --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --publish-at "${{ github.event.inputs.publish_at }}" --state-file upload_resume_state/state.json
+            python -m tools.audio_live_capture --task-id "${{ inputs.queue_task_id }}" --job "youtube-uploader" -- python -u src/youtube_api_uploader.py --run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --source-run-id "${{ needs.resume_planner.outputs.source_run_id || github.run_id }}" --execution-run-id "${{ github.run_id }}" --input-dir prepared_parts --task-id "${{ github.event.inputs.queue_task_id }}" --repo "${{ github.repository }}" --privacy "public" --publish-at "${{ github.event.inputs.publish_at }}" --state-file upload_resume_state/state.json
             code=$?
             set -e
 
