@@ -27,7 +27,16 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m pip install requests beautifulsoup4 pyyaml curl_cffi
-      - run: python -m tools.validate_sources_live ${{ matrix.source }}
+      - name: "九站抽樣，以及實際失敗書籍回歸測試"
+        env:
+          SOURCE_ID: ${{ matrix.source }}
+        shell: bash
+        run: |
+          if [ "$SOURCE_ID" = "shuba69" ]; then
+            python -m tools.validate_sources_live "$SOURCE_ID" --queue-target "https://www.69shuba.com/book/88746/"
+          else
+            python -m tools.validate_sources_live "$SOURCE_ID"
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
