@@ -259,7 +259,12 @@ def main():
             mobile = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=1,
                                       is_mobile=True, has_touch=True)
             mobile.on("pageerror", lambda error: errors.append(str(error)))
+            # Validate populated queue controls on mobile, not merely a disconnected shell.
+            mobile.route("https://api.github.com/**", github_mock)
             mobile.goto(f"http://127.0.0.1:{port}/", wait_until="domcontentloaded", timeout=20000)
+            mobile.locator("#queue-body tr").first.get_by_text("原創測試小說").wait_for()
+            assert mobile.locator("#queue-body tr").count() == 3
+            assert mobile.locator("#count-queued").inner_text() == "1"
             mobile.screenshot(path=str(OUTPUT / "audio-dashboard-mobile.png"), full_page=True)
             assert mobile.locator('[data-tab="create"]').is_visible()
             mobile.locator('[data-tab="create"]').click()
