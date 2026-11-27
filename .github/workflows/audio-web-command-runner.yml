@@ -1,0 +1,35 @@
+name: "AUDIO｜站內指令處理（不開 GitHub 視窗）"
+run-name: "【AUDIO 站內操作】處理待辦｜第 ${{ github.run_number }} 次"
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "tools/audio_web_command_runner.py"
+      - ".github/workflows/audio-web-command-runner.yml"
+concurrency:
+  group: audio-web-commands
+  cancel-in-progress: false
+permissions:
+  id-token: write
+  contents: write
+  actions: write
+jobs:
+  service:
+    name: "使用 GitHub OIDC 驗證並執行站內操作"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: "安裝程式套件"
+        run: pip install -r requirements.txt
+      - name: "處理站內操作並回報執行結果"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python -m tools.audio_web_command_runner
