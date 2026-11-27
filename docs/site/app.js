@@ -184,7 +184,8 @@ async function parseCatalog(){
  const list=await request("/actions/runs/"+run.id+"/artifacts");
  const artifact=(list.artifacts||[]).find(x=>x.name==="catalog-preview-"+requestId);if(!artifact)throw Error("找不到解析結果 Artifact");
  const data=await fetchPreviewArtifact(artifact);
- if(data.catalog_url!==url)throw Error("解析結果與輸入網址不一致");
+ if(data.requested_url!==url)throw Error("解析結果與輸入網址不一致");
+ $("catalog-url").value=data.catalog_url;
  parsedCatalog=data;text($("book-title"),data.book_title);$("book-title").value=data.book_title;
  $("end-chapter").value=Math.min(10,data.total_chapters);
  const box=$("catalog-preview");box.replaceChildren();
