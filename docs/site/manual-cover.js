@@ -27,7 +27,7 @@
   bitmap.close();
   blob=await new Promise((resolve,reject)=>cv.toBlob(b=>b?resolve(b):reject(Error("無法產生 JPG")),"image/jpeg",0.98));
   $id("manual-cover-download").disabled=false;$id("manual-cover-copy").disabled=false;$id("manual-cover-submit").disabled=false;
-  text($id("manual-cover-status"),"已完成 1280×720 中央裁切；JPEG "+(blob.size/1024).toFixed(0)+" KB。請先下載檔案，並將它附加至 GitHub Issue 再提交。");
+  text($id("manual-cover-status"),"已完成 1280×720 中央裁切；JPEG "+(blob.size/1024).toFixed(0)+" KB。可直接按下「送出並套用封面」，無須下載或開啟其他網站。");
  }
  function download(){
   if(!blob||!currentTaskId)throw Error("請先選擇圖片");
@@ -43,12 +43,22 @@
   const png=await new Promise((resolve,reject)=>canvas.toBlob(
     b=>b?resolve(b):reject(Error("無法複製封面圖片")),"image/png"));
   await navigator.clipboard.write([new ClipboardItem({"image/png":png})]);
-  notice("封面已複製；在 GitHub Issue 本文按 Ctrl+V，確認圖片上傳後送出即可");
+  notice("封面已複製到剪貼簿");
  }
- function submit(){
+ async function submit(){
   if(!blob||!currentTaskId)throw Error("請先產生手動封面");
-  if(!confirm("已下載 JPEG？下一頁請將此圖片拖曳到 GitHub Issue 本文，再按 Submit new issue，未附圖將不會更新封面。"))return;
-  audioIssueAction("manual_cover",{task_id:currentTaskId},"上傳手動封面");
+  const button=$id("manual-cover-submit");button.disabled=true;
+  try{
+   text($id("manual-cover-status"),"正在安全上傳封面…");
+   const cover_key=await window.audioUploadCover(blob);
+   const request=await window.audioIssueAction("manual_cover",{task_id:currentTaskId,cover_key},"儲存手動封面");
+   if(!request)throw Error("封面已上傳但尚未送入後端指令");
+   $id("manual-cover-dialog").close();
+   notice("封面已排入套用工作，請在本頁「雲端操作狀態」查看結果");
+  }catch(error){
+   text($id("manual-cover-status"),"無法套用封面："+error.message);
+   throw error;
+  }finally{button.disabled=false;}
  }
  document.addEventListener("DOMContentLoaded",()=>{
   $id("manual-cover-file").addEventListener("change",e=>prepare(e.target.files?.[0]).catch(err=>notice(err.message,"error")));
@@ -61,6 +71,6 @@
   });
   $id("manual-cover-download").addEventListener("click",download);
   $id("manual-cover-copy").addEventListener("click",()=>copyImage().catch(err=>notice(err.message,"error")));
-  $id("manual-cover-submit").addEventListener("click",submit);
+  $id("manual-cover-submit").addEventListener("click",()=>submit().catch(error=>notice(error.message,"error")));
  });
 })();
