@@ -264,21 +264,21 @@
 </dialog>
 <dialog id="review-dialog" class="editor-dialog review-wide" aria-labelledby="review-title">
 <form id="review-form"><h2 id="review-title">文字清理、Raw/Clean 抽查與封面審核</h2><div id="gui-text-tabs" class="gui-tabs hidden"><button id="gui-text-candidates-tab" type="button" class="secondary" aria-pressed="true">候選詞句與排除設定</button><button id="gui-text-raw-tab" type="button" class="secondary" aria-pressed="false">Raw／Clean 文字抽查</button></div>
-<p class="muted">以本次 GitHub Artifact 的實際章節文字及封面為依據。可把 TXT 與封面 ZIP 一次拖入下方；檔案僅在本機瀏覽器解壓及驗證，不上傳到 GitHub Pages。</p>
-<div id="review-drop-zone" class="review-drop-zone">
-<label for="review-drop-files">將 TXT／封面審核 ZIP 拖到這裡，或點擊選取檔案（可多選）</label>
-<input id="review-drop-files" type="file" accept=".zip,.json" multiple>
-<small>封面須含與目前任務相符的 Manifest、圖片與 Prompt SHA-256</small>
+<div class="gui-review-status-bar" role="status">
+<span id="review-auto-status">正在讀取本書的 GitHub TXT 審核結果…</span>
+<button type="button" id="review-auto-load" class="secondary">重新載入</button>
 </div>
-<div class="inline-actions"><button type="button" id="review-auto-load">站內自動取得 TXT 與封面審核檔案</button>
-<span class="muted" id="review-auto-status">不必離開 AUDIO；使用安全的雲端工作機取得原始 Artifact 後進行指紋驗證。</span></div>
+<!-- 舊版檔案匯入欄位僅保留為非互動相容結構；一般操作完全由背景自動取回。 -->
+<div class="hidden" id="review-legacy-import" aria-hidden="true">
+<div id="review-drop-zone"><label for="review-drop-files">舊版手動審核檔案</label>
+<input id="review-drop-files" type="file" accept=".zip,.json" multiple tabindex="-1"></div>
 <div class="review-files">
-<a id="review-scrape-link" class="hidden" tabindex="-1" aria-hidden="true" target="_blank" rel="noopener noreferrer">開啟 TXT 審核 Run，下載 scrape-review Artifact</a>
-<label>匯入廣告報告 JSON 或 Artifact ZIP<input id="review-report-file" type="file" accept=".json,.zip,application/json,application/zip"></label>
-<a id="review-cover-link" class="hidden" tabindex="-1" aria-hidden="true" target="_blank" rel="noopener noreferrer">開啟封面 Run，下載 cover-review Artifact</a>
-<label>匯入封面審核 Artifact ZIP<input id="review-cover-file" type="file" accept=".zip,application/zip"></label>
-</div>
-<p id="review-load-status" class="muted">尚未匯入報告；請以實際 Artifact 檢查資料。</p>
+<a id="review-scrape-link" class="hidden" tabindex="-1" aria-hidden="true"></a>
+<input id="review-report-file" type="file" accept=".json,.zip" tabindex="-1">
+<a id="review-cover-link" class="hidden" tabindex="-1" aria-hidden="true"></a>
+<input id="review-cover-file" type="file" accept=".zip" tabindex="-1">
+</div></div>
+<p id="review-load-status" class="muted">等待自動讀取 TXT 審核結果。</p>
 <div class="review-columns">
 <section id="gui-candidate-pane"><h3>候選詞句與排除設定</h3>
 <div class="review-controls">
