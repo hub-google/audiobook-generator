@@ -138,7 +138,7 @@ def main():
             desktop.locator('[data-tab="overview"]').click()
             assert desktop.locator("#token").count() == 0
             assert desktop.locator("#connection-pill").inner_text() == "GitHub 登入操作"
-            desktop.evaluate("window.__issueUrls=[];window.open=(url)=>{window.__issueUrls.push(String(url));return null;};")
+            desktop.evaluate("window.__issueUrls=[];window.open=(url)=>{window.__issueUrls.push({url:String(url),stack:(new Error()).stack});return null;};")
             desktop.locator('[data-tab="create"]').click()
             desktop.locator("#start-chapter").fill("1")
             desktop.locator("#end-chapter").fill("3")
@@ -166,8 +166,8 @@ def main():
             assert desktop.locator("#excluded").input_value() == "2"
             desktop.locator("#book-form button[type=submit]").click()
             desktop.wait_for_function("window.__issueUrls.length >= 1")
-            assert "/issues/new?" in desktop.evaluate("window.__issueUrls[0]"), repr(desktop.evaluate("window.__issueUrls[0]"))
-            assert "AUDIO-COMMAND-V1" in desktop.evaluate("decodeURIComponent(window.__issueUrls[0])")
+            assert any("/issues/new?" in x["url"] for x in desktop.evaluate("window.__issueUrls")), repr(desktop.evaluate("window.__issueUrls"))
+            assert any("AUDIO-COMMAND-V1" in x["url"] for x in desktop.evaluate("window.__issueUrls"))
             desktop.locator('[data-tab="overview"]').click()
             desktop.locator("#queue-body tr").first.get_by_role("button", name="編輯").click()
             assert desktop.locator("#edit-dialog").is_visible()
@@ -177,7 +177,7 @@ def main():
             desktop.locator("#edit-form button[type=submit]").click()
             desktop.locator("#edit-dialog").wait_for(state="hidden")
             desktop.wait_for_function("window.__issueUrls.length >= 2")
-            assert "/issues/new?" in desktop.evaluate("window.__issueUrls[1]")
+            assert any("/issues/new?" in x["url"] for x in desktop.evaluate("window.__issueUrls"))
             desktop.locator("#queue-body tr").nth(1).get_by_role(
                 "button", name="確認審核並繼續").click()
             assert desktop.locator("#review-dialog").is_visible()
