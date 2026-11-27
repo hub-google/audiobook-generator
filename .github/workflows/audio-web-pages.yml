@@ -8,6 +8,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 concurrency:
@@ -32,5 +33,22 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs/site
+      - name: Wait until uploaded Pages artifact is indexed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..18}; do
+            count="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" --jq '[.artifacts[] | select(.name == "github-pages" and .expired == false)] | length')"
+            if [ "$count" = "1" ]; then
+              sleep 5
+              exit 0
+            fi
+            echo "Artifact visibility: $count (attempt $attempt)"
+            sleep 5
+          done
+          echo "Pages artifact is not uniquely available" >&2
+          exit 1
       - id: deployment
         uses: actions/deploy-pages@v4
