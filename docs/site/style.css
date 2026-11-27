@@ -107,3 +107,9 @@
 .audio-reference-list dt{font-weight:650;color:#526783}.audio-reference-list dd{margin:0}
 @media(max-width:650px){.audio-operation-panel{bottom:8px;right:8px;width:calc(100vw - 16px)}
 .audio-auth-dialog,.audio-reference-dialog{padding:18px}}
+
+/* Operation results belong in the document flow, never over actionable buttons. */
+.audio-operation-panel{position:relative;bottom:auto;right:auto;z-index:1;
+ width:auto;max-height:300px;margin:12px 20px 20px;box-shadow:0 4px 16px #13213f14}
+@media(max-width:650px){.audio-operation-panel{position:relative;bottom:auto;right:auto;
+ width:auto;margin:10px 12px 14px;max-height:250px}}
