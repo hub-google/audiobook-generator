@@ -95,53 +95,47 @@
   await window.addTasks(books);
   say("已開啟 GitHub 新增確認頁，請按 Submit new issue；確認完成後才會送入製作佇列。");
  }
- async function pollResult(requestId,keyword,generation){
-  const url="https://raw.githubusercontent.com/"+REPO+"/"+QUEUE_BRANCH+
-     "/web-searches/"+encodeURIComponent(requestId)+".json";
-  for(let attempt=0;attempt<90;attempt++){
-   if(generation!==searchGeneration)return;
-   if(attempt)await new Promise(resolve=>setTimeout(resolve,5000));
-   if(generation!==searchGeneration)return;
-   try{
-    const response=await fetch(url+"?t="+Date.now(),{cache:"no-store"});
-    if(response.status===404)continue;
-    if(!response.ok)throw Error("HTTP "+response.status);
-    const data=await response.json();
-    if(data.request_id!==requestId||data.keyword!==keyword||!Array.isArray(data.results))
-     throw Error("搜尋結果與這次請求不符");
-    const dedup=new Map();
-    for(const entry of data.results){const novel=validNovel(entry);
-     if(novel&&!dedup.has(novel.catalog_url))dedup.set(novel.catalog_url,novel);}
-    current=Array.from(dedup.values());selected.clear();renderResults();
-    const summary=(data.sources||[]).map(s=>nameOf(s.source_id)+"："+
-      (s.status==="unavailable"?"暫時無法搜尋":(s.results?.length||0)+" 本")).join("　");
-    byId("novel-search-source-status").textContent=summary;
-    say("搜尋完成：找到 "+current.length+" 本；可勾選多本後加入待新增清單。");
-    byId("novel-search-go").disabled=false;return;
-   }catch(error){
-    if(attempt===89){say("搜尋結果讀取失敗："+error.message);break;}
-   }
-  }
-  if(generation===searchGeneration){
-   say("尚未收到搜尋結果，請查看 GitHub Issue / Actions；可重新搜尋。");
-   byId("novel-search-go").disabled=false;
-  }
- }
- function search(){
+ const SEARCH_API="https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-novel-search";
+ let searchController=null;
+ async function search(){
   const keyword=byId("novel-search-keyword").value.trim().replace(/\s+/g," ");
   if(!keyword||keyword.length>80)throw Error("請輸入 1～80 字的書名或作者");
   const source=byId("novel-search-source").value;
   if(source&&!SOURCES.some(s=>s.id===source))throw Error("不支援的來源網站");
-  const id=crypto.randomUUID().replace(/-/g,"");
-  // Must run synchronously inside a click event to avoid popup blockers.
-  window.audioIssueAction("search",{request_id:id,keyword,sources:source?[source]:[]},
-    "搜尋小說 "+keyword.slice(0,35));
   const generation=++searchGeneration;
+  if(searchController)searchController.abort();
+  searchController=new AbortController();
+  const controller=searchController,timeout=setTimeout(()=>controller.abort(),45000);
   current=[];selected.clear();
   byId("novel-search-results").classList.add("hidden");
   byId("novel-search-go").disabled=true;
-  say("已開啟 GitHub 確認頁。請按「Submit new issue」；送出後會自動載入九站搜尋結果。");
-  void pollResult(id,keyword,generation);
+  say("正在搜尋 "+(source?nameOf(source):"全部 9 個來源")+"，結果會直接顯示在下方…");
+  try{
+   const url=new URL(SEARCH_API);
+   url.searchParams.set("q",keyword);
+   if(source)url.searchParams.set("source",source);
+   const response=await fetch(url.toString(),{method:"GET",signal:controller.signal,cache:"no-store",
+     headers:{"Accept":"application/json"}});
+   const data=await response.json();
+   if(!response.ok)throw Error(data.error||"搜尋服務 HTTP "+response.status);
+   if(generation!==searchGeneration)return;
+   if(!Array.isArray(data.results)||!Array.isArray(data.sources))throw Error("搜尋結果格式不正確");
+   const dedup=new Map();
+   for(const entry of data.results){const novel=validNovel(entry);
+    if(novel&&!dedup.has(novel.catalog_url))dedup.set(novel.catalog_url,novel);}
+   current=[...dedup.values()];selected.clear();renderResults();
+   const summary=data.sources.map(s=>nameOf(s.source_id)+"："+
+     (s.status==="unavailable"?"暫時無法搜尋":(s.results?.length||0)+" 本")).join("　");
+   byId("novel-search-source-status").textContent=summary;
+   say("搜尋完成：找到 "+current.length+" 本；可直接勾選多本並加入下方待新增清單。");
+  }catch(error){
+   if(generation!==searchGeneration)return;
+   const message=error.name==="AbortError"?"搜尋連線逾時，請再試一次":error.message;
+   say("搜尋失敗："+message+"。未新增任何製作任務。");
+  }finally{
+   clearTimeout(timeout);
+   if(generation===searchGeneration){byId("novel-search-go").disabled=false;searchController=null;}
+  }
  }
  document.addEventListener("DOMContentLoaded",()=>{
   for(const source of SOURCES){
