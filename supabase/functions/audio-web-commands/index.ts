@@ -7,7 +7,7 @@ const ORIGIN = "https://hub-google.github.io";
 const REPO = "hub-google/audiobook-generator";
 const admin = createClient(PROJECT, SECRET, { auth: { persistSession: false, autoRefreshToken: false } });
 const jwks = createRemoteJWKSet(new URL("https://token.actions.githubusercontent.com/.well-known/jwks"));
-const ops = new Set(["enqueue","batch_add","edit","move","status","delete","complete","restore","requeue","cancel","review","dispatch","preview","ping","manual_cover","export_artifacts","batch_cover_info","fetch_artifact","fetch_logs"]);
+const ops = new Set(["enqueue","batch_add","edit","move","status","delete","complete","restore","requeue","cancel","review","dispatch","preview","ping","manual_cover","export_artifacts","batch_cover_info","fetch_artifact","fetch_logs","manual_cover_prequeue","cover_info_prequeue"]);
 const buckets = "audio-web-manual-covers";
 
 function reply(obj,code=200,origin=ORIGIN) {
@@ -57,7 +57,7 @@ async function submit(req) {
  const user=await userOf(req);
  const body=await req.json();
  const {op,data}=checkPayload(body);
- if(op==="manual_cover") {
+ if(op==="manual_cover"||op==="manual_cover_prequeue") {
   const key=String(data.cover_key||"");
   if(!/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.jpg$/.test(key) || !key.startsWith(user.id+"/"))
    throw Object.assign(new Error("手動封面不存在或不屬於此帳號"),{status:400});
