@@ -12,12 +12,12 @@
 | 九個來源目錄 | 使用同 Python catalog_parser；69 書吧實測 120 章 | 2026-11-27 九站已各以第一／中間／最後章實抓 PASS；仍須長篇完整驗證 |
 | 全書章節篩選、章號、UUID | 全書分頁、UUID/原章號/正規化章號、逐章編輯、多選移動、拖曳重排、Ctrl+方向鍵／空白鍵 | 仍需在真實大型目錄與多種瀏覽器逐項比對桌面快捷鍵 |
 | 三種重複條件及直接比對 | 已可選條件、看直接匹配理由、排除重複 | 真實大型目錄同值驗收 |
-| 新增、批次、編輯書籍及保存 Profile | 網頁可操作；GitHub Actions 用相同 cloud_queue/book_profiles 核心，條件保存 | 仍須 Github Issues 確認、Profile/Queue 交易失敗回復 |
+| 新增、批次、編輯書籍及保存 Profile | 原 Python Queue/Profile 共用核心；補上可恢復同步紀錄及編輯視覺化選章器、文字清理 Profile 編輯 | 仍須 GitHub Issue 確認；真正多使用者高並發尚未完整驗收 |
 | 佇列排序、暫停、恢復、刪除、完成、移回及中止 | 單本、多選功能已實作；Issue idempotency、取消等待 GitHub 確認 | 完整多使用者並發與動態狀態機驗收 |
-| 製作進度與記錄 | GitHub Run/Job/Step 顯示 | 完整 marker 日誌、即時進度推播 |
+| 製作進度與記錄 | GitHub Run/Job/Step、每 15 秒唯讀佇列同步、手動刷新工作步驟 | 原 GUI 的完整 Worker marker 即時日誌仍未整合；GitHub 原始 Logs 需要使用者授權 |
 | 批次 Gemini 封面資訊 | 已用原 build_cover_information 函式執行於 Actions；網站可自動讀取研究結果、切換小說、匯入備用結果、複製目前與全部 Prompt | 結果已可透過 request_id 自動同步到 Pages，亦保留 Artifact 手動匯入；正式 Gemini API 配額仍限制生產能力 |
 | 手動圖片、拖放、裁切、恢復封面 | 已有 JPG/PNG/WEBP、拖放、1280×720、剪貼簿、Issue 上傳、Profile；Cloud 驗證由原 cover_assets 執行 | 必須在 GitHub Issue 附圖再提交，不能直接由純 Pages 私密上傳 |
-| Raw/Clean 與廣告候選 | 可匯入真實審核 Artifact、篩選候選及去除/保留、原始逐章與分段；瀏覽器 Clean 和 Python 清理程式跨語言測試 | 全部大型章節與上下文審核的真實同等性 |
+| Raw/Clean 與廣告候選 | 真實 Artifact 匯入、逐章 Raw/Clean、候選去除／保留／編輯／移除、手動新增詞句，與 Python 清理程式跨語言測試 | 仍須人工匯入 TXT/封面 Artifact；大型小說審核未完成全量驗收 |
 | 後製門檻 | Actions 會重新下載對應 TXT Artifact，比對小說 ID 與 Raw SHA256，保存去除與保留詞句，才可以開始後製 | 真正小說完整後製與輸出驗收 |
 | 即時／預定發布、台灣時間、策略 A | 網頁可設定，保留既有雲端 YouTube 工作流程 | 真實 YouTube 端對端 |
 | 逐項與整包下載 | GitHub 原生 Artifact 下載；單本/多本串流打包成一個 ZIP 並在 Actions 供下載 | 仍須 GitHub 驗證下載與大型資料實際驗收 |
@@ -55,3 +55,9 @@
 - 進度對話框增設每 15 秒唯讀同步 GitHub automation-state 公開佇列，更新目前階段、HF / YouTube 統計；視窗關閉即停止查詢。
 - 進度視窗有「重新整理進度及工作步驟」，新的 Run 出現時自動更新 Job/Step；避免每 15 秒反覆對 GitHub REST API 請求全部 Jobs，以免吃滿匿名 API 額度。
 - 仍非桌面 GUI 的即時 worker log marker：不在 Pages 放 Token，GitHub Job 原始 Logs 需要 GitHub 授權，保留 Run 連結供開啟。
+
+## 2026-11-27 第 97、98 次驗收
+- 第 97 次 GitHub Actions 45944324376：後端回歸與桌面／手機 Chromium 驗收成功，涵蓋既有小說完整目錄視覺化編輯。
+- 第 98 次 GitHub Actions 45944624153：後端回歸與桌面／手機 Chromium 驗收成功，涵蓋進度視窗唯讀刷新。
+- 第 45 次 Pages 部署 45944624162：成功，提交 74fef611474787828a7de92552163e1c3e1f8275。
+- 目前尚不能宣稱全 GUI 100% 一致：Issue 送出、原始 TXT/封面 Artifact 下載匯入、手動封面圖片 GitHub 提交、完整 Worker marker、正式全書→YouTube E2E 仍與 GUI 不同或缺乏正式驗收。

@@ -82,6 +82,17 @@ def main():
                             json.dumps(state, ensure_ascii=False).encode()).decode(),
                             "sha": "mock-sha"}
                     status = 200
+                elif "/contents/audiobook-book-profiles.json" in request.url:
+                    sample_profiles={"schema_version":4,"revision":1,"books":{"mockbook":{
+                        "catalog_url":"https://czbooks.net/n/demo",
+                        "book_title":"原創測試小說",
+                        "cleaner_remove_patterns":["歷史廣告"],"duplicate_detection":{},
+                        "chapter_title_overrides":{},"chapter_normalized_number_overrides":{}
+                    }}}
+                    result={"content":base64.b64encode(
+                        json.dumps(sample_profiles,ensure_ascii=False).encode()).decode(),
+                        "sha":"mock-profile-sha"}
+                    status=200
                 elif request.url.endswith("/actions/runs?per_page=35"):
                     result = {"workflow_runs": []}
                     status = 200
@@ -224,8 +235,10 @@ def main():
             assert desktop.locator("#edit-order").input_value() == ""
             desktop.locator("#edit-load-catalog").click()
             desktop.get_by_text("已載入完整目錄，共 120 章").wait_for(timeout=16000)
+            assert desktop.locator("#edit-cleaner").input_value() == "歷史廣告"
             assert desktop.locator("#chapter-dialog").is_visible()
             assert desktop.locator("#chapter-list .chapter-item").count() == 120
+            desktop.screenshot(path=str(OUTPUT / "audio-edit-chapter-picker.png"), full_page=True)
             desktop.locator("#chapter-list .chapter-item").nth(1).locator('input[aria-label="製作 UUID 2"]').uncheck()
             desktop.locator("#chapter-picker-save").click()
             assert desktop.locator("#edit-excluded").input_value() == "2"
