@@ -22,7 +22,7 @@ function toB64(value){const bytes=new TextEncoder().encode(value);let result="";
 function fromB64(value){const raw=atob(value.replace(/\s/g,""));return new TextDecoder().decode(Uint8Array.from(raw,c=>c.charCodeAt(0)));}
 function getSource(url){let parsed;try{parsed=new URL(url)}catch{throw new Error("請輸入有效的小說網址");}if(!["http:","https:"].includes(parsed.protocol)||parsed.username||parsed.password)throw new Error("僅接受 HTTP(S) 網址");const source=SOURCES.find(s=>s.hosts.includes(parsed.hostname.toLowerCase()));if(!source)throw new Error("目前不支援此網址的網站");return source;}
 async function request(path,options={}){
- if(options.method&&options.method.toUpperCase()!=="GET")throw Error("GitHub Pages 僅允許公開讀取；寫入操作由 GitHub Issue 驗證執行");
+ if(options.method&&options.method.toUpperCase()!=="GET")throw Error("GitHub 公開 API 僅供讀取；修改資料請使用本站操作介面");
  const headers={"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28",...(options.headers||{})};
  // Repository reads are public; no browser credentials.
  const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),35000);
@@ -822,7 +822,7 @@ function bind(id,event,fn){const el=$(id);if(el)el.addEventListener(event,e=>Pro
 document.addEventListener("DOMContentLoaded",()=>{
  const select=$("source");SOURCES.forEach(s=>{const opt=document.createElement("option");opt.value=s.id;opt.textContent=s.name;select.append(opt);});
  document.querySelectorAll(".nav").forEach(b=>b.addEventListener("click",()=>switchTab(b.dataset.tab)));
- // No PAT input; GitHub itself confirms every write operation.
+ // No PAT or login in the browser. Mutations use the site command service.
  bind("refresh-btn","click",refresh);bind("dispatch-btn","click",window.triggerDispatcher);bind("book-form","submit",window.submitBook);
  bind("batch-btn","click",window.batchAdd);bind("parse-btn","click",window.parseCatalog);
  bind("edit-form","submit",window.saveEditor);bind("review-form","submit",window.saveReview);
