@@ -18,6 +18,7 @@ on:
 permissions:
   actions: write
   contents: read
+  id-token: write
 
 jobs:
   generate_book_introduction:
@@ -35,7 +36,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          python src/cover_preflight.py \
+          python -m tools.audio_live_capture --task-id "${{ inputs.queue_task_id }}" --job "cover-introduction" -- python -u src/cover_preflight.py \
             --stage introduction \
             --config config.yaml \
             --task-id "${{ inputs.queue_task_id }}" \
@@ -69,7 +70,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python src/cover_preflight.py \
+          python -m tools.audio_live_capture --task-id "${{ inputs.queue_task_id }}" --job "cover-cover-information" -- python -u src/cover_preflight.py \
             --stage cover-information \
             --config config.yaml \
             --task-id "${{ inputs.queue_task_id }}"
@@ -100,7 +101,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python src/cover_preflight.py \
+          python -m tools.audio_live_capture --task-id "${{ inputs.queue_task_id }}" --job "cover-review" -- python -u src/cover_preflight.py \
             --stage review \
             --config config.yaml \
             --task-id "${{ inputs.queue_task_id }}"
@@ -137,7 +138,7 @@ jobs:
           CLOUDFLARE_WORKERS_FREE_CONFIRMED: ${{ vars.CLOUDFLARE_WORKERS_FREE_CONFIRMED }}
           COVER_IMAGE_PROVIDER: cloudflare
         run: |
-          python src/cover_preflight.py \
+          python -m tools.audio_live_capture --task-id "${{ inputs.queue_task_id }}" --job "cover-cover" -- python -u src/cover_preflight.py \
             --stage cover \
             --config config.yaml \
             --task-id "${{ inputs.queue_task_id }}"
