@@ -300,6 +300,13 @@ def main():
             mobile.locator("#queue-body tr").first.get_by_text("原創測試小說").wait_for()
             assert mobile.locator("#queue-body tr").count() == 3
             assert mobile.locator("#count-queued").inner_text() == "1"
+            # Every task status and action must fit the phone viewport without
+            # sideways scrolling or clipping the rightmost table columns.
+            bounds=mobile.locator("#queue-body tr").first.bounding_box()
+            assert bounds is not None and bounds["x"]>=0
+            assert bounds["x"]+bounds["width"]<=391
+            assert mobile.locator("#queue-body tr").nth(2).get_by_role(
+                "button",name="取消本次 Run").is_visible()
             mobile.screenshot(path=str(OUTPUT / "audio-dashboard-mobile.png"), full_page=True)
             assert mobile.locator('[data-tab="create"]').is_visible()
             mobile.locator('[data-tab="create"]').click()

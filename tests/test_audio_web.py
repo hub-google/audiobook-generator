@@ -376,3 +376,11 @@ def test_needs_attention_and_waiting_retry_show_requeue_controls():
     app=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
     assert '["waiting_retry","needs_attention"].includes(task.status)' in app
     assert 'makeBtn("重新排程",window.requeueTask,task.task_id)' in app
+
+
+def test_mobile_queue_shows_all_task_columns_as_cards():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    css=(ROOT/"docs/site/style.css").read_text(encoding="utf-8")
+    assert 'id="queue-table-wrap"' in html
+    assert "@media(max-width:680px)" in css
+    assert "#queue-body tr{display:flex;flex-direction:column" in css

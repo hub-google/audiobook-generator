@@ -40,3 +40,22 @@
 .review-candidate-actions{display:flex;flex-wrap:wrap;gap:5px;align-items:center;justify-content:flex-end}
 .review-candidate-actions button{font-size:11px;padding:5px 8px}
 @media(max-width:650px){.review-candidate{flex-wrap:wrap}.review-candidate-actions{width:100%;justify-content:flex-start;padding-left:25px}}
+
+/* On phones the workflow row is a fully visible card, not an 820px-wide table
+   whose Run status and controls silently disappear beyond the viewport. */
+@media(max-width:680px){
+ #queue-table-wrap{overflow:visible}
+ #queue-table-wrap table{display:block;min-width:0;width:100%}
+ #queue-table-wrap thead{display:none}
+ #queue-body{display:grid;gap:12px}
+ #queue-body tr{display:flex;flex-direction:column;gap:0;border:1px solid #e0e8f3;
+  border-radius:12px;background:#fff;overflow:hidden}
+ #queue-body td{display:block;width:100%;padding:9px 13px;border:0;overflow-wrap:anywhere}
+ #queue-body td:first-child{font-size:14px;font-weight:650;padding-top:15px}
+ #queue-body td:nth-child(2)::before{content:"章節　";font-size:12px;color:#718096}
+ #queue-body td:nth-child(3)::before{content:"狀態　";font-size:12px;color:#718096}
+ #queue-body td:nth-child(4)::before{content:"進度　";font-size:12px;color:#718096}
+ #queue-body td:last-child{padding-top:4px;padding-bottom:15px}
+ #queue-body td .actions{max-width:none;flex-wrap:wrap;gap:7px}
+ #queue-body td .actions button{white-space:normal}
+}
