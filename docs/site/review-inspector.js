@@ -201,6 +201,44 @@
     throw Error("請匯入這本小說的 ad-candidates JSON / ZIP，檢查 Raw/Clean 才能核准");
   return {task_id:taskId,raw_fingerprint:report.raw_fingerprint};
  };
+ let reviewLoadGeneration=0;
+ async function loadCloudReview(){
+  const selected=taskId, generation=++reviewLoadGeneration;
+  const valid=()=>taskId===selected&&generation===reviewLoadGeneration&&$("review-dialog").open;
+  const task=queueTasks().find(t=>t.task_id===selected);
+  if(!task)throw Error("找不到待審核小說");
+  if(!task.scrape_run_id||!task.cover_run_id)throw Error("TXT 或封面 Run 尚未產生");
+  const button=$("review-auto-load");button.disabled=true;
+  const indicator=$("review-auto-status");
+  try{
+   text(indicator,"正在站內提交 TXT／封面檔案取回請求…");
+   const requestIds=await Promise.all([
+    window.audioRequestArtifact(selected,task.scrape_run_id,"scrape"),
+    window.audioRequestArtifact(selected,task.cover_run_id,"cover")
+   ]);
+   if(requestIds.some(x=>!x))throw Error("雲端檔案請求未成功排入");
+   text(indicator,"已提交兩個工作；GitHub Actions 取得真實 Artifact 後會自動載入審核頁。");
+   const loadOne=async(requestId,kind)=>{
+    const assets=await window.audioWaitForAsset(requestId,valid);
+    if(!valid())return;
+    const asset=assets.find(x=>x.content_type==="application/zip")||assets[0];
+    const blob=await window.audioAssetBlob(asset.id);
+    if(!valid())return;
+    const file=new File([blob],asset.filename,{type:"application/zip"});
+    await loadReviewFiles([file]);
+    text(indicator,kind+" 已通過檔案格式驗證；等待另一份資料完成。");
+   };
+   const results=await Promise.allSettled([
+    loadOne(requestIds[0],"TXT"),loadOne(requestIds[1],"封面")
+   ]);
+   if(!valid())return;
+   const errors=results.filter(x=>x.status==="rejected").map(x=>x.reason?.message||"未知錯誤");
+   if(errors.length)throw Error(errors.join("；"));
+   text(indicator,"TXT／封面已自動讀取。請審閱 Raw／Clean 與封面，再決定是否核准後製。");
+  }catch(error){
+   if(valid())text(indicator,"自動載入尚未成功："+error.message+"。仍可使用下方手動匯入。");
+  }finally{if(valid())button.disabled=false;}
+ }
  const original=window.openReview;
  window.openReview=function(id){
   const t=queueTasks().find(x=>x.task_id===id);
@@ -220,8 +258,11 @@
   $("review-scrape-link").href="https://github.com/"+REPO+"/actions/runs/"+t.scrape_run_id;
   $("review-cover-link").href="https://github.com/"+REPO+"/actions/runs/"+t.cover_run_id;
   renderCandidates();renderText();
+  text($("review-auto-status"),"可一鍵從 GitHub Actions 安全取得 TXT 與封面審核檔案；不需開啟外站。");
+  if(window.audioAuth?.loggedIn)void loadCloudReview();
  };
  document.addEventListener("DOMContentLoaded",()=>{
+  $("review-auto-load").addEventListener("click",()=>loadCloudReview().catch(e=>notice(e.message,"error")));
   $("review-report-file").addEventListener("change",e=>loadReviewFiles(e.target.files).catch(err=>notice(err.message,"error")));
   $("review-cover-file").addEventListener("change",e=>loadReviewFiles(e.target.files).catch(err=>notice(err.message,"error")));
   $("review-drop-files").addEventListener("change",e=>loadReviewFiles(e.target.files).catch(err=>notice(err.message,"error")));
