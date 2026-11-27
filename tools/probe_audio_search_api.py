@@ -37,6 +37,7 @@ def main():
     status, _, actual = query({"q": "萬古第一廢"})
     assert status == 200, (status, actual)
     print("萬古第一廢 search results:", [(n["source_id"], n["title"]) for n in actual.get("results", [])])
+    assert actual.get("results"), "指定關鍵字沒有任何小說搜尋結果"
 
     status, _, _ = query({"q": "詭秘之主"}, "https://untrusted.example")
     assert status == 403, status
