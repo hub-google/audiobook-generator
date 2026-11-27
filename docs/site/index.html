@@ -36,6 +36,10 @@
 <div class="form-grid"><label>小說來源<select id="source" required></select></label><label class="wide">小說網址<input type="url" id="catalog-url" placeholder="貼上書籍、目錄或章節網址" required></label></div>
 <div class="inline-actions"><button type="button" id="parse-btn" class="secondary">解析網站目錄</button><span class="muted" id="parse-status">需要 GitHub Token，解析會在 GitHub Actions 執行</span></div>
 <div id="catalog-preview" class="catalog-preview hidden"></div>
+<div id="chapter-selection-tools" class="inline-actions hidden">
+<button id="open-chapter-picker" type="button" class="secondary">從完整目錄勾選／排除章節</button>
+<span class="muted">可搜尋、勾選或批次排除全部章節，不必手動輸入章號</span>
+</div>
 <div class="form-grid"><label class="wide">小說名稱<input id="book-title" maxlength="160" placeholder="解析成功後自動填入，也可手動輸入" required></label><label>起始章<input type="number" id="start-chapter" min="1" max="999999" value="1" required></label><label>結束章<input type="number" id="end-chapter" min="1" max="999999" value="10" required></label><label class="wide">排除章節（可留空）<input id="excluded" placeholder="例如：3,8,11-15"></label></div>
 <div class="form-grid"><label class="toggle"><input type="checkbox" id="renumber"> 排除後重新編號（從第 1 章開始）</label><label>公開時間<input type="datetime-local" id="publish-at"><small class="muted">留空代表依工作流程立即發布；輸入的是台灣時間。</small></label></div>
 <details class="advanced"><summary>進階章節設定（自訂標題、章號、播放順序）</summary>
@@ -53,6 +57,19 @@
 <div class="section-head"><div><h2>GitHub Actions 製作紀錄</h2><p>查看 TXT、Gemini 封面、影片製作、排程與部署的工作結果。</p></div><a href="https://github.com/hub-google/audiobook-generator/actions" rel="noopener noreferrer" target="_blank">開啟 Actions</a></div>
 <div class="table-wrap"><table><thead><tr><th>執行項目</th><th>觸發時間</th><th>狀態</th><th>連結</th></tr></thead><tbody id="runs-body"><tr><td colspan="4" class="empty">尚未載入</td></tr></tbody></table></div>
 </section>
+<dialog id="chapter-dialog" class="editor-dialog" aria-labelledby="chapter-dialog-title">
+<h2 id="chapter-dialog-title">選擇要製作的章節</h2>
+<p class="muted">勾選表示製作，取消勾選表示排除。範圍以新增表單的起訖章節為準。</p>
+<label>搜尋章號或章名<input id="chapter-search" placeholder="輸入章節編號、標題關鍵字"></label>
+<div class="chapter-controls">
+<button type="button" id="chapter-all" class="secondary">全選搜尋結果</button>
+<button type="button" id="chapter-none" class="secondary">全部排除搜尋結果</button>
+<button type="button" id="chapter-invert" class="secondary">反選搜尋結果</button>
+</div>
+<p id="chapter-picker-status" class="muted"></p>
+<div id="chapter-list" class="chapter-list"></div>
+<div class="dialog-actions"><button type="button" id="chapter-picker-cancel" class="secondary">取消</button><button type="button" id="chapter-picker-save">套用選章結果</button></div>
+</dialog>
 <dialog id="progress-dialog" class="editor-dialog" aria-labelledby="progress-title">
 <h2 id="progress-title">小說製作進度</h2><pre id="progress-detail" class="progress-detail"></pre>
 <div class="dialog-actions"><button class="secondary" type="button" id="progress-close">關閉</button></div>

@@ -82,3 +82,14 @@ def test_web_progress_and_completion_controls():
     for label in ("cancelRunningTask","markCompleted","restoreCompleted","showProgress"):
         assert "function "+label+"(" in js or "async function "+label+"(" in js
     assert '"/actions/runs/"+encodeURIComponent(id)+"/cancel"' in js
+
+
+def test_full_chapter_picker_keeps_complete_catalog():
+    parser=(ROOT/"tools/web_catalog_preview.py").read_text(encoding="utf-8")
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    assert 'chapter_titles=result["chapter_titles"]' in parser
+    assert 'chapter_titles"][:60]' not in parser
+    for id in ("chapter-dialog","chapter-list","chapter-search","chapter-all","chapter-none","chapter-invert","chapter-picker-save"):
+        assert f'id="{id}"' in html
+    assert "function pickerMatchingIndices()" in js

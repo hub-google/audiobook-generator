@@ -118,6 +118,24 @@ def main():
             desktop.locator("#token").fill("ghp_mock_local_browser_only")
             desktop.locator("#connect-btn").click()
             desktop.locator("#connection-pill").filter(has_text="已連線").wait_for()
+            desktop.locator('[data-tab="create"]').click()
+            desktop.locator("#start-chapter").fill("1")
+            desktop.locator("#end-chapter").fill("3")
+            desktop.evaluate("""() => {
+                parsedCatalog = {
+                    catalog_url: "https://czbooks.net/n/demo",
+                    book_title: "驗收小說", total_chapters: 3,
+                    chapter_titles: ["第一章", "第二章", "第三章"]
+                };
+                document.querySelector("#chapter-selection-tools").classList.remove("hidden");
+            }""")
+            desktop.locator("#open-chapter-picker").click()
+            assert desktop.locator("#chapter-dialog").is_visible()
+            assert desktop.locator("#chapter-list .chapter-item").count() == 3
+            desktop.locator("#chapter-list .chapter-item").nth(1).locator("input").uncheck()
+            desktop.locator("#chapter-picker-save").click()
+            assert desktop.locator("#excluded").input_value() == "2"
+            desktop.locator('[data-tab="overview"]').click()
             desktop.locator("#queue-body tr").first.get_by_role("button", name="編輯").click()
             assert desktop.locator("#edit-dialog").is_visible()
             desktop.locator("#edit-name").fill("原創測試新版")

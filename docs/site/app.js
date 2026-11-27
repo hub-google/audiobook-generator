@@ -11,7 +11,7 @@ const SOURCES=[
 {id:"moon17",name:"月亮小說網",hosts:["17moon.com","www.17moon.com"]},
 {id:"book8",name:"無限小說",hosts:["8book.com","www.8book.com","v.8book.com","m.8book.com","i.8book.com"]}
 ];
-let token="",queue=null,queueSha=null,latestRuns=[],parsedCatalog=null,editorTaskId=null,reviewTaskId=null;
+let token="",queue=null,queueSha=null,latestRuns=[],parsedCatalog=null,editorTaskId=null,reviewTaskId=null,chapterPickerExcluded=null;
 const $=id=>document.getElementById(id), text=(node,value)=>{node.textContent=value==null?"":String(value)};
 function notice(message,kind="ok"){const n=$("message");text(n,message);n.className="notice"+(kind==="error"?" error":"");}
 const dateLabel=v=>v?new Date(v).toLocaleString("zh-TW",{timeZone:"Asia/Taipei",hour12:false}):"—";
@@ -246,7 +246,7 @@ async function submitBook(event){
  const publish=$("publish-at").value?$("publish-at").value+":00+08:00":null;
  const excluded=excludedNumbers($("excluded").value,start,end);
  await addTasks([buildTask({url,title:$("book-title").value,start,end,excluded,renumber:$("renumber").checked,publishAt:publish,identity:parsedCatalog?.catalog_url===url?parsedCatalog.catalog_identity:"",titles:readOverrides($("title-overrides").value,start,end),numbers:readOverrides($("number-overrides").value,start,end,true),order:readOrder($("chapter-order").value,start,end,excluded)})]);
- $("book-form").reset();parsedCatalog=null;$("catalog-preview").classList.add("hidden");
+ $("book-form").reset();parsedCatalog=null;$("catalog-preview").classList.add("hidden");$("chapter-selection-tools").classList.add("hidden");
 }
 async function batchAdd(){
  const lines=$("batch-urls").value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(!lines.length)throw Error("請貼上批次小說資料");
@@ -275,10 +275,63 @@ async function fetchPreviewArtifact(artifact){
  const response=await request("/actions/artifacts/"+artifact.id+"/zip");
  return unzipJson(await response.arrayBuffer(),"catalog-preview.json");
 }
+function pickerMatchingIndices(){
+ if(!parsedCatalog||!Array.isArray(parsedCatalog.chapter_titles))return [];
+ const start=Number($("start-chapter").value),end=Number($("end-chapter").value),q=$("chapter-search").value.trim().toLowerCase();
+ if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<1||end<start||end>parsedCatalog.total_chapters)throw Error("請先設定有效的章節範圍");
+ const indices=[];for(let i=start;i<=end;i++){
+  const title=String(parsedCatalog.chapter_titles[i-1]||"");
+  if(!q||title.toLowerCase().includes(q)||String(i).includes(q))indices.push(i);
+ }
+ return indices;
+}
+function pickerStatus(matched){
+ const start=Number($("start-chapter").value),end=Number($("end-chapter").value);
+ const selected=end-start+1-chapterPickerExcluded.size;
+ text($("chapter-picker-status"),"本次選定 "+selected+" / "+(end-start+1)+" 章；符合搜尋 "+matched+" 章，畫面最多顯示前 250 章");
+}
+function renderChapterPicker(){
+ const matched=pickerMatchingIndices(),container=$("chapter-list");
+ container.replaceChildren();
+ for(const index of matched.slice(0,250)){
+  const label=document.createElement("label");label.className="chapter-item";
+  const check=document.createElement("input");check.type="checkbox";check.checked=!chapterPickerExcluded.has(index);
+  const span=document.createElement("span");span.textContent=index+". "+String(parsedCatalog.chapter_titles[index-1]||"");
+  check.addEventListener("change",()=>{
+   if(check.checked)chapterPickerExcluded.delete(index);else chapterPickerExcluded.add(index);
+   pickerStatus(matched.length);
+  });
+  label.append(check,span);container.append(label);
+ }
+ pickerStatus(matched.length);
+}
+function openChapterPicker(){
+ if(!parsedCatalog||!Array.isArray(parsedCatalog.chapter_titles)||parsedCatalog.chapter_titles.length!==parsedCatalog.total_chapters)
+  throw Error("完整目錄尚未載入，請重新解析目錄");
+ const start=Number($("start-chapter").value),end=Number($("end-chapter").value);
+ chapterPickerExcluded=new Set(excludedNumbers($("excluded").value,start,end));
+ $("chapter-search").value="";renderChapterPicker();$("chapter-dialog").showModal();
+}
+function pickerBulk(mode){
+ if(!chapterPickerExcluded)throw Error("尚未開啟選章視窗");
+ for(const i of pickerMatchingIndices()){
+  if(mode==="none")chapterPickerExcluded.add(i);
+  else if(mode==="all")chapterPickerExcluded.delete(i);
+  else if(chapterPickerExcluded.has(i))chapterPickerExcluded.delete(i);
+  else chapterPickerExcluded.add(i);
+ }
+ renderChapterPicker();
+}
+function saveChapterPicker(){
+ if(!chapterPickerExcluded)throw Error("尚未開啟選章視窗");
+ $("excluded").value=[...chapterPickerExcluded].sort((a,b)=>a-b).join(",");
+ $("chapter-dialog").close();chapterPickerExcluded=null;
+ notice("章節選擇已套用到排除清單；加入佇列前仍可調整");
+}
 async function parseCatalog(){
  if(!token)throw Error("解析目錄需要 GitHub Token");
  const url=$("catalog-url").value.trim(),source=getSource(url);
- $("source").value=source.id;parsedCatalog=null;
+ $("source").value=source.id;parsedCatalog=null;$("chapter-selection-tools").classList.add("hidden");
  const requestId=crypto.randomUUID().slice(0,8);
  const btn=$("parse-btn");btn.disabled=true;
  try{
@@ -300,7 +353,7 @@ async function parseCatalog(){
  $("end-chapter").value=Math.min(10,data.total_chapters);
  const box=$("catalog-preview");box.replaceChildren();
  const title=document.createElement("strong");title.textContent=data.book_title+" · "+data.total_chapters+" 章";box.append(title);
- const listEl=document.createElement("ul");(data.chapter_titles||[]).slice(0,40).forEach((name,i)=>{const item=document.createElement("li");item.textContent=(i+1)+". "+name;listEl.append(item);});box.append(listEl);box.classList.remove("hidden");
+ const listEl=document.createElement("ul");(data.chapter_titles||[]).slice(0,40).forEach((name,i)=>{const item=document.createElement("li");item.textContent=(i+1)+". "+name;listEl.append(item);});box.append(listEl);box.classList.remove("hidden");$("chapter-selection-tools").classList.remove("hidden");
  text($("parse-status"),"已解析完成（"+data.source_id+"，"+data.total_chapters+" 章）");
  }finally{btn.disabled=false;}
 }
@@ -318,7 +371,10 @@ document.addEventListener("DOMContentLoaded",()=>{
  bind("refresh-btn","click",refresh);bind("dispatch-btn","click",triggerDispatcher);bind("book-form","submit",submitBook);
  bind("batch-btn","click",batchAdd);bind("parse-btn","click",parseCatalog);
  bind("edit-form","submit",saveEditor);bind("review-form","submit",saveReview);
+ bind("open-chapter-picker","click",openChapterPicker);bind("chapter-search","input",renderChapterPicker);
+ bind("chapter-all","click",()=>pickerBulk("all"));bind("chapter-none","click",()=>pickerBulk("none"));bind("chapter-invert","click",()=>pickerBulk("invert"));
+ bind("chapter-picker-save","click",saveChapterPicker);bind("chapter-picker-cancel","click",()=>{$("chapter-dialog").close();chapterPickerExcluded=null;});
  bind("progress-close","click",()=>$("progress-dialog").close());bind("edit-cancel","click",()=>{$("edit-dialog").close();editorTaskId=null;});bind("review-cancel","click",()=>{$("review-dialog").close();reviewTaskId=null;});
- bind("catalog-url","input",()=>{parsedCatalog=null;$("catalog-preview").classList.add("hidden");});
+ bind("catalog-url","input",()=>{parsedCatalog=null;$("catalog-preview").classList.add("hidden");$("chapter-selection-tools").classList.add("hidden");});
  refresh();
 });

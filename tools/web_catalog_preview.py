@@ -16,7 +16,7 @@ def main():
     if not result.get("success") or not result.get("total_chapters"):
         raise RuntimeError("Catalog is incomplete")
     preview={key:result[key] for key in ("catalog_url","book_title","source_id","total_chapters","catalog_identity")}
-    preview.update(requested_url=a.url,request_id=a.request_id,chapter_titles=result["chapter_titles"][:60])
+    preview.update(requested_url=a.url,request_id=a.request_id,chapter_titles=result["chapter_titles"])
     Path("catalog-preview.json").write_text(json.dumps(preview,ensure_ascii=False,indent=2),encoding="utf-8")
     print(f"Catalog parsed: {preview['source_id']} {preview['total_chapters']} chapters")
 
