@@ -132,8 +132,11 @@
    throw Error("TXT／封面尚未通過前置檢查，無法核准後製");
   const evidence=window.audioReviewEvidence?.();
   if(!evidence)throw Error("請先匯入這本小說真正的 TXT 審核報告");
+  const cover_evidence=window.audioReviewCoverEvidence?.();
+  if(!cover_evidence)throw Error("請先匯入此書封面並驗證完整性");
   return await send("review",{task_id:id,remove_patterns:patterns,
-   candidate_overrides:window.audioReviewCandidateEdits?.()||[],evidence},
+   candidate_overrides:window.audioReviewCandidateEdits?.()||[],
+   evidence,cover_evidence},
    "核准文字與封面，開始後製");
  };
  window.saveReview=async function(e){

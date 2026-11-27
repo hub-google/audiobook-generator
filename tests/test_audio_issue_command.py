@@ -337,3 +337,36 @@ def test_edit_cleaner_rules_are_stored_in_book_profile_not_lost_in_queue():
     assert next(iter(profiles.value["books"].values()))["cleaner_remove_patterns"]==[
         "新增廣告詞","不必要文字"]
     assert "cleaner_remove_patterns" not in state["queue"][0]
+
+
+def test_review_approval_requires_cover_manifest_evidence():
+    from src.cloud_queue import empty_queue,new_task
+    from src.book_profiles import empty_profiles
+    from tools.audio_issue_command import apply_command
+    from unittest.mock import Mock
+    state=empty_queue()
+    task=new_task("https://69shuba.com/book/123/","Sample",1,3)
+    task["status"]="waiting_review"
+    task["scrape_run_id"]=10
+    task["cover_run_id"]=11
+    task["stages"]["scrape"]["status"]="completed"
+    task["stages"]["cover"]["status"]="completed"
+    state["queue"].append(task)
+    class Store:
+        def load(self):return state,None
+        def mutate(self,fn,msg):
+            nonlocal state
+            state=fn(state)
+    profiles=Mock()
+    values={"task_id":task["task_id"],"remove_patterns":[],
+            "evidence":{"task_id":task["task_id"],"raw_fingerprint":"a"*64}}
+    cmd={"op":"review","data":values}
+    txt={"raw_fingerprint":"a"*64,"remove_patterns":[],"keep_patterns":[]}
+    with patch("tools.audio_review_evidence.validate_review_evidence",return_value=txt):
+        with patch("tools.audio_cover_evidence.validate_cover_review_evidence",
+                   side_effect=ValueError("Cover was never reviewed")):
+            with pytest.raises(ValueError, match="never reviewed"):
+                apply_command(cmd,Store(),profiles,739,"token","owner/repo")
+    assert task["status"]=="waiting_review"
+    assert 739 not in state.get("web_applied_issue_ids",[])
+    profiles.mutate.assert_not_called()

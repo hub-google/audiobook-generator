@@ -312,6 +312,7 @@ def apply_command(command, store, profiles, issue_number, token, repo):
         return f"Already processed issue #{issue_number}", False
 
     review_evidence = None
+    cover_review_evidence = None
     # Preserve the desktop GUI's explicit edit-while-running behavior only for
     # the video-processing phase where the Run is known and can be cancelled.
     active_edit_status = {"running", "dispatching", "canceling"}
@@ -328,6 +329,10 @@ def apply_command(command, store, profiles, issue_number, token, repo):
             raise ValueError("Review requires a waiting TXT/cover preflight task")
         from tools.audio_review_evidence import validate_review_evidence
         review_evidence = validate_review_evidence(values, review_task, token, repo, api)
+        if not values.get("review_only"):
+            from tools.audio_cover_evidence import validate_cover_review_evidence
+            cover_review_evidence = validate_cover_review_evidence(
+                values, review_task, token, repo, api)
 
     # Parse new books before queue mutation; a failed book never inserts a partial batch.
     new_books = []
@@ -437,8 +442,10 @@ def apply_command(command, store, profiles, issue_number, token, repo):
             # Keep the task in waiting_review until the separate confirmation.
             if values.get("review_only"):
                 return q
+            if cover_review_evidence is None:
+                raise ValueError("The actual cover Artifact was not verified")
             review = {"status": "approved", "approved_at": utc_now(),
-                      **review_evidence}
+                      **review_evidence, **cover_review_evidence}
             return start_reviewed_processing(
                 confirm_preflight_review(q,ids[0],task.get("scrape_run_id"),task.get("cover_run_id"),review),ids[0]
             )

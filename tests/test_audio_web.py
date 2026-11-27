@@ -439,3 +439,12 @@ def test_cover_review_requires_manifest_sha256_and_matching_task():
     assert 'await sha256Hex(imageBytes)!==m.cover_sha256' in js
     assert 'await sha256Hex(promptBytes)!==m.prompt_sha256' in js
     assert 'async function loadReviewFiles(files)' in js
+
+
+def test_review_approval_has_both_txt_and_cover_evidence_and_no_browser_token():
+    bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    script=(ROOT/"docs/site/review-inspector.js").read_text(encoding="utf-8")
+    assert "window.audioReviewCoverEvidence=function()" in script
+    assert "coverEvidence={task_id:selectedTask" in script
+    assert "cover_evidence=window.audioReviewCoverEvidence?.()" in bridge
+    assert "evidence,cover_evidence" in bridge

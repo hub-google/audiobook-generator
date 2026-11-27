@@ -1,6 +1,6 @@
 "use strict";
 (function(){
- let report=null, taskId=null, coverUrl=null, bookTitle="";
+ let report=null, taskId=null, coverUrl=null, bookTitle="",coverEvidence=null;
  const state={candidateChoices:new Map(),chapters:{},prompt:""};
  function editedCandidates(){
   return (report?.candidates||[]).filter(c=>typeof c?.text==="string").map(c=>({
@@ -160,6 +160,8 @@
   if(coverUrl)URL.revokeObjectURL(coverUrl);
   coverUrl=URL.createObjectURL(new Blob([imageBytes],{type:"image/jpeg"}));
   $("review-cover-preview").src=coverUrl;$("review-cover-preview").hidden=false;
+  coverEvidence={task_id:selectedTask,cover_sha256:m.cover_sha256,
+    prompt_sha256:m.prompt_sha256};
   text($("review-cover-status"),"已核對封面任務 "+selectedTask+" 與兩份 SHA-256 指紋");
  }
  async function loadReviewFiles(files){
@@ -182,6 +184,11 @@
   }
   notice("已匯入 TXT "+txt+" 份、封面 "+cover+" 份；請檢查 Raw/Clean 與封面內容。");
  }
+ window.audioReviewCoverEvidence=function(){
+  if(!coverEvidence||coverEvidence.task_id!==taskId)
+   throw Error("必須先匯入此書的封面審核 ZIP，核對 Manifest、圖片與 Prompt 後才能開始後製");
+  return {...coverEvidence};
+ };
  window.audioReviewEvidence=function(){
   if(!report||report.task_id!==taskId||!chapterKeys().length||
      !/^[0-9a-f]{64}$/.test(String(report.raw_fingerprint||"")))
@@ -192,7 +199,8 @@
  window.openReview=function(id){
   const t=queueTasks().find(x=>x.task_id===id);
   if(!t||t.status!=="waiting_review")throw Error("小說尚未進入審核");
-  taskId=id;bookTitle=t.book_title||"";report=null;state.candidateChoices.clear();
+  taskId=id;bookTitle=t.book_title||"";report=null;coverEvidence=null;
+  state.candidateChoices.clear();
   state.chapters={};state.prompt="";
   original(id);
   for(const field of ["review-report-file","review-cover-file","review-search"])$(field).value="";

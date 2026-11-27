@@ -66,3 +66,7 @@
 - Browser 審核封面新增原始 cover-preflight-manifest.json 核對：artifact_role/schema_version、task_id、master_cover.jpg SHA-256、master_cover_prompt.json SHA-256；不符就拒絕顯示錯誤小說或遭變更的封面。
 - TXT 與 Cover 審核資料支援拖放多個 ZIP／JSON，一次讀入、在瀏覽器本機解壓，不向 GitHub Pages 上傳原文或將 Secrets 放入 JavaScript。
 - 對於 GitHub 原生 Artifact 仍需 GitHub 授權後下載；純靜態 Pages 不會繞過 GitHub 下載權限。
+
+## 封面實際審核門檻
+- 進入第二階段後製前，瀏覽器必須已驗證 TXT Raw 指紋及 Cover Manifest／原圖／Prompt 兩組 SHA-256；僅「儲存清理規則」不用核准封面。
+- 後端 Issue Actions 在核准時另以 GitHub 授權下載該書 cover-review Artifact，再次核對 task_id、manifest、圖片與 Prompt SHA-256；不得僅信任瀏覽器提供的指紋。所有驗證失敗仍在 waiting_review，不啟動後製。
