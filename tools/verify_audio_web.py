@@ -145,10 +145,12 @@ def main():
             assert next(t for t in mock_writes[-1]["queue"]
                         if t["task_id"] == "book-smoke-running")["status"] == "canceling"
             desktop.locator("#queue-body tr").first.get_by_role("button", name="標為已完成").click()
+            desktop.locator("#completed-list .completed-item").first.get_by_role("button", name="移回佇列").wait_for()
             assert len(mock_writes[-1]["completed"]) == 1
             assert mock_writes[-1]["completed"][0]["task_id"] == "book-smoke-queued"
             desktop.locator("#completed-list .completed-item").first.get_by_role(
                 "button", name="移回佇列").click()
+            desktop.locator("#completed-list .completed-item").wait_for(state="hidden")
             assert len(mock_writes[-1]["completed"]) == 0
             assert next(t for t in mock_writes[-1]["queue"]
                         if t["task_id"] == "book-smoke-queued")["status"] == "paused"
