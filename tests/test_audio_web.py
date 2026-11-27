@@ -265,3 +265,12 @@ def test_review_approval_is_gated_by_authoritative_artifact_fingerprint():
     assert "window.audioReviewEvidence?.()" in bridge
     assert "validate_review_evidence(values, review_task, token, repo, api)" in backend
     assert "evidence:window.audioReviewEvidence()" in review
+
+
+def test_manual_cover_supports_browser_drop_and_clipboard_paste():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    js=(ROOT/"docs/site/manual-cover.js").read_text(encoding="utf-8")
+    assert 'id="manual-cover-copy"' in html
+    assert 'addEventListener("drop"' in js
+    assert "ClipboardItem" in js
+    assert "file.size>20_000_000" not in js
