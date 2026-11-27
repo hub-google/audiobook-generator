@@ -52,7 +52,7 @@
   note.textContent="這是原始參考網址，為避免誤跳出 AUDIO，本站改為直接顯示並提供複製："+url.href;
  }
  window.audioShowExternalInfo=url=>void show(url).catch(e=>notice(e.message,"error"));
- document.addEventListener("click",event=>{
+ function interceptExternal(event){
   const a=event.target.closest?.("a[href]");
   if(!a||event.defaultPrevented)return;
   let url;try{url=new URL(a.href,location.href)}catch{return;}
@@ -60,6 +60,8 @@
    event.preventDefault();event.stopImmediatePropagation();
    window.audioShowExternalInfo(url.href);
   }
- },true);
+ }
+ document.addEventListener("click",interceptExternal,true);
+ document.addEventListener("auxclick",event=>{if(event.button===1)interceptExternal(event);},true);
  document.addEventListener("DOMContentLoaded",()=>{dialog();});
 })();
