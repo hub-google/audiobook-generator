@@ -23,7 +23,8 @@ def test_artifacts_stream_directly_into_single_zip(tmp_path):
         headers={}
         def get(self,url,**kwargs):
             if "artifacts?" in url:
-                page=int(url.split("page=")[1])
+                from urllib.parse import urlsplit,parse_qs
+                page=int(parse_qs(urlsplit(url).query)["page"][0])
                 if page==1:
                     return Response({"artifacts":[{
                         "name":"作品分包","id":24,"expired":False,
