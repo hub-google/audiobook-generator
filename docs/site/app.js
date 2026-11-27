@@ -7,7 +7,7 @@ const SOURCES=[
 {id:"sixk",name:"6K 小說",hosts:["6ksu.app","www.6ksu.app"]},
 {id:"xszj",name:"小說之家",hosts:["xszj.tw","www.xszj.tw"]},
 {id:"metanovel",name:"MetaNovel",hosts:["metanovel.org","www.metanovel.org","m.metanovel.org"]},
-{id:"twkan",name:"天天看",hosts:["twkan.cc","www.twkan.cc"]},
+{id:"twkan",name:"天天看",hosts:["twkan.cc","www.twkan.cc","twkan.com","www.twkan.com"]},
 {id:"moon17",name:"月亮小說網",hosts:["17moon.com","www.17moon.com"]},
 {id:"book8",name:"無限小說",hosts:["8book.com","www.8book.com","v.8book.com","m.8book.com","i.8book.com"]}
 ];
