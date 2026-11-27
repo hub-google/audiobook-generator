@@ -250,6 +250,12 @@ def main():
             desktop.locator("#novel-search-add-queue").click()
             desktop.wait_for_function("window.__webCommands.includes('batch_add')",timeout=15000)
             assert desktop.evaluate("window.__issueUrls") == [], "批次新增不得開啟外部視窗"
+            # A book must appear immediately as submitted, not disappear while Actions is queued.
+            assert desktop.locator("#audio-submitted-books").is_visible()
+            assert desktop.locator("#audio-submitted-list .audio-submitted-item").count() == 2
+            assert "詭秘之主" in desktop.locator("#audio-submitted-list").inner_text()
+            assert "等待後端處理" in desktop.locator("#audio-submitted-list").inner_text()
+            desktop.screenshot(path=str(OUTPUT / "audio-submitted-queue-desktop.png"), full_page=True)
             desktop.locator('[data-tab="create"]').click()
             # Reset the single-book form for the independent catalog-editor check.
             desktop.locator("#source").select_option("czbooks")
