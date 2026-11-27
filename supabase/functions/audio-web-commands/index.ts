@@ -35,7 +35,7 @@ async function userOf(req) {
  if(!authorized)throw Object.assign(new Error("目前帳號沒有 AUDIO 管理權限"),{status:403});
  return data.user;
 }
-async function runnerOf(req,allowExporter=false) {
+async function runnerOf(req,allowExporter=false,allowPipeline=false) {
  const token=tokenOf(req);
  if(!token)throw Object.assign(new Error("缺少 GitHub Actions 身份驗證"),{status:401});
  const {payload}=await jwtVerify(token,jwks,{issuer:"https://token.actions.githubusercontent.com",audience:"audio-web-commands"});
@@ -43,7 +43,12 @@ async function runnerOf(req,allowExporter=false) {
  const exporter=REPO+"/.github/workflows/audio-export-artifacts.yml@refs/heads/main";
  const fromRunner=payload.workflow_ref===expected&&["schedule","workflow_dispatch","push"].includes(String(payload.event_name||""));
  const fromExporter=allowExporter&&payload.workflow_ref===exporter&&payload.event_name==="workflow_dispatch";
- if(payload.repository!==REPO || payload.ref!=="refs/heads/main" || !(fromRunner||fromExporter))
+ const pipelineRefs=new Set([
+  REPO+"/.github/workflows/audiobook.yml@refs/heads/main",
+  REPO+"/.github/workflows/cover-preflight.yml@refs/heads/main"
+ ]);
+ const fromPipeline=allowPipeline&&pipelineRefs.has(String(payload.workflow_ref||""))&&payload.event_name==="workflow_dispatch";
+ if(payload.repository!==REPO || payload.ref!=="refs/heads/main" || !(fromRunner||fromExporter||fromPipeline))
   throw Object.assign(new Error("不是已授權的 AUDIO GitHub Actions 工作機"),{status:403});
  return payload;
 }
@@ -188,6 +193,53 @@ async function getAsset(req){
   "Access-Control-Allow-Origin":ORIGIN,"Vary":"Origin","Cache-Control":"private,no-store"
  }});
 }
+function redactLogLine(value){
+ return String(value||"")
+  .replace(/(bearer\s+)[a-z0-9_.-]+/gi,"$1[REDACTED]")
+  .replace(/((?:api[_-]?key|authorization|access[_-]?token|refresh[_-]?token|password|secret)\s*[:=]\s*)[^\s&]+/gi,"$1[REDACTED]")
+  .replace(/(?:gh[pousr]_|hf_)[a-z0-9]{12,}/gi,"[REDACTED]")
+  .replace(/AIza[a-zA-Z0-9_-]{20,}/g,"[REDACTED]")
+  .replace(/\u001b\[[0-9;]*m/g,"")
+  .slice(0,800).trim();
+}
+async function postLive(req){
+ const claim=await runnerOf(req,false,true);
+ const body=await req.json();
+ const task_id=String(body.task_id||"").trim();
+ const run_id=Number(body.run_id);
+ const job_name=String(body.job_name||"").replace(/[^a-zA-Z0-9_-]/g,"_").slice(0,90);
+ if(!/^book-[A-Za-z0-9_-]{5,80}$/.test(task_id)||
+  !Number.isSafeInteger(run_id)||run_id<1||String(run_id)!==String(claim.run_id)||
+  !job_name || !Array.isArray(body.lines)||body.lines.length>35)
+  throw Object.assign(new Error("無效的即時日誌來源"),{status:400});
+ const rows=body.lines.map(line=>({
+  task_id,run_id,job_name,
+  level:["warning","error"].includes(line?.level)?line.level:"info",
+  message:redactLogLine(line?.message)
+ })).filter(x=>x.message.length>0);
+ if(!rows.length)return reply({ok:true,stored:0});
+ const {error}=await admin.from("audio_web_live_events").insert(rows);
+ if(error)throw new Error("即時日誌暫存失敗");
+ return reply({ok:true,stored:rows.length},202);
+}
+async function readLive(req){
+ await userOf(req);
+ const params=new URL(req.url).searchParams;
+ const task_id=params.get("task_id")||"";
+ const after=Number(params.get("after")||0);
+ if(!/^book-[A-Za-z0-9_-]{5,80}$/.test(task_id)||
+  !Number.isSafeInteger(after)||after<0)
+  throw Object.assign(new Error("即時日誌查詢參數無效"),{status:400});
+ let query=admin.from("audio_web_live_events")
+  .select("id,run_id,job_name,level,message,created_at")
+  .eq("task_id",task_id).limit(100);
+ if(after>0)query=query.gt("id",after).order("id",{ascending:true});
+ else query=query.order("id",{ascending:false});
+ const {data,error}=await query;
+ if(error)throw new Error("取得即時日誌失敗");
+ return reply({events:after>0?(data||[]):(data||[]).reverse()});
+}
+
 async function downloadCover(req) {
  await runnerOf(req);
  const key=new URL(req.url).searchParams.get("key")||"";
@@ -204,6 +256,8 @@ Deno.serve(async req=>{
    "Access-Control-Allow-Headers":"authorization, apikey, content-type","Vary":"Origin"}});
   const path=new URL(req.url).pathname.split("/").pop();
   if(req.method==="POST"&&path==="submit")return await submit(req);
+  if(req.method==="POST"&&path==="live_append")return await postLive(req);
+  if(req.method==="GET"&&path==="live_events")return await readLive(req);
   if(req.method==="POST"&&path==="stage")return await stageAsset(req);
   if(req.method==="GET"&&path==="assets")return await listAssets(req);
   if(req.method==="GET"&&path==="asset")return await getAsset(req);
