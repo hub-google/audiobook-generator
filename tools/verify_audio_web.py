@@ -179,8 +179,7 @@ def main():
             desktop.locator('[data-tab="create"]').click()
             # Nine-site search and multi-selection are exercised in Chromium.
             def search_mock(route):
-                request_id=route.request.url.split("/web-searches/",1)[1].split(".json",1)[0]
-                result={"request_id":request_id,"keyword":"詭秘之主",
+                result={"keyword":"詭秘之主",
                         "sources":[{"source_id":"shuba69","status":"ok",
                                     "results":[{"title":"詭秘之主"}]},
                                    {"source_id":"czbooks","status":"ok",
@@ -196,15 +195,18 @@ def main():
                 route.fulfill(status=200,content_type="application/json",
                               headers={"Access-Control-Allow-Origin":"*"},
                               body=json.dumps(result,ensure_ascii=False))
-            desktop.route("https://raw.githubusercontent.com/**/web-searches/**", search_mock)
+            desktop.route("https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-novel-search**", search_mock)
             assert desktop.locator("#novel-search-source option").count() == 10
             desktop.locator("#novel-search-keyword").fill("詭秘之主")
             desktop.locator("#novel-search-go").click()
             desktop.locator("#novel-search-body tr").first.get_by_text("詭秘之主").wait_for(timeout=20000)
+            assert desktop.evaluate("window.__issueUrls") == [], "搜尋不可開啟 GitHub Issue"
+            assert desktop.locator("#novel-search-status").inner_text().startswith("搜尋完成")
             assert desktop.locator("#novel-search-body tr").count() == 2
             desktop.locator("#novel-search-select-all").click()
             desktop.locator("#novel-search-stage").click()
             assert desktop.locator("#novel-search-staged-list .staged-item").count() == 2
+            assert desktop.evaluate("window.__issueUrls") == [], "加入待新增清單不可開新分頁"
             desktop.screenshot(path=str(OUTPUT / "audio-search-multiselect-desktop.png"),full_page=True)
             desktop.locator("#novel-search-add-queue").click()
             assert len(desktop.evaluate("window.__issueUrls")) >= 2
