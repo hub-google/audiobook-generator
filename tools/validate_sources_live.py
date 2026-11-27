@@ -45,8 +45,8 @@ CANDIDATES = {
 }
 
 
-def live_adapter(source_id):
-    url = SAMPLES[source_id]
+def live_adapter(source_id, catalog_url=None):
+    url = catalog_url or SAMPLES[source_id]
     adapter = resolve_source(url, source_id)
     result = {"source": source_id, "module": type(adapter).__name__, "url": url,
               "status": "FAIL", "chapters": [], "stage": "catalog"}
@@ -148,8 +148,20 @@ def probe_candidate(source_id):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("source", choices=list(SAMPLES))
+    parser.add_argument("--queue-target", default="",
+                        help="Optional real queue book to probe separately without modifying it")
     args = parser.parse_args()
     result = live_adapter(args.source) if args.source in SAMPLES else probe_candidate(args.source)
+    if args.queue_target:
+        from src.sources import resolve_source
+        source = resolve_source(args.queue_target, args.source)
+        if source.source_id != args.source:
+            parser.error("Queue target source does not match the selected adapter")
+        target = live_adapter(args.source, args.queue_target)
+        result["queue_target"] = target
+        if target["status"] != "PASS":
+            result["status"] = "FAIL"
+            result["error"] = "Selected book in real AUDIO queue could not pass source check"
     report = json.dumps(result, ensure_ascii=False, indent=2)
     print(report, flush=True)
     path = Path("source-report.json")
