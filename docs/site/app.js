@@ -78,6 +78,8 @@ function buildTaskRow(task,index){
   div.append(makeBtn("刪除",window.deleteTask,task.task_id));
  }
  if(canEditAfterCancel(task))div.append(makeBtn("編輯並重新排程",openEditor,task.task_id));
+ if(["waiting_retry","needs_attention"].includes(task.status))
+  div.append(makeBtn("重新排程",window.requeueTask,task.task_id));
  tr.addEventListener("dblclick",event=>{
   if(!canEditTask(task)||event.target.closest("button,input,a,select,textarea"))return;
   openEditor(task.task_id);

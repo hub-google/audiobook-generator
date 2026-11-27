@@ -285,3 +285,28 @@ def test_edit_running_processing_cancels_existing_run_and_requeues():
     assert updated["requeue_after_edit"] is True
     assert ("POST","actions/runs/1234/cancel") in calls
     assert q["web_profile_pending"]=={}
+
+
+def test_attention_preflight_can_requeue_failed_cover_without_repeating_txt():
+    from src.cloud_queue import empty_queue, new_task
+    from tools.audio_issue_command import apply_command
+    state=empty_queue()
+    book=new_task("https://69shuba.com/book/123/","Fail cover",1,3)
+    book.update(status="needs_attention",workflow_phase="preflight",scrape_run_id=100,cover_run_id=101)
+    book["stages"]["scrape"].update(status="completed",run_id=100)
+    book["stages"]["cover"].update(status="failed",run_id=101)
+    state["queue"].append(book)
+    class Store:
+        def load(self): return state,None
+        def mutate(self,fn,msg):
+            nonlocal state
+            state=fn(state)
+    result,dispatch=apply_command({"op":"requeue","data":{"task_id":book["task_id"]}},
+                                   Store(),None,900,"token","owner/repo")
+    task=state["queue"][0]
+    assert dispatch is True
+    assert task["status"]=="queued"
+    assert task["stages"]["scrape"]["status"]=="completed"
+    assert task["scrape_run_id"]==100
+    assert task["stages"]["cover"]["status"]=="pending"
+    assert task["cover_run_id"] is None

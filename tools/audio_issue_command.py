@@ -19,7 +19,7 @@ import requests
 from src.cloud_queue import (
     GitHubQueueStore, new_task, add_tasks, move_tasks, update_task,
     mark_tasks_completed, move_tasks_to_pending, requeue_task_after_active,
-    update_task_chapters, delete_task, start_reviewed_processing,
+    update_task_chapters, delete_task, retry_failed_preflight_stages, start_reviewed_processing,
     confirm_preflight_review, utc_now, normalize_queue, touch
 )
 from src.book_profiles import GitHubBookProfileStore, update_book_profile
@@ -376,6 +376,14 @@ def apply_command(command, store, profiles, issue_number, token, repo):
                 q = delete_task(q, task_id)
             return q
         if operation == "requeue":
+            task = targets[0]
+            if task.get("workflow_phase") == "preflight" and any(
+                task.get("stages", {}).get(name, {}).get("status") != "completed"
+                for name in ("scrape", "cover")
+            ):
+                # Keep the successful preflight artifact; restart only the
+                # missing/failed TXT or cover stage.
+                return retry_failed_preflight_stages(q, ids[0])
             return requeue_task_after_active(q, ids[0])
         if operation == "edit":
             task = targets[0]

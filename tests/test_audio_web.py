@@ -370,3 +370,9 @@ def test_long_chapter_issue_command_uses_native_gzip_without_browser_token():
     assert "function base64Url(bytes)" in bridge
     assert "function naturalChapterOrder(task)" in (ROOT/"docs/site/app.js").read_text(encoding="utf-8")
     assert "未填結束章時，自動依最新目錄選取全書" in html
+
+
+def test_needs_attention_and_waiting_retry_show_requeue_controls():
+    app=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    assert '["waiting_retry","needs_attention"].includes(task.status)' in app
+    assert 'makeBtn("重新排程",window.requeueTask,task.task_id)' in app
