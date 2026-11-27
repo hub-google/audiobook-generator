@@ -276,6 +276,21 @@ def main():
             page.wait_for_timeout(200)
             verify_stayed("batch-cover-generate")
             assert any(x.get("op")=="batch_cover_info" for x in submitted), "Cover research not queued"
+            # Login/OTP buttons are exercised with an in-memory mock (no email sent).
+            def mock_auth(route):
+                response={"access_token":"local-test-access","refresh_token":"local-test-refresh",
+                          "expires_in":3600} if route.request.url.endswith("/verify") else {}
+                route.fulfill(status=200,content_type="application/json",
+                              headers={"Access-Control-Allow-Origin":"*"},
+                              body=json.dumps(response))
+            page.route("https://unapiwajmgqqtdkixaab.supabase.co/auth/v1/**",mock_auth)
+            page.locator("#audio-auth-dialog").evaluate("(d)=>d.showModal()")
+            page.locator("#audio-auth-email").fill("audiotest@example.com")
+            attempt_button("#audio-auth-send",keep_dialog=True)
+            page.locator("#audio-auth-otp").fill("123456")
+            attempt_button("#audio-auth-confirm")
+            page.locator("#audio-auth-dialog").evaluate("(d)=>d.showModal()")
+            attempt_button("#audio-auth-close")
             # Programmatic scan of every available inline action with accessible ID.
             all_ids=page.evaluate("""() => [...document.querySelectorAll("button[id]")].map(b=>({
                id:b.id,label:b.textContent.trim(),disabled:b.disabled,hidden:!(b.offsetWidth||b.offsetHeight)
