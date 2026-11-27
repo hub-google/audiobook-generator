@@ -152,3 +152,16 @@ def test_github_pages_only_uses_issue_bridge_no_browser_pat():
     assert 'AUDIO-COMMAND-V1' in bridge
     assert "hub-google/audiobook-generator/issues/new" in bridge
     assert 'window.addRankingToQueue=async function()' in bridge
+
+
+def test_local_artifact_review_and_cover_inspection_no_server_exposure():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    script=(ROOT/"docs/site/review-inspector.js").read_text(encoding="utf-8")
+    assert 'id="review-report-file"' in html
+    assert 'id="review-cover-file"' in html
+    assert 'src="./review-inspector.js"' in html
+    assert "ad_review_candidates" in script
+    assert "payload.task_id!==taskId" in script
+    assert "master_cover_prompt.json" in script
+    assert "review-save-only" in script
+    assert "raw.githubusercontent.com" not in script

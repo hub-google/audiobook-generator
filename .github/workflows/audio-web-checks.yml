@@ -24,7 +24,7 @@ jobs:
       - name: "檢查 Python 語法"
         run: python -m compileall -q src tools gui_components
       - name: "檢查網頁 JavaScript 語法"
-        run: node --check docs/site/app.js && node --check docs/site/bridge.js
+        run: node --check docs/site/app.js && node --check docs/site/bridge.js && node --check docs/site/review-inspector.js
       - name: "安裝桌面畫面測試環境"
         run: sudo apt-get update -qq && sudo apt-get install -y xvfb
       - name: "執行完整回歸測試"

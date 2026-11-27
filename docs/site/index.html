@@ -125,14 +125,53 @@
 </div>
 <div class="dialog-actions"><button type="button" class="secondary" id="edit-cancel">取消</button><button type="submit">儲存任務</button></div>
 </form></dialog>
-<dialog id="review-dialog" class="editor-dialog" aria-labelledby="review-title">
-<form id="review-form"><h2 id="review-title">TXT 與封面審核</h2>
-<p class="muted">先從上方工作表開啟來源 Run，實際確認 TXT、封面與版權授權。每行一個需要從正文移除的固定文字；不支援正規表達式。</p>
-<label>正文清理字詞<textarea id="review-patterns" rows="7" placeholder="每行一個要移除的固定文字"></textarea></label>
-<div class="dialog-actions"><button type="button" class="secondary" id="review-cancel">取消</button><button type="submit">確認已審核，開始影片製作</button></div>
+<dialog id="review-dialog" class="editor-dialog review-wide" aria-labelledby="review-title">
+<form id="review-form"><h2 id="review-title">文字清理、Raw/Clean 抽查與封面審核</h2>
+<p class="muted">和桌面 GUI 一樣，以本次 GitHub Artifact 的實際章節文字及封面為審核依據。下載後匯入 ZIP／JSON；文字只在瀏覽器本機處理，不會上傳至 GitHub Pages。</p>
+<div class="review-files">
+<a id="review-scrape-link" target="_blank" rel="noopener noreferrer">開啟 TXT 審核 Run，下載 scrape-review Artifact</a>
+<label>匯入廣告報告 JSON 或 Artifact ZIP<input id="review-report-file" type="file" accept=".json,.zip,application/json,application/zip"></label>
+<a id="review-cover-link" target="_blank" rel="noopener noreferrer">開啟封面 Run，下載 cover-review Artifact</a>
+<label>匯入封面審核 Artifact ZIP<input id="review-cover-file" type="file" accept=".zip,application/zip"></label>
+</div>
+<p id="review-load-status" class="muted">尚未匯入報告；請以實際 Artifact 檢查資料。</p>
+<div class="review-columns">
+<section><h3>候選詞句與排除設定</h3>
+<div class="review-controls">
+<input id="review-search" placeholder="搜尋候選詞／原因">
+<select id="review-kind"><option value="">所有類型</option></select>
+<select id="review-state"><option value="">所有處理狀態</option><option value="remove">去除</option><option value="keep">保留</option></select>
+</div>
+<div class="review-actions">
+<button type="button" class="secondary" id="review-select-visible">全選篩選結果去除</button>
+<button type="button" class="secondary" id="review-keep-visible">全部保留</button>
+<button type="button" class="secondary" id="review-invert-visible">反選</button>
+</div>
+<div id="review-candidates" class="review-candidates" aria-label="廣告候選詞"></div>
+<label>正文清理字詞（每行一項）<textarea id="review-patterns" rows="5" placeholder="由候選詞勾選或手動輸入固定字詞"></textarea></label>
+</section>
+<section><h3>Raw / Clean 逐章檢查</h3>
+<div class="review-controls"><select id="review-chapter"><option value="">選取章節</option></select>
+<button type="button" class="secondary" id="review-first">第一章</button>
+<button type="button" class="secondary" id="review-middle">中間章</button>
+<button type="button" class="secondary" id="review-last">最後一章</button></div>
+<p id="review-text-stats" class="muted">尚未載入文字報告</p>
+<div class="review-texts"><div><strong>Raw · 爬蟲原文</strong><pre id="review-raw"></pre></div>
+<div><strong>Clean · 清理預覽</strong><pre id="review-clean"></pre></div></div>
+<p class="muted">此處 Clean 是即時固定字詞去除預覽；最終朗讀文字仍以 Actions 內的 Python 正規化程式為準，不將預覽當作已產生的 TTS。</p>
+</section></div>
+<section class="review-cover"><h3>封面圖、Gemini 故事資訊與 HF Prompt</h3>
+<img id="review-cover-preview" alt="GitHub Artifact 中的封面" hidden>
+<div class="review-texts"><div><strong>小說介紹／視覺分析</strong><pre id="review-cover-analysis">尚未載入</pre></div>
+<div><strong>HF 生圖 Prompt</strong><pre id="review-cover-prompt">尚未載入</pre></div></div>
+<button type="button" id="review-copy-prompt" class="secondary">複製 HF Prompt</button>
+</section>
+<div class="dialog-actions"><button type="button" class="secondary" id="review-cancel">取消</button>
+<button type="button" class="secondary" id="review-save-only">只儲存文字清理規則</button>
+<button type="submit">確認審核並開始第二階段後製</button></div>
 </form></dialog>
 <footer>資料由 GitHub API 即時讀取；GitHub Pages 不會在瀏覽器執行 Python、TTS 或影片轉檔。</footer>
 </main>
 </div>
-<script src="./app.js" defer></script><script src="./bridge.js" defer></script>
+<script src="./app.js" defer></script><script src="./bridge.js" defer></script><script src="./review-inspector.js" defer></script>
 </body></html>
