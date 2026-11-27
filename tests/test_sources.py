@@ -32,7 +32,7 @@ def test_registry_rejects_unknown_and_host_spoofing():
 def test_shuba_catalog_order_ids_and_original_labels():
     result = parse_catalog(URL, html=CATALOG)
     assert result['book_title'] == '測試小說'
-    assert result['chapters'][0] == 'https://www.69shuba.com/txt/29590/10'
+    assert result['chapters'][0] == 'https://69shuba.com/txt/29590/10'
     assert result['chapter_titles'][0] == '第1章 開始'
     assert result['chapter_records'][0]['original_title'] == '1.第1章 開始'
     assert result['chapter_records'][0]['source_chapter_id'] == '10'
@@ -61,7 +61,7 @@ def test_chapter_removes_ui_but_keeps_novel_paragraphs():
 
 def test_shuba_metadata_does_not_point_to_hjwzw():
     from src.metadata_gen import _catalog_book_url
-    assert _catalog_book_url(URL) == 'https://www.69shuba.com/book/29590.htm'
+    assert _catalog_book_url(URL) == 'https://69shuba.com/book/29590.htm'
 
 
 def test_same_title_different_urls_are_isolated(tmp_path):
@@ -119,11 +119,11 @@ def test_three_txt_exports_use_production_parser(tmp_path):
 
 def test_catalog_url_normalization():
     shuba = resolve_source('https://www.69shuba.com/book/29590')
-    assert shuba.catalog_url('https://www.69shuba.com/book/29590') == 'https://www.69shuba.com/book/29590/'
-    assert shuba.catalog_url('https://www.69shuba.com/book/29590/') == 'https://www.69shuba.com/book/29590/'
-    assert shuba.catalog_url('https://www.69shuba.com/book/29590.htm') == 'https://www.69shuba.com/book/29590/'
-    assert shuba.catalog_url('https://www.69shuba.com/txt/29590/10') == 'https://www.69shuba.com/book/29590/'
-    assert shuba.catalog_url('https://www.69shuba.com/book/29590?edition=2') == 'https://www.69shuba.com/book/29590/?edition=2'
+    assert shuba.catalog_url('https://www.69shuba.com/book/29590') == 'https://69shuba.com/book/29590/'
+    assert shuba.catalog_url('https://www.69shuba.com/book/29590/') == 'https://69shuba.com/book/29590/'
+    assert shuba.catalog_url('https://www.69shuba.com/book/29590.htm') == 'https://69shuba.com/book/29590/'
+    assert shuba.catalog_url('https://www.69shuba.com/txt/29590/10') == 'https://69shuba.com/book/29590/'
+    assert shuba.catalog_url('https://www.69shuba.com/book/29590?edition=2') == 'https://69shuba.com/book/29590/?edition=2'
 
     hjwzw = resolve_source('https://tw.hjwzw.com/Book/35120')
     assert hjwzw.catalog_url('https://tw.hjwzw.com/Book/35120') == 'https://tw.hjwzw.com/Book/Chapter/35120'
@@ -132,7 +132,7 @@ def test_catalog_url_normalization():
 
 def test_parse_catalog_accepts_url_without_trailing_slash():
     result = parse_catalog('https://www.69shuba.com/book/29590', html=CATALOG)
-    assert result['catalog_url'] == 'https://www.69shuba.com/book/29590/'
+    assert result['catalog_url'] == 'https://69shuba.com/book/29590/'
     assert result['total_chapters'] == 3
 
 
@@ -141,3 +141,60 @@ def test_http_404_raises_source_parse_error():
     with patch('src.sources.http_client.requests.get', return_value=response), patch('src.sources.http_client.time.sleep'):
         with pytest.raises(SourceParseError, match='HTTP 404'):
             fetch_page(URL, resolve_source(URL))
+
+
+def test_hjwzw_reorders_proven_complete_number_sequence():
+    url = 'https://tw.hjwzw.com/Book/Chapter/1'
+    html = '<h1>書</h1><a href="/Book/Read/1,1">第一回 開始</a><a href="/Book/Read/1,3">第三回 結束</a><a href="/Book/Read/1,99">第二回 補回</a>'
+    result = parse_catalog(url, html=html)
+    assert result['chapter_titles'] == ['第一回 開始', '第二回 補回', '第三回 結束']
+    assert [r['source_order'] for r in result['chapter_records']] == [1, 2, 3]
+    assert result['chapters'][1].endswith('1,99')
+
+
+def test_hjwzw_does_not_sort_ambiguous_number_sequence():
+    url = 'https://tw.hjwzw.com/Book/Chapter/1'
+    html = '<h1>書</h1><a href="/Book/Read/1,1">第一章 開始</a><a href="/Book/Read/1,2">第三章 續篇</a><a href="/Book/Read/1,3">番外</a>'
+    assert parse_catalog(url, html=html)['chapter_titles'] == ['第一章 開始', '第三章 續篇', '番外']
+
+
+
+def test_sixk_retries_transient_read_timeout_but_not_forever():
+    import requests
+    from src.sources.sixk import SixKSource
+    src = SixKSource()
+    url = "https://www.6ksu.app/novel/1.html"
+    response = Mock(status_code=200, url=url, content=b"<html><body>healthy</body></html>")
+    response.headers = {}
+    with patch("src.sources.http_client.requests.get",
+               side_effect=[requests.exceptions.ReadTimeout(), response]) as get, \
+         patch("src.sources.http_client.time.sleep"):
+        assert fetch_page(url, src, timeout=15).status_code == 200
+        assert get.call_count == 2
+        assert all(c.kwargs["timeout"] == 30 for c in get.call_args_list)
+
+    with patch("src.sources.http_client.requests.get",
+               side_effect=requests.exceptions.ReadTimeout()) as get, \
+         patch("src.sources.http_client.time.sleep"):
+        with pytest.raises(requests.exceptions.ReadTimeout):
+            fetch_page(url, src, timeout=15)
+        assert get.call_count == 3
+
+
+def test_sixk_403_is_not_retried():
+    from src.sources.sixk import SixKSource
+    src = SixKSource()
+    response = Mock(status_code=403, url="https://www.6ksu.app/novel/1.html")
+    response.headers = {}
+    with patch("src.sources.http_client.requests.get", return_value=response) as get, \
+         patch("src.sources.http_client.time.sleep"):
+        with pytest.raises(SourceAccessError):
+            fetch_page(response.url, src)
+        assert get.call_count == 1
+
+
+def test_shuba_discovery_urls_use_reachable_bare_host():
+    from src.sources.shuba69 import Shuba69Source
+    src = Shuba69Source()
+    assert src.catalog_url("https://www.69shuba.com/book/29590/") == "https://69shuba.com/book/29590/"
+    assert src.get_referer("https://69shuba.com/txt/29590/10") == "https://69shuba.com/book/29590/"

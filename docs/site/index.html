@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>AUDIO · 有聲小說製作平台</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+<div class="brand"><span class="mark">A</span><div><b>AUDIO</b><small>有聲小說製作平台</small></div></div>
+<nav aria-label="主選單">
+<button data-tab="overview" class="nav active">總覽與佇列</button>
+<button data-tab="create" class="nav">新增小說</button>
+<button data-tab="runs" class="nav">製作紀錄</button>
+</nav>
+<div class="sidebar-bottom"><small>GitHub Actions 雲端工作流程</small><small>小說來源：9 個網站</small><a href="https://github.com/hub-google/audiobook-generator" target="_blank" rel="noopener noreferrer">開啟原始碼</a></div>
+</aside>
+<main class="main">
+<header class="topbar"><div><h1 id="page-title">製作總覽</h1><p class="muted" id="page-subtitle">同步 GitHub 雲端佇列與製作進度</p></div><div class="toolbar"><span id="connection-pill" class="pill">尚未連線</span><button type="button" id="refresh-btn" class="secondary">重新整理</button></div></header>
+<div id="message" role="status" aria-live="polite" class="notice hidden"></div>
+<section class="access-panel">
+<div><strong>GitHub 授權</strong><p class="muted">請輸入有此 Repo「Contents 讀寫、Actions 讀寫」權限的 Fine-grained Token。只保留在此頁的記憶體中，重新整理即清除，不會儲存在 Pages。</p></div>
+<div class="token-row"><input type="password" id="token" aria-label="GitHub Token" placeholder="github_pat_... 或 ghp_..." autocomplete="off" spellcheck="false"><button id="connect-btn">連線</button><button id="disconnect-btn" class="secondary">登出</button></div>
+</section>
+<section id="overview" class="tab active">
+<div class="metrics"><article class="metric"><span>排隊中</span><strong id="count-queued">—</strong></article><article class="metric"><span>進行中 / 待審</span><strong id="count-active">—</strong></article><article class="metric"><span>已完成</span><strong id="count-completed">—</strong></article><article class="metric"><span>最近更新</span><strong class="smaller" id="updated-at">—</strong></article></div>
+<div class="section-head"><div><h2>小說工作佇列</h2><p>依雲端排程順序排列。正在執行的作業不可直接刪除或移動。</p></div><button id="dispatch-btn" class="secondary">執行一次調度檢查</button></div>
+<div class="table-wrap"><table><thead><tr><th>順序 / 小說</th><th>章節</th><th>執行狀態</th><th>TXT / 封面 / 影片</th><th>操作</th></tr></thead><tbody id="queue-body"><tr><td colspan="5" class="empty">連線後載入佇列</td></tr></tbody></table></div>
+<div class="section-head"><h2>已完成作品</h2></div><div id="completed-list" class="completed"><p class="muted">尚無資料</p></div>
+</section>
+<section id="create" class="tab">
+<div class="section-head"><div><h2>新增小說至製作佇列</h2><p>可先從指定網站解析目錄，檢查書名、章數與章節排序，再正式新增。</p></div></div>
+<form id="book-form" class="form-card">
+<div class="form-grid"><label>小說來源<select id="source" required></select></label><label class="wide">小說網址<input type="url" id="catalog-url" placeholder="貼上書籍、目錄或章節網址" required></label></div>
+<div class="inline-actions"><button type="button" id="parse-btn" class="secondary">解析網站目錄</button><span class="muted" id="parse-status">需要 GitHub Token，解析會在 GitHub Actions 執行</span></div>
+<div id="catalog-preview" class="catalog-preview hidden"></div>
+<div class="form-grid"><label class="wide">小說名稱<input id="book-title" maxlength="160" placeholder="解析成功後自動填入，也可手動輸入" required></label><label>起始章<input type="number" id="start-chapter" min="1" max="999999" value="1" required></label><label>結束章<input type="number" id="end-chapter" min="1" max="999999" value="10" required></label><label class="wide">排除章節（可留空）<input id="excluded" placeholder="例如：3,8,11-15"></label></div>
+<div class="form-grid"><label class="toggle"><input type="checkbox" id="renumber"> 排除後重新編號（從第 1 章開始）</label><label>公開時間<input type="datetime-local" id="publish-at"><small class="muted">留空代表依工作流程立即發布；輸入的是台灣時間。</small></label></div>
+<div class="form-foot"><p class="muted">加入佇列後，雲端調度會先執行 TXT 與封面，完成審核再製作影片。</p><button type="submit" id="enqueue-btn">加入雲端佇列</button></div>
+</form>
+<section class="form-card"><h3>批次加入小說</h3><p class="muted">每行一個「書名 | 網址 | 起始章 | 結束章」。未填章數時預設 1–10。</p><textarea rows="5" id="batch-urls" placeholder="測試小說 | https://czbooks.net/n/xxxxx | 1 | 10"></textarea><div class="form-foot"><span></span><button id="batch-btn" class="secondary" type="button">批次加入</button></div></section>
+</section>
+<section id="runs" class="tab">
+<div class="section-head"><div><h2>GitHub Actions 製作紀錄</h2><p>查看 TXT、Gemini 封面、影片製作、排程與部署的工作結果。</p></div><a href="https://github.com/hub-google/audiobook-generator/actions" rel="noopener noreferrer" target="_blank">開啟 Actions</a></div>
+<div class="table-wrap"><table><thead><tr><th>執行項目</th><th>觸發時間</th><th>狀態</th><th>連結</th></tr></thead><tbody id="runs-body"><tr><td colspan="4" class="empty">尚未載入</td></tr></tbody></table></div>
+</section>
+<footer>資料由 GitHub API 即時讀取；GitHub Pages 不會在瀏覽器執行 Python、TTS 或影片轉檔。</footer>
+</main>
+</div>
+<script src="./app.js" defer></script>
+</body></html>

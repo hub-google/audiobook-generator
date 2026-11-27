@@ -130,6 +130,9 @@ jobs:
       - name: Generate reviewable cover
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_IMAGE_MODEL: gemini-2.5-flash-image
+          COVER_IMAGE_PROVIDER: auto
         run: |
           python src/cover_preflight.py \
             --stage cover \

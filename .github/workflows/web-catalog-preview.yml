@@ -1,0 +1,49 @@
+name: AUDIO Web Catalog Preview
+run-name: "目錄解析 · ${{ inputs.request_id }}"
+on:
+  workflow_dispatch:
+    inputs:
+      catalog_url: {description: Novel source URL, required: true, type: string}
+      request_id: {description: Unique web request ID, required: true, type: string}
+permissions:
+  contents: write
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11', cache: pip}
+      - run: pip install -r requirements.txt
+      - name: Parse catalog
+        env:
+          CATALOG_URL: ${{ inputs.catalog_url }}
+          REQUEST_ID: ${{ inputs.request_id }}
+        run: python -m tools.web_catalog_preview --url "$CATALOG_URL" --request-id "$REQUEST_ID"
+      - name: Publish machine-readable preview to the state branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUEST_ID: ${{ inputs.request_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="web-previews/${REQUEST_ID}.json"
+          encoded="$(base64 -w0 catalog-preview.json)"
+          for attempt in 1 2 3; do
+            if gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$name" \
+              -f message="Publish AUDIO catalog preview $REQUEST_ID" \
+              -f branch=automation-state \
+              -f content="$encoded"; then
+              exit 0
+            fi
+            sleep "$attempt"
+          done
+          echo "Unable to publish catalog preview" >&2
+          exit 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: catalog-preview-${{ inputs.request_id }}
+          path: catalog-preview.json
+          if-no-files-found: error
+          retention-days: 1

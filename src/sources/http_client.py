@@ -35,7 +35,12 @@ def reset_session(source_id=None):
 
 
 def fetch_page(url, source, timeout=20):
-    # Process-wide pacing. Workflow max-parallel also honors source.max_parallel.
+    source.absolute_url(url, url)
+    # A few read-heavy sites need longer than the default crawler timeout.
+    # Restrict retries to declared transient failures, never 403/429.
+    timeout = max(float(timeout), min(60.0, float(getattr(source, "min_timeout", 0))))
+    transient_retries = max(0, min(2, int(getattr(source, "transient_retries", 0))))
+    # Process-wide pacing for requests made by this worker.
     with _lock:
         remaining = source.min_interval - (time.monotonic() - _last.get(source.source_id, 0))
         if remaining > 0:
@@ -48,16 +53,46 @@ def fetch_page(url, source, timeout=20):
         # impersonation layer rather than manually forged on a fresh session.
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     }
+    if source.plain_http:
+        headers['User-Agent'] = getattr(source, 'user_agent', 'AUDIO-source-validation/1.0')
     referer = getattr(source, 'get_referer', lambda u: None)(url)
     if referer:
         headers['Referer'] = referer
 
     # Allow mock patch of requests.get in tests
-    if getattr(requests.get, '__module__', None) == 'unittest.mock':
-        response = requests.get(url, headers=headers, timeout=timeout)
+    if source.plain_http or getattr(requests.get, '__module__', None) == 'unittest.mock':
+        get = requests.get
     else:
-        session = get_session(source.source_id)
-        response = session.get(url, headers=headers, timeout=timeout)
+        get = get_session(source.source_id).get
+
+    # Check redirects before following them; never contact a foreign host
+    # advertised as a chapter endpoint. Stop on explicit access restrictions.
+    target = url
+    seen = set()
+    for _ in range(6):
+        if target in seen:
+            raise SourceParseError("來源網頁重新導向循環")
+        seen.add(target)
+        for attempt in range(transient_retries + 1):
+            try:
+                response = get(target, headers=headers, timeout=timeout, allow_redirects=False)
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+                if attempt >= transient_retries:
+                    raise
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            if response.status_code in (502, 503, 504) and attempt < transient_retries:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            break
+        if response.status_code not in (301, 302, 303, 307, 308):
+            break
+        location = response.headers.get("Location")
+        if not location:
+            raise SourceParseError("來源重新導向缺少網址")
+        target = source.absolute_url(target, location)
+    else:
+        raise SourceParseError("來源重新導向次數過多")
 
     if response.status_code in (401, 403, 429):
         raise SourceAccessError(f'來源存取受限 HTTP {response.status_code}: {url}')

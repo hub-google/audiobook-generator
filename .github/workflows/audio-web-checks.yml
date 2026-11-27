@@ -1,0 +1,65 @@
+name: AUDIO Web and Sources CI
+on:
+  push:
+    branches:
+      - master
+      - feature/audio-web-nine-sources-gemini-20261127
+  workflow_dispatch:
+concurrency:
+  group: audio-web-ci-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11', cache: pip}
+      - name: Install runtime and tests
+        run: pip install -r requirements.txt pytest playwright
+      - name: Python syntax
+        run: python -m compileall -q src tools gui_components
+      - name: Browser JavaScript syntax
+        run: node --check docs/site/app.js
+      - name: Install virtual display for desktop compatibility tests
+        run: sudo apt-get update -qq && sudo apt-get install -y xvfb
+      - name: Complete regression tests
+        run: xvfb-run -a python -m pytest -q tests
+  ui-smoke:
+    needs: regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Install browser driver
+        run: pip install playwright
+      - name: Verify desktop and mobile web console
+        run: python -m tools.verify_audio_web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audio-web-ui-screenshots
+          path: ui-test-screenshots/*.png
+          if-no-files-found: warn
+          retention-days: 7
+  cover-live-probe:
+    if: github.ref == 'refs/heads/feature/audio-web-nine-sources-gemini-20261127'
+    needs: regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11', cache: pip}
+      - run: pip install -r requirements.txt
+      - name: Request actual HF cover; try Gemini if unavailable
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_IMAGE_MODEL: gemini-2.5-flash-image
+        run: python -m tools.cover_provider_probe
