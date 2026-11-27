@@ -7,14 +7,14 @@ const ORIGIN = "https://hub-google.github.io";
 const REPO = "hub-google/audiobook-generator";
 const admin = createClient(PROJECT, SECRET, { auth: { persistSession: false, autoRefreshToken: false } });
 const jwks = createRemoteJWKSet(new URL("https://token.actions.githubusercontent.com/.well-known/jwks"));
-const ops = new Set(["enqueue","batch_add","edit","move","status","delete","complete","restore","requeue","cancel","review","dispatch","preview","ping","manual_cover","export_artifacts","batch_cover_info"]);
+const ops = new Set(["enqueue","batch_add","edit","move","status","delete","complete","restore","requeue","cancel","review","dispatch","preview","ping","manual_cover","export_artifacts","batch_cover_info","fetch_artifact","fetch_logs"]);
 const buckets = "audio-web-manual-covers";
 
 function reply(obj,code=200,origin=ORIGIN) {
  return new Response(JSON.stringify(obj),{status:code,headers:{
   "Content-Type":"application/json; charset=utf-8",
   "Access-Control-Allow-Origin":origin,"Access-Control-Allow-Methods":"GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers":"authorization, apikey, content-type",
+  "Access-Control-Allow-Headers":"authorization, apikey, content-type, x-audio-command-id, x-audio-filename",
   "Vary":"Origin","Cache-Control":"no-store"
  }});
 }
@@ -129,6 +129,63 @@ async function finish(req) {
  if(error||!data)throw Object.assign(new Error("請求不存在或已完成"),{status:409});
  return reply({ok:true});
 }
+const ASSET_BUCKET = "audio-web-private-assets";
+
+async function stageAsset(req) {
+ await runnerOf(req);
+ const id=Number(req.headers.get("x-audio-command-id"));
+ const filename=String(req.headers.get("x-audio-filename")||"").trim();
+ const type=String(req.headers.get("content-type")||"").split(";")[0];
+ if(!Number.isSafeInteger(id)||id<1||!/^[\w.\u4e00-\u9fff-]{1,150}$/.test(filename)||
+    !["application/zip","text/plain"].includes(type))
+  throw Object.assign(new Error("無效的檔案傳送要求"),{status:400});
+ const {data:command,error:checkError}=await admin.from("audio_web_commands")
+  .select("id,requested_by,op,status").eq("id",id).single();
+ if(checkError||!command||command.status!=="processing"||
+    !["fetch_artifact","fetch_logs"].includes(command.op))
+  throw Object.assign(new Error("沒有對應的受保護檔案請求"),{status:403});
+ const bytes=new Uint8Array(await req.arrayBuffer());
+ if(bytes.length<1||bytes.length>45_000_000)throw Object.assign(new Error("單一雲端檔案超過 45 MB 暫存上限"),{status:413});
+ const path=command.requested_by+"/"+id+"/"+crypto.randomUUID()+"/"+filename;
+ const {error:putError}=await admin.storage.from(ASSET_BUCKET).upload(path,bytes,{contentType:type,upsert:false});
+ if(putError)throw new Error("儲存操作檔案失敗");
+ const {data:row,error:recordError}=await admin.from("audio_web_assets")
+  .insert({command_id:id,requested_by:command.requested_by,filename,content_type:type,
+    bytes:bytes.length,storage_path:path}).select("id,filename,bytes").single();
+ if(recordError||!row){
+  await admin.storage.from(ASSET_BUCKET).remove([path]);
+  throw new Error("記錄操作檔案失敗");
+ }
+ return reply({ok:true,asset:row},201);
+}
+
+async function listAssets(req){
+ const user=await userOf(req),id=new URL(req.url).searchParams.get("request_id")||"";
+ if(!/^[0-9a-f-]{36}$/.test(id))throw Object.assign(new Error("請求編號錯誤"),{status:400});
+ const {data:cmd,error:err}=await admin.from("audio_web_commands")
+  .select("id").eq("request_id",id).eq("requested_by",user.id).maybeSingle();
+ if(err||!cmd)throw Object.assign(new Error("找不到所要求的工作"),{status:404});
+ const {data,error}=await admin.from("audio_web_assets")
+  .select("id,filename,content_type,bytes,created_at")
+  .eq("command_id",cmd.id).eq("requested_by",user.id).order("id",{ascending:true});
+ if(error)throw new Error("讀取產出檔案失敗");
+ return reply({assets:data||[]});
+}
+async function getAsset(req){
+ const user=await userOf(req),id=Number(new URL(req.url).searchParams.get("asset_id"));
+ if(!Number.isSafeInteger(id)||id<1)throw Object.assign(new Error("檔案編號無效"),{status:400});
+ const {data:meta,error:err}=await admin.from("audio_web_assets")
+  .select("id,requested_by,storage_path,filename,content_type")
+  .eq("id",id).eq("requested_by",user.id).maybeSingle();
+ if(err||!meta)throw Object.assign(new Error("檔案不存在或無存取權限"),{status:404});
+ const {data,error}=await admin.storage.from(ASSET_BUCKET).download(meta.storage_path);
+ if(error||!data)throw Object.assign(new Error("無法取回檔案"),{status:404});
+ return new Response(data,{headers:{
+  "Content-Type":meta.content_type,
+  "Content-Disposition":"attachment; filename=\""+meta.filename.replace(/[^A-Za-z0-9_.-]/g,"_")+"\"",
+  "Access-Control-Allow-Origin":ORIGIN,"Vary":"Origin","Cache-Control":"private,no-store"
+ }});
+}
 async function downloadCover(req) {
  await runnerOf(req);
  const key=new URL(req.url).searchParams.get("key")||"";
@@ -145,6 +202,9 @@ Deno.serve(async req=>{
    "Access-Control-Allow-Headers":"authorization, apikey, content-type","Vary":"Origin"}});
   const path=new URL(req.url).pathname.split("/").pop();
   if(req.method==="POST"&&path==="submit")return await submit(req);
+  if(req.method==="POST"&&path==="stage")return await stageAsset(req);
+  if(req.method==="GET"&&path==="assets")return await listAssets(req);
+  if(req.method==="GET"&&path==="asset")return await getAsset(req);
   if(req.method==="GET"&&path==="status")return await statuses(req);
   if(req.method==="POST"&&path==="upload")return await coverUpload(req);
   if(req.method==="POST"&&path==="claim")return await claimCommands(req);
