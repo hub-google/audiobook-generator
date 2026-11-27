@@ -157,3 +157,9 @@
 .audio-submitted-item{display:flex;flex-wrap:wrap;align-items:center;gap:10px;background:#fff;border:1px solid #e1e7f0;border-radius:9px;padding:10px 12px;overflow-wrap:anywhere}
 .audio-submitted-item strong{font-size:13px;min-width:0;flex:1 1 160px}
 .audio-submitted-item small{font-size:12px;color:#a33b42;width:100%}
+
+/* Desktop GUI parity: review starts by reading the book's cloud report. */
+.gui-review-status-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 12px;margin:12px 0;background:#f4f7fd;border:1px solid #dce6f5;border-radius:9px}
+.gui-review-status-bar span{font-size:13px;color:#344563;white-space:pre-line;min-width:0}
+.gui-review-status-bar button{flex-shrink:0}
+@media(max-width:680px){.gui-review-status-bar{align-items:flex-start;flex-direction:column}}
