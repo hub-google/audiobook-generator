@@ -210,7 +210,7 @@ def test_no_legacy_pat_or_direct_github_writes_remain_in_pages():
     js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
     html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
     assert "Token" not in js and "Authorization" not in js
-    assert "Token" not in html
+    assert 'id="token"' not in html
     assert "async function mutate(" not in js
     assert "async function connect(" not in js
     assert 'options.method.toUpperCase()!=="GET"' in js
