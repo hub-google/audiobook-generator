@@ -27,6 +27,7 @@ jobs:
       - name: "檢查網站檔案"
         run: |
           node --check docs/site/app.js
+          node --check docs/site/novel-search.js
           test -s docs/site/index.html
           test -s docs/site/style.css
       - name: Prepare Python crawler for 69shuba public ranking
