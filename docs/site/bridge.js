@@ -69,7 +69,7 @@
   return send("fetch_logs",{task_id:taskId,run_id:Number(runId)},"取得 Run "+runId+" 原始日誌");
  };
  async function appendAssetActions(row,container){
-  if(!["fetch_artifact","fetch_logs"].includes(row.op)||row.status!=="completed")return;
+  if(!["fetch_artifact","fetch_logs","export_artifacts"].includes(row.op)||row.status!=="completed")return;
   try{
    const assets=await window.audioAssetsFor(row.request_id);
    for(const item of assets){
