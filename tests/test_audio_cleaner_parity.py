@@ -31,7 +31,7 @@ def test_js_cleaner_has_only_pure_processing_and_correct_page_order():
     js=JS.read_text(encoding="utf-8")
     html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
     review=(ROOT/"docs/site/review-inspector.js").read_text(encoding="utf-8")
-    assert 'src="./cleaner-parity.js"' in html
+    assert 'src="./cleaner-parity.js?' in html
     assert html.index('src="./cleaner-parity.js"')<html.index('src="./review-inspector.js"')
     assert 'AudioCleaner.cleanTextContent' in review
     assert "fetch(" not in js and "localStorage" not in js
