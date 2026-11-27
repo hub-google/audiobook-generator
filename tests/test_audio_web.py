@@ -218,10 +218,10 @@ def test_click_handlers_explicitly_bind_new_tokenless_issue_bridge():
 def test_no_legacy_pat_or_direct_github_writes_remain_in_pages():
     js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
     html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
-    # Pages may send a short-lived Supabase user JWT to the protected live log
-    # API, but must never ship a GitHub PAT or write directly to GitHub.
+    # The direct-use development workspace sends no browser credential.
+    # Pages must never ship a GitHub PAT or write directly to GitHub.
     assert "ghp_" not in js and "github_pat_" not in js and "GITHUB_TOKEN" not in js
-    assert 'fetch(endpoint,{headers:{"Authorization":"Bearer "+token}' in js
+    assert 'fetch(endpoint,{cache:"no-store"})' in js
     assert "api.github.com/repos/" not in js or 'const REPO=' in js
     assert 'id="token"' not in html
     assert "async function mutate(" not in js
@@ -349,14 +349,14 @@ def test_large_catalog_upload_uses_file_not_cli_base64_argument():
     assert '-f content="$encoded"' not in workflow
 
 
-def test_browser_syncs_queue_after_authenticated_site_action_without_pat():
+def test_browser_syncs_queue_after_direct_site_action_without_pat():
     bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
     assert "function watchQueueUpdate()" in bridge
     assert "outstanding.set(id,{label,updateQueue:QUEUE_CHANGING.has(op)})" in bridge
     assert "watchQueueUpdate()" in bridge
     assert "const next=await readQueue()" in bridge
-    assert "const token=await window.audioAuth.token()" in bridge
-    assert '"Authorization":"Bearer "+token' in bridge
+    assert "audioAuth" not in bridge
+    assert '"Authorization":"Bearer "+token' not in bridge
     assert "GITHUB_TOKEN" not in bridge
     assert "hub-google/audiobook-generator/issues/new" not in bridge
 
@@ -506,3 +506,16 @@ def test_gui_queue_uses_shared_columns_without_auth_explanation_card():
     assert html.count('<col class="q-book">') == 2
     assert 'id="gui-queue-completed-tab"' in html
     assert 'table-layout:fixed' in css
+
+def test_direct_use_removes_login_and_otp_but_keeps_worker_identity():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    for name in ("app.js","bridge.js","cloud-log.js","review-inspector.js"):
+        js=(ROOT/"docs/site"/name).read_text(encoding="utf-8")
+        assert "audioAuth" not in js
+    assert 'src="./auth.js' not in html
+    assert not (ROOT/"docs/site/auth.js").exists()
+    edge=(ROOT/"supabase/functions/audio-web-commands/index.ts").read_text(encoding="utf-8")
+    assert "PUBLIC_WORKSPACE_ID" in edge
+    assert "admin.auth.getUser" not in edge
+    assert "jwtVerify(token,jwks" in edge
+    assert "await runnerOf(req)" in edge

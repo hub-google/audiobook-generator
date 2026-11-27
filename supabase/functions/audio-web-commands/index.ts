@@ -22,18 +22,12 @@ function access(req) {
  const origin=req.headers.get("origin");
  if(origin && origin!==ORIGIN) throw Object.assign(new Error("來源網域未授權"),{status:403});
 }
+// Only GitHub Actions worker endpoints require a signed identity.
 function tokenOf(req) { return (req.headers.get("authorization")||"").replace(/^Bearer\s+/i,""); }
-async function userOf(req) {
- const token=tokenOf(req);
- if(!token || token.length>6000) throw Object.assign(new Error("請先在 AUDIO 網站登入"),{status:401});
- const {data,error}=await admin.auth.getUser(token);
- if(error||!data?.user?.id||!data.user.email_confirmed_at||data.user.is_anonymous)
-  throw Object.assign(new Error("登入已失效，請重新驗證"),{status:401});
- const email=String(data.user.email||"").trim().toLowerCase();
- const {data:authorized,error:dbError}=await admin.from("audio_web_authorized_emails").select("email").eq("email",email).maybeSingle();
- if(dbError)throw new Error("授權資料庫無法查詢");
- if(!authorized)throw Object.assign(new Error("目前帳號沒有 AUDIO 管理權限"),{status:403});
- return data.user;
+// Temporary shared development workspace. No end-user login, activation code, or browser secret.
+const PUBLIC_WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
+function userOf(_req) {
+ return {id:PUBLIC_WORKSPACE_ID};
 }
 async function runnerOf(req,allowExporter=false,allowPipeline=false) {
  const token=tokenOf(req);
@@ -67,7 +61,7 @@ async function submit(req) {
  if(op==="manual_cover"||op==="manual_cover_prequeue") {
   const key=String(data.cover_key||"");
   if(!/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.jpg$/.test(key) || !key.startsWith(user.id+"/"))
-   throw Object.assign(new Error("手動封面不存在或不屬於此帳號"),{status:400});
+   throw Object.assign(new Error("手動封面不存在或不屬於 AUDIO 工作區"),{status:400});
   const {data:items,error}=await admin.storage.from(buckets).list(user.id,{limit:100,search:key.split("/")[1]});
   if(error || !items?.some(x=>x.name===key.split("/")[1])) throw Object.assign(new Error("找不到已上傳的封面檔案"),{status:400});
  }

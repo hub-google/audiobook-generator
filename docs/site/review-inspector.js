@@ -259,7 +259,7 @@
   $("review-cover-link").href="https://github.com/"+REPO+"/actions/runs/"+t.cover_run_id;
   renderCandidates();renderText();
   text($("review-auto-status"),"可一鍵從 GitHub Actions 安全取得 TXT 與封面審核檔案；不需開啟外站。");
-  if(window.audioAuth?.loggedIn)void loadCloudReview();
+  void loadCloudReview();
  };
  function setTextTab(tab){$("gui-candidate-pane").classList.toggle("hidden",mode==="text"&&tab!=="candidates");$("gui-raw-pane").classList.toggle("hidden",mode==="text"&&tab!=="raw");$("gui-text-candidates-tab").setAttribute("aria-pressed",String(tab==="candidates"));$("gui-text-raw-tab").setAttribute("aria-pressed",String(tab==="raw"));}
  function setCoverTab(tab){$("gui-cover-analysis-panel").classList.toggle("hidden",tab!=="analysis");$("gui-cover-prompt-panel").classList.toggle("hidden",tab!=="prompt");$("gui-cover-analysis-tab").setAttribute("aria-pressed",String(tab==="analysis"));$("gui-cover-prompt-tab").setAttribute("aria-pressed",String(tab==="prompt"));}

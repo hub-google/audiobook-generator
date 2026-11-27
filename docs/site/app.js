@@ -214,14 +214,13 @@ function renderProgressRawLog(){
 }
 async function pollProgressLive(){
  if(!progressTaskId||!$("progress-dialog")?.open||progressLiveBusy||
-    progressArchiveLogLoaded||document.hidden||!window.audioAuth?.loggedIn)return;
+    progressArchiveLogLoaded||document.hidden)return;
  const current=progressTaskId,generation=progressGeneration;
  progressLiveBusy=true;
  try{
-  const token=await window.audioAuth.token();
   const endpoint="https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-web-commands/live_events"+
    "?task_id="+encodeURIComponent(current)+"&after="+encodeURIComponent(progressLiveCursor);
-  const response=await fetch(endpoint,{headers:{"Authorization":"Bearer "+token},cache:"no-store"});
+  const response=await fetch(endpoint,{cache:"no-store"});
   if(!response.ok)throw Error("HTTP "+response.status);
   const data=await response.json();
   if(current!==progressTaskId||generation!==progressGeneration||!$("progress-dialog").open)return;

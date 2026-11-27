@@ -1,5 +1,5 @@
 "use strict";
-// GitHub Pages: read-only frontend; GitHub authenticates all writes on github.com.
+// AUDIO public development workspace: all website commands go through the server, without a user login.
 // No PAT, OAuth access token, HF/Gemini secret or YouTube credential is in this file.
 (function(){
  const EDGE="https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-web-commands";
@@ -25,11 +25,7 @@
   document.getElementById("audio-operation-hide").addEventListener("click",()=>panel.classList.add("hidden"));
  }
  async function binaryAsset(assetId){
-  await window.audioAuth.ensure();
-  const token=await window.audioAuth.token();
-  const response=await fetch(EDGE+"/asset?asset_id="+encodeURIComponent(assetId),{
-   headers:{"Authorization":"Bearer "+token},cache:"no-store"
-  });
+  const response=await fetch(EDGE+"/asset?asset_id="+encodeURIComponent(assetId),{cache:"no-store"});
   if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(error.error||"讀取檔案失敗");}
   return response.blob();
  }
@@ -177,9 +173,7 @@
   }
  }
  async function api(path,opts={}){
-  await window.audioAuth.ensure();
-  const token=await window.audioAuth.token();
-  const headers={"Authorization":"Bearer "+token,"Accept":"application/json"};
+  const headers={"Accept":"application/json"};
   let body=opts.body;
   if(body!==undefined&&!(body instanceof Blob)&&!(body instanceof ArrayBuffer)){
    body=JSON.stringify(body);headers["Content-Type"]="application/json";

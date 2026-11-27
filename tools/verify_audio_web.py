@@ -125,6 +125,8 @@ def main():
             assert desktop.title() == "AUDIO · 有聲小說製作平台"
             assert desktop.locator("#overview").is_visible()
             assert desktop.locator(".access-panel").count()==0
+            assert desktop.locator("#audio-auth-dialog").count()==0
+            assert desktop.evaluate("typeof window.audioAuth")=="undefined"
             assert desktop.locator("#connection-pill").count() == 1
             desktop.screenshot(path=str(OUTPUT / "audio-dashboard-desktop.png"), full_page=True)
             desktop.locator("#queue-body tr").first.get_by_role("button", name="進度").wait_for()
@@ -201,8 +203,6 @@ def main():
                               body=json.dumps(result,ensure_ascii=False))
             desktop.route("https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-web-commands/**", command_mock)
             desktop.evaluate("""() => {
-              window.audioAuth.ensure=async()=>{};
-              window.audioAuth.token=async()=>"local-user-jwt";
               window.__webCommands=[];
               const original=window.fetch.bind(window);
               window.fetch=(url,options={})=>{

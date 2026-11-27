@@ -239,6 +239,10 @@ def fetch_logs(row, token):
                 continue
             title = f"\n===== {entry.filename} =====\n"
             excerpt = body.decode("utf-8", errors="replace")
+            excerpt = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9_.-]+", r"\1[REDACTED]", excerpt)
+            excerpt = re.sub(r"(?i)((?:api[_-]?key|authorization|access[_-]?token|refresh[_-]?token|password|secret)\s*[:=]\s*)[^\s&]+", r"\1[REDACTED]", excerpt)
+            excerpt = re.sub(r"(?i)([?&](?:key|token|access_token|refresh_token|sig|signature|auth)=)[^\s&]+", r"\1[REDACTED]", excerpt)
+            excerpt = re.sub(r"\b(?:ghp_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|hf_[A-Za-z0-9]+|sb_secret_[A-Za-z0-9_-]+|AIza[A-Za-z0-9_-]{35})\b", "[REDACTED]", excerpt)
             total += len(title) + len(excerpt)
             if total > 9_000_000:
                 break

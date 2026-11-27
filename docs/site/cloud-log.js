@@ -95,7 +95,7 @@
   }finally{loading=false;}
  }
  async function pollLiveEvents(){
-  if(paused||liveBusy||document.hidden||!window.audioAuth?.loggedIn||!queue)return;
+  if(paused||liveBusy||document.hidden||!queue)return;
   if(!id("runs")?.classList.contains("active"))return;
   const task=[...(queue.queue||[]),...(queue.completed||[])].find(t=>
    ["preparing_assets","processing","running","waiting_review","needs_attention"].includes(t.status))||
@@ -105,10 +105,9 @@
   if(current!==liveTaskId){liveTaskId=current;liveCursor=0;append("即時 Worker 日誌："+(task.book_title||current));}
   liveBusy=true;
   try{
-   const bearer=await window.audioAuth.token();
    const url="https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-web-commands/live_events"+
     "?task_id="+encodeURIComponent(current)+"&after="+encodeURIComponent(liveCursor);
-   const response=await fetch(url,{headers:{"Authorization":"Bearer "+bearer},cache:"no-store"});
+   const response=await fetch(url,{cache:"no-store"});
    if(!response.ok)throw Error("HTTP "+response.status);
    const result=await response.json();
    if(liveTaskId!==current)return;
