@@ -16,6 +16,18 @@
   return url;
  }
  window.audioIssueAction=send;
+ function selectedActive(){
+  const books=selectedPendingTasks();
+  if(!books.length)throw Error("請先勾選小說");
+  return books;
+ }
+ function selectedPermitted(statuses){
+  const books=selectedActive();
+  if(books.some(t=>!statuses.includes(t.status)))throw Error("選取的小說含有不能執行此操作的狀態");
+  return books.map(t=>t.task_id);
+ }
+ function multi(op,data,label){send(op,data,label);}
+
  window.triggerDispatcher=async function(){send("dispatch",{},"執行調度檢查");};
  window.moveTask=async function(id,delta){send("move",{task_ids:[id],delta},"調整任務順序");};
  window.setTaskState=async function(id,status){
@@ -160,6 +172,20 @@
   }finally{btn.disabled=false;}
  };
  document.addEventListener("DOMContentLoaded",()=>{
+  const cmds=[
+   ["batch-up",()=>multi("move",{task_ids:selectedPermitted(["queued","paused","interrupted","stopped"]),delta:-1},"批次上移")],
+   ["batch-down",()=>multi("move",{task_ids:selectedPermitted(["queued","paused","interrupted","stopped"]),delta:1},"批次下移")],
+   ["batch-pause",()=>multi("status",{task_ids:selectedPermitted(["queued","paused"]),status:"paused"},"批次暫停")],
+   ["batch-resume",()=>multi("status",{task_ids:selectedPermitted(["queued","paused"]),status:"queued"},"批次恢復")],
+   ["batch-complete",()=>{if(confirm("確定將選取小說標為完成（不代表已上傳）？"))
+    multi("complete",{task_ids:selectedPermitted(["queued","paused","interrupted","stopped"])},"批次標記完成");}],
+   ["batch-delete",()=>{if(confirm("確定刪除所有選取的待製作小說？"))
+    multi("delete",{task_ids:selectedPermitted(["queued","paused","interrupted","stopped"])},"批次刪除小說");}],
+   ["batch-restore",()=>{if(!selectedCompleted.size)throw Error("請選擇已完成小說");
+    multi("restore",{task_ids:[...selectedCompleted]},"批次移回未完成");}],
+  ];
+  for(const [id,fn]of cmds)$(id).addEventListener("click",()=>Promise.resolve().then(fn).catch(e=>notice(e.message,"error")));
+
   const add=$("rank-add");if(add)add.addEventListener("click",()=>window.addRankingToQueue().catch(e=>notice(e.message,"error")));
  });
 })();

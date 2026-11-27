@@ -11,7 +11,7 @@ const SOURCES=[
 {id:"moon17",name:"月亮小說網",hosts:["17moon.com","www.17moon.com"]},
 {id:"book8",name:"無限小說",hosts:["8book.com","www.8book.com","v.8book.com","m.8book.com","i.8book.com"]}
 ];
-let token="",queue=null,queueSha=null,latestRuns=[],parsedCatalog=null,editorTaskId=null,reviewTaskId=null,chapterPickerExcluded=null,chapterPickerOrder=null,rankingNovels=[],rankingSelected=new Set();
+let token="",queue=null,queueSha=null,latestRuns=[],parsedCatalog=null,editorTaskId=null,reviewTaskId=null,chapterPickerExcluded=null,chapterPickerOrder=null,rankingNovels=[],rankingSelected=new Set(),selectedPending=new Set(),selectedCompleted=new Set();
 const $=id=>document.getElementById(id), text=(node,value)=>{node.textContent=value==null?"":String(value)};
 function notice(message,kind="ok"){const n=$("message");text(n,message);n.className="notice"+(kind==="error"?" error":"");}
 const dateLabel=v=>v?new Date(v).toLocaleString("zh-TW",{timeZone:"Asia/Taipei",hour12:false}):"—";
@@ -46,7 +46,11 @@ function canEdit(task){return !active(task)&&["queued","paused","interrupted","s
 function makeBtn(label,action,id,disabled=false,authRequired=true){const b=document.createElement("button");b.type="button";b.textContent=label;b.className="secondary";b.disabled=disabled;b.addEventListener("click",()=>Promise.resolve().then(()=>action(id)).catch(e=>notice(e.message,"error")));return b;}
 function buildTaskRow(task,index){
  const tr=document.createElement("tr"),col=(value)=>{const td=document.createElement("td");td.textContent=value;tr.append(td);return td;};
- const first=col((index+1)+". "+(task.book_title||"待解析"));const url=document.createElement("small");url.textContent=task.catalog_url||"";first.append(url);
+ const first=col("");const check=document.createElement("input");check.type="checkbox";check.checked=selectedPending.has(task.task_id);
+ check.setAttribute("aria-label","選取 "+(task.book_title||"小說"));
+ check.addEventListener("change",()=>{if(check.checked)selectedPending.add(task.task_id);else selectedPending.delete(task.task_id);updateBatchStatus();});
+ first.append(check,document.createTextNode(" "+(index+1)+". "+(task.book_title||"待解析")));
+ const url=document.createElement("small");url.textContent=task.catalog_url||"";first.append(url);
  col("第 "+(task.start_chapter||1)+"–"+(task.end_chapter||"全部")+" 章");
  const status=col("");const badge=document.createElement("span");badge.className="status "+statusClass(task.status);badge.textContent=statusName(task.status);status.append(badge);
  const stages=col("TXT "+stageBadge(task,"scrape")+" · 封面 "+stageBadge(task,"cover")+" · 影片 "+stageBadge(task,"processing"));
@@ -66,16 +70,29 @@ function buildTaskRow(task,index){
  }
  return tr;
 }
+function updateBatchStatus(){
+ text($("queue-selected-count"),"已選 "+selectedPending.size+" 本");
+ const all=queueTasks();$("queue-all").checked=!!all.length&&all.every(t=>selectedPending.has(t.task_id));
+ const button=$("batch-restore");button.disabled=selectedCompleted.size===0;
+}
+function selectedPendingTasks(){return queueTasks().filter(t=>selectedPending.has(t.task_id));}
 function renderQueue(){
  const tasks=queueTasks(),completed=Array.isArray(queue?.completed)?queue.completed:[];
  text($("count-queued"),tasks.filter(t=>t.status==="queued"||t.status==="paused").length);
  text($("count-active"),tasks.filter(t=>active(t)).length);text($("count-completed"),completed.length);
  text($("updated-at"),dateLabel(queue?.updated_at));
  const tbody=$("queue-body");tbody.replaceChildren();if(!tasks.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=5;td.className="empty";td.textContent="目前沒有待製作小說";tr.append(td);tbody.append(tr);}
+ selectedPending=new Set([...selectedPending].filter(id=>tasks.some(t=>t.task_id===id)));
  tasks.forEach((t,i)=>tbody.append(buildTaskRow(t,i)));
  const list=$("completed-list");list.replaceChildren();
  if(!completed.length){const p=document.createElement("p");p.className="muted";p.textContent="尚無已完成作品";list.append(p);}
- completed.slice(0,40).forEach(t=>{const row=document.createElement("div");row.className="completed-item";const name=document.createElement("strong");name.textContent=t.book_title||"未知小說";const status=document.createElement("span");status.className="muted";status.textContent=dateLabel(t.completed_at||t.updated_at);const restore=makeBtn("移回佇列",restoreCompleted,t.task_id);row.append(name,status,restore);list.append(row);});
+ selectedCompleted=new Set([...selectedCompleted].filter(id=>completed.some(t=>t.task_id===id)));
+ completed.forEach(t=>{const row=document.createElement("div");row.className="completed-item";
+ const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.checked=selectedCompleted.has(t.task_id);
+ checkbox.setAttribute("aria-label","選取已完成 "+(t.book_title||"小說"));
+ checkbox.addEventListener("change",()=>{if(checkbox.checked)selectedCompleted.add(t.task_id);else selectedCompleted.delete(t.task_id);updateBatchStatus();});
+ const name=document.createElement("strong");name.textContent=t.book_title||"未知小說";const status=document.createElement("span");status.className="muted";status.textContent=dateLabel(t.completed_at||t.updated_at);const restore=makeBtn("移回佇列",restoreCompleted,t.task_id);row.append(checkbox,name,status,restore);list.append(row);});
+ updateBatchStatus();
 }
 async function refresh(){
  try{const res=await readQueue();queue=res.data;queueSha=res.sha;renderQueue();
@@ -545,6 +562,7 @@ document.addEventListener("DOMContentLoaded",()=>{
  bind("publish-at","change",renderPublish);
  document.querySelectorAll("[data-publish-day]").forEach(b=>b.addEventListener("click",()=>setPublishPreset(Number(b.dataset.publishDay),b.dataset.publishHour)));
  renderPublish();
+ bind("queue-all","change",()=>{const on=$("queue-all").checked;selectedPending=new Set(on?queueTasks().map(t=>t.task_id):[]);renderQueue();});
  bind("rank-search","input",renderRanking);bind("rank-category","change",renderRanking);
  bind("rank-select-all","click",()=>{for(const n of filteredRanking())rankingSelected.add(n.catalog_url);renderRanking();});
  bind("rank-select-none","click",()=>{rankingSelected.clear();renderRanking();});

@@ -26,8 +26,18 @@
 <section id="overview" class="tab active">
 <div class="metrics"><article class="metric"><span>排隊中</span><strong id="count-queued">—</strong></article><article class="metric"><span>進行中 / 待審</span><strong id="count-active">—</strong></article><article class="metric"><span>已完成</span><strong id="count-completed">—</strong></article><article class="metric"><span>最近更新</span><strong class="smaller" id="updated-at">—</strong></article></div>
 <div class="section-head"><div><h2>小說工作佇列</h2><p>依雲端排程順序排列。正在執行的作業不可直接刪除或移動。</p></div><button id="dispatch-btn" class="secondary">執行一次調度檢查</button></div>
+<div class="batch-toolbar" id="batch-toolbar">
+<label class="toggle"><input type="checkbox" id="queue-all"> 全選待製作</label>
+<span class="muted" id="queue-selected-count">已選 0 本</span>
+<button id="batch-up" class="secondary">↑ 批次上移</button>
+<button id="batch-down" class="secondary">↓ 批次下移</button>
+<button id="batch-pause" class="secondary">暫停選取</button>
+<button id="batch-resume" class="secondary">恢復選取</button>
+<button id="batch-complete" class="secondary">標記完成</button>
+<button id="batch-delete" class="secondary">刪除選取</button>
+</div>
 <div class="table-wrap"><table><thead><tr><th>順序 / 小說</th><th>章節</th><th>執行狀態</th><th>TXT / 封面 / 影片</th><th>操作</th></tr></thead><tbody id="queue-body"><tr><td colspan="5" class="empty">連線後載入佇列</td></tr></tbody></table></div>
-<div class="section-head"><h2>已完成作品</h2></div><div id="completed-list" class="completed"><p class="muted">尚無資料</p></div>
+<div class="section-head"><h2>已完成作品</h2><button id="batch-restore" class="secondary">將勾選作品移回待製作</button></div><div id="completed-list" class="completed"><p class="muted">尚無資料</p></div>
 </section>
 <section id="create" class="tab">
 <div class="section-head"><div><h2>新增小說至製作佇列</h2><p>可先從指定網站解析目錄，檢查書名、章數與章節排序，再正式新增。</p></div></div>

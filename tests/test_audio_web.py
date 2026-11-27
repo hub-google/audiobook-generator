@@ -165,3 +165,14 @@ def test_local_artifact_review_and_cover_inspection_no_server_exposure():
     assert "master_cover_prompt.json" in script
     assert "review-save-only" in script
     assert "raw.githubusercontent.com" not in script
+
+
+def test_pending_and_completed_multiselect_uses_privileged_github_issue():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    app=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    for id in ("queue-all","batch-up","batch-down","batch-pause","batch-resume","batch-complete","batch-delete","batch-restore"):
+        assert f'id="{id}"' in html
+    assert "function selectedPendingTasks()" in app
+    assert 'function selectedPermitted(statuses)' in bridge
+    assert 'task_ids:[...selectedCompleted]' in bridge
