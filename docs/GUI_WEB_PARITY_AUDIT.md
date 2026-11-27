@@ -12,26 +12,28 @@
 | 排行榜分類／搜尋／多選／全選／不選／反選與欄位排序 | `rank-select-invert`、`rank-sort`，連結與 API 留在網站 | **本次補上** |
 | Pending / Success 雲端佇列，單本與多選的排序／暫停／恢復／重排／刪除／取消／完成／移回 | `app.js` 各項控制；站內雲端指令＋原 Python `cloud_queue` | **已做**；正式各狀態情境尚需回歸 |
 | 選書狀態包含 TXT、封面、影片 Run、HF／YouTube 數量、公開排程 | `selected-task-status` 與進度視窗 | **本次補上** |
-| 原 GUI Worker 即時 marker/原始日誌與 Job／Step | Job／Step 站內讀取，受授權 `fetch_logs` 取得 Run 原始日誌，`progress-raw-log` 顯示及搜尋 | **本次補上按需讀取**；仍不是原 GUI 的逐秒串流 marker |
-| 匯入實際 TXT／封面 Artifact 審核與 Raw/Clean／候選字詞 | `review-inspector.js` 同 Python 清理規則；`review-auto-load` 安全領取 ZIP，核對 SHA/manifest | **本次補上自動讀取**；需正式待審狀態實測，遇超大檔有限制 |
+| 原 GUI 全域雲端日誌／Worker marker／原始日誌與 Job／Step | `cloud-log.js` 整合 Run、Job/Step、HF/YouTube 狀態變化，授權 `fetch_logs` 供站內檢視原始日誌 | **本次補上**；逐秒原始 Worker marker 串流尚未完全一致 |
+| 匯入實際 TXT／封面 Artifact 審核與 Raw/Clean／候選字詞 | `review-inspector.js` 同 Python 清理規則；`review-auto-load` 安全領取 ZIP（支援私人分片重組），核對 SHA/manifest | **本次補上自動讀取**；正式待審狀態與超大型資料仍需實測 |
 | Gemini 故事研究、HF 封面 Prompt、批次研究／複製 | `batch-cover.js`、`audio-batch-cover-info.yml`；產生動作需授權 | **已做**；正式 Gemini 配額／外部 API 仍可能失敗 |
 | 原 GUI 新增前手動封面上傳、從 Profile 恢復舊圖、先產 Gemini Prompt 並快取 | `manual-cover.js`、`draft-cover-info.js`，透過安全雲端工具，Profile 儲存到原分支 | **本次補上**；手動封面、Gemini 真實憑證與生成結果需驗 |
 | JPG／PNG／WEBP 本機裁切 1280×720／下載／複製／安全上傳 | 網站 `manual-cover.js`，私人 Storage→GitHub OIDC→原 `cover_assets.py` | **已做**，禁用外站 Issue 上傳 |
 | 審核後啟動第二階段、Clean TTS、影片、YouTube | 同原 Python `apply_command`，前端驗證 Artifact，再由後端重驗 SHA | **已做流程**；沒有本版完整 YouTube 成功 Run，**不可宣稱正式全流程驗收** |
 | 台灣時間立即公開／定時公開／逾期策略 A | `app.js` 同 GUI 排程策略 | **已做**；真實 YouTube 上傳排程需驗 |
-| 個別／多本整包成品 Artifact 下載 | `audio-export-artifacts.yml` + 私人 Edge Asset，站內下載，小檔 ZIP 已接線 | **本次補上**；單檔大於 45MB 的雲端傳輸仍是已知限制，不應宣稱完整一致 |
-| 所有按鈕不跳轉外站、不公開 Token | `external-info.js` 攔截外站參考，站內 Auth＋命令／私人檔案服務 | **99 次 Chromium 實際按鈕操作**，24 筆模擬提交，0 popup，0 外站，0 JS error；實際管理登入需真實身分驗證 |
+| 個別／多本整包成品 Artifact 下載 | `audio-export-artifacts.yml` + 私人 Edge Asset，25MB 分片傳回，Chrome／Edge 可串流存檔 | **本次補上**；2.6MB 真實 ZIP 已成功，小檔到多片的單測與 Chrome 重組已通過，超大型正式 ZIP 仍待整體實測 |
+| 所有按鈕不跳轉外站、不公開 Token | `external-info.js` 攔截外站參考，站內 Auth＋命令／私人檔案服務 | **105 次 Chromium 實際按鈕操作**，24 筆模擬提交，0 popup，0 外站，0 JS error；實際管理登入需真實身分驗證 |
 
 ## 本次執行證據
 
-- Chromium 按鈕稽核 Run [45956086426](https://github.com/hub-google/audiobook-generator/actions/runs/45956086426)：**99 次按鈕點擊、24 次站內請求（瀏覽器端使用測試攔截）、0 新視窗、0 外站、0 JS 執行錯誤**。章節分頁的上下頁按鈕因示範只有 3 章被正確停用（未假裝成功點擊）。
+- Chromium 按鈕稽核 Run [45956985259](https://github.com/hub-google/audiobook-generator/actions/runs/45956985259)：**105 次按鈕點擊、24 次站內請求（瀏覽器端使用測試攔截）、0 新視窗、0 外站、0 JS 執行錯誤**。章節分頁的上下頁按鈕因示範只有 3 章被正確停用（未假裝成功點擊）。
 - 真實 GitHub OIDC 工作機成功領取與完成測試請求，對原有任務的封面 Artifact ZIP 1658 bytes 與 Run 原始日誌 41745 bytes 取得成功，儲存於 Supabase 私人 Storage（非前端 mock）。
 - 過往「GitHub Issue 要求 Submit new issue」只保留歷史後端相容用途，網站按鈕不再走這個流程。
+- 實際整包 ZIP 工作成功：[Run 45956406743](https://github.com/hub-google/audiobook-generator/actions/runs/45956406743)，AUDIO 私人 Storage 寫入 audio-export-5.zip（2,625,355 bytes）。
+- ZIP 分片通過 4 項 Python 單元測試、Chrome 重組／缺片阻擋測試，JS 語法檢查成功。
 
 ## 尚未有足夠實證能宣稱 100% 等同 GUI 的事項
 
-1. 同 GUI 毫秒或逐秒即時 Worker marker 串流：現在是經由按鈕向 GitHub 要**既有 Run Logs**，不會虛稱真實即時串流。
-2. 大於目前單檔 45MB 的 Artifact／整包下載；目前大型檔案保留 GitHub Artifact，仍未達到全站內直接拿到的要求。
+1. 新增站內全域雲端日誌，顯示 Run/Job/Step 及 HF/YouTube 變化；原始 Worker 日誌授權下載。**逐秒的原始 Worker marker 串流仍未完全一致**。
+2. 大型 ZIP 已實作 25MB 私人分片傳回與 Chrome/Edge 串流存檔；超大型正式成品尚未真實端到端驗收，且仍受雲端總儲存量及瀏覽器支援限制。
 3. Gemini／Cloudflare／HF 外部生圖與全書 TXT→封面→人工審核→TTS→影片→YouTube 真實正式成功執行；網頁功能已接線，但無法以 mock 代替真實成果。
 4. 原 GUI 自動讀取真正審核 Artifact 已新增但尚未以剛好兩階段成功的正式待審書籍、超大型資料多來源實測。
 
