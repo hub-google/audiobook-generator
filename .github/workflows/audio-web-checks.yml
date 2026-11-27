@@ -5,6 +5,9 @@ on:
       - master
       - feature/audio-web-nine-sources-gemini-20261127
   workflow_dispatch:
+concurrency:
+  group: audio-web-ci-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
