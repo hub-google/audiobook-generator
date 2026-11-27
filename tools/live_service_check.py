@@ -96,6 +96,8 @@ def check_original_media():
             "Acceptance", str(wav), str(root), str(root / "Video"), []
         )
         validate_video(video, duration)
+        if Path(video).stat().st_size < 1000:
+            raise RuntimeError("Generated MP4 is unexpectedly empty")
         print("Original-content media: Edge TTS, WAV, SRT, FFmpeg MP4 verified", flush=True)
 
 
