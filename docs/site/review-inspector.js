@@ -203,7 +203,7 @@
   state.candidateChoices.clear();
   state.chapters={};state.prompt="";
   original(id);
-  for(const field of ["review-report-file","review-cover-file","review-search"])$(field).value="";
+  for(const field of ["review-report-file","review-cover-file","review-drop-files","review-search"])$(field).value="";
   $("review-kind").value="";$("review-state").value="";
   $("review-chapter").replaceChildren(new Option("尚未載入",""));
   text($("review-load-status"),"請選擇此小說的實際 GitHub Artifact");
@@ -255,11 +255,15 @@
   });
   $("review-copy-prompt").addEventListener("click",()=>navigator.clipboard.writeText(state.prompt).then(()=>notice("已複製 HF Prompt")).catch(e=>notice(e.message,"error")));
   $("review-save-only").addEventListener("click",()=>{
-   if(!taskId)throw Error("尚未選取小說");
-   audioIssueAction("review",{task_id:taskId,remove_patterns:patterns(),review_only:true,
-     candidate_overrides:window.audioReviewCandidateEdits(),
-     evidence:window.audioReviewEvidence()},"儲存文字清理規則");
-   $("review-dialog").close();
+   try{
+    if(!taskId)throw Error("尚未選取小說");
+    const result=audioIssueAction("review",{task_id:taskId,remove_patterns:patterns(),
+      review_only:true,candidate_overrides:window.audioReviewCandidateEdits(),
+      evidence:window.audioReviewEvidence()},"儲存文字清理規則");
+    Promise.resolve(result).then(url=>{
+     if(url)$("review-dialog").close();
+    }).catch(error=>notice(error.message,"error"));
+   }catch(error){notice(error.message,"error");}
   });
  });
 })();

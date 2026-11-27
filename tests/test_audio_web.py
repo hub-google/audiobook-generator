@@ -448,3 +448,13 @@ def test_review_approval_has_both_txt_and_cover_evidence_and_no_browser_token():
     assert "coverEvidence={task_id:selectedTask" in script
     assert "cover_evidence=window.audioReviewCoverEvidence?.()" in bridge
     assert "evidence,cover_evidence" in bridge
+
+
+def test_issue_bridge_does_not_claim_success_when_popup_blocked():
+    bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    review=(ROOT/"docs/site/review-inspector.js").read_text(encoding="utf-8")
+    assert 'function openIssueTab()' in bridge
+    assert 'if(!tab)throw Error("新分頁遭到瀏覽器封鎖' in bridge
+    assert 'tab.opener=null' in bridge
+    assert 'const tab=openIssueTab();' in bridge
+    assert 'if(url)$("review-dialog").close()' in review

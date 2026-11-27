@@ -163,7 +163,16 @@ def main():
             desktop.locator('[data-tab="overview"]').click()
             assert desktop.locator("#token").count() == 0
             assert desktop.locator("#connection-pill").inner_text() == "GitHub 登入操作"
-            desktop.evaluate("window.__issueUrls=[];window.open=(url)=>{window.__issueUrls.push({url:String(url),stack:(new Error()).stack});return null;};void 0;")
+            desktop.evaluate("""() => {
+              window.__issueUrls=[];
+              window.open=()=>({
+                opener:null,
+                location:{replace(url){window.__issueUrls.push({
+                  url:String(url),stack:(new Error()).stack
+                });}},
+                close(){}
+              });
+            }""")
             desktop.locator('[data-tab="create"]').click()
             # Exercise the real catalog response path: desktop defaults to the full book.
             desktop.locator("#start-chapter").fill("2")

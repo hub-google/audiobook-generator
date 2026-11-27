@@ -47,20 +47,29 @@
    binary+=String.fromCharCode(...bytes.slice(offset,offset+8192));
   return btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
  }
+ function openIssueTab(){
+  // Open about:blank synchronously while a user gesture is active; browser
+  // popup blockers return null. Sever the opener before navigating to GitHub.
+  const tab=window.open("about:blank","_blank");
+  if(!tab)throw Error("新分頁遭到瀏覽器封鎖；請允許 AUDIO 開啟 GitHub 確認頁");
+  tab.opener=null;
+  return tab;
+ }
  function send(op,data,label){
   const body=JSON.stringify({version:1,op,data});
   const url=issueUrl(toB64(body).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""),label);
   if(url.length<=25000){
-   window.open(url,"_blank","noopener");successNotice(op);
+   const tab=openIssueTab();
+   try{tab.location.replace(url);}
+   catch(error){try{tab.close();}catch{}throw error;}
+   successNotice(op);
    return url;
   }
   // GitHub already accepts gzip commands. Compress large chapter plans before
   // URL encoding; keep the new tab opened in the original click gesture.
   if(!("CompressionStream" in window))
    throw Error("這個瀏覽器不支援大型章節傳送，請使用最新版 Chrome 或 Edge");
-  const tab=window.open("about:blank","_blank");
-  if(!tab)throw Error("新分頁遭到瀏覽器封鎖，請允許 AUDIO 開啟 GitHub 分頁");
-  tab.opener=null;
+  const tab=openIssueTab();
   notice("章節設定較長，正在壓縮以符合 GitHub 網址長度限制…");
   return (async()=>{
    const input=new TextEncoder().encode(body);
