@@ -8,6 +8,44 @@
  let pendingWatcher=0;
  const outstanding=new Map();
  const awaitingExports=new Set();
+ // Persist only book titles, URLs and request IDs for this browser tab. No secrets.
+ const BOOKS_KEY="audio-submitted-books-v1";
+ let submitted=[];
+ try{
+  const saved=JSON.parse(sessionStorage.getItem(BOOKS_KEY)||"[]");
+  submitted=Array.isArray(saved)?saved.filter(x=>x&&typeof x.requestId==="string"
+   &&Date.now()-Number(x.createdAt||0)<48*3600*1000).slice(0,100):[];
+ }catch{submitted=[];}
+ function saveSubmitted(){
+  try{sessionStorage.setItem(BOOKS_KEY,JSON.stringify(submitted.slice(0,100)));}catch{}
+ }
+ function displaySubmitted(){
+  if(typeof window.audioShowSubmittedBooks==="function")window.audioShowSubmittedBooks(submitted);
+ }
+ window.audioRefreshSubmittedBooks=displaySubmitted;
+ function trackSubmitted(requestId,op,payload){
+  if(op!=="enqueue"&&op!=="batch_add")return;
+  const books=Array.isArray(payload.books)?payload.books:[];
+  for(const book of books.slice(0,50)){
+   const url=String(book.catalog_url||"").slice(0,500);
+   if(!url)continue;
+   submitted.unshift({requestId,url,title:String(book.book_title||url).slice(0,160),
+     status:"pending",error:"",createdAt:Date.now()});
+  }
+  saveSubmitted();displaySubmitted();
+ }
+ function updateSubmittedStatuses(rows){
+  const states=new Map(rows.map(x=>[x.request_id,x]));
+  let changed=false;
+  for(const book of submitted){
+   const result=states.get(book.requestId);if(!result)continue;
+   if(book.status!==result.status||book.error!==String(result.error||"")){
+    book.status=result.status;book.error=String(result.error||"").slice(0,220);changed=true;
+   }
+  }
+  if(changed)saveSubmitted();
+  displaySubmitted();
+ }
 
  function ensurePanel(){
   if(document.getElementById("audio-operation-panel"))return;
@@ -187,6 +225,7 @@
   try{
    const response=await api("/status");
    const rows=response.requests||[];
+   updateSubmittedStatuses(rows);
    renderOperations(rows);
    const old=[...outstanding];
    for(const [id,info] of old){
@@ -226,6 +265,7 @@
    const id=response.request?.request_id;
    if(!id)throw Error("雲端沒有回傳操作識別碼");
    outstanding.set(id,{label,updateQueue:QUEUE_CHANGING.has(op)});
+   trackSubmitted(id,op,data);
    if(op==="export_artifacts")awaitingExports.add(id);
    ensurePanel();
    document.getElementById("audio-operation-panel").classList.remove("hidden");
@@ -481,6 +521,8 @@
   }finally{btn.disabled=false;}
  };
  document.addEventListener("DOMContentLoaded",()=>{
+  displaySubmitted();
+  void syncOperations();
   const cmds=[
    ["batch-up",()=>multi("move",{task_ids:selectedPermitted(["queued","paused","interrupted","stopped"]),delta:-1},"批次上移")],
    ["batch-down",()=>multi("move",{task_ids:selectedPermitted(["queued","paused","interrupted","stopped"]),delta:1},"批次下移")],
