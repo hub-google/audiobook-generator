@@ -31,12 +31,21 @@ jobs:
         run: |
           set -euo pipefail
           name="web-previews/${REQUEST_ID}.json"
-          encoded="$(base64 -w0 catalog-preview.json)"
+          # Large novels can exceed the OS argument-size limit. Build the
+          # request in a file instead of passing base64 as a CLI argument.
+          python - <<'PY'
+          import base64, json, os
+          from pathlib import Path
+          body = {
+              "message": "Publish AUDIO catalog preview " + os.environ["REQUEST_ID"],
+              "branch": "automation-state",
+              "content": base64.b64encode(Path("catalog-preview.json").read_bytes()).decode("ascii"),
+          }
+          Path("catalog-preview-request.json").write_text(json.dumps(body), encoding="utf-8")
+          PY
           for attempt in 1 2 3; do
             if gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$name" \
-              -f message="Publish AUDIO catalog preview $REQUEST_ID" \
-              -f branch=automation-state \
-              -f content="$encoded"; then
+              --input catalog-preview-request.json; then
               exit 0
             fi
             sleep "$attempt"

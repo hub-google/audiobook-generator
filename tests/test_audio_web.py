@@ -325,3 +325,9 @@ def test_catalog_preview_restores_saved_desktop_profile():
     assert result["profile_defaults"]["chapter_normalized_number_overrides"] == {"2": "2.5"}
     assert result["profile_defaults"]["duplicate_detection"]["use_chapter_name"] is False
     assert len(result["chapter_titles"]) == 3
+
+
+def test_large_catalog_upload_uses_file_not_cli_base64_argument():
+    workflow=(ROOT/".github/workflows/web-catalog-preview.yml").read_text(encoding="utf-8")
+    assert "--input catalog-preview-request.json" in workflow
+    assert '-f content="$encoded"' not in workflow
