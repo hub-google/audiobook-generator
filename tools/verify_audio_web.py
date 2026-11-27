@@ -267,6 +267,46 @@ def main():
                 "buffer":json.dumps(review_sample,ensure_ascii=False).encode("utf-8"),
             })
             desktop.get_by_text("已核對任務 book-smoke-review").wait_for()
+            # Verify real browser-side ZIP + cover Manifest SHA-256 inspection.
+            import io
+            import zipfile
+            import hashlib
+            from PIL import Image
+            cover_png=io.BytesIO()
+            Image.new("RGB",(128,72)).save(cover_png,format="JPEG")
+            cover_bytes=cover_png.getvalue()
+            prompt_bytes=json.dumps({
+                "book_title":"封面審核測試",
+                "prompt":"A minimal original cover description",
+                "brief":{"synopsis":"A short original story"},
+            },ensure_ascii=False).encode("utf-8")
+            cover_manifest={
+                "schema_version":1,"artifact_role":"cover_preflight",
+                "task_id":"book-smoke-review",
+                "cover_sha256":hashlib.sha256(cover_bytes).hexdigest(),
+                "prompt_sha256":hashlib.sha256(prompt_bytes).hexdigest(),
+            }
+            def make_cover_zip(image_bytes,manifest):
+                buf=io.BytesIO()
+                with zipfile.ZipFile(buf,"w",compression=zipfile.ZIP_DEFLATED) as archive:
+                    archive.writestr("Workspace/demo/Cover/master_cover.jpg",image_bytes)
+                    archive.writestr("Workspace/demo/Cover/master_cover_prompt.json",prompt_bytes)
+                    archive.writestr("Workspace/demo/Cover/cover-preflight-manifest.json",
+                                     json.dumps(manifest,ensure_ascii=False).encode("utf-8"))
+                return buf.getvalue()
+            valid_cover_zip=make_cover_zip(cover_bytes,cover_manifest)
+            desktop.locator("#review-drop-files").set_input_files([{
+                "name":"cover-review-book-smoke-review.zip",
+                "mimeType":"application/zip","buffer":valid_cover_zip}])
+            desktop.get_by_text("已核對封面任務 book-smoke-review").wait_for(timeout=8000)
+            assert desktop.locator("#review-cover-preview").is_visible()
+            assert "A minimal original cover" in desktop.locator("#review-cover-prompt").inner_text()
+            tampered_zip=make_cover_zip(cover_bytes+b"tampered",cover_manifest)
+            desktop.locator("#review-drop-files").set_input_files([{
+                "name":"cover-review-tampered.zip",
+                "mimeType":"application/zip","buffer":tampered_zip}])
+            desktop.get_by_text("封面或 Prompt 的 SHA-256 驗證失敗",exact=False).wait_for(timeout=8000)
+            assert desktop.locator("#review-cover-preview").is_visible()
             assert "本段為測試廣告" in desktop.locator("#review-raw").inner_text()
             desktop.locator("#review-patterns").fill("本段為測試廣告")
             assert "本段為測試廣告" not in desktop.locator("#review-clean").inner_text()
