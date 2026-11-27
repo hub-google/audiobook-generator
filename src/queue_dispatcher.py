@@ -18,10 +18,10 @@ from zoneinfo import ZoneInfo
 import requests
 
 try:
-    from .cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, next_task, settle_interrupted_task, task_id_from_run_name, update_task
+    from .cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, next_task, settle_interrupted_task, task_id_from_run_name, update_task, touch
     from .book_profiles import GitHubBookProfileStore, get_book_profile, profile_snapshot
 except ImportError:
-    from cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, next_task, settle_interrupted_task, task_id_from_run_name, update_task
+    from cloud_queue import BLOCKING_STATES, GitHubQueueStore, QueueConflict, current_task, format_chapter_label, next_task, settle_interrupted_task, task_id_from_run_name, update_task, touch
     from book_profiles import GitHubBookProfileStore, get_book_profile, profile_snapshot
 
 
@@ -845,9 +845,15 @@ class Dispatcher:
         # concurrently. Reload and recompute after an optimistic-lock conflict.
         for attempt in range(5):
             queue, sha = self.store.load()
+            old_revision = int(queue.get("revision") or 0)
             queue, changed = self.reconcile(queue)
             if not changed:
                 break
+            # Reconcile may update stage dictionaries directly without
+            # calling update_task/touch. Bump the revision so Pages notices the
+            # real state change rather than showing a stale active task.
+            if int(queue.get("revision") or 0) <= old_revision:
+                queue = touch(queue)
             try:
                 sha = self.store.save(queue, sha=sha, message="Reconcile audiobook queue with GitHub runs")
                 break
