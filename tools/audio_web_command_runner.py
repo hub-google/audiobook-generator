@@ -22,6 +22,7 @@ from tools.audio_issue_command import api, apply_command, valid_id, valid_url
 # All commands remain in the site; GitHub OIDC verifies the processing workflow.
 # Live integration smoke: download one existing tiny Artifact and its Run logs with protected staging.
 # Regression: verify site-owned small bundle export dispatches and stages through GitHub OIDC.
+# Live export regression after dependency fix: do not mutate real audiobook queue.
 REPO = "hub-google/audiobook-generator"
 EDGE = "https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-web-commands"
 
