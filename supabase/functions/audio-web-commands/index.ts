@@ -41,7 +41,7 @@ async function runnerOf(req) {
  const {payload}=await jwtVerify(token,jwks,{issuer:"https://token.actions.githubusercontent.com",audience:"audio-web-commands"});
  const expected=REPO+"/.github/workflows/audio-web-command-runner.yml@refs/heads/main";
  if(payload.repository!==REPO || payload.ref!=="refs/heads/main" || payload.workflow_ref!==expected ||
-  !["schedule","workflow_dispatch"].includes(String(payload.event_name||"")))
+  !["schedule","workflow_dispatch","push"].includes(String(payload.event_name||"")))
   throw Object.assign(new Error("不是已授權的 AUDIO GitHub Actions 工作機"),{status:403});
  return payload;
 }
