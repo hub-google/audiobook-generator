@@ -243,12 +243,14 @@ def main():
             assert desktop.locator("#novel-search-staged-list .staged-item").count() == 2
             assert desktop.evaluate("window.__issueUrls") == [], "加入待新增清單不可開新分頁"
             desktop.screenshot(path=str(OUTPUT / "audio-search-multiselect-desktop.png"),full_page=True)
-            desktop.locator("#novel-search-add-queue").click()
-            desktop.wait_for_function("window.__webCommands.includes('batch_add')",timeout=15000)
-            assert desktop.evaluate("window.__issueUrls") == [], "批次新增不得開啟外部視窗"
+            # Configure one selected book while staging is still visible.
             desktop.locator("#novel-search-edit-one").click()
             assert desktop.locator("#book-title").input_value() == "詭秘之主"
             assert desktop.locator("#catalog-url").input_value() == "https://69shuba.com/book/123/"
+            desktop.locator("#novel-search-add-queue").click()
+            desktop.wait_for_function("window.__webCommands.includes('batch_add')",timeout=15000)
+            assert desktop.evaluate("window.__issueUrls") == [], "批次新增不得開啟外部視窗"
+            desktop.locator('[data-tab="create"]').click()
             # Reset the single-book form for the independent catalog-editor check.
             desktop.locator("#source").select_option("czbooks")
             desktop.locator("#catalog-url").fill("https://czbooks.net/n/demo")
