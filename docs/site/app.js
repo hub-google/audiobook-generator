@@ -181,9 +181,8 @@ async function parseCatalog(){
  }
  if(!run||run.status!=="completed")throw Error("目錄解析仍在執行，請到 Actions 查看紀錄");
  if(run.conclusion!=="success")throw Error("目錄解析失敗，請查看 Run #"+run.id);
- const list=await request("/actions/runs/"+run.id+"/artifacts");
- const artifact=(list.artifacts||[]).find(x=>x.name==="catalog-preview-"+requestId);if(!artifact)throw Error("找不到解析結果 Artifact");
- const data=await fetchPreviewArtifact(artifact);
+ const content=await request("/contents/web-previews/"+encodeURIComponent(requestId)+".json?ref="+QUEUE_BRANCH);
+ const data=JSON.parse(fromB64(content.content));
  if(data.requested_url!==url)throw Error("解析結果與輸入網址不一致");
  $("catalog-url").value=data.catalog_url;
  parsedCatalog=data;text($("book-title"),data.book_title);$("book-title").value=data.book_title;
