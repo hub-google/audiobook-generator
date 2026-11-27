@@ -49,10 +49,28 @@ class CrawlerRenumberingTests(unittest.TestCase):
     @patch("src.crawler.time.sleep", return_value=None)
     @patch("src.sources.http_client.reset_session")
     @patch("src.crawler.fetch_chapter_text")
-    def test_shuba_access_error_rebuilds_session_and_retries(self, fetch, reset, _sleep):
+    def test_shuba_explicit_403_stops_without_extra_requests(self, fetch, reset, _sleep):
+        fetch.side_effect = SourceAccessError("來源存取受限 HTTP 403")
+        with tempfile.TemporaryDirectory() as directory:
+            config = {
+                "book_title": "book",
+                "base_url": "https://www.69shuba.com",
+                "catalog_url": "https://www.69shuba.com/book/1/",
+                "source_id": "shuba69",
+                "paths": {"workspace_base": directory},
+            }
+            with self.assertRaisesRegex(SourceAccessError, "HTTP 403"):
+                run_crawler_worker(config, ["/txt/1/10"], exact_indices=[1])
+        self.assertEqual(fetch.call_count, 1)
+        reset.assert_not_called()
+
+    @patch("src.crawler.time.sleep", return_value=None)
+    @patch("src.sources.http_client.reset_session")
+    @patch("src.crawler.fetch_chapter_text")
+    def test_transient_access_error_still_retries(self, fetch, reset, _sleep):
         fetch.side_effect = [
-            SourceAccessError("來源存取受限 HTTP 403"),
-            ("第1章", "這是一段足夠長的小說正文，用來驗證重建 Session 後可以正常儲存章節內容。"),
+            SourceAccessError("來源暫時異常 HTTP 503"),
+            ("第1章", "這是一段足夠長的小說正文，用來驗證暫時失敗後可以正常儲存章節內容。"),
         ]
         with tempfile.TemporaryDirectory() as directory:
             config = {
@@ -63,7 +81,6 @@ class CrawlerRenumberingTests(unittest.TestCase):
                 "paths": {"workspace_base": directory},
             }
             run_crawler_worker(config, ["/txt/1/10"], exact_indices=[1])
-
         self.assertEqual(fetch.call_count, 2)
         reset.assert_called_once_with("shuba69")
 
