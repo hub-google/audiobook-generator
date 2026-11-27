@@ -199,7 +199,7 @@ function redactLogLine(value){
   .replace(/((?:api[_-]?key|authorization|access[_-]?token|refresh[_-]?token|password|secret)\s*[:=]\s*)[^\s&]+/gi,"$1[REDACTED]")
   .replace(/(?:gh[pousr]_|hf_)[a-z0-9]{12,}/gi,"[REDACTED]")
   .replace(/AIza[a-zA-Z0-9_-]{20,}/g,"[REDACTED]")
-  .replace(/([?&](?:key|token|access_token|refresh_token|sig|signature|auth)=)[^\\s&]+/gi,"$1[REDACTED]")
+  .replace(/([?&](?:key|token|access_token|refresh_token|sig|signature|auth)=)[^\s&]+/gi,"$1[REDACTED]")
   .replace(/\u001b\[[0-9;]*m/g,"")
   .slice(0,800).trim();
 }
