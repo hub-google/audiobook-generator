@@ -122,8 +122,16 @@ def main():
             assert desktop.locator("#batch-cover-dialog").is_visible()
             assert desktop.locator("#batch-cover-book-list button").count() == 1
             desktop.locator("#batch-cover-close").click()
+            desktop.route("https://raw.githubusercontent.com/**/audiobook-queue.json**",
+                lambda route:route.fulfill(
+                    status=200,content_type="application/json",
+                    headers={"Access-Control-Allow-Origin":"*"},
+                    body=json.dumps(state,ensure_ascii=False)))
             desktop.locator("#queue-body tr").first.get_by_role("button", name="進度").click()
             assert desktop.locator("#progress-dialog").is_visible()
+            desktop.locator("#progress-refresh-now").click()
+            desktop.get_by_text("最近同步：",exact=False).wait_for(timeout=8000)
+            assert "原創測試小說" in desktop.locator("#progress-detail").inner_text()
             desktop.locator("#progress-close").click()
 
             desktop.locator('[data-tab="create"]').click()

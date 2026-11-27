@@ -413,3 +413,16 @@ def test_editor_supports_existing_desktop_book_cleaner_settings():
     assert 'loadCurrentBookCleaner(task)' in app
     assert 'editCleanerInitial=' in app
     assert 'changes.cleaner_remove_patterns=patterns' in bridge
+
+
+def test_progress_dialog_live_readonly_sync_and_manual_jobs_refresh():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    app=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    assert 'id="progress-refresh-now"' in html
+    assert 'id="progress-auto-status"' in html
+    assert "async function pollProgressNow(forceJobs=false)" in app
+    assert "function scheduleProgressPoll(generation)" in app
+    assert 'raw.githubusercontent.com/"+REPO+"/"+QUEUE_BRANCH+"/"+QUEUE_PATH' in app
+    assert 'bind("progress-refresh-now","click",()=>pollProgressNow(true))' in app
+    assert "progressGeneration++;progressTaskId=null" in app
+    assert "GitHub unauthenticated REST quota" in app

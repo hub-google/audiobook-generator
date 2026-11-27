@@ -11,6 +11,7 @@ const SOURCES=[
 {id:"moon17",name:"月亮小說網",hosts:["17moon.com","www.17moon.com"]},
 {id:"book8",name:"無限小說",hosts:["8book.com","www.8book.com","v.8book.com","m.8book.com","i.8book.com"]}
 ];
+let progressGeneration=0,progressTaskId=null,progressTimer=null,progressJobRuns="",progressBusy=false;
 let editCleanerInitial="",queue=null,queueSha=null,latestRuns=[],parsedCatalog=null,editorTaskId=null,reviewTaskId=null,chapterPickerExcluded=null,chapterPickerOrder=null,rankingNovels=[],rankingSelected=new Set(),selectedPending=new Set(),selectedCompleted=new Set(),chapterSelectedRows=new Set(),chapterPage=0,chapterPageSize=200,chapterEditingIndex=null,editorParsedCatalog=null,chapterPickerMode="create",pickerOriginalCatalog=null,pickerOriginalDuplicateState=null;
 const $=id=>document.getElementById(id), text=(node,value)=>{node.textContent=value==null?"":String(value)};
 function notice(message,kind="ok"){const n=$("message");text(n,message);n.className="notice"+(kind==="error"?" error":"");}
@@ -153,9 +154,7 @@ async function renderRunJobDetails(task){
  }
 }
 
-async function showProgress(id){
- const t=[...queueTasks(),...(queue?.completed||[])].find(x=>x.task_id===id);
- if(!t)throw Error("找不到任務");
+function renderProgressSummary(t){
  const detail=[
   "書名："+(t.book_title||"待解析"),
   "狀態："+statusName(t.status),
@@ -166,9 +165,73 @@ async function showProgress(id){
   "YouTube進度："+(t.youtube_progress?.completed||0)+"/"+(t.youtube_progress?.total||0),
   "執行 Run："+(t.run_id||"尚未建立"),
   "工作 ID："+t.task_id,
-  "異常或原因："+(t.reason||"無"),
+  "異常或原因："+(t.reason||"無")
  ].join("\n");
- text($("progress-detail"),detail);$("progress-dialog").showModal();await renderRunJobDetails(t);
+ text($("progress-detail"),detail);
+}
+function progressRunIds(t){
+ return [t.scrape_run_id,t.cover_run_id,t.processing_run_id,t.run_id].filter(Boolean).join(",");
+}
+function scheduleProgressPoll(generation){
+ if(progressTimer!==null){clearTimeout(progressTimer);progressTimer=null;}
+ if(generation!==progressGeneration||!$("progress-dialog").open)return;
+ progressTimer=setTimeout(()=>{
+  progressTimer=null;
+  if(document.hidden){scheduleProgressPoll(generation);return;}
+  void pollProgressNow();
+ },15000);
+}
+async function pollProgressNow(forceJobs=false){
+ const id=progressTaskId,generation=progressGeneration;
+ if(!id||!$("progress-dialog").open||progressBusy)return;
+ progressBusy=true;
+ if(progressTimer!==null){clearTimeout(progressTimer);progressTimer=null;}
+ text($("progress-auto-status"),"正在同步雲端佇列…");
+ try{
+  // Public read-only raw JSON avoids burning GitHub unauthenticated REST quota
+  // every 15 seconds. Secrets and mutation operations stay in GitHub Actions.
+  const url="https://raw.githubusercontent.com/"+REPO+"/"+QUEUE_BRANCH+"/"+QUEUE_PATH+
+   "?_="+Date.now();
+  const response=await fetch(url,{cache:"no-store"});
+  if(!response.ok)throw Error("GitHub 佇列讀取 HTTP "+response.status);
+  const latest=await response.json();
+  if(!Array.isArray(latest.queue)||!Array.isArray(latest.completed))
+   throw Error("雲端佇列內容不完整");
+  if(generation!==progressGeneration||!$("progress-dialog").open)return;
+  queue=latest;renderQueue();
+  const task=[...latest.queue,...latest.completed].find(t=>t.task_id===id);
+  if(!task){
+   text($("progress-auto-status"),"這項任務已不在佇列，請確認是否已刪除。");
+   return;
+  }
+  renderProgressSummary(task);
+  const runIds=progressRunIds(task);
+  if(forceJobs||runIds!==progressJobRuns){
+   progressJobRuns=runIds;
+   await renderRunJobDetails(task);
+  }
+  if(generation!==progressGeneration||!$("progress-dialog").open)return;
+  text($("progress-auto-status"),"最近同步："+new Date().toLocaleTimeString("zh-TW",{
+   timeZone:"Asia/Taipei",hour12:false})+"；每 15 秒自動更新佇列狀態");
+ }catch(error){
+  if(generation===progressGeneration&&$("progress-dialog").open)
+   text($("progress-auto-status"),"同步失敗："+error.message+"；會自動重試，亦可按鈕重新整理");
+ }finally{
+  progressBusy=false;
+  scheduleProgressPoll(generation);
+ }
+}
+async function showProgress(id){
+ const t=[...queueTasks(),...(queue?.completed||[])].find(x=>x.task_id===id);
+ if(!t)throw Error("找不到任務");
+ progressGeneration++;progressTaskId=id;progressJobRuns=progressRunIds(t);
+ if(progressTimer!==null){clearTimeout(progressTimer);progressTimer=null;}
+ renderProgressSummary(t);
+ text($("progress-auto-status"),"工作步驟載入中；佇列將每 15 秒自動同步");
+ $("progress-dialog").showModal();
+ const generation=progressGeneration;
+ try{await renderRunJobDetails(t);}
+ finally{scheduleProgressPoll(generation);}
 }
 function readOverrides(value,start,end,isNumber=false){
  const out={};for(const line of value.split(/\r?\n/)){if(!line.trim())continue;const pos=line.indexOf("|");if(pos<0)throw Error("進階章節設定必須使用「索引 | 內容」格式："+line);
@@ -655,7 +718,12 @@ document.addEventListener("DOMContentLoaded",()=>{
  bind("chapter-exclude-duplicates","click",excludePickerDuplicates);
  bind("chapter-sort-number","click",()=>sortPickerOrder("number"));bind("chapter-sort-original","click",()=>sortPickerOrder("original"));
  for(const id of ["duplicate-number","duplicate-name","duplicate-pair","duplicate-only"])bind(id,"change",renderChapterPicker);
- bind("progress-close","click",()=>$("progress-dialog").close());bind("edit-cancel","click",()=>{$("edit-dialog").close();editorTaskId=null;});bind("review-cancel","click",()=>{$("review-dialog").close();reviewTaskId=null;});
+ bind("progress-close","click",()=>$("progress-dialog").close());
+ bind("progress-refresh-now","click",()=>pollProgressNow(true));
+ $("progress-dialog").addEventListener("close",()=>{
+  progressGeneration++;progressTaskId=null;
+  if(progressTimer!==null){clearTimeout(progressTimer);progressTimer=null;}
+ });bind("edit-cancel","click",()=>{$("edit-dialog").close();editorTaskId=null;});bind("review-cancel","click",()=>{$("review-dialog").close();reviewTaskId=null;});
  bind("publish-immediate","change",renderPublish);bind("publish-scheduled","change",renderPublish);
  bind("publish-at","change",renderPublish);
  document.querySelectorAll("[data-publish-day]").forEach(b=>b.addEventListener("click",()=>setPublishPreset(Number(b.dataset.publishDay),b.dataset.publishHour)));

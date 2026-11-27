@@ -50,3 +50,8 @@
 ## 書籍清理 Profile 一致性
 - 編輯既有小說時讀取同一個 GitHub automation-state 書籍 Profile 的最新清理字詞；可編輯、清空或新增，且只有實際修改才寫入，避免舊快照覆蓋新設定。
 - 後端將清理詞句加入 Profile 同步交易紀錄（outbox），不冒然把書籍清理設定混進雲端任務欄位；所有變更使用原 Python validate_remove_patterns()。
+
+## 製作進度同步
+- 進度對話框增設每 15 秒唯讀同步 GitHub automation-state 公開佇列，更新目前階段、HF / YouTube 統計；視窗關閉即停止查詢。
+- 進度視窗有「重新整理進度及工作步驟」，新的 Run 出現時自動更新 Job/Step；避免每 15 秒反覆對 GitHub REST API 請求全部 Jobs，以免吃滿匿名 API 額度。
+- 仍非桌面 GUI 的即時 worker log marker：不在 Pages 放 Token，GitHub Job 原始 Logs 需要 GitHub 授權，保留 Run 連結供開啟。
