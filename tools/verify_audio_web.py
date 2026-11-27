@@ -177,6 +177,44 @@ def main():
               });
             }""")
             desktop.locator('[data-tab="create"]').click()
+            # Nine-site search and multi-selection are exercised in Chromium.
+            def search_mock(route):
+                request_id=route.request.url.split("/web-searches/",1)[1].split(".json",1)[0]
+                result={"request_id":request_id,"keyword":"詭秘之主",
+                        "sources":[{"source_id":"shuba69","status":"ok",
+                                    "results":[{"title":"詭秘之主"}]},
+                                   {"source_id":"czbooks","status":"ok",
+                                    "results":[{"title":"詭秘之主"}]}],
+                        "results":[
+                            {"source_id":"shuba69","title":"詭秘之主",
+                             "author":"愛潛水的烏賊",
+                             "catalog_url":"https://69shuba.com/book/123/"},
+                            {"source_id":"czbooks","title":"詭秘之主",
+                             "author":"愛潛水的烏賊",
+                             "catalog_url":"https://czbooks.net/n/demo"},
+                        ]}
+                route.fulfill(status=200,content_type="application/json",
+                              headers={"Access-Control-Allow-Origin":"*"},
+                              body=json.dumps(result,ensure_ascii=False))
+            desktop.route("https://raw.githubusercontent.com/**/web-searches/**", search_mock)
+            assert desktop.locator("#novel-search-source option").count() == 10
+            desktop.locator("#novel-search-keyword").fill("詭秘之主")
+            desktop.locator("#novel-search-go").click()
+            desktop.locator("#novel-search-body tr").first.get_by_text("詭秘之主").wait_for(timeout=20000)
+            assert desktop.locator("#novel-search-body tr").count() == 2
+            desktop.locator("#novel-search-select-all").click()
+            desktop.locator("#novel-search-stage").click()
+            assert desktop.locator("#novel-search-staged-list .staged-item").count() == 2
+            desktop.screenshot(path=str(OUTPUT / "audio-search-multiselect-desktop.png"),full_page=True)
+            desktop.locator("#novel-search-add-queue").click()
+            assert len(desktop.evaluate("window.__issueUrls")) >= 2
+            desktop.locator("#novel-search-edit-one").click()
+            assert desktop.locator("#book-title").input_value() == "詭秘之主"
+            assert desktop.locator("#catalog-url").input_value() == "https://69shuba.com/book/123/"
+            # Reset the single-book form for the independent catalog-editor check.
+            desktop.locator("#source").select_option("czbooks")
+            desktop.locator("#catalog-url").fill("https://czbooks.net/n/demo")
+            desktop.locator("#book-title").fill("驗收示範")
             # Exercise the real catalog response path: desktop defaults to the full book.
             desktop.locator("#start-chapter").fill("2")
             desktop.locator("#end-chapter").fill("3")
