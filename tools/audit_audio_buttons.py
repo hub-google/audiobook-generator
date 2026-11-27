@@ -178,7 +178,18 @@ def main():
               };
               document.querySelector("#chapter-selection-tools").classList.remove("hidden");
             }""")
+            page.locator("#start-chapter").fill("1")
+            page.locator("#end-chapter").fill("3")
+            page.locator("#excluded").fill("")
+            page.locator("#chapter-order").fill("")
+            page.evaluate('chapterPickerMode="create"')
             attempt_button("#open-chapter-picker",keep_dialog=True)
+            if not page.locator("#chapter-dialog").is_visible():
+                problem=page.evaluate("""() => {
+                  try { openChapterPicker("create"); return "Manual invocation succeeded"; }
+                  catch (e) { return e.name + ": " + e.message; }
+                }""")
+                raise AssertionError("Chapter dialog not visible after click: "+str(problem))
             for name in ["chapter-all","chapter-none","chapter-invert","chapter-all",
                          "chapter-exclude-duplicates","chapter-sort-number",
                          "chapter-sort-original","chapter-move-up","chapter-move-down",
