@@ -170,7 +170,7 @@ def main():
             for name in ["rank-select-all","rank-select-none","rank-select-all","rank-copy","rank-add"]:
                 attempt_button("#"+name)
             page.evaluate("""() => {
-              window.parsedCatalog={
+              parsedCatalog={
                 catalog_url:"https://czbooks.net/n/demo",book_title:"測試小說 A",
                 total_chapters:3,chapter_titles:["第 1 章","第 2 章","第 3 章"],
                 chapter_parts:[{n:"1",d:"第 1 章",c:""},{n:"2",d:"第 2 章",c:""},{n:"3",d:"第 3 章",c:""}]
