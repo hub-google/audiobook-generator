@@ -6,6 +6,7 @@
  const id=name=>document.getElementById(name);
  const lines=[],tasks=new Map(),runs=new Map(),jobSteps=new Map();
  let paused=false,lastJobCheck=0,loading=false,lastSeenRevision=-1;
+ let liveTaskId=null,liveCursor=0,liveBusy=false,lastLiveError="";
  const fmt=()=>new Date().toLocaleTimeString("zh-TW",{timeZone:"Asia/Taipei",hour12:false});
  function append(message){
   const entry="["+fmt()+"] "+String(message).replace(/\s+/g," ").slice(0,420);
@@ -93,7 +94,41 @@
    append("雲端工作步驟讀取暫時失敗："+(e.status||e.name||"NetworkError"));
   }finally{loading=false;}
  }
- function tick(){if(paused)return;observeQueue();observeRuns();void observeJobs();}
+ async function pollLiveEvents(){
+  if(paused||liveBusy||document.hidden||!window.audioAuth?.loggedIn||!queue)return;
+  if(!id("runs")?.classList.contains("active"))return;
+  const task=[...(queue.queue||[]),...(queue.completed||[])].find(t=>
+   ["preparing_assets","processing","running","waiting_review","needs_attention"].includes(t.status))||
+   (queue.queue||[])[0];
+  if(!task)return;
+  const current=String(task.task_id||"");
+  if(current!==liveTaskId){liveTaskId=current;liveCursor=0;append("即時 Worker 日誌："+(task.book_title||current));}
+  liveBusy=true;
+  try{
+   const bearer=await window.audioAuth.token();
+   const url="https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-web-commands/live_events"+
+    "?task_id="+encodeURIComponent(current)+"&after="+encodeURIComponent(liveCursor);
+   const response=await fetch(url,{headers:{"Authorization":"Bearer "+bearer},cache:"no-store"});
+   if(!response.ok)throw Error("HTTP "+response.status);
+   const result=await response.json();
+   if(liveTaskId!==current)return;
+   for(const event of result.events||[]){
+    if(Number(event.id)<=liveCursor)continue;
+    liveCursor=Number(event.id);
+    const moment=new Date(event.created_at).toLocaleTimeString("zh-TW",{
+     timeZone:"Asia/Taipei",hour12:false});
+    append("Worker "+String(event.job_name||"")+
+     "｜"+moment+"｜"+String(event.level||"info")+"｜"+String(event.message||""));
+   }
+   lastLiveError="";
+  }catch(error){
+   if(lastLiveError!==error.message){
+    lastLiveError=error.message;
+    append("即時 Worker 日誌暫時無法同步："+error.message);
+   }
+  }finally{liveBusy=false;}
+ }
+ function tick(){if(paused)return;observeQueue();observeRuns();void observeJobs();void pollLiveEvents();}
  async function synchronize(){
   if(paused)paused=false;
   append("手動更新雲端佇列與 Actions 紀錄");
@@ -118,6 +153,7 @@
   append("AUDIO 雲端日誌就緒；原始 Run Logs 只會透過受保護的站內操作取得");
   setTimeout(tick,1200);
   setInterval(tick,12000);
+  setInterval(()=>{void pollLiveEvents();},5000);
   document.addEventListener("visibilitychange",()=>{if(!document.hidden)tick();});
  });
 })();
