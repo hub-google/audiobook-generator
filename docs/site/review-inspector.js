@@ -221,10 +221,11 @@
    const loadOne=async(requestId,kind)=>{
     const assets=await window.audioWaitForAsset(requestId,valid);
     if(!valid())return;
-    const asset=assets.find(x=>x.content_type==="application/zip")||assets[0];
-    const blob=await window.audioAssetBlob(asset.id);
+    const grouped=window.audioAssetGroups(assets);
+    if(grouped.length!==1)throw Error("審核檔案群組不完整或無法辨認");
+    const blob=await window.audioCombineAssetBlobs(assets);
     if(!valid())return;
-    const file=new File([blob],asset.filename,{type:"application/zip"});
+    const file=new File([blob],grouped[0].name,{type:"application/zip"});
     await loadReviewFiles([file]);
     text(indicator,kind+" 已通過檔案格式驗證；等待另一份資料完成。");
    };
