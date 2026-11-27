@@ -4,14 +4,16 @@
  const URL_BASE="https://unapiwajmgqqtdkixaab.supabase.co";
  const PUBLIC_KEY="sb_publishable_L09XC4Tekm6cZaPTTczm3g_Aap-SOSy";
  const STORE="audio-user-session-v1";
- let session=null,loginPromise=null,loginResolve=null,loginReject=null;
- try{session=JSON.parse(sessionStorage.getItem(STORE)||"null");}catch{}
+ let session=null,loginPromise=null,loginResolve=null,loginReject=null,refreshPromise=null;
+ // Keep only the administrator user session; service credentials remain on the backend.
+ try{session=JSON.parse(localStorage.getItem(STORE)||sessionStorage.getItem(STORE)||"null");}catch{}
  const authHeaders=()=>({"apikey":PUBLIC_KEY,"Content-Type":"application/json","Accept":"application/json"});
  function save(data){
   session=data&&data.access_token?data:null;
   try{
-   if(session)sessionStorage.setItem(STORE,JSON.stringify(session));
-   else sessionStorage.removeItem(STORE);
+   if(session)localStorage.setItem(STORE,JSON.stringify(session));
+   else localStorage.removeItem(STORE);
+   sessionStorage.removeItem(STORE);
   }catch{}
   const status=document.getElementById("audio-auth-status");
   if(status)status.textContent=session?"已驗證的站內登入":"尚未登入";
@@ -26,9 +28,16 @@
   if(!session?.access_token)throw Error("請先驗證 AUDIO 管理員身份");
   if(session.expires_at&&session.expires_at*1000-Date.now()<150000){
    if(!session.refresh_token){save(null);throw Error("登入已失效，請重新驗證");}
-   const fresh=await authPost("token?grant_type=refresh_token",{refresh_token:session.refresh_token});
-   if(!fresh.expires_at)fresh.expires_at=Math.floor(Date.now()/1000)+(fresh.expires_in||3600);
-   save(fresh);
+   if(!refreshPromise)refreshPromise=(async()=>{
+    // Another open tab may have already rotated the refresh token.
+    let current=session;
+    try{const stored=JSON.parse(localStorage.getItem(STORE)||"null");if(stored?.refresh_token)current=stored;}catch{}
+    if(current.expires_at&&current.expires_at*1000-Date.now()>=150000){save(current);return;}
+    const fresh=await authPost("token?grant_type=refresh_token",{refresh_token:current.refresh_token});
+    if(!fresh.expires_at)fresh.expires_at=Math.floor(Date.now()/1000)+(fresh.expires_in||3600);
+    save(fresh);
+   })().finally(()=>{refreshPromise=null;});
+   await refreshPromise;
   }
   return session.access_token;
  }
@@ -38,7 +47,7 @@
   dialog.className="audio-auth-dialog";
   dialog.innerHTML='<form method="dialog" class="audio-auth-form">'+
   '<h2>驗證 AUDIO 管理員</h2>'+
-  '<p class="muted">操作不會開啟 GitHub。第一次執行雲端修改時，請以授權 Email 收取驗證信；登入後可直接在此頁操作。</p>'+
+  '<p class="muted">操作不會開啟 GitHub。首次使用此瀏覽器時，請以授權 Email 驗證；驗證成功後會保留登入，關閉分頁後仍可繼續操作。</p>'+
   '<label>授權 Email<input id="audio-auth-email" type="email" autocomplete="email" required placeholder="輸入管理員電子郵件"></label>'+
   '<div class="inline-actions"><button id="audio-auth-send" type="button">寄送登入驗證信</button></div>'+
   '<label>收到的驗證碼（若郵件附有驗證碼）<input id="audio-auth-otp" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="輸入 6 位驗證碼"></label>'+
@@ -99,5 +108,6 @@
  }
  fromCallback();
  window.audioAuth={ensure,token,logout:()=>save(null),get loggedIn(){return !!session;}};
+ window.addEventListener("storage",event=>{if(event.key!==STORE)return;try{session=JSON.parse(event.newValue||"null");}catch{session=null;}const status=document.getElementById("audio-auth-status");if(status)status.textContent=session?"已驗證的站內登入":"尚未登入";});
  document.addEventListener("DOMContentLoaded",()=>{attachDialog();save(session);});
 })();
