@@ -1,0 +1,48 @@
+name: "小說搜尋｜九站關鍵字"
+run-name: "【小說搜尋】任務 ${{ inputs.request_id }}"
+on:
+  workflow_dispatch:
+    inputs:
+      keyword: {description: "小說名稱或作者關鍵字", required: true, type: string}
+      sources: {description: "以逗號分隔的來源代碼（空白代表全部）", required: false, type: string}
+      request_id: {description: "唯一搜尋識別碼", required: true, type: string}
+permissions:
+  contents: write
+jobs:
+  search:
+    name: "搜尋指定來源並公布候選書籍"
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11', cache: pip}
+      - run: pip install -r requirements.txt
+      - name: "搜尋書籍（不抓取章節）"
+        env:
+          KEYWORD: ${{ inputs.keyword }}
+          SOURCES: ${{ inputs.sources }}
+          REQUEST_ID: ${{ inputs.request_id }}
+        run: python -m tools.audio_novel_search --keyword "$KEYWORD" --sources "$SOURCES" --request-id "$REQUEST_ID"
+      - name: "寫入公開搜尋結果"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64,json,os
+          from pathlib import Path
+          body={"message":"Publish AUDIO keyword search "+os.environ["REQUEST_ID"],
+                "branch":"automation-state",
+                "content":base64.b64encode(Path("novel-search.json").read_bytes()).decode("ascii")}
+          Path("novel-search-request.json").write_text(json.dumps(body))
+          PY
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/web-searches/${REQUEST_ID}.json" --input novel-search-request.json >/dev/null
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: novel-search-${{ inputs.request_id }}
+          path: novel-search.json
+          if-no-files-found: ignore
+          retention-days: 1
