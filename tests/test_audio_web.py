@@ -67,3 +67,9 @@ def test_advanced_web_editor_and_review_inputs():
     assert "async function saveEditor(event)" in js
     assert "async function saveReview(event)" in js
     assert 'ref:"master"' not in js
+
+
+def test_workflow_allows_single_youtube_account_with_expandable_pool():
+    workflow=(ROOT/".github/workflows/audiobook.yml").read_text(encoding="utf-8")
+    assert 'YOUTUBE_EXPECTED_ACCOUNT_COUNT: "1"' in workflow
+    assert "YOUTUBE_REFRESH_TOKEN_10:" in workflow
