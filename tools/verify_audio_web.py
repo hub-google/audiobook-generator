@@ -136,9 +136,9 @@ def main():
             desktop.locator("#end-chapter").fill("10")
             desktop.screenshot(path=str(OUTPUT / "audio-create-desktop.png"), full_page=True)
             desktop.locator('[data-tab="overview"]').click()
-            desktop.locator("#token").fill("ghp_mock_local_browser_only")
-            desktop.locator("#connect-btn").click()
-            desktop.locator("#connection-pill").filter(has_text="已連線").wait_for()
+            assert desktop.locator("#token").count() == 0
+            assert desktop.locator("#connection-pill").inner_text() == "GitHub 登入操作"
+            desktop.evaluate("window.__issueUrls=[];window.open=(url)=>{window.__issueUrls.push(String(url));return null;};")
             desktop.locator('[data-tab="create"]').click()
             desktop.locator("#start-chapter").fill("1")
             desktop.locator("#end-chapter").fill("3")
@@ -164,6 +164,10 @@ def main():
             desktop.locator("#chapter-list .chapter-item").nth(1).locator("input").uncheck()
             desktop.locator("#chapter-picker-save").click()
             assert desktop.locator("#excluded").input_value() == "2"
+            desktop.locator("#book-form button[type=submit]").click()
+            desktop.wait_for_function("window.__issueUrls.length >= 1")
+            assert "/issues/new?" in desktop.evaluate("window.__issueUrls[0]")
+            assert "AUDIO-COMMAND-V1" in desktop.evaluate("decodeURIComponent(window.__issueUrls[0])")
             desktop.locator('[data-tab="overview"]').click()
             desktop.locator("#queue-body tr").first.get_by_role("button", name="編輯").click()
             assert desktop.locator("#edit-dialog").is_visible()
@@ -172,8 +176,8 @@ def main():
             desktop.screenshot(path=str(OUTPUT / "audio-task-editor.png"), full_page=True)
             desktop.locator("#edit-form button[type=submit]").click()
             desktop.locator("#edit-dialog").wait_for(state="hidden")
-            assert mock_writes[-1]["queue"][0]["book_title"] == "原創測試新版"
-            assert mock_writes[-1]["queue"][0]["chapter_title_overrides"]["1"] == "第一章 原創內容"
+            desktop.wait_for_function("window.__issueUrls.length >= 2")
+            assert "/issues/new?" in desktop.evaluate("window.__issueUrls[1]")
             desktop.locator("#queue-body tr").nth(1).get_by_role(
                 "button", name="確認審核並繼續").click()
             assert desktop.locator("#review-dialog").is_visible()
@@ -181,26 +185,18 @@ def main():
             desktop.screenshot(path=str(OUTPUT / "audio-review-editor.png"), full_page=True)
             desktop.locator("#review-form button[type=submit]").click()
             desktop.locator("#review-dialog").wait_for(state="hidden")
-            assert mock_writes[-1]["queue"][1]["ad_review"]["remove_patterns"] == ["本段為測試廣告"]
+            desktop.wait_for_function("window.__issueUrls.length >= 3")
             desktop.locator("#queue-body tr").first.get_by_role("button", name="進度").click()
             assert desktop.locator("#progress-dialog").is_visible()
-            assert "原創測試新版" in desktop.locator("#progress-detail").inner_text()
+            assert "原創測試小說" in desktop.locator("#progress-detail").inner_text()
             desktop.locator("#progress-close").click()
             desktop.locator("#queue-body tr").nth(2).get_by_role(
                 "button", name="取消本次 Run").click()
-            desktop.get_by_text("已提交取消請求").wait_for()
-            assert next(t for t in mock_writes[-1]["queue"]
-                        if t["task_id"] == "book-smoke-running")["status"] == "canceling"
-            desktop.locator("#queue-body tr").first.get_by_role("button", name="標為已完成").click()
-            desktop.locator("#completed-list .completed-item").first.get_by_role("button", name="移回佇列").wait_for()
-            assert len(mock_writes[-1]["completed"]) == 1
-            assert mock_writes[-1]["completed"][0]["task_id"] == "book-smoke-queued"
-            desktop.locator("#completed-list .completed-item").first.get_by_role(
-                "button", name="移回佇列").click()
-            desktop.locator("#completed-list .completed-item").wait_for(state="hidden")
-            assert len(mock_writes[-1]["completed"]) == 0
-            assert next(t for t in mock_writes[-1]["queue"]
-                        if t["task_id"] == "book-smoke-queued")["status"] == "paused"
+            desktop.wait_for_function("window.__issueUrls.length >= 4")
+            desktop.locator("#queue-body tr").first.get_by_role(
+                "button", name="標為已完成").click()
+            desktop.wait_for_function("window.__issueUrls.length >= 5")
+            assert not mock_writes, "Pages must not send a privileged GitHub API PUT"
             desktop.locator('[data-tab="runs"]').click()
             assert desktop.locator("#runs").is_visible()
             mobile = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=1,
