@@ -89,11 +89,17 @@
   const title=lineBreak>=0?raw.slice(0,lineBreak):raw,body=lineBreak>=0?raw.slice(lineBreak+1):"";
   let clean=AudioCleaner.chunkText(AudioCleaner.cleanTextContent(body,title,bookTitle,patterns()));
   text($("review-clean"),clean);
-  const original=raw.replace(/\s/g,"").length,after=clean.replace(/\s/g,"").length;
-  const ratio=original?((original-after)/original*100):0;
-  const warning=ratio>=50?"；⚠ 清除比例偏高":!after&&original?"；⚠ Clean 為空":"";
+  // Match gui_components/review.py: count Unicode characters, not non-whitespace.
+  // Python uses len(raw_text.strip()) and len(clean_text.replace("\\n", "").strip()).
+  const original=Array.from(raw.trim()).length;
+  const after=Array.from(clean.replace(/\\n/g,"").trim()).length;
+  const removed=Math.max(0,original-after);
+  const ratio=original?(removed/original*100):0;
+  let warning=!clean.trim()?"　⚠ Clean 為空":ratio>=50?"　⚠ 清除比例偏高":"";
+  const suspicious=["本站","域名","最新地址","手機閱讀","廣告"].filter(word=>clean.includes(word));
+  if(suspicious.length)warning+="　⚠ 疑似殘留："+suspicious.join("、");
   text($("review-text-stats"),index?
-   "第 "+index+" 章｜Raw "+original.toLocaleString()+" 字｜Python 同規則清理 "+after.toLocaleString()+" 字｜約清除 "+ratio.toFixed(1)+"%"+warning:
+   "artifact 第 "+index+" 章｜"+title+"｜Raw "+original.toLocaleString()+" 字｜Clean "+after.toLocaleString()+" 字｜約清除 "+ratio.toFixed(1)+"%"+warning:
    "尚未載入章節文字");
  }
  function navigate(pos){
@@ -299,6 +305,8 @@
   $("review-state").addEventListener("change",renderCandidates);
   $("review-patterns").addEventListener("input",()=>{renderCandidates();renderText()});
   $("review-chapter").addEventListener("change",renderText);
+  // Original embedded Tk notebook returns to candidate rules via this button.
+  $("review-manage-patterns").addEventListener("click",()=>setTextTab("candidates"));
   for(const [id,pos] of [["review-first",0],["review-middle",0.5],["review-last",-1]])
    $(id).addEventListener("click",()=>navigate(pos===0.5?Math.floor((chapterKeys().length-1)/2):pos));
   for(const [id,mode] of [["review-select-visible","remove"],["review-keep-visible","keep"],["review-invert-visible","invert"]])
