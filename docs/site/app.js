@@ -284,7 +284,6 @@ function filteredRanking(){
 function renderRanking(){
  const data=filteredRanking(),body=$("rank-body");body.replaceChildren();
  text($("rank-count"),"顯示 "+data.length+" 本／總計 "+rankingNovels.length+" 本；已選 "+rankingSelected.size+" 本");
- $("rank-add").disabled=!token||rankingSelected.size===0;
  $("rank-copy").disabled=rankingSelected.size===0;
  if(!data.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=6;td.className="empty";td.textContent=rankingNovels.length?"沒有符合條件的小說":"尚無可用排行資料";tr.append(td);body.append(tr);return;}
  for(const novel of data.slice(0,500)){
@@ -319,13 +318,6 @@ async function copyRankingUrls(){
  if(!lines.length)throw Error("請先選取小說");
  await navigator.clipboard.writeText(lines.join("\n"));
  notice("已複製 "+lines.length+" 個小說網址");
-}
-async function addRankingToQueue(){
- const chosen=chosenRanking();if(!chosen.length)throw Error("請先選取小說");
- if(!token)throw Error("GitHub Pages 無法在未經授權的情況下修改佇列；請勿把 Token 放入前端程式碼");
- // Unlike the desktop Python GUI, a static web page cannot synchronously
- // crawl each entire book. Do not fabricate end_chapter=10 as a full novel.
- throw Error("全書批次加入需先由 GitHub Actions 逐本解析完整章數；此項尚未完成，為避免漏章不會送出不完整的任務");
 }
 
 function renderRuns(){const body=$("runs-body");body.replaceChildren();if(!latestRuns.length){const tr=document.createElement("tr");tr.innerHTML='<td colspan="4" class="empty">目前沒有 Actions 紀錄</td>';body.append(tr);return;}
@@ -474,7 +466,8 @@ function saveChapterPicker(){
  if(!chapterPickerExcluded)throw Error("尚未開啟選章視窗");
  $("excluded").value=[...chapterPickerExcluded].sort((a,b)=>a-b).join(",");
  const result=chapterPickerOrder.filter(i=>!chapterPickerExcluded.has(i));
- const expected=Array.from({length:result.length},(_,i)=>i+Number($("start-chapter").value)).filter(i=>!chapterPickerExcluded.has(i));
+ const start=Number($("start-chapter").value),end=Number($("end-chapter").value);
+ const expected=Array.from({length:end-start+1},(_,i)=>i+start).filter(i=>!chapterPickerExcluded.has(i));
  $("chapter-order").value=result.every((n,i)=>n===expected[i])?"":result.join(",");
  $("renumber").checked=$("renumber").checked||Boolean($("chapter-order").value);
  $("chapter-dialog").close();chapterPickerExcluded=null;chapterPickerOrder=null;
@@ -555,7 +548,7 @@ document.addEventListener("DOMContentLoaded",()=>{
  bind("rank-search","input",renderRanking);bind("rank-category","change",renderRanking);
  bind("rank-select-all","click",()=>{for(const n of filteredRanking())rankingSelected.add(n.catalog_url);renderRanking();});
  bind("rank-select-none","click",()=>{rankingSelected.clear();renderRanking();});
- bind("rank-copy","click",copyRankingUrls);bind("rank-add","click",addRankingToQueue);
+ bind("rank-copy","click",copyRankingUrls);
  loadRanking();
  bind("catalog-url","input",()=>{parsedCatalog=null;$("catalog-preview").classList.add("hidden");$("chapter-selection-tools").classList.add("hidden");});
  refresh();

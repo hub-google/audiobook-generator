@@ -138,4 +138,5 @@ def test_69shuba_ranking_has_real_data_export_and_read_only_browser_view():
     assert 'id="rank-search"' in html
     assert 'id="rank-body"' in html
     assert "async function loadRanking()" in js
-    assert "全書批次加入需先由 GitHub Actions" in js
+    assert "async function copyRankingUrls()" in js
+    assert "async function addRankingToQueue()" not in js
