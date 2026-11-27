@@ -1,0 +1,34 @@
+name: "AUDIO｜全頁按鈕不跳站驗收"
+run-name: "【AUDIO 按鈕驗收】桌面＋手機｜第 ${{ github.run_number }} 次"
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/site/**"
+      - "tools/audit_audio_buttons.py"
+      - ".github/workflows/audio-button-audit.yml"
+  workflow_dispatch:
+permissions: {contents: read}
+concurrency:
+  group: audio-button-audit
+  cancel-in-progress: true
+jobs:
+  browser:
+    name: "逐項檢查按鈕與外部跳轉"
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: pip install playwright Pillow
+      - run: sudo apt-get update -qq && sudo apt-get install -y fonts-noto-cjk
+      - name: "Chrome 中測試按鈕／連結／不開外部視窗"
+        run: python -m tools.audit_audio_buttons
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audio-button-audit-screenshots-and-report
+          path: ui-test-screenshots/audio-all-buttons*
+          if-no-files-found: warn
+          retention-days: 7
