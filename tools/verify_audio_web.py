@@ -322,7 +322,7 @@ def main():
             desktop.screenshot(path=str(OUTPUT / "audio-review-rejected-tampering.png"),full_page=True)
             # ZIP-bomb protection checks the uncompressed size from the central directory.
             fake_size=bytearray(valid_cover_zip)
-            central=fake_size.find(b"PK\\x01\\x02")
+            central=fake_size.find(b"PK\x01\x02")
             assert central >= 0
             import struct
             struct.pack_into("<I",fake_size,central+24,200_000_000)
