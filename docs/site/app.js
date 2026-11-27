@@ -188,6 +188,20 @@ function readOrder(value,start,end,excluded){
 function formatOverrides(overrides){return Object.entries(overrides||{}).map(([k,v])=>k+" | "+v).join("\n");}
 function formatPublish(v){return v?String(v).slice(0,16):"";}
 function publishValue(v){return v?v+":00+08:00":null;}
+function naturalChapterOrder(task){
+ const order=task.chapter_order||[];
+ if(!order.length)return true;
+ const start=Number(task.start_chapter||1),end=Number(task.end_chapter||0);
+ const skipped=new Set((task.excluded_chapters||[]).map(Number));
+ if(order.length!==end-start+1-skipped.size)return false;
+ let expected=start;
+ for(const value of order){
+  while(skipped.has(expected)&&expected<=end)expected++;
+  if(value!==expected)return false;
+  expected++;
+ }
+ return true;
+}
 function openEditor(id){
  const task=queueTasks().find(x=>x.task_id===id);
  if(!task||!canEditTask(task))throw Error("此任務目前無法編輯（執行中的任務需有可取消的影片 Run）");
@@ -198,7 +212,8 @@ function openEditor(id){
  $("edit-duplicate-number").checked=detection.use_normalized_number!==false;
  $("edit-duplicate-name").checked=detection.use_chapter_name!==false;
  $("edit-duplicate-pair").checked=!!detection.use_number_and_name;
- $("edit-order").value=(task.chapter_order||[]).join(",");$("edit-dialog").showModal();
+ $("edit-order").value=naturalChapterOrder(task)?"":(task.chapter_order||[]).join(",");
+ $("edit-dialog").showModal();
 }
 function openReview(id){const task=queueTasks().find(t=>t.task_id===id);if(!task||task.status!=="waiting_review")throw Error("任務不在待審核狀態");
  reviewTaskId=id;$("review-patterns").value=(task.ad_review?.remove_patterns||task.profile_snapshot?.cleaner_remove_patterns||[]).join("\n");

@@ -360,3 +360,13 @@ def test_running_processing_task_can_edit_with_cancel_and_requeue():
     assert "function canEditAfterCancel(task)" in app
     assert 'makeBtn("編輯並重新排程",openEditor' in app
     assert 'if(canEditAfterCancel(t)&&!confirm(' in bridge
+
+
+def test_long_chapter_issue_command_uses_native_gzip_without_browser_token():
+    bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    assert 'new CompressionStream("gzip")' in bridge
+    assert "tab.location.replace(compressedUrl)" in bridge
+    assert "function base64Url(bytes)" in bridge
+    assert "function naturalChapterOrder(task)" in (ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    assert "未填結束章時，自動依最新目錄選取全書" in html

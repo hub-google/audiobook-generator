@@ -213,6 +213,7 @@ def main():
             desktop.locator('[data-tab="overview"]').click()
             desktop.locator("#queue-body tr").first.get_by_role("button", name="編輯").click()
             assert desktop.locator("#edit-dialog").is_visible()
+            assert desktop.locator("#edit-order").input_value() == ""
             desktop.locator("#edit-name").fill("原創測試新版")
             desktop.locator("#edit-titles").fill("1 | 第一章 原創內容")
             desktop.screenshot(path=str(OUTPUT / "audio-task-editor.png"), full_page=True)
@@ -260,6 +261,33 @@ def main():
             desktop.locator("#queue-body tr").first.get_by_role(
                 "button", name="標為已完成").click()
             desktop.wait_for_function("window.__issueUrls.length >= 5")
+            # Large chapter plans are compressed into a GitHub Issue instead of
+            # failing at the prior 25k-character frontend ceiling.
+            packed_result=desktop.evaluate("""async () => {
+                const savedOpen=window.open;
+                let opened="",redirected="";
+                window.open=url=>{
+                  opened=String(url);
+                  return {opener:null,location:{replace:url=>redirected=String(url)},close(){}};
+                };
+                try{
+                  const url=await window.audioIssueAction("ping",{
+                    chapters:Array.from({length:8000},(_,i)=>i+1)
+                  },"大型章節壓縮測試");
+                  return {opened,redirected,url};
+                }finally{window.open=savedOpen;}
+            }""")
+            assert packed_result["opened"] == "about:blank"
+            assert packed_result["redirected"] == packed_result["url"]
+            from urllib.parse import urlsplit,parse_qs
+            import gzip,re
+            from base64 import urlsafe_b64decode
+            assert len(packed_result["url"])<25000
+            issue_body=parse_qs(urlsplit(packed_result["url"]).query)["body"][0]
+            encoded=re.search(r"AUDIO-COMMAND-V1:([A-Za-z0-9_-]+):AUDIO-COMMAND-V1",issue_body).group(1)
+            raw=urlsafe_b64decode(encoded+"="*((-len(encoded))%4))
+            command=json.loads(gzip.decompress(raw))
+            assert len(command["data"]["chapters"])==8000
             assert not mock_writes, "Pages must not send a privileged GitHub API PUT"
             desktop.locator('[data-tab="runs"]').click()
             assert desktop.locator("#runs").is_visible()

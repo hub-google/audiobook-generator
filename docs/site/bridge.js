@@ -31,18 +31,53 @@
    clearTimeout(timer);void check();
   }},{once:true});
  }
- function send(op,data,label){
-  const payload=toB64(JSON.stringify({version:1,op,data}))
-   .replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+ function issueUrl(payload,label){
   const body="<!-- AUDIO-COMMAND-V1:"+payload+":AUDIO-COMMAND-V1 -->\n\n"+
     "## AUDIO 操作確認\n\n"+label+"\n\n請登入 GitHub 並送出 Issue。"+
     "Actions 會再次檢查發起者的 Repo 寫入權限；未授權的請求不會執行。";
-  const url=ISSUES+"?"+new URLSearchParams({title:"[AUDIO] "+label,body}).toString();
-  if(url.length>25000)throw Error("選取的章節設定過長，超過 GitHub 網址能安全傳送的長度，請分批提交");
-  window.open(url,"_blank","noopener");
+  return ISSUES+"?"+new URLSearchParams({title:"[AUDIO] "+label,body}).toString();
+ }
+ function successNotice(op){
   notice("已開啟 GitHub 確認頁，請按「Submit new issue」；回到 AUDIO 後會自動查詢佇列更新。");
   if(QUEUE_CHANGING.has(op))watchQueueUpdate();
-  return url;
+ }
+ function base64Url(bytes){
+  let binary="";
+  for(let offset=0;offset<bytes.length;offset+=8192)
+   binary+=String.fromCharCode(...bytes.slice(offset,offset+8192));
+  return btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+ }
+ function send(op,data,label){
+  const body=JSON.stringify({version:1,op,data});
+  const url=issueUrl(toB64(body).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""),label);
+  if(url.length<=25000){
+   window.open(url,"_blank","noopener");successNotice(op);
+   return url;
+  }
+  // GitHub already accepts gzip commands. Compress large chapter plans before
+  // URL encoding; keep the new tab opened in the original click gesture.
+  if(!("CompressionStream" in window))
+   throw Error("這個瀏覽器不支援大型章節傳送，請使用最新版 Chrome 或 Edge");
+  const tab=window.open("about:blank","_blank");
+  if(!tab)throw Error("新分頁遭到瀏覽器封鎖，請允許 AUDIO 開啟 GitHub 分頁");
+  tab.opener=null;
+  notice("章節設定較長，正在壓縮以符合 GitHub 網址長度限制…");
+  return (async()=>{
+   const input=new TextEncoder().encode(body);
+   if(input.length>300000)throw Error("章節設定資料超過 GitHub 操作內容限制");
+   const gz=await new Response(new Blob([input]).stream()
+      .pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
+   const compressedUrl=issueUrl(base64Url(new Uint8Array(gz)),label);
+   if(compressedUrl.length>25000)
+    throw Error("壓縮後仍超過 GitHub 網址限制；請減少自訂章節內容");
+   tab.location.replace(compressedUrl);
+   successNotice(op);
+   return compressedUrl;
+  })().catch(error=>{
+   try{tab.close();}catch{}
+   notice("無法送出 GitHub 操作："+error.message,"error");
+   return null;
+  });
  }
  window.audioIssueAction=send;
  window.exportArtifacts=async function(taskId){
@@ -97,7 +132,7 @@
    throw Error("TXT／封面尚未通過前置檢查，無法核准後製");
   const evidence=window.audioReviewEvidence?.();
   if(!evidence)throw Error("請先匯入這本小說真正的 TXT 審核報告");
-  send("review",{task_id:id,remove_patterns:patterns,
+  return await send("review",{task_id:id,remove_patterns:patterns,
    candidate_overrides:window.audioReviewCandidateEdits?.()||[],evidence},
    "核准文字與封面，開始後製");
  };
@@ -106,7 +141,7 @@
   const patterns=[...new Set($("review-patterns").value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean))];
   if(patterns.some(s=>s.length>10000))throw Error("清理字詞單項過長");
   if(!confirm("是否確認已檢查 TXT、封面、文字清理以及相關授權？"))return;
-  await window.approveTask(reviewTaskId,patterns);
+  if(!await window.approveTask(reviewTaskId,patterns))return;
   $("review-dialog").close();reviewTaskId=null;
  };
  window.saveEditor=async function(e){
@@ -131,7 +166,9 @@
   if(!Object.values(changes.duplicate_detection).some(Boolean))throw Error("至少需選一種重複判斷條件");
   if(!changes.book_title)throw Error("書名不可空白");
   if(canEditAfterCancel(t)&&!confirm("這本小說正在製作。儲存會取消舊 Run，再依新章節設定重新排程，是否繼續？"))return;
-  send("edit",{task_id:id,changes},canEditAfterCancel(t)?"修改章節並重新排程":"編輯小說章節");
+  const opened=await send("edit",{task_id:id,changes},
+   canEditAfterCancel(t)?"修改章節並重新排程":"編輯小說章節");
+  if(!opened)return;
   $("edit-dialog").close();editorTaskId=null;
  };
  window.addTasks=async function(tasks){
@@ -145,7 +182,7 @@
    chapter_order:t.chapter_order||[],publish_at:t.publish_at||null,
    duplicate_detection:t.duplicate_detection||null
   }));
-  send(books.length===1?"enqueue":"batch_add",{books},
+  return await send(books.length===1?"enqueue":"batch_add",{books},
    books.length===1?"新增小說":"批次新增 "+books.length+" 本小說");
  };
  window.submitBook=async function(e){
@@ -181,11 +218,11 @@
    return {catalog_url:url,book_title:p.length>1?p[0]:"",start_chapter:start,end_chapter:end,
      excluded_chapters:[],renumber_selected:true};
   });
-  send("batch_add",{books},"批次解析並加入 "+books.length+" 本小說");
+  return await send("batch_add",{books},"批次解析並加入 "+books.length+" 本小說");
  };
  window.addRankingToQueue=async function(){
   const chosen=chosenRanking();if(!chosen.length)throw Error("請先選取小說");
-  send("batch_add",{books:chosen.map(n=>({
+  return await send("batch_add",{books:chosen.map(n=>({
    catalog_url:n.catalog_url,book_title:n.title,start_chapter:1,end_chapter:null,
    excluded_chapters:[],renumber_selected:true
   }))},"從完本排行新增 "+chosen.length+" 本小說");
@@ -219,7 +256,8 @@
  window.parseCatalog=async function(){
   const url=$("catalog-url").value.trim();getSource(url);
   const id=crypto.randomUUID().slice(0,8);
-  send("preview",{catalog_url:url,request_id:id},"解析完整章節目錄 "+id);
+  if(!await send("preview",{catalog_url:url,request_id:id},
+   "解析完整章節目錄 "+id))return;
   text($("parse-status"),"請在 GitHub 頁面送出 Issue；本頁會嘗試自動讀取解析結果。");
   const btn=$("parse-btn");btn.disabled=true;
   try{
