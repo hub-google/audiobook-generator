@@ -6,11 +6,17 @@ import zipfile
 
 import pytest
 
-from tools.stage_audio_export import chunk_names, stage_export
+from tools.stage_audio_export import CHUNK_SIZE, chunk_names, stage_export
+
+
+def test_default_chunks_fit_edge_upload_headroom():
+    assert CHUNK_SIZE == 4_000_000
+    chunks=list(chunk_names("audio-export-11.zip",10_000_001))
+    assert [length for _,_,length in chunks] == [4_000_000,4_000_000,2_000_001]
 
 
 def test_split_chunks_have_exact_offsets_and_size():
-    chunks=list(chunk_names("audio-export-5.zip",51_000_001,25_000_000))
+    chunks=list(chunk_names("audio-export-5.zip",51_000_001,chunk_size=25_000_000))
     assert chunks==[
         ("audio-export-5.zip.part00001-of-00003",0,25_000_000),
         ("audio-export-5.zip.part00002-of-00003",25_000_000,25_000_000),
