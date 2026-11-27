@@ -11,7 +11,7 @@ const SOURCES=[
 {id:"moon17",name:"月亮小說網",hosts:["17moon.com","www.17moon.com"]},
 {id:"book8",name:"無限小說",hosts:["8book.com","www.8book.com","v.8book.com","m.8book.com","i.8book.com"]}
 ];
-let queue=null,queueSha=null,latestRuns=[],parsedCatalog=null,editorTaskId=null,reviewTaskId=null,chapterPickerExcluded=null,chapterPickerOrder=null,rankingNovels=[],rankingSelected=new Set(),selectedPending=new Set(),selectedCompleted=new Set(),chapterSelectedRows=new Set(),chapterPage=0,chapterPageSize=200,chapterEditingIndex=null;
+let queue=null,queueSha=null,latestRuns=[],parsedCatalog=null,editorTaskId=null,reviewTaskId=null,chapterPickerExcluded=null,chapterPickerOrder=null,rankingNovels=[],rankingSelected=new Set(),selectedPending=new Set(),selectedCompleted=new Set(),chapterSelectedRows=new Set(),chapterPage=0,chapterPageSize=200,chapterEditingIndex=null,editorParsedCatalog=null,chapterPickerMode="create",pickerOriginalCatalog=null,pickerOriginalDuplicateState=null;
 const $=id=>document.getElementById(id), text=(node,value)=>{node.textContent=value==null?"":String(value)};
 function notice(message,kind="ok"){const n=$("message");text(n,message);n.className="notice"+(kind==="error"?" error":"");}
 const dateLabel=v=>v?new Date(v).toLocaleString("zh-TW",{timeZone:"Asia/Taipei",hour12:false}):"—";
@@ -207,7 +207,9 @@ function naturalChapterOrder(task){
 function openEditor(id){
  const task=queueTasks().find(x=>x.task_id===id);
  if(!task||!canEditTask(task))throw Error("此任務目前無法編輯（執行中的任務需有可取消的影片 Run）");
- editorTaskId=id;text($("edit-book-url"),task.catalog_url);$("edit-name").value=task.book_title||"";$("edit-start").value=task.start_chapter||1;$("edit-end").value=task.end_chapter||10;
+ editorTaskId=id;editorParsedCatalog=null;
+ text($("edit-catalog-status"),"尚未載入完整目錄；可先編輯文字欄位，或載入完整目錄視覺化選章。");
+ text($("edit-book-url"),task.catalog_url);$("edit-name").value=task.book_title||"";$("edit-start").value=task.start_chapter||1;$("edit-end").value=task.end_chapter||10;
  $("edit-excluded").value=(task.excluded_chapters||[]).join(",");$("edit-renumber").checked=!!task.renumber_selected;$("edit-publish").value=formatPublish(task.publish_at);
  $("edit-titles").value=formatOverrides(task.chapter_title_overrides);$("edit-numbers").value=formatOverrides(task.chapter_normalized_number_overrides);
  const detection=task.duplicate_detection||task.profile_snapshot?.duplicate_detection||{};
@@ -279,10 +281,56 @@ async function copyRankingUrls(){
 function renderRuns(){const body=$("runs-body");body.replaceChildren();if(!latestRuns.length){const tr=document.createElement("tr");tr.innerHTML='<td colspan="4" class="empty">目前沒有 Actions 紀錄</td>';body.append(tr);return;}
  latestRuns.forEach(run=>{const tr=document.createElement("tr");let td=document.createElement("td");td.textContent=run.display_title||run.name;tr.append(td);td=document.createElement("td");td.textContent=dateLabel(run.created_at);tr.append(td);td=document.createElement("td");const badge=document.createElement("span");badge.className="status "+(run.conclusion==="success"?"done":run.conclusion==="failure"?"error":"running");badge.textContent=run.conclusion||run.status;td.append(badge);tr.append(td);td=document.createElement("td");const link=document.createElement("a");link.href=run.html_url;link.target="_blank";link.rel="noopener noreferrer";link.textContent="查看 Run #"+run.id;td.append(link);tr.append(td);body.append(tr);});
 }
+function pickerField(name){
+ if(chapterPickerMode!=="edit")return $(name);
+ const names={"start-chapter":"edit-start","end-chapter":"edit-end",
+  "excluded":"edit-excluded","chapter-order":"edit-order",
+  "title-overrides":"edit-titles","number-overrides":"edit-numbers",
+  "renumber":"edit-renumber"};
+ return $(names[name]||name);
+}
+function closeChapterPicker(){
+ $("chapter-dialog").close();
+ chapterPickerExcluded=null;chapterPickerOrder=null;chapterSelectedRows.clear();
+ if(chapterPickerMode==="edit"){
+  parsedCatalog=pickerOriginalCatalog;
+  if(pickerOriginalDuplicateState){
+   for(const [id,checked] of Object.entries(pickerOriginalDuplicateState))$(id).checked=checked;
+  }
+ }
+ chapterPickerMode="create";
+ pickerOriginalCatalog=null;pickerOriginalDuplicateState=null;
+}
+function setEditorCatalog(data,requestedUrl){
+ const task=queueTasks().find(t=>t.task_id===editorTaskId);
+ if(!task||!$("edit-dialog").open||task.catalog_url!==requestedUrl||data.requested_url!==requestedUrl)
+  throw Error("目錄結果與目前編輯的小說不相符");
+ if(!Number.isSafeInteger(data.total_chapters)||data.total_chapters<1||
+    data.chapter_titles?.length!==data.total_chapters||data.chapter_parts?.length!==data.total_chapters)
+  throw Error("目錄章節不完整，無法視覺化編輯");
+ if(Number($("edit-end").value)>data.total_chapters)
+  throw Error("已選章節超過最新目錄章數，請先確認章數變化");
+ editorParsedCatalog=structuredClone(data);
+ text($("edit-catalog-status"),"已載入完整目錄，共 "+data.total_chapters+" 章，可選章、編輯章名與重排。");
+ return editorParsedCatalog;
+}
+function openEditorChapterPicker(){
+ if(!editorParsedCatalog)throw Error("請先載入這本小說的完整目錄");
+ if(chapterPickerMode!=="create"||$("chapter-dialog").open)throw Error("目前有其他選章視窗尚未關閉");
+ chapterPickerMode="edit";
+ pickerOriginalCatalog=parsedCatalog;
+ pickerOriginalDuplicateState=Object.fromEntries(
+  ["duplicate-number","duplicate-name","duplicate-pair"].map((id)=>[id,$(id).checked]));
+ for(const key of ["number","name","pair"])
+  $("duplicate-"+key).checked=$("edit-duplicate-"+key).checked;
+ parsedCatalog=editorParsedCatalog;
+ try{openChapterPicker("edit");}
+ catch(e){closeChapterPicker();throw e;}
+}
 function currentChapterOverrides(){
  if(!parsedCatalog)return {};
  const end=parsedCatalog.total_chapters;
- return readOverrides($("number-overrides").value||"",1,end,true);
+ return readOverrides(pickerField("number-overrides").value||"",1,end,true);
 }
 function analyzePickerDuplicates(){
  const parts=parsedCatalog?.chapter_parts||[];
@@ -330,7 +378,7 @@ function movePickerChapter(index,delta){
 }
 function excludePickerDuplicates(){
  if(!chapterPickerExcluded)throw Error("尚未開啟章節視窗");
- const dup=analyzePickerDuplicates(),start=Number($("start-chapter").value),end=Number($("end-chapter").value);
+ const dup=analyzePickerDuplicates(),start=Number(pickerField("start-chapter").value),end=Number(pickerField("end-chapter").value);
  let count=0;
  for(const index of dup.keys())if(index>=start&&index<=end&&!chapterPickerExcluded.has(index)){chapterPickerExcluded.add(index);count++;}
  renderChapterPicker();notice("已排除 "+count+" 個重複章節；尚未寫入雲端");
@@ -386,11 +434,11 @@ function saveChapterEdit(){
  if(!name)throw Error("章節名稱不可空白");
  if(n&&!/^[1-9]\d*(?:\.\d+)?$/.test(n))throw Error("正規化章號必須為大於 0 的整數或小數");
  const parts=parsedCatalog.chapter_parts[index-1],full=[parts.d,name].filter(Boolean).join(" ");
- const titles=readOverrides($("title-overrides").value||"",1,parsedCatalog.total_chapters);
+ const titles=readOverrides(pickerField("title-overrides").value||"",1,parsedCatalog.total_chapters);
  const numbers=currentChapterOverrides();titles[String(index)]=full;
  if(n)numbers[String(index)]=n;else delete numbers[String(index)];
- $("title-overrides").value=formatOverrides(titles);
- $("number-overrides").value=formatOverrides(numbers);
+ pickerField("title-overrides").value=formatOverrides(titles);
+ pickerField("number-overrides").value=formatOverrides(numbers);
  parsedCatalog.chapter_titles[index-1]=full;
  parts.name=name;parts.c=name.replace(/\s+/g,""); // same rule as normalize_chapter_name_for_comparison
  $("chapter-edit-dialog").close();chapterEditingIndex=null;renderChapterPicker();
@@ -404,11 +452,11 @@ function moveSelectedChapters(delta){
   if(selected.has(chapterPickerOrder[i])&&!selected.has(chapterPickerOrder[i+1]))
    [chapterPickerOrder[i+1],chapterPickerOrder[i]]=[chapterPickerOrder[i],chapterPickerOrder[i+1]];
  }
- $("renumber").checked=true;renderChapterPicker();
+ pickerField("renumber").checked=true;renderChapterPicker();
 }
 function pickerMatchingIndices(){
  if(!parsedCatalog||!Array.isArray(parsedCatalog.chapter_titles))return [];
- const start=Number($("start-chapter").value),end=Number($("end-chapter").value),q=$("chapter-search").value.trim().toLowerCase();
+ const start=Number(pickerField("start-chapter").value),end=Number(pickerField("end-chapter").value),q=$("chapter-search").value.trim().toLowerCase();
  if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<1||end<start||end>parsedCatalog.total_chapters)throw Error("請先設定有效的章節範圍");
  const duplicateOnly=$("duplicate-only").checked,duplicate=duplicateOnly?analyzePickerDuplicates():null;
  return (chapterPickerOrder||[]).filter(i=>{
@@ -420,7 +468,7 @@ function pickerMatchingIndices(){
  });
 }
 function pickerStatus(matched){
- const start=Number($("start-chapter").value),end=Number($("end-chapter").value);
+ const start=Number(pickerField("start-chapter").value),end=Number(pickerField("end-chapter").value);
  const selected=(chapterPickerOrder||[]).filter(i=>i>=start&&i<=end&&!chapterPickerExcluded.has(i)).length;
  const duplicates=analyzePickerDuplicates().size;
  text($("chapter-picker-status"),"本次選定 "+selected+" / "+(end-start+1)+" 章；重複章節 "+duplicates+" 筆；符合搜尋 "+matched+" 章；多選移動 "+chapterSelectedRows.size+" 章");
@@ -448,18 +496,18 @@ function renderChapterPicker(){
    const targetAt=remaining.indexOf(index);
    if(targetAt<0)return;
    chapterPickerOrder=remaining.slice(0,targetAt).concat(moving,remaining.slice(targetAt));
-   $("renumber").checked=true;
+   pickerField("renumber").checked=true;
    renderChapterPicker();
   });
   const multi=document.createElement("input");multi.type="checkbox";multi.checked=chapterSelectedRows.has(index);
  multi.setAttribute("aria-label","多選 UUID "+index);
  multi.addEventListener("change",()=>{if(multi.checked)chapterSelectedRows.add(index);else chapterSelectedRows.delete(index);pickerStatus(matched.length);});
  const check=document.createElement("input");check.type="checkbox";check.checked=!chapterPickerExcluded.has(index);
- check.disabled=index<Number($("start-chapter").value)||index>Number($("end-chapter").value);
+ check.disabled=index<Number(pickerField("start-chapter").value)||index>Number(pickerField("end-chapter").value);
  check.setAttribute("aria-label","製作 UUID "+index);
   const span=document.createElement("span");
  const parts=parsedCatalog.chapter_parts?.[index-1]||{},sourceNum=parts.d||"—";
- const orderNumber=chapterPickerOrder.filter(x=>x>=Number($("start-chapter").value)&&x<=Number($("end-chapter").value)&&!chapterPickerExcluded.has(x)).indexOf(index)+1;
+ const orderNumber=chapterPickerOrder.filter(x=>x>=Number(pickerField("start-chapter").value)&&x<=Number(pickerField("end-chapter").value)&&!chapterPickerExcluded.has(x)).indexOf(index)+1;
  span.textContent="UUID "+index+"｜編號 "+(orderNumber||"—")+"｜正規化 "+(chapterEffectiveNumber(index)||"—")+"｜原章號 "+sourceNum+"｜"+(parts.name||parsedCatalog.chapter_titles[index-1]||"");
   const match=duplicate.get(index);
   if(match){const small=document.createElement("small");small.className="duplicate-reason";
@@ -480,12 +528,13 @@ function renderChapterPicker(){
  }
  pickerStatus(matched.length);
 }
-function openChapterPicker(){
+function openChapterPicker(mode="create"){
+ if(mode!==chapterPickerMode)throw Error("選章器的編輯模式不一致");
  if(!parsedCatalog||!Array.isArray(parsedCatalog.chapter_titles)||parsedCatalog.chapter_titles.length!==parsedCatalog.total_chapters)
   throw Error("完整目錄尚未載入，請重新解析目錄");
- const start=Number($("start-chapter").value),end=Number($("end-chapter").value);
- chapterPickerExcluded=new Set(excludedNumbers($("excluded").value,start,end));
- const orderText=$("chapter-order").value.trim();
+ const start=Number(pickerField("start-chapter").value),end=Number(pickerField("end-chapter").value);
+ chapterPickerExcluded=new Set(excludedNumbers(pickerField("excluded").value,start,end));
+ const orderText=pickerField("chapter-order").value.trim();
  const wholeBook=Array.from({length:parsedCatalog.total_chapters},(_,i)=>i+1);
  const selectedOrder=orderText?readOrder(orderText,start,end,[...chapterPickerExcluded]):[];
  chapterPickerOrder=selectedOrder.concat(wholeBook.filter(i=>!selectedOrder.includes(i)));
@@ -494,7 +543,7 @@ function openChapterPicker(){
 }
 function pickerBulk(mode){
  if(!chapterPickerExcluded)throw Error("尚未開啟選章視窗");
- const start=Number($("start-chapter").value),end=Number($("end-chapter").value);
+ const start=Number(pickerField("start-chapter").value),end=Number(pickerField("end-chapter").value);
  for(const i of pickerMatchingIndices()){
   if(i<start||i>end)continue;
   if(mode==="none")chapterPickerExcluded.add(i);
@@ -506,14 +555,21 @@ function pickerBulk(mode){
 }
 function saveChapterPicker(){
  if(!chapterPickerExcluded)throw Error("尚未開啟選章視窗");
- $("excluded").value=[...chapterPickerExcluded].sort((a,b)=>a-b).join(",");
- const start=Number($("start-chapter").value),end=Number($("end-chapter").value);
+ pickerField("excluded").value=[...chapterPickerExcluded].sort((a,b)=>a-b).join(",");
+ const start=Number(pickerField("start-chapter").value),end=Number(pickerField("end-chapter").value);
  const result=chapterPickerOrder.filter(i=>i>=start&&i<=end&&!chapterPickerExcluded.has(i));
  const expected=Array.from({length:end-start+1},(_,i)=>i+start).filter(i=>!chapterPickerExcluded.has(i));
- $("chapter-order").value=result.every((n,i)=>n===expected[i])?"":result.join(",");
- $("renumber").checked=true;
- $("chapter-dialog").close();chapterPickerExcluded=null;chapterPickerOrder=null;
- notice("章節選擇已套用到排除清單；加入佇列前仍可調整");
+ pickerField("chapter-order").value=result.every((n,i)=>n===expected[i])?"":result.join(",");
+ pickerField("renumber").checked=true;
+ if(chapterPickerMode==="edit"){
+  for(const key of ["number","name","pair"])
+   $("edit-duplicate-"+key).checked=$("duplicate-"+key).checked;
+ }
+ const message=chapterPickerMode==="edit"?
+  "章節選擇已套用至目前小說編輯表單；按「儲存任務」才會提交 GitHub。":
+  "章節選擇已套用到排除清單；加入佇列前仍可調整";
+ closeChapterPicker();
+ notice(message);
 }
 function taipeiPreset(days,hours){
  const parts=Object.fromEntries(new Intl.DateTimeFormat("en-US",{timeZone:"Asia/Taipei",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date()).filter(x=>x.type!=="literal").map(x=>[x.type,Number(x.value)]));
@@ -546,7 +602,8 @@ document.addEventListener("DOMContentLoaded",()=>{
  bind("refresh-btn","click",refresh);bind("dispatch-btn","click",window.triggerDispatcher);bind("book-form","submit",window.submitBook);
  bind("batch-btn","click",window.batchAdd);bind("parse-btn","click",window.parseCatalog);
  bind("edit-form","submit",window.saveEditor);bind("review-form","submit",window.saveReview);
- bind("open-chapter-picker","click",openChapterPicker);
+ bind("open-chapter-picker","click",()=>openChapterPicker("create"));
+ bind("edit-load-catalog","click",window.loadEditCatalog);
  bind("chapter-search","input",()=>{chapterPage=0;renderChapterPicker();});
  bind("chapter-show-all","change",()=>{chapterPage=0;renderChapterPicker();});
  bind("chapter-prev","click",()=>{chapterPage--;renderChapterPicker();});
@@ -576,7 +633,7 @@ document.addEventListener("DOMContentLoaded",()=>{
  });
  bind("chapter-all","click",()=>pickerBulk("all"));bind("chapter-none","click",()=>pickerBulk("none"));bind("chapter-invert","click",()=>pickerBulk("invert"));
  bind("chapter-picker-save","click",saveChapterPicker);
- bind("chapter-picker-cancel","click",()=>{$("chapter-dialog").close();chapterPickerExcluded=null;chapterPickerOrder=null;});
+ bind("chapter-picker-cancel","click",closeChapterPicker);
  bind("chapter-exclude-duplicates","click",excludePickerDuplicates);
  bind("chapter-sort-number","click",()=>sortPickerOrder("number"));bind("chapter-sort-original","click",()=>sortPickerOrder("original"));
  for(const id of ["duplicate-number","duplicate-name","duplicate-pair","duplicate-only"])bind(id,"change",renderChapterPicker);

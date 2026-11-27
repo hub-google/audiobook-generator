@@ -253,6 +253,35 @@
   $("chapter-selection-tools").classList.remove("hidden");
   text($("parse-status"),"完整目錄解析成功，共 "+data.total_chapters+" 章");
  }
+ window.loadEditCatalog=async function(){
+  const task=queueTasks().find(t=>t.task_id===editorTaskId);
+  if(!task||!$("edit-dialog").open)throw Error("請先選擇要編輯的小說");
+  if(editorParsedCatalog){openEditorChapterPicker();return;}
+  const url=task.catalog_url,id=crypto.randomUUID().slice(0,8);
+  if(!await send("preview",{catalog_url:url,request_id:id},
+      "載入編輯目錄 "+id))return;
+  const button=$("edit-load-catalog");
+  button.disabled=true;
+  text($("edit-catalog-status"),"請在 GitHub 送出 Issue，正在等待此書目錄…");
+  try{
+   for(let i=0;i<72;i++){
+    if(editorTaskId!==task.task_id||!$("edit-dialog").open)return;
+    await new Promise(resolve=>setTimeout(resolve,5000));
+    if(editorTaskId!==task.task_id||!$("edit-dialog").open)return;
+    const link="https://raw.githubusercontent.com/"+REPO+"/"+QUEUE_BRANCH+
+       "/web-previews/"+id+".json?_="+Date.now();
+    let response;
+    try{response=await fetch(link,{cache:"no-store"});}
+    catch{continue;}
+    if(response.status===404)continue;
+    if(!response.ok)throw Error("讀取完整目錄失敗（HTTP "+response.status+"）");
+    setEditorCatalog(await response.json(),url);
+    openEditorChapterPicker();
+    return;
+   }
+   throw Error("尚未取得目錄結果，請確認 GitHub Issue 和 Actions 均成功");
+  }finally{button.disabled=false;}
+ };
  window.parseCatalog=async function(){
   const url=$("catalog-url").value.trim();getSource(url);
   const id=crypto.randomUUID().slice(0,8);

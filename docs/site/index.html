@@ -97,7 +97,7 @@
 </section>
 <dialog id="chapter-dialog" class="editor-dialog" aria-labelledby="chapter-dialog-title">
 <h2 id="chapter-dialog-title">選擇要製作的章節</h2>
-<p class="muted">勾選表示製作，取消勾選表示排除。範圍以新增表單的起訖章節為準。</p>
+<p class="muted">勾選表示製作，取消勾選表示排除。範圍依目前新增或編輯表單的起訖章節設定。</p>
 <div class="chapter-filters"><label>搜尋章號或章名<input id="chapter-search" placeholder="搜尋 UUID、章號、章名"></label><label class="toggle"><input id="chapter-show-all" type="checkbox" checked> 顯示全書章節</label></div>
 <div class="chapter-controls">
 <button type="button" id="chapter-all" class="secondary">全選搜尋結果</button>
@@ -142,6 +142,9 @@
 <dialog id="edit-dialog" class="editor-dialog" aria-labelledby="edit-title">
 <form id="edit-form">
 <h2 id="edit-title">編輯小說任務</h2><p class="muted" id="edit-book-url"></p>
+<div class="inline-actions">
+<button id="edit-load-catalog" type="button" class="secondary">載入完整目錄並視覺化選章</button>
+<span id="edit-catalog-status" class="muted">尚未載入完整目錄</span></div>
 <div class="form-grid">
 <label class="wide">小說名稱<input id="edit-name" maxlength="160" required></label>
 <label>起始章<input id="edit-start" type="number" min="1" max="999999" required></label>

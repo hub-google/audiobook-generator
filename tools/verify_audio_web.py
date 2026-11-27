@@ -214,6 +214,14 @@ def main():
             desktop.locator("#queue-body tr").first.get_by_role("button", name="編輯").click()
             assert desktop.locator("#edit-dialog").is_visible()
             assert desktop.locator("#edit-order").input_value() == ""
+            desktop.locator("#edit-load-catalog").click()
+            desktop.get_by_text("已載入完整目錄，共 120 章").wait_for(timeout=16000)
+            assert desktop.locator("#chapter-dialog").is_visible()
+            assert desktop.locator("#chapter-list .chapter-item").count() == 120
+            desktop.locator("#chapter-list .chapter-item").nth(1).locator('input[aria-label="製作 UUID 2"]').uncheck()
+            desktop.locator("#chapter-picker-save").click()
+            assert desktop.locator("#edit-excluded").input_value() == "2"
+            assert desktop.locator("#excluded").input_value() == "2"
             desktop.locator("#edit-name").fill("原創測試新版")
             desktop.locator("#edit-titles").fill("1 | 第一章 原創內容")
             desktop.screenshot(path=str(OUTPUT / "audio-task-editor.png"), full_page=True)

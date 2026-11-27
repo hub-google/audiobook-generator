@@ -384,3 +384,20 @@ def test_mobile_queue_shows_all_task_columns_as_cards():
     assert 'id="queue-table-wrap"' in html
     assert "@media(max-width:680px)" in css
     assert "#queue-body tr{display:flex;flex-direction:column" in css
+
+
+def test_visual_chapter_editor_reuses_full_picker_and_preserves_new_book_draft():
+    app=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    assert 'id="edit-load-catalog"' in html
+    assert "function openEditorChapterPicker()" in app
+    assert 'chapterPickerMode="edit"' in app
+    assert "function pickerField(name)" in app
+    assert 'pickerField("edit-start")' not in app
+    assert 'pickerField("start-chapter")' in app
+    assert "function closeChapterPicker()" in app
+    assert 'window.loadEditCatalog=async function()' in bridge
+    assert "setEditorCatalog(await response.json(),url)" in bridge
+    assert 'for(let i=0;i<72;i++)' in bridge
+    assert "pickerOriginalCatalog=parsedCatalog" in app
