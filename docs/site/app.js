@@ -464,6 +464,15 @@ async function loadCurrentBookCleaner(task){
   "已載入此書最新雲端清理設定；修改後隨任務儲存。":
   "此書尚未有清理設定；如有需要可新增。");
 }
+// The original GUI loads the current per-book Profile before showing candidates.
+window.audioReadBookCleaner=async function(task){
+ const file=await request("/contents/audiobook-book-profiles.json?ref="+QUEUE_BRANCH);
+ const data=JSON.parse(fromB64(file.content));
+ const profile=Object.values(data.books||{}).find(p=>p.catalog_url===task.catalog_url);
+ return Array.isArray(profile?.cleaner_remove_patterns)?
+  profile.cleaner_remove_patterns:
+  (task.ad_review?.remove_patterns||task.profile_snapshot?.cleaner_remove_patterns||[]);
+};
 function openReview(id){const task=[...queueTasks(),...(queue?.completed||[])].find(t=>t.task_id===id);if(!task)throw Error("找不到小說任務");
  reviewTaskId=id;$("review-patterns").value=(task.ad_review?.remove_patterns||task.profile_snapshot?.cleaner_remove_patterns||[]).join("\n");
  $("review-dialog").showModal();
