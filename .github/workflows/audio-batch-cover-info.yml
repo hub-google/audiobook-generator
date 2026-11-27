@@ -5,8 +5,9 @@ on:
     inputs:
       task_ids: {description: "Selected authorized book task IDs", required: true, type: string}
       source_issue: {description: "Authorized GitHub Issue", required: true, type: string}
+      request_id: {description: "Browser request ID for automatic results", required: true, type: string}
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: "audio-batch-cover-${{ inputs.source_issue }}"
   cancel-in-progress: false
@@ -26,7 +27,34 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           SELECTED_TASK_IDS: ${{ inputs.task_ids }}
+          REQUEST_ID: ${{ inputs.request_id }}
         run: python -m tools.audio_batch_cover_info
+      - name: "將分析結果同步至 GitHub Pages 查詢資料"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUEST_ID: ${{ inputs.request_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64, json, os, re
+          from pathlib import Path
+          request_id = os.environ["REQUEST_ID"]
+          if not re.fullmatch(r"[a-f0-9]{32}", request_id):
+              raise SystemExit("Invalid batch cover request ID")
+          data = json.loads(Path("batch-cover-info.json").read_text(encoding="utf-8"))
+          if data.get("request_id") != request_id:
+              raise SystemExit("Batch cover request ID mismatch")
+          body = {
+              "message": "Publish AUDIO batch cover result " + request_id,
+              "branch": "automation-state",
+              "content": base64.b64encode(
+                  Path("batch-cover-info.json").read_bytes()
+              ).decode("ascii"),
+          }
+          Path("batch-cover-request.json").write_text(json.dumps(body), encoding="utf-8")
+          PY
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/web-cover-info/$REQUEST_ID.json" --input batch-cover-request.json
       - name: "上傳批次故事分析及 Prompt"
         uses: actions/upload-artifact@v4
         if: always()

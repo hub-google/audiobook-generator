@@ -26,3 +26,16 @@ def test_missing_gemini_response_returns_failure_not_placeholder():
     results=run_batch([task],lambda title,url: {"prompt":""})
     assert results[0]["status"]=="failed"
     assert "data" not in results[0]
+
+
+def test_batch_cover_automatic_results_never_require_browser_credentials():
+    from pathlib import Path
+    root=Path(__file__).resolve().parents[1]
+    js=(root/"docs/site/batch-cover.js").read_text(encoding="utf-8")
+    workflow=(root/".github/workflows/audio-batch-cover-info.yml").read_text(encoding="utf-8")
+    assert '"batch_cover_info",{task_ids:ids,request_id}' in js
+    assert "web-cover-info/" in js
+    assert "localStorage.setItem(REQUEST_STORE" in js
+    assert "Authorization" not in js and "HF_TOKEN" not in js and "GEMINI_API_KEY" not in js
+    assert "web-cover-info/$REQUEST_ID.json" in workflow
+    assert "--input batch-cover-request.json" in workflow

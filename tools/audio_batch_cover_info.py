@@ -50,6 +50,9 @@ def run_batch(tasks, generator=build_cover_information):
 
 def main():
     ids = parse_task_ids(os.environ["SELECTED_TASK_IDS"])
+    request_id = os.environ.get("REQUEST_ID", "")
+    if not re.fullmatch(r"[a-f0-9]{32}", request_id):
+        raise ValueError("Invalid batch cover request ID")
     queue, _ = GitHubQueueStore(
         os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_TOKEN"],
     ).load()
@@ -61,6 +64,7 @@ def main():
         raise ValueError("Selected audiobook tasks changed since authorization")
     data = {
         "schema_version": 1, "role": "audio_batch_cover_information",
+        "request_id": request_id,
         "results": run_batch([task_map[key] for key in ids]),
     }
     Path("batch-cover-info.json").write_text(

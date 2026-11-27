@@ -1,6 +1,7 @@
 "use strict";
 (function(){
- let ids=[],activeId=null,results=new Map();
+ let ids=[],activeId=null,results=new Map(),pendingRequest=null,pollGeneration=0;
+ const REQUEST_STORE="audio-batch-cover-pending";
  const el=id=>document.getElementById(id);
  const task=id=>(queue?.queue||[]).concat(queue?.completed||[]).find(t=>t.task_id===id);
  const format=(id,data)=>"《"+(task(id)?.book_title||"待解析")+"》\n\n【小說架構／視覺分析】\n"+
@@ -31,7 +32,15 @@
   ids=ids.filter(id=>available.has(id));
   if(!ids.length)throw Error("請先勾選至少一本小說");
   activeId=ids[0];results=new Map();el("batch-cover-result-file").value="";
+  pollGeneration++;pendingRequest=null;
+  try{
+   const saved=JSON.parse(localStorage.getItem(REQUEST_STORE)||"null");
+   if(saved&&Array.isArray(saved.ids)&&
+      JSON.stringify(saved.ids.slice().sort())===JSON.stringify(ids.slice().sort())&&
+      /^[a-f0-9]{32}$/.test(saved.request_id||""))pendingRequest=saved.request_id;
+  }catch{}
   render();el("batch-cover-dialog").showModal();
+  if(pendingRequest)void pollResults(pendingRequest,pollGeneration);
  };
  async function unzip(buffer){
   const bytes=new Uint8Array(buffer),dv=new DataView(buffer);let last=-1;
@@ -73,6 +82,36 @@
   }
   results=new Map(data.results.map(row=>[row.task_id,row]));render();
  }
+ async function pollResults(requestId,generation){
+  if(!/^[a-f0-9]{32}$/.test(requestId))return;
+  for(let attempt=0;attempt<720;attempt++){
+   if(generation!==pollGeneration||!el("batch-cover-dialog").open)return;
+   try{
+    const path="https://raw.githubusercontent.com/"+REPO+"/"+QUEUE_BRANCH+
+      "/web-cover-info/"+requestId+".json?_="+Date.now();
+    const response=await fetch(path,{cache:"no-store"});
+    if(response.ok){
+     const payload=await response.json();
+     if(payload?.request_id!==requestId)throw Error("批次封面結果與操作請求不一致");
+     await applyAutomaticResults(payload);
+     localStorage.removeItem(REQUEST_STORE);pendingRequest=null;
+     notice("批次封面資訊已自動載入");return;
+    }
+    if(response.status!==404)throw Error("GitHub 封面資訊讀取失敗 HTTP "+response.status);
+   }catch(e){if(attempt===0)notice("等待封面結果："+e.message,"error");}
+   await new Promise(resolve=>setTimeout(resolve,10000));
+  }
+  if(generation===pollGeneration)notice("仍未取得封面資訊，請檢查 GitHub Actions 執行紀錄","error");
+ }
+ async function applyAutomaticResults(payload){
+  if(payload?.role!=="audio_batch_cover_information"||payload.schema_version!==1||
+     !Array.isArray(payload.results))throw Error("批次封面結果格式無效");
+  for(const item of payload.results){
+   if(!ids.includes(item.task_id)||!["completed","failed"].includes(item.status))
+    throw Error("封面結果包含其他小說或不合法狀態");
+  }
+  results=new Map(payload.results.map(item=>[item.task_id,item]));render();
+ }
  async function copy(value){
   await navigator.clipboard.writeText(value);notice("已複製封面資訊");
  }
@@ -94,8 +133,15 @@
    el(id).addEventListener("click",()=>{
     try{window.openBatchCover(done);}catch(e){notice(e.message,"error");}
    });
-  el("batch-cover-generate").addEventListener("click",()=>audioIssueAction(
-    "batch_cover_info",{task_ids:ids},"批次產生 "+ids.length+" 本小說封面資訊"));
+  el("batch-cover-generate").addEventListener("click",()=>{
+    const request_id=crypto.randomUUID().replaceAll("-","");
+    audioIssueAction("batch_cover_info",{task_ids:ids,request_id},
+      "批次產生 "+ids.length+" 本小說封面資訊");
+    localStorage.setItem(REQUEST_STORE,JSON.stringify({request_id,ids}));
+    pendingRequest=request_id;pollGeneration++;
+    text(el("batch-cover-summary"),"請先在 GitHub 送出 Issue。送出後此頁會自動載入封面資訊。");
+    void pollResults(request_id,pollGeneration);
+  });
   el("batch-cover-result-file").addEventListener("change",e=>
    importResults(e.target.files?.[0]).catch(err=>notice(err.message,"error")));
   el("batch-cover-manual").addEventListener("click",()=>{
@@ -106,6 +152,6 @@
    Promise.resolve().then(()=>copy(currentText())).catch(e=>notice(e.message,"error")));
   el("batch-cover-copy-all").addEventListener("click",()=>
    Promise.resolve().then(()=>copy(allText())).catch(e=>notice(e.message,"error")));
-  el("batch-cover-close").addEventListener("click",()=>el("batch-cover-dialog").close());
+  el("batch-cover-close").addEventListener("click",()=>{pollGeneration++;el("batch-cover-dialog").close();});
  });
 })();

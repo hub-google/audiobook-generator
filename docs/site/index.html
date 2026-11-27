@@ -163,9 +163,9 @@
 <h2 id="batch-cover-title">批次封面資訊＋手動封面</h2>
 <p class="muted">選取左側小說，查看 Gemini 故事／視覺分析和 HF Prompt；生成與保存交由 GitHub Actions，網頁沒有 API 金鑰。</p>
 <div class="inline-actions"><button id="batch-cover-generate" type="button">產生選取小說的封面資訊</button>
-<label>匯入 Actions 結果 JSON／ZIP<input id="batch-cover-result-file" type="file" accept=".json,.zip,application/json,application/zip"></label>
+<label>備用：手動匯入 Actions 結果 JSON／ZIP<input id="batch-cover-result-file" type="file" accept=".json,.zip,application/json,application/zip"></label>
 <a href="https://github.com/hub-google/audiobook-generator/actions/workflows/audio-batch-cover-info.yml" target="_blank" rel="noopener noreferrer">查看封面資訊執行紀錄</a></div>
-<p id="batch-cover-summary" class="muted">選擇小說後可以在 GitHub 產生封面資訊。</p>
+<p id="batch-cover-summary" class="muted">GitHub 送出操作後將自動載入封面資訊，重新開啟此視窗仍可接續查詢。</p>
 <div class="batch-cover-layout"><div id="batch-cover-book-list" class="batch-cover-list" aria-label="選取小說"></div>
 <div class="batch-cover-right"><h3 id="batch-cover-selected-title">小說資訊</h3><div class="review-texts">
 <div><strong>Gemini 小說架構／視覺分析</strong><pre id="batch-cover-analysis">等待資料</pre></div>
