@@ -148,9 +148,16 @@ def main():
             attempt_button('#audio-operations-show')
             attempt_button('#dispatch-btn')
             page.locator("#queue-body tr").first.locator('input[type="checkbox"]').check()
+            assert "HF：" in page.locator("#selected-task-status").inner_text()
+            attempt_button("#selected-task-progress")
+            attempt_button("#selected-task-edit")
+
             for name in ["batch-up","batch-down","batch-pause","batch-resume",
                          "batch-complete","batch-delete","batch-export","batch-cover-btn"]:
                 attempt_button("#"+name)
+            attempt_button("#queue-invert")
+            attempt_button("#queue-clear")
+            page.locator("#queue-body tr").first.locator('input[type="checkbox"]').check()
             page.locator('[data-tab="create"]').click()
             attempt_button("#novel-search-go")  # empty query should fail locally, never navigate
             page.locator("#novel-search-keyword").fill("測試")
@@ -166,10 +173,23 @@ def main():
             page.locator("#source").select_option("czbooks")
             page.locator("#book-title").fill("驗收小說")
             attempt_button("#parse-btn")
+            attempt_button("#draft-cover-information",keep_dialog=True)
+            attempt_button("#draft-cover-info-copy",keep_dialog=True)
+            attempt_button("#draft-cover-info-generate",keep_dialog=True)
+            attempt_button("#draft-cover-info-close")
+            attempt_button("#draft-manual-cover",keep_dialog=True)
+            attempt_button("#manual-cover-close")
+            attempt_button("#book-form-reset")
+            page.locator("#catalog-url").fill("https://czbooks.net/n/demo")
+            page.locator("#source").select_option("czbooks")
+            page.locator("#book-title").fill("驗收小說")
             page.locator("#batch-urls").fill("驗收小說 | https://czbooks.net/n/demo | 1 | 3")
             attempt_button("#batch-btn")
             for name in ["rank-select-all","rank-select-none","rank-select-all","rank-copy","rank-add"]:
                 attempt_button("#"+name)
+            page.locator("#rank-sort").select_option("author")
+            attempt_button("#rank-select-invert")
+            page.locator("#rank-sort").select_option("rank")
             page.evaluate("""() => {
               parsedCatalog={
                 catalog_url:"https://czbooks.net/n/demo",book_title:"測試小說 A",
@@ -252,6 +272,7 @@ def main():
             page.locator("#edit-name").fill("測試修改書名")
             attempt_button('#edit-form button[type="submit"]')
             attempt_button('#queue-body tr:nth-child(2) button:has-text("確認審核並繼續")',keep_dialog=True)
+            attempt_button("#review-auto-load",keep_dialog=True)
             for name in ["review-select-visible","review-keep-visible","review-invert-visible"]:
                 attempt_button("#"+name,keep_dialog=True)
             page.locator("#review-manual-pattern").fill("測試文字")
