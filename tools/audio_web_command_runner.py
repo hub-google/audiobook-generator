@@ -384,7 +384,7 @@ def _step_summary(line):
     if not path:
         return
     with open(path, "a", encoding="utf-8") as handle:
-        handle.write(line + "\\n")
+        handle.write(line + "\n")
 
 
 def main():
