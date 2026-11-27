@@ -119,6 +119,32 @@ def parse_time(value):
         return None
 
 
+
+def finished_preflight_is_stale(scrape_run, cover_run, *, now=None):
+    """After a full day without a new GitHub run update, do not claim to be running.
+
+    The existing native rerun controllers retain ownership during their actual
+    retry window. A stale pair of terminal GitHub Runs cannot be presented as
+    actively making TXT/cover progress indefinitely.
+    """
+    if not scrape_run or not cover_run:
+        return False
+    runs = (scrape_run, cover_run)
+    if any(run.get("status") != "completed" for run in runs):
+        return False
+    failed = [run for run in runs if run.get("conclusion") != "success"]
+    if not failed:
+        return False
+    moment = now or datetime.now(timezone.utc)
+    for run in failed:
+        updated_at = parse_time(run.get("updated_at") or run.get("run_started_at"))
+        if updated_at is None or updated_at.tzinfo is None:
+            return False
+        if moment - updated_at < timedelta(hours=24):
+            return False
+    return True
+
+
 class Dispatcher:
     def __init__(self, repo, token, branch="automation-state", force=False,
                  trigger_run_id=None, trigger_workflow_name="",
@@ -401,6 +427,10 @@ class Dispatcher:
                         for state in (scrape, cover)
                     )
                     new_status, reason = ("canceling" if cancel_pending else "stopped"), "user_cancelled"
+                elif finished_preflight_is_stale(scrape_run, cover_run):
+                    failures = [name for name, run in (("TXT", scrape_run), ("封面", cover_run))
+                                if run.get("conclusion") != "success"]
+                    new_status, reason = "needs_attention", "preflight_stale_24h:" + ",".join(failures)
                 elif scrape.get("status") == "failed" and scrape_run:
                     # The dedicated scrape-rerun controller owns native
                     # rerun-failed-jobs calls. This dispatcher only reconciles
