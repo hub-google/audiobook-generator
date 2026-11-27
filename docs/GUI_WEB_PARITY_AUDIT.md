@@ -27,6 +27,7 @@
 - GitHub OIDC 即時日誌真實整合測試 [Run 45961831305](https://github.com/hub-google/audiobook-generator/actions/runs/45961831305) **成功**，私人資料表 `audio_web_live_events` 收到 `AUDIO_PRIVATE_LIVE_SMOKE_OK`；測試用記錄已清除。正式小說爬取與上傳過程的全段日誌還沒有新 Run 佐證。
 - 真實外部服務健康檢查 [Run 45961994814](https://github.com/hub-google/audiobook-generator/actions/runs/45961994814) **成功**：HF 私有資料存取、YouTube OAuth refresh + channel read、原創短句 Edge TTS→WAV→SRT→FFmpeg MP4。沒有執行公開影片上傳，不能把這個結果說成全書 YouTube E2E 成功。
 - GitHub 佇列調度 [Run 45962426030](https://github.com/hub-google/audiobook-generator/actions/runs/45962426030) **成功**，將唯一長期停滯的小說從 `preparing_assets` 調整為 `needs_attention`，原因 `preflight_stale_24h:TXT,封面`，不再假裝爬取仍在執行。實際障礙為部分 69 書吧章節 HTTP 403 與 Gemini 503／無充足原著資料，未繞過網站存取限制，也未憑空生成小說事實。
+- 另外修正同一筆任務狀態已變動卻沒有累加 `revision` 的協調問題：`Dispatcher.run` 對實際狀態變更補上 `touch()`；網頁 `syncOverviewQueue` 除 revision 也比較任務內容，避免舊版佇列的狀態更新被漏掉。
 - 仍欠一個確實有來源存取授權、完成 TXT 與封面 Artifact 的正式待審 Run，才可驗證核准審核後製直到 YouTube 上傳。
 - 網頁與 GitHub Pages 程式更新，允許管理員登入後查看按書即時 Worker 日誌；後端密鑰不進入瀏覽器，加入 API URL query 參數遮罩。
 
