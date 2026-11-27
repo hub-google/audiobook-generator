@@ -243,10 +243,11 @@ async function submitBook(event){
  if($("source").value!==source.id)throw Error("選取的網站與網址不一致");
  const start=Number($("start-chapter").value),end=Number($("end-chapter").value);
  if(parsedCatalog&&parsedCatalog.catalog_url===url&&end>parsedCatalog.total_chapters)throw Error("結束章超過目錄總章數");
- const publish=$("publish-at").value?$("publish-at").value+":00+08:00":null;
+ const publish=$("publish-scheduled").checked&&$("publish-at").value?$("publish-at").value+":00+08:00":null;
+ if($("publish-scheduled").checked&&!publish)throw Error("請選擇排定公開時間，或切回立即公開");
  const excluded=excludedNumbers($("excluded").value,start,end);
  await addTasks([buildTask({url,title:$("book-title").value,start,end,excluded,renumber:$("renumber").checked,publishAt:publish,identity:parsedCatalog?.catalog_url===url?parsedCatalog.catalog_identity:"",titles:readOverrides($("title-overrides").value,start,end),numbers:readOverrides($("number-overrides").value,start,end,true),order:readOrder($("chapter-order").value,start,end,excluded)})]);
- $("book-form").reset();parsedCatalog=null;$("catalog-preview").classList.add("hidden");$("chapter-selection-tools").classList.add("hidden");
+ $("book-form").reset();renderPublish();parsedCatalog=null;$("catalog-preview").classList.add("hidden");$("chapter-selection-tools").classList.add("hidden");
 }
 async function batchAdd(){
  const lines=$("batch-urls").value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(!lines.length)throw Error("請貼上批次小說資料");
@@ -357,6 +358,23 @@ async function parseCatalog(){
  text($("parse-status"),"已解析完成（"+data.source_id+"，"+data.total_chapters+" 章）");
  }finally{btn.disabled=false;}
 }
+function taipeiPreset(days,hours){
+ const parts=Object.fromEntries(new Intl.DateTimeFormat("en-US",{timeZone:"Asia/Taipei",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date()).filter(x=>x.type!=="literal").map(x=>[x.type,Number(x.value)]));
+ const iso=new Date(Date.UTC(parts.year,parts.month-1,parts.day+Number(days))).toISOString().slice(0,10);
+ return iso+"T"+hours;
+}
+function renderPublish(){
+ const scheduled=$("publish-scheduled").checked;$("publish-schedule").classList.toggle("hidden",!scheduled);
+ const when=$("publish-at").value;
+ if(!scheduled){text($("publish-preview"),"立即公開：上傳成功後公開");return;}
+ if(!when){text($("publish-preview"),"尚未選擇公開時間");return;}
+ const date=new Date(when+":00+08:00"),past=Number.isNaN(date.getTime())||date.getTime()<=Date.now();
+ text($("publish-preview"),past?"排定時間已過：上傳成功後依策略 A 立即公開":"預定台灣時間 "+when.replace("T"," ")+" 公開（所有 Parts 同步）");
+}
+function setPublishPreset(day,hours){
+ $("publish-scheduled").checked=true;$("publish-at").value=taipeiPreset(day,hours);renderPublish();
+}
+
 function switchTab(which){
  document.querySelectorAll(".tab").forEach(e=>e.classList.toggle("active",e.id===which));
  document.querySelectorAll(".nav").forEach(e=>e.classList.toggle("active",e.dataset.tab===which));
@@ -375,6 +393,10 @@ document.addEventListener("DOMContentLoaded",()=>{
  bind("chapter-all","click",()=>pickerBulk("all"));bind("chapter-none","click",()=>pickerBulk("none"));bind("chapter-invert","click",()=>pickerBulk("invert"));
  bind("chapter-picker-save","click",saveChapterPicker);bind("chapter-picker-cancel","click",()=>{$("chapter-dialog").close();chapterPickerExcluded=null;});
  bind("progress-close","click",()=>$("progress-dialog").close());bind("edit-cancel","click",()=>{$("edit-dialog").close();editorTaskId=null;});bind("review-cancel","click",()=>{$("review-dialog").close();reviewTaskId=null;});
+ bind("publish-immediate","change",renderPublish);bind("publish-scheduled","change",renderPublish);
+ bind("publish-at","change",renderPublish);
+ document.querySelectorAll("[data-publish-day]").forEach(b=>b.addEventListener("click",()=>setPublishPreset(Number(b.dataset.publishDay),b.dataset.publishHour)));
+ renderPublish();
  bind("catalog-url","input",()=>{parsedCatalog=null;$("catalog-preview").classList.add("hidden");$("chapter-selection-tools").classList.add("hidden");});
  refresh();
 });

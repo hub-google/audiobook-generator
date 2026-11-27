@@ -93,3 +93,14 @@ def test_full_chapter_picker_keeps_complete_catalog():
     for id in ("chapter-dialog","chapter-list","chapter-search","chapter-all","chapter-none","chapter-invert","chapter-picker-save"):
         assert f'id="{id}"' in html
     assert "function pickerMatchingIndices()" in js
+
+
+def test_publish_mode_matches_desktop_preset_and_taipei_strategy_a():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    assert 'id="publish-immediate"' in html
+    assert 'id="publish-scheduled"' in html
+    assert 'data-publish-day="2"' in html
+    assert 'timeZone:"Asia/Taipei"' in js
+    assert 'function renderPublish()' in js
+    assert 'function setPublishPreset(day,hours)' in js

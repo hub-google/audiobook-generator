@@ -41,7 +41,20 @@
 <span class="muted">可搜尋、勾選或批次排除全部章節，不必手動輸入章號</span>
 </div>
 <div class="form-grid"><label class="wide">小說名稱<input id="book-title" maxlength="160" placeholder="解析成功後自動填入，也可手動輸入" required></label><label>起始章<input type="number" id="start-chapter" min="1" max="999999" value="1" required></label><label>結束章<input type="number" id="end-chapter" min="1" max="999999" value="10" required></label><label class="wide">排除章節（可留空）<input id="excluded" placeholder="例如：3,8,11-15"></label></div>
-<div class="form-grid"><label class="toggle"><input type="checkbox" id="renumber"> 排除後重新編號（從第 1 章開始）</label><label>公開時間<input type="datetime-local" id="publish-at"><small class="muted">留空代表依工作流程立即發布；輸入的是台灣時間。</small></label></div>
+<div class="form-grid"><label class="toggle"><input type="checkbox" id="renumber"> 排除後重新編號（從第 1 章開始）</label>
+<div class="publish-options"><strong>公開時間設定（台灣時間）</strong>
+<label class="toggle"><input type="radio" name="publish-mode" id="publish-immediate" checked> 立即公開（預設）</label>
+<label class="toggle"><input type="radio" name="publish-mode" id="publish-scheduled"> 排定時間公開（全書 Parts 同步）</label>
+<div id="publish-schedule" class="hidden"><div class="publish-presets">
+<button type="button" class="secondary" data-publish-day="0" data-publish-hour="18:00">今日 18:00</button>
+<button type="button" class="secondary" data-publish-day="0" data-publish-hour="20:00">今日 20:00</button>
+<button type="button" class="secondary" data-publish-day="1" data-publish-hour="18:00">明日 18:00</button>
+<button type="button" class="secondary" data-publish-day="1" data-publish-hour="20:00">明日 20:00</button>
+<button type="button" class="secondary" data-publish-day="2" data-publish-hour="18:00">後日 18:00</button>
+</div><label>排定時間<input type="datetime-local" id="publish-at"></label></div>
+<p id="publish-preview" class="muted">立即公開：上傳成功後公開</p>
+<small class="muted">若上傳時排定時間已過，依原 GUI 策略 A 立即公開。</small>
+</div></div>
 <details class="advanced"><summary>進階章節設定（自訂標題、章號、播放順序）</summary>
 <p class="muted">以下均使用「目錄內的第幾筆」作為章節索引，而不是書中的章號。未填寫則保留原設定。</p>
 <div class="form-grid">

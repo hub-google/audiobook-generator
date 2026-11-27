@@ -5,3 +5,5 @@
 .progress-detail{font:13px/1.9 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f8fc;border:1px solid #dfe7f5;padding:18px;border-radius:12px}.completed-item .secondary{padding:5px 9px;font-size:12px;margin-left:10px}.completed-item{align-items:center;flex-wrap:wrap}
 
 .chapter-controls{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.chapter-controls button{font-size:12px;padding:8px 12px}.chapter-list{height:min(50vh,430px);overflow:auto;border:1px solid #dce5f2;border-radius:10px;padding:8px;background:#fbfcff}.chapter-item{display:flex;align-items:flex-start;flex-direction:row;gap:11px;padding:9px 10px;border-bottom:1px solid #edf1f6;font-size:13px;font-weight:400}.chapter-item:last-child{border-bottom:0}.chapter-item input{margin:2px 0 0;flex-shrink:0}.chapter-item span{line-height:1.45}.chapter-item:hover{background:#f0f5ff}.chapter-controls+.muted{margin:12px 0}
+
+.publish-options{display:flex;flex-direction:column;gap:10px}.publish-options strong{font-size:13px}.publish-presets{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px}.publish-presets button{padding:7px 9px;font-size:12px}
