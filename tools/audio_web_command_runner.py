@@ -18,6 +18,7 @@ from src.cover_assets import normalize_manual_cover, upload_github_cover
 from tools.audio_issue_command import api, apply_command, valid_id
 
 # All commands remain in the site; GitHub OIDC verifies the processing workflow.
+# Live integration smoke: download one existing tiny Artifact and its Run logs with protected staging.
 REPO = "hub-google/audiobook-generator"
 EDGE = "https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-web-commands"
 
