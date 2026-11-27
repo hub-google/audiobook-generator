@@ -134,14 +134,15 @@
    el(id).addEventListener("click",()=>{
     try{window.openBatchCover(done);}catch(e){notice(e.message,"error");}
    });
-  el("batch-cover-generate").addEventListener("click",()=>{
+  el("batch-cover-generate").addEventListener("click",async()=>{
     const request_id=crypto.randomUUID().replaceAll("-","");
-    audioIssueAction("batch_cover_info",{task_ids:ids,request_id},
+    const accepted=await audioIssueAction("batch_cover_info",{task_ids:ids,request_id},
       "批次產生 "+ids.length+" 本小說封面資訊");
+    if(!accepted)return;
     try{localStorage.setItem(REQUEST_STORE,JSON.stringify({request_id,ids}));}
     catch{ /* Browser storage may be disabled; current-tab polling still works. */ }
     pendingRequest=request_id;pollGeneration++;
-    text(el("batch-cover-summary"),"請先在 GitHub 送出 Issue。送出後此頁會自動載入封面資訊。");
+    text(el("batch-cover-summary"),"雲端已接收操作，本頁會自動載入封面資訊。");
     void pollResults(request_id,pollGeneration);
   });
   el("batch-cover-result-file").addEventListener("change",e=>
