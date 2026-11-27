@@ -440,7 +440,7 @@ def main():
             desktop.locator("#review-drop-files").set_input_files([{
                 "name":"cover-review-book-smoke-review.zip",
                 "mimeType":"application/zip","buffer":valid_cover_zip}])
-            desktop.get_by_text("已匯入 TXT 0 份、封面 1 份",exact=False).wait_for(timeout=8000)
+            desktop.get_by_text("已載入 TXT 0 份、封面 1 份",exact=False).wait_for(timeout=8000)
             assert "本段為測試廣告" in desktop.locator("#review-raw").inner_text()
             desktop.locator("#review-patterns").fill("本段為測試廣告")
             assert "本段為測試廣告" not in desktop.locator("#review-clean").inner_text()
