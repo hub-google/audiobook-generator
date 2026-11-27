@@ -285,3 +285,13 @@ def test_batch_cover_gui_supports_copy_current_all_and_manual_upload():
     assert "window.openBatchCover=function" in js
     assert "function currentText()" in js and "function allText()" in js
     assert '"batch_cover_info"' in js
+
+
+def test_gui_chapter_drag_and_keyboard_reorder_and_double_click_edit():
+    js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    assert 'label.draggable=true' in js
+    assert 'addEventListener("drop"' in js
+    assert 'event.dataTransfer.effectAllowed="move"' in js
+    assert 'bind("chapter-list","keydown"' in js
+    assert 'tr.addEventListener("dblclick"' in js
+    assert 'openEditor(task.task_id)' in js

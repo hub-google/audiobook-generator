@@ -33,3 +33,5 @@
 .batch-cover-list button.selected{border-color:#2865d6;background:#edf3ff}
 .batch-cover-right{min-width:0}
 @media(max-width:780px){.batch-cover-layout{grid-template-columns:1fr}.batch-cover-list{max-height:150px}}
+
+.chapter-item[draggable="true"]{cursor:grab}.chapter-item[draggable="true"]:active{cursor:grabbing}

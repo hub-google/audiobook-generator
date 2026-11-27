@@ -72,6 +72,10 @@ function buildTaskRow(task,index){
   if(["paused","interrupted","stopped"].includes(task.status))div.append(makeBtn("標為已完成",window.markCompleted,task.task_id));
   div.append(makeBtn("刪除",window.deleteTask,task.task_id));
  }
+ tr.addEventListener("dblclick",event=>{
+  if(!canEdit(task)||event.target.closest("button,input,a,select,textarea"))return;
+  openEditor(task.task_id);
+ });
  return tr;
 }
 function updateBatchStatus(){
@@ -405,6 +409,24 @@ function renderChapterPicker(){
  $("chapter-prev").disabled=chapterPage<=0;$("chapter-next").disabled=chapterPage>=totalPages-1;
  for(const index of matched.slice(chapterPage*chapterPageSize,(chapterPage+1)*chapterPageSize)){
   const label=document.createElement("label");label.className="chapter-item";
+  label.draggable=true;
+  label.dataset.uuid=String(index);
+  label.addEventListener("dragstart",event=>{
+   if(!chapterSelectedRows.has(index)){chapterSelectedRows.clear();chapterSelectedRows.add(index);}
+   event.dataTransfer.setData("text/plain",String(index));event.dataTransfer.effectAllowed="move";
+  });
+  label.addEventListener("dragover",event=>{event.preventDefault();event.dataTransfer.dropEffect="move";});
+  label.addEventListener("drop",event=>{
+   event.preventDefault();
+   const moving=chapterPickerOrder.filter(uuid=>chapterSelectedRows.has(uuid));
+   if(!moving.length||moving.includes(index))return;
+   const remaining=chapterPickerOrder.filter(uuid=>!chapterSelectedRows.has(uuid));
+   const targetAt=remaining.indexOf(index);
+   if(targetAt<0)return;
+   chapterPickerOrder=remaining.slice(0,targetAt).concat(moving,remaining.slice(targetAt));
+   $("renumber").checked=true;
+   renderChapterPicker();
+  });
   const multi=document.createElement("input");multi.type="checkbox";multi.checked=chapterSelectedRows.has(index);
  multi.setAttribute("aria-label","多選 UUID "+index);
  multi.addEventListener("change",()=>{if(multi.checked)chapterSelectedRows.add(index);else chapterSelectedRows.delete(index);pickerStatus(matched.length);});
@@ -505,6 +527,19 @@ document.addEventListener("DOMContentLoaded",()=>{
  bind("chapter-show-all","change",()=>{chapterPage=0;renderChapterPicker();});
  bind("chapter-prev","click",()=>{chapterPage--;renderChapterPicker();});
  bind("chapter-next","click",()=>{chapterPage++;renderChapterPicker();});
+ bind("chapter-list","keydown",event=>{
+  if((event.ctrlKey||event.metaKey)&&event.key==="ArrowUp"){
+   event.preventDefault();moveSelectedChapters(-1);
+  }else if((event.ctrlKey||event.metaKey)&&event.key==="ArrowDown"){
+   event.preventDefault();moveSelectedChapters(1);
+  }else if(event.key===" "&&event.target.closest(".chapter-item")){
+   event.preventDefault();
+   const row=event.target.closest(".chapter-item"),uuid=Number(row.dataset.uuid);
+   if(chapterSelectedRows.has(uuid))chapterSelectedRows.delete(uuid);
+   else chapterSelectedRows.add(uuid);
+   renderChapterPicker();
+  }
+ });
  bind("chapter-move-up","click",()=>moveSelectedChapters(-1));
  bind("chapter-move-down","click",()=>moveSelectedChapters(1));
  bind("chapter-edit-cancel","click",()=>{$("chapter-edit-dialog").close();chapterEditingIndex=null;});
