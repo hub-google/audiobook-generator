@@ -181,7 +181,7 @@ def main():
             page.locator("#start-chapter").fill("1")
             page.locator("#end-chapter").fill("3")
             page.locator("#excluded").fill("")
-            page.locator("#chapter-order").fill("")
+            page.locator("#chapter-order").evaluate("(node)=>node.value=\'\'")
             page.evaluate('chapterPickerMode="create"')
             attempt_button("#open-chapter-picker",keep_dialog=True)
             if not page.locator("#chapter-dialog").is_visible():
