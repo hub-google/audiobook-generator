@@ -274,3 +274,14 @@ def test_manual_cover_supports_browser_drop_and_clipboard_paste():
     assert 'addEventListener("drop"' in js
     assert "ClipboardItem" in js
     assert "file.size>20_000_000" not in js
+
+
+def test_batch_cover_gui_supports_copy_current_all_and_manual_upload():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    js=(ROOT/"docs/site/batch-cover.js").read_text(encoding="utf-8")
+    for key in ("batch-cover-btn","batch-cover-completed","batch-cover-dialog","batch-cover-book-list","batch-cover-generate","batch-cover-result-file","batch-cover-copy-current","batch-cover-copy-all","batch-cover-manual"):
+        assert f'id="{key}"' in html
+    assert 'src="./batch-cover.js"' in html
+    assert "window.openBatchCover=function" in js
+    assert "function currentText()" in js and "function allText()" in js
+    assert '"batch_cover_info"' in js

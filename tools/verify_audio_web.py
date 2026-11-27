@@ -117,6 +117,11 @@ def main():
             desktop.screenshot(path=str(OUTPUT / "audio-dashboard-desktop.png"), full_page=True)
             desktop.locator("#queue-body tr").first.get_by_role("button", name="進度").wait_for()
             assert desktop.locator("#queue-body tr").first.get_by_role("button", name="進度").is_enabled()
+            desktop.locator('#queue-body tr').first.locator('input[type="checkbox"]').check()
+            desktop.locator("#batch-cover-btn").click()
+            assert desktop.locator("#batch-cover-dialog").is_visible()
+            assert desktop.locator("#batch-cover-book-list button").count() == 1
+            desktop.locator("#batch-cover-close").click()
             desktop.locator("#queue-body tr").first.get_by_role("button", name="進度").click()
             assert desktop.locator("#progress-dialog").is_visible()
             desktop.locator("#progress-close").click()

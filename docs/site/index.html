@@ -36,9 +36,11 @@
 <button id="batch-complete" class="secondary">標記完成</button>
 <button id="batch-delete" class="secondary">刪除選取</button>
 <button id="batch-export" class="secondary">批次下載選取作品</button>
+<button id="batch-cover-btn" class="secondary">批次封面資訊</button>
 </div>
 <div class="table-wrap"><table><thead><tr><th>順序 / 小說</th><th>章節</th><th>執行狀態</th><th>TXT / 封面 / 影片</th><th>操作</th></tr></thead><tbody id="queue-body"><tr><td colspan="5" class="empty">連線後載入佇列</td></tr></tbody></table></div>
-<div class="section-head"><h2>已完成作品</h2><div class="inline-actions"><button id="batch-export-completed" class="secondary">下載勾選成品</button><button id="batch-restore" class="secondary">將勾選作品移回待製作</button></div></div><div id="completed-list" class="completed"><p class="muted">尚無資料</p></div>
+<div class="section-head"><h2>已完成作品</h2><div class="inline-actions"><button id="batch-export-completed" class="secondary">下載勾選成品</button>
+<button id="batch-cover-completed" class="secondary">批次封面資訊</button><button id="batch-restore" class="secondary">將勾選作品移回待製作</button></div></div><div id="completed-list" class="completed"><p class="muted">尚無資料</p></div>
 </section>
 <section id="create" class="tab">
 <div class="section-head"><div><h2>新增小說至製作佇列</h2><p>可先從指定網站解析目錄，檢查書名、章數與章節排序，再正式新增。</p></div></div>
@@ -157,6 +159,21 @@
 </div>
 <div class="dialog-actions"><button type="button" class="secondary" id="edit-cancel">取消</button><button type="submit">儲存任務</button></div>
 </form></dialog>
+<dialog id="batch-cover-dialog" class="editor-dialog batch-cover-dialog" aria-labelledby="batch-cover-title">
+<h2 id="batch-cover-title">批次封面資訊＋手動封面</h2>
+<p class="muted">選取左側小說，查看 Gemini 故事／視覺分析和 HF Prompt；生成與保存交由 GitHub Actions，網頁沒有 API 金鑰。</p>
+<div class="inline-actions"><button id="batch-cover-generate" type="button">產生選取小說的封面資訊</button>
+<label>匯入 Actions 結果 JSON／ZIP<input id="batch-cover-result-file" type="file" accept=".json,.zip,application/json,application/zip"></label>
+<a href="https://github.com/hub-google/audiobook-generator/actions/workflows/audio-batch-cover-info.yml" target="_blank" rel="noopener noreferrer">查看封面資訊執行紀錄</a></div>
+<p id="batch-cover-summary" class="muted">選擇小說後可以在 GitHub 產生封面資訊。</p>
+<div class="batch-cover-layout"><div id="batch-cover-book-list" class="batch-cover-list" aria-label="選取小說"></div>
+<div class="batch-cover-right"><h3 id="batch-cover-selected-title">小說資訊</h3><div class="review-texts">
+<div><strong>Gemini 小說架構／視覺分析</strong><pre id="batch-cover-analysis">等待資料</pre></div>
+<div><strong>HF 生圖 Prompt</strong><pre id="batch-cover-prompt">等待資料</pre></div></div>
+<button id="batch-cover-manual" type="button" class="secondary">替選取小說更換手動封面</button></div></div>
+<div class="dialog-actions"><button id="batch-cover-copy-current" type="button" class="secondary">複製目前資料</button>
+<button id="batch-cover-copy-all" type="button" class="secondary">複製全部小說資訊</button>
+<button id="batch-cover-close" type="button" class="secondary">關閉</button></div></dialog>
 <dialog id="manual-cover-dialog" class="editor-dialog" aria-labelledby="manual-cover-title">
 <h2 id="manual-cover-title">手動封面 · 1280×720</h2>
 <p id="manual-cover-book" class="muted"></p>
@@ -217,5 +234,5 @@
 <footer>資料由 GitHub API 即時讀取；GitHub Pages 不會在瀏覽器執行 Python、TTS 或影片轉檔。</footer>
 </main>
 </div>
-<script src="./app.js" defer></script><script src="./bridge.js" defer></script><script src="./cleaner-parity.js" defer></script><script src="./review-inspector.js" defer></script><script src="./manual-cover.js" defer></script>
+<script src="./app.js" defer></script><script src="./bridge.js" defer></script><script src="./cleaner-parity.js" defer></script><script src="./review-inspector.js" defer></script><script src="./manual-cover.js" defer></script><script src="./batch-cover.js" defer></script>
 </body></html>

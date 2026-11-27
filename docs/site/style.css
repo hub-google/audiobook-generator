@@ -25,3 +25,11 @@
 .chapter-reorder button{font-size:12px;padding:5px 7px}
 .chapter-pages{justify-content:space-between}
 @media(max-width:780px){.chapter-columns{display:none}.chapter-item{grid-template-columns:26px 26px 1fr}.chapter-reorder{grid-column:3}.chapter-reorder button{font-size:11px}}
+
+.batch-cover-dialog{width:min(1150px,calc(100vw - 18px))}
+.batch-cover-layout{display:grid;grid-template-columns:250px minmax(0,1fr);gap:14px;margin:14px 0}
+.batch-cover-list{display:flex;flex-direction:column;gap:6px;overflow:auto;max-height:500px;border:1px solid #dce5f1;border-radius:12px;padding:8px}
+.batch-cover-list button{white-space:normal;text-align:left}
+.batch-cover-list button.selected{border-color:#2865d6;background:#edf3ff}
+.batch-cover-right{min-width:0}
+@media(max-width:780px){.batch-cover-layout{grid-template-columns:1fr}.batch-cover-list{max-height:150px}}
