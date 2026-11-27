@@ -426,3 +426,16 @@ def test_progress_dialog_live_readonly_sync_and_manual_jobs_refresh():
     assert 'bind("progress-refresh-now","click",()=>pollProgressNow(true))' in app
     assert "progressGeneration++;progressTaskId=null" in app
     assert "GitHub unauthenticated REST quota" in app
+
+
+def test_cover_review_requires_manifest_sha256_and_matching_task():
+    js=(ROOT/"docs/site/review-inspector.js").read_text(encoding="utf-8")
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    assert 'id="review-drop-zone"' in html
+    assert 'id="review-drop-files"' in html
+    assert 'id="review-cover-status"' in html
+    assert 'uniqueZipEntry(entries,"cover-preflight-manifest.json")' in js
+    assert 'm.task_id!==selectedTask' in js
+    assert 'await sha256Hex(imageBytes)!==m.cover_sha256' in js
+    assert 'await sha256Hex(promptBytes)!==m.prompt_sha256' in js
+    assert 'async function loadReviewFiles(files)' in js

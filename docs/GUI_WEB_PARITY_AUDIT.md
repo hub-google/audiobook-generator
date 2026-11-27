@@ -61,3 +61,8 @@
 - 第 98 次 GitHub Actions 45944624153：後端回歸與桌面／手機 Chromium 驗收成功，涵蓋進度視窗唯讀刷新。
 - 第 45 次 Pages 部署 45944624162：成功，提交 74fef611474787828a7de92552163e1c3e1f8275。
 - 目前尚不能宣稱全 GUI 100% 一致：Issue 送出、原始 TXT/封面 Artifact 下載匯入、手動封面圖片 GitHub 提交、完整 Worker marker、正式全書→YouTube E2E 仍與 GUI 不同或缺乏正式驗收。
+
+## 封面審核完整性修正
+- Browser 審核封面新增原始 cover-preflight-manifest.json 核對：artifact_role/schema_version、task_id、master_cover.jpg SHA-256、master_cover_prompt.json SHA-256；不符就拒絕顯示錯誤小說或遭變更的封面。
+- TXT 與 Cover 審核資料支援拖放多個 ZIP／JSON，一次讀入、在瀏覽器本機解壓，不向 GitHub Pages 上傳原文或將 Secrets 放入 JavaScript。
+- 對於 GitHub 原生 Artifact 仍需 GitHub 授權後下載；純靜態 Pages 不會繞過 GitHub 下載權限。

@@ -59,3 +59,9 @@
  #queue-body td .actions{max-width:none;flex-wrap:wrap;gap:7px}
  #queue-body td .actions button{white-space:normal}
 }
+
+.review-drop-zone{padding:18px;margin:12px 0;border:2px dashed #9cb0ca;border-radius:12px;text-align:center;background:rgba(139,166,198,.06)}
+.review-drop-zone.is-dragover{border-color:#266eb8;background:rgba(65,140,212,.13)}
+.review-drop-zone label{display:block;font-weight:650;cursor:pointer;margin-bottom:7px}
+.review-drop-zone input{max-width:100%;font-size:12px}
+.review-drop-zone small{display:block;margin-top:7px;color:#66758d}

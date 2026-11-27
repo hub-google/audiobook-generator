@@ -197,7 +197,12 @@
 </dialog>
 <dialog id="review-dialog" class="editor-dialog review-wide" aria-labelledby="review-title">
 <form id="review-form"><h2 id="review-title">文字清理、Raw/Clean 抽查與封面審核</h2>
-<p class="muted">和桌面 GUI 一樣，以本次 GitHub Artifact 的實際章節文字及封面為審核依據。下載後匯入 ZIP／JSON；文字只在瀏覽器本機處理，不會上傳至 GitHub Pages。</p>
+<p class="muted">以本次 GitHub Artifact 的實際章節文字及封面為依據。可把 TXT 與封面 ZIP 一次拖入下方；檔案僅在本機瀏覽器解壓及驗證，不上傳到 GitHub Pages。</p>
+<div id="review-drop-zone" class="review-drop-zone">
+<label for="review-drop-files">將 TXT／封面審核 ZIP 拖到這裡，或點擊選取檔案（可多選）</label>
+<input id="review-drop-files" type="file" accept=".zip,.json" multiple>
+<small>封面須含與目前任務相符的 Manifest、圖片與 Prompt SHA-256</small>
+</div>
 <div class="review-files">
 <a id="review-scrape-link" target="_blank" rel="noopener noreferrer">開啟 TXT 審核 Run，下載 scrape-review Artifact</a>
 <label>匯入廣告報告 JSON 或 Artifact ZIP<input id="review-report-file" type="file" accept=".json,.zip,application/json,application/zip"></label>
@@ -233,7 +238,8 @@
 <p class="muted">Clean 依原 cleaner.py 的正規化、固定字詞、開頭過濾與語義分段邏輯即時計算。更改規則後立即重新檢視；最終 TTS 仍以雲端執行結果為準。</p>
 </section></div>
 <section class="review-cover"><h3>封面圖、Gemini 故事資訊與 HF Prompt</h3>
-<img id="review-cover-preview" alt="GitHub Artifact 中的封面" hidden>
+<img id="review-cover-preview" alt="已驗證 GitHub Artifact 的封面" hidden>
+<p id="review-cover-status" class="muted">尚未核對封面 Manifest</p>
 <div class="review-texts"><div><strong>小說介紹／視覺分析</strong><pre id="review-cover-analysis">尚未載入</pre></div>
 <div><strong>HF 生圖 Prompt</strong><pre id="review-cover-prompt">尚未載入</pre></div></div>
 <button type="button" id="review-copy-prompt" class="secondary">複製 HF Prompt</button>
