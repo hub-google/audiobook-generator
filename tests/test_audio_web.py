@@ -295,3 +295,33 @@ def test_gui_chapter_drag_and_keyboard_reorder_and_double_click_edit():
     assert 'bind("chapter-list","keydown"' in js
     assert 'tr.addEventListener("dblclick"' in js
     assert 'openEditor(task.task_id)' in js
+
+
+def test_catalog_preview_restores_saved_desktop_profile():
+    """Web chapter preview and desktop GUI share the same saved book settings."""
+    from src.book_profiles import empty_profiles, update_book_profile
+    from tools.web_catalog_preview import build_preview
+    catalog_url = "https://69shuba.com/book/123/"
+    data = update_book_profile(
+        empty_profiles(), catalog_url, "Example",
+        chapter_title_overrides={"2": "第二章 保留的編輯"},
+        chapter_normalized_number_overrides={"2": "2.5"},
+        duplicate_detection={
+            "use_normalized_number": True,
+            "use_chapter_name": False,
+            "use_number_and_name": True,
+        },
+    )
+    mock_catalog = {
+        "success": True, "catalog_url": catalog_url, "book_title": "Example",
+        "source_id": "shuba69", "total_chapters": 3, "catalog_identity": "abc",
+        "chapter_titles": ["第一章 原文", "第二章 原文", "第三章 其他"],
+        "chapters": ["url1", "url2", "url3"],
+    }
+    with patch("tools.web_catalog_preview.parse_catalog", return_value=mock_catalog):
+        result = build_preview(catalog_url, data)
+    assert result["chapter_titles"][1] == "第二章 保留的編輯"
+    assert result["chapter_parts"][1]["name"] == "保留的編輯"
+    assert result["profile_defaults"]["chapter_normalized_number_overrides"] == {"2": "2.5"}
+    assert result["profile_defaults"]["duplicate_detection"]["use_chapter_name"] is False
+    assert len(result["chapter_titles"]) == 3

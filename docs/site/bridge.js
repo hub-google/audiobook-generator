@@ -168,8 +168,14 @@
   // Match desktop GUI: select the complete book and reset previous book state.
   $("start-chapter").value=1;$("end-chapter").value=data.total_chapters;
   for(const id of ["excluded","title-overrides","number-overrides","chapter-order"])$(id).value="";
+  const defaults=data.profile_defaults||{};
+  $("title-overrides").value=formatOverrides(defaults.chapter_title_overrides||{});
+  $("number-overrides").value=formatOverrides(defaults.chapter_normalized_number_overrides||{});
   $("renumber").checked=true;
-  $("duplicate-number").checked=true;$("duplicate-name").checked=true;$("duplicate-pair").checked=false;
+  const detection=defaults.duplicate_detection||{};
+  $("duplicate-number").checked=detection.use_normalized_number!==false;
+  $("duplicate-name").checked=detection.use_chapter_name!==false;
+  $("duplicate-pair").checked=!!detection.use_number_and_name;
   const box=$("catalog-preview");box.replaceChildren();
   const title=document.createElement("strong");title.textContent=data.book_title+" · "+data.total_chapters+" 章";box.append(title);
   const ul=document.createElement("ul");

@@ -150,6 +150,7 @@ def main():
             desktop.locator("#start-chapter").fill("2")
             desktop.locator("#end-chapter").fill("3")
             desktop.locator("#excluded").fill("2")
+            desktop.locator("details.advanced summary").click()
             desktop.locator("#title-overrides").fill("2 | 舊小說")
             desktop.locator("#number-overrides").fill("2 | 8")
             desktop.locator("#chapter-order").fill("3")

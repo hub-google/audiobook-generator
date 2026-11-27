@@ -19,6 +19,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: "解析小說章節目錄"
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CATALOG_URL: ${{ inputs.catalog_url }}
           REQUEST_ID: ${{ inputs.request_id }}
         run: python -m tools.web_catalog_preview --url "$CATALOG_URL" --request-id "$REQUEST_ID"
