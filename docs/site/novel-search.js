@@ -93,7 +93,7 @@
    excluded_chapters:[],renumber_selected:true
   }));
   await window.addTasks(books);
-  say("已開啟 GitHub 新增確認頁，請按 Submit new issue；確認完成後才會送入製作佇列。");
+  say("已送入站內雲端操作佇列，請查看本頁操作狀態。");
  }
  const SEARCH_API="https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-novel-search";
  let searchController=null;
