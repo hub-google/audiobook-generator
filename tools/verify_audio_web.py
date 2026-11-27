@@ -165,7 +165,7 @@ def main():
             desktop.screenshot(path=str(OUTPUT / "audio-create-desktop.png"), full_page=True)
             desktop.locator('[data-tab="overview"]').click()
             assert desktop.locator("#token").count() == 0
-            assert desktop.locator("#connection-pill").inner_text() == "GitHub 登入操作"
+            assert desktop.locator("#connection-pill").count() == 1
             desktop.evaluate("""() => {
               window.__issueUrls=[];
               window.open=()=>({
@@ -175,6 +175,40 @@ def main():
                 });}},
                 close(){}
               });
+            }""")
+            # Same-page queue backend; no GitHub tabs or privileged browser credentials.
+            requests_seen = []
+            def command_mock(route):
+                import uuid
+                path = route.request.url.split("?",1)[0]
+                if path.endswith("/submit"):
+                    body = route.request.post_data_json
+                    requests_seen.append(body)
+                    result = {"ok":True,"request":{"request_id":str(uuid.uuid4()),"status":"pending"}}
+                    code = 202
+                elif path.endswith("/status"):
+                    result = {"requests":[]}
+                    code = 200
+                elif path.endswith("/upload"):
+                    result = {"ok":True,"cover_key":"00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000002.jpg"}
+                    code = 200
+                else:
+                    result = {"error":"Not mocked"}
+                    code = 404
+                route.fulfill(status=code,content_type="application/json",
+                              headers={"Access-Control-Allow-Origin":"*"},
+                              body=json.dumps(result,ensure_ascii=False))
+            desktop.route("https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-web-commands/**", command_mock)
+            desktop.evaluate("""() => {
+              window.audioAuth.ensure=async()=>{};
+              window.audioAuth.token=async()=>"local-user-jwt";
+              window.__webCommands=[];
+              const original=window.fetch.bind(window);
+              window.fetch=(url,options={})=>{
+                if(String(url).includes("audio-web-commands/submit"))
+                  window.__webCommands.push(JSON.parse(options.body).op);
+                return original(url,options);
+              };
             }""")
             desktop.locator('[data-tab="create"]').click()
             # Nine-site search and multi-selection are exercised in Chromium.
@@ -209,8 +243,8 @@ def main():
             assert desktop.evaluate("window.__issueUrls") == [], "加入待新增清單不可開新分頁"
             desktop.screenshot(path=str(OUTPUT / "audio-search-multiselect-desktop.png"),full_page=True)
             desktop.locator("#novel-search-add-queue").click()
-            # Search itself creates no Issue; the explicit batch-add action creates one.
-            assert len(desktop.evaluate("window.__issueUrls")) == 1
+            desktop.wait_for_function("window.__webCommands.includes('batch_add')",timeout=15000)
+            assert desktop.evaluate("window.__issueUrls") == [], "批次新增不得開啟外部視窗"
             desktop.locator("#novel-search-edit-one").click()
             assert desktop.locator("#book-title").input_value() == "詭秘之主"
             assert desktop.locator("#catalog-url").input_value() == "https://69shuba.com/book/123/"
@@ -279,9 +313,8 @@ def main():
             assert desktop.locator("#excluded").input_value() == "2"
             assert desktop.locator("#book-form").evaluate("(el) => el.checkValidity()"), "Create form is incomplete"
             desktop.locator("#book-form button[type=submit]").click()
-            desktop.wait_for_function("window.__issueUrls.length >= 1", timeout=7000)
-            assert any("/issues/new?" in x["url"] for x in desktop.evaluate("window.__issueUrls")), repr(desktop.evaluate("window.__issueUrls"))
-            assert any("AUDIO-COMMAND-V1" in x["url"] for x in desktop.evaluate("window.__issueUrls"))
+            desktop.wait_for_function("window.__webCommands.includes('enqueue')",timeout=15000)
+            assert desktop.evaluate("window.__issueUrls") == [], "新增小說不得開 GitHub"
             desktop.locator('[data-tab="overview"]').click()
             desktop.locator("#queue-body tr").first.get_by_role("button", name="編輯").click()
             assert desktop.locator("#edit-dialog").is_visible()
@@ -302,8 +335,8 @@ def main():
             desktop.screenshot(path=str(OUTPUT / "audio-task-editor.png"), full_page=True)
             desktop.locator("#edit-form button[type=submit]").click()
             desktop.locator("#edit-dialog").wait_for(state="hidden")
-            desktop.wait_for_function("window.__issueUrls.length >= 2")
-            assert any("/issues/new?" in x["url"] for x in desktop.evaluate("window.__issueUrls"))
+            desktop.wait_for_function("window.__webCommands.includes('edit')",timeout=15000)
+            assert desktop.evaluate("window.__issueUrls") == []
             desktop.locator("#queue-body tr").nth(1).get_by_role(
                 "button", name="確認審核並繼續").click()
             assert desktop.locator("#review-dialog").is_visible()
@@ -389,47 +422,34 @@ def main():
             desktop.screenshot(path=str(OUTPUT / "audio-review-editor.png"), full_page=True)
             desktop.locator("#review-form button[type=submit]").click()
             desktop.locator("#review-dialog").wait_for(state="hidden")
-            desktop.wait_for_function("window.__issueUrls.length >= 3")
+            desktop.wait_for_function("window.__webCommands.includes('review')",timeout=15000)
             desktop.locator("#queue-body tr").first.get_by_role("button", name="進度").click()
             assert desktop.locator("#progress-dialog").is_visible()
             assert "原創測試小說" in desktop.locator("#progress-detail").inner_text()
             desktop.locator("#progress-close").click()
             desktop.locator("#queue-body tr").nth(2).get_by_role(
                 "button", name="取消本次 Run").click()
-            desktop.wait_for_function("window.__issueUrls.length >= 4")
+            desktop.wait_for_function("window.__webCommands.includes('cancel')",timeout=15000)
             desktop.locator("#queue-body tr").first.get_by_role(
                 "button", name="標為已完成").click()
-            desktop.wait_for_function("window.__issueUrls.length >= 5")
-            # Large chapter plans are compressed into a GitHub Issue instead of
-            # failing at the prior 25k-character frontend ceiling.
-            packed_result=desktop.evaluate("""async () => {
-                const savedOpen=window.open;
-                let opened="",redirected="";
-                window.open=url=>{
-                  opened=String(url);
-                  return {opener:null,location:{replace:url=>redirected=String(url)},close(){}};
-                };
-                try{
-                  const url=await window.audioIssueAction("ping",{
-                    chapters:Array.from({length:8000},(_,i)=>i+1)
-                  },"大型章節壓縮測試");
-                  return {opened,redirected,url};
-                }finally{window.open=savedOpen;}
+            desktop.wait_for_function("window.__webCommands.includes('complete')",timeout=15000)
+            # Large chapter operations are posted directly to the protected backend.
+            command_id=desktop.evaluate("""async () => {
+              const sample=Array.from({length:8000},(_,i)=>i+1);
+              const id=await window.audioIssueAction("ping",{chapters:sample},"大型章節測試");
+              return {id,opened:window.__issueUrls.length};
             }""")
-            assert packed_result["opened"] == "about:blank"
-            assert packed_result["redirected"] == packed_result["url"]
-            from urllib.parse import urlsplit,parse_qs
-            import gzip,re
-            from base64 import urlsafe_b64decode
-            assert len(packed_result["url"])<25000
-            issue_body=parse_qs(urlsplit(packed_result["url"]).query)["body"][0]
-            encoded=re.search(r"AUDIO-COMMAND-V1:([A-Za-z0-9_-]+):AUDIO-COMMAND-V1",issue_body).group(1)
-            raw=urlsafe_b64decode(encoded+"="*((-len(encoded))%4))
-            command=json.loads(gzip.decompress(raw))
-            assert len(command["data"]["chapters"])==8000
+            assert command_id["id"] and command_id["opened"] == 0
+            assert any(entry.get("op") == "ping" and
+                len(entry.get("data",{}).get("chapters",[])) == 8000
+                for entry in requests_seen), "Complete chapter payload never reached backend"
             assert not mock_writes, "Pages must not send a privileged GitHub API PUT"
             desktop.locator('[data-tab="runs"]').click()
             assert desktop.locator("#runs").is_visible()
+            desktop.locator('#runs a[href*="github.com"]').first.click()
+            assert desktop.locator("#audio-external-details").is_visible(), "外部連結應在站內顯示"
+            assert desktop.evaluate("window.__issueUrls") == []
+            desktop.locator("#audio-reference-close").click()
             mobile = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=1,
                                       is_mobile=True, has_touch=True)
             mobile.on("pageerror", lambda error: errors.append(str(error)))
