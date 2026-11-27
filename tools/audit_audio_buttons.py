@@ -104,6 +104,13 @@ def main():
                 elif path.endswith("/upload"):
                     data={"cover_key":"00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000002.jpg"}
                     status=200
+                elif path.endswith("/asset"):
+                    from urllib.parse import parse_qs,urlsplit
+                    idx=parse_qs(urlsplit(route.request.url).query)["asset_id"][0]
+                    content=b"PK" if idx=="101" else b"DATA"
+                    route.fulfill(status=200,body=content,content_type="application/zip",
+                                  headers={"Access-Control-Allow-Origin":"*"})
+                    return
                 else:
                     data={"error":"Unsupported mock"};status=404
                 route.fulfill(status=status,content_type="application/json",
@@ -116,6 +123,27 @@ def main():
               window.audioAuth.ensure=async()=>{};
               window.audioAuth.token=async()=>"mock-user-token";
             }""")
+            multipart=page.evaluate("""async () => {
+              const good=window.audioAssetGroups([
+                {id:102,filename:"book.zip.part00002-of-00002",bytes:4},
+                {id:101,filename:"book.zip.part00001-of-00002",bytes:2}
+              ]);
+              if(good.length!==1||good[0].parts[0].id!==101)throw Error("multipart sorting failed");
+              let incomplete=false;
+              try {
+                window.audioAssetGroups([{id:101,filename:"book.zip.part00001-of-00002",bytes:2}]);
+              }catch(e){incomplete=String(e.message).includes("未完整");}
+              if(!incomplete)throw Error("incomplete multipart accepted");
+              window.__storedBytes=[];
+              window.showSaveFilePicker=async()=>({createWritable:async()=>({
+                write:async blob=>window.__storedBytes.push(await blob.text()),
+                close:async()=>{},abort:async()=>{}
+              })});
+              await window.audioSaveAssetGroup(good[0]);
+              return window.__storedBytes.join("");
+            }""")
+            assert multipart=="PKDATA", "Browser did not rebuild ZIP parts in order"
+            passed.append("multipart-zip-private-download")
             def verify_stayed(control):
                 urls=page.evaluate("window.__externalAttempts")
                 if urls: raise AssertionError(f"{control}: window.open called with {urls}")
