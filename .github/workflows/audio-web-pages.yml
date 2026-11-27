@@ -81,6 +81,12 @@ jobs:
                   assert 'type="password"' not in html and 'github-token' not in html, "login UI returned"
                   js=requests.get(url+"bridge.js?verify="+str(time.time_ns()),timeout=20)
                   assert js.status_code==200 and "trackSubmitted" in js.text, "site bridge is stale"
+                  # Formal-site proof for H21/H23 (not just local mocked Chromium).
+                  assert 'id="review-manage-patterns"' in html, "deployed H21 keyword manager missing"
+                  review_js=requests.get(url+"review-inspector.js?verify="+str(time.time_ns()),timeout=20)
+                  assert review_js.status_code==200, "deployed review-inspector.js missing"
+                  assert 'review-manage-patterns' in review_js.text, "H21 rule navigation not deployed"
+                  assert '疑似殘留：' in review_js.text and 'Array.from(raw.trim())' in review_js.text, "H23 GUI parity not deployed"
                   api=requests.get(
                       "https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-web-commands/status",
                       timeout=20,headers={"Origin":"https://hub-google.github.io"})
