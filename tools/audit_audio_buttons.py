@@ -179,6 +179,13 @@ def main():
             assert "HF：" in page.locator("#selected-task-status").inner_text()
             attempt_button("#selected-task-progress")
             attempt_button("#selected-task-edit")
+            attempt_button("#gui-cover-review",keep_dialog=True)
+            assert page.locator("#gui-cover-pane").is_visible()
+            assert page.locator("#gui-replace-cover").is_enabled()
+            attempt_button("#review-cancel")
+            attempt_button("#gui-text-review",keep_dialog=True)
+            assert page.locator("#gui-candidate-pane").is_visible()
+            attempt_button("#review-cancel")
 
             for name in ["batch-up","batch-down","batch-pause","batch-resume",
                          "batch-complete","batch-delete","batch-export","batch-cover-btn"]:

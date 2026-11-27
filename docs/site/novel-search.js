@@ -3,7 +3,7 @@
 (function(){
  const byId=id=>document.getElementById(id);
  const selected=new Map(), staged=new Map();
- let current=[],searchGeneration=0,focusedUrl="";
+ let current=[],searchGeneration=0,focusedUrl="",submitting=false;
  const say=message=>{byId("novel-search-status").textContent=message;};
  const nameOf=sid=>SOURCES.find(s=>s.id===sid)?.name||sid;
  const validNovel=item=>{
@@ -52,7 +52,7 @@
   const list=byId("novel-search-staged-list");list.replaceChildren();
   byId("novel-search-staging").classList.toggle("hidden",staged.size===0);
   byId("novel-search-staged-count").textContent="已加入 "+staged.size+" 本（尚未送出製作）";
-  byId("novel-search-add-queue").disabled=staged.size===0;
+  byId("novel-search-add-queue").disabled=submitting||staged.size===0;
   byId("novel-search-edit-one").disabled=staged.size===0;
   if(!staged.has(focusedUrl))focusedUrl=staged.keys().next().value||"";
   for(const novel of staged.values()){
@@ -87,13 +87,15 @@
   say("已帶入「"+novel.book_title+"」，請按「解析網站目錄」取得全書章節，再設定並加入佇列。");
  }
  async function addQueue(){
+  if(submitting)return;
   if(!staged.size)throw Error("請先將搜尋結果加入待新增清單");
   const books=Array.from(staged.values(),n=>({
    catalog_url:n.catalog_url,book_title:n.book_title,start_chapter:1,end_chapter:null,
    excluded_chapters:[],renumber_selected:true
   }));
-  await window.addTasks(books);
-  say("已送入站內雲端操作佇列，請查看本頁操作狀態。");
+  submitting=true;renderStage();
+  try{const request=await window.addTasks(books);if(!request){say("新增未成功送出，已保留待新增清單。");return;}for(const book of books)staged.delete(book.catalog_url);say("已送出 "+books.length+" 本小說，等待 GitHub 解析目錄並寫入正式佇列。");switchTab("overview");setQueueView("pending");}
+  finally{submitting=false;renderStage();}
  }
  const SEARCH_API="https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-novel-search";
  let searchController=null;

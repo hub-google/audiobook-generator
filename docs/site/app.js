@@ -119,13 +119,8 @@ function renderSelectedTaskStatus(){
   if(t.reason)lines.push("原因："+t.reason);
   text(el,lines.join("\n"));
  }
- $("selected-task-progress").disabled=!t;
- $("selected-task-edit").disabled=!t||!canEditTask(t);
- $("gui-cover-review").disabled=!t||!t.cover_run_id||t.stages?.cover?.status!=="completed";
- $("gui-text-review").disabled=!t||!t.scrape_run_id||t.stages?.scrape?.status!=="completed";
- $("gui-start-processing").disabled=!t||t.status!=="waiting_review"||t.workflow_phase!=="preflight"||t.ad_review?.status!=="approved";
- $("gui-requeue").disabled=!t||!["paused","interrupted","stopped","waiting_retry","needs_attention"].includes(t.status);
- $("gui-cancel-run").disabled=!t||!live(t)||t.status==="canceling";
+ // Keep GUI controls clickable; explain actual prerequisites on click instead of silent disabled buttons.
+ for(const id of ["selected-task-progress","selected-task-edit","gui-cover-review","gui-text-review","gui-start-processing","gui-requeue","gui-cancel-run"])$(id).disabled=false;
 }
 function resetCreateForm(){
  parsedCatalog=null;chapterPickerExcluded=null;chapterPickerOrder=null;
@@ -899,14 +894,15 @@ document.addEventListener("DOMContentLoaded",()=>{
   else selectedPending.add(t.task_id);
  }renderQueue();});
  bind("queue-clear","click",()=>{selectedPending.clear();renderQueue();});
- bind("selected-task-progress","click",()=>{const t=selectedTask();if(t)return showProgress(t.task_id);});
- bind("gui-cover-review","click",()=>{const t=selectedTask();if(t)return window.openReview(t.task_id,"cover");});
- bind("gui-text-review","click",()=>{const t=selectedTask();if(t)return window.openReview(t.task_id,"text");});
- bind("gui-start-processing","click",async()=>{const t=selectedTask();if(!t||t.ad_review?.status!=="approved"||t.status!=="waiting_review")throw Error("請先確認文字清理設定");return window.audioIssueAction("review",{task_id:t.task_id,start_only:true},"開始第二階段後製");});
- bind("gui-requeue","click",()=>{const t=selectedTask();if(t)return window.requeueTask(t.task_id);});
- bind("gui-cancel-run","click",()=>{const t=selectedTask();if(t)return window.cancelRunningTask(t.task_id);});
+ const requireOne=()=>{let t=selectedTask();if(!t&&selectedPending.size===0&&selectedCompleted.size===0&&queueTasks().length===1&&!$("gui-pending-pane").classList.contains("hidden")){t=queueTasks()[0];selectedPending.add(t.task_id);updateBatchStatus();}if(!t)throw Error("請先選取一本小說");return t;};
+ bind("selected-task-progress","click",()=>showProgress(requireOne().task_id));
+ bind("gui-cover-review","click",()=>window.openReview(requireOne().task_id,"cover"));
+ bind("gui-text-review","click",()=>window.openReview(requireOne().task_id,"text"));
+ bind("gui-start-processing","click",async()=>{const t=requireOne();if(t.stages?.scrape?.status!=="completed"||t.stages?.cover?.status!=="completed")throw Error("TXT 或封面尚未完成，請先重新排程或補齊封面");if(t.ad_review?.status!=="approved"){window.openReview(t.task_id,"text");return;}if(t.status!=="waiting_review"||t.workflow_phase!=="preflight")throw Error("目前任務狀態無法開始第二階段後製");return window.audioIssueAction("review",{task_id:t.task_id,start_only:true},"開始第二階段後製");});
+ bind("gui-requeue","click",()=>{const t=requireOne();if(live(t))throw Error("請先取消正在執行的 Run");if(t.status==="completed")throw Error("請先將已完成作品移回佇列");return window.requeueTask(t.task_id);});
+ bind("gui-cancel-run","click",()=>window.cancelRunningTask(requireOne().task_id));
  bind("gui-batch-add","click",()=>{switchTab("create");$("batch-urls").scrollIntoView({block:"center"});$("batch-urls").focus();});
- bind("selected-task-edit","click",()=>{const t=selectedTask();if(t)return openEditor(t.task_id);});
+ bind("selected-task-edit","click",()=>{const t=requireOne();if(!canEditTask(t))throw Error("此任務目前無法編輯，請先取消 Run 或重新排程");return openEditor(t.task_id);});
  bind("book-form-reset","click",resetCreateForm);
  bind("rank-copy","click",copyRankingUrls);
  loadRanking();

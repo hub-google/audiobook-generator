@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>AUDIO · 有聲小說製作平台</title>
-<link rel="stylesheet" href="./style.css?v=20261127-direct-use8">
+<link rel="stylesheet" href="./style.css?v=20261127-queue-fix9">
 </head>
 <body>
 <div class="layout">
@@ -36,14 +36,14 @@
 <button id="batch-export" class="secondary">批次下載選取作品</button>
 <button id="batch-cover-btn" class="secondary">批次封面資訊</button>
 <button id="gui-batch-add" class="secondary" type="button">批量加入網址</button>
-<button id="gui-requeue" class="secondary" type="button" disabled>重新排程</button>
-<button id="gui-cancel-run" class="secondary" type="button" disabled>取消本次 Run</button>
+<button id="gui-requeue" class="secondary" type="button">重新排程</button>
+<button id="gui-cancel-run" class="secondary" type="button">取消本次 Run</button>
 </div>
-<div class="gui-review-toolbar"><button id="gui-cover-review" type="button" class="secondary" disabled>封面圖／Gemini 小說介紹／HF 生圖 Prompt</button><button id="gui-text-review" type="button" class="secondary" disabled>文字清理／關鍵字審核</button><button id="gui-start-processing" type="button" disabled>開始第二階段後製</button><span class="muted">語音品質檢查：Clean 欄就是 TTS 實際會朗讀的文字</span></div>
+<div class="gui-review-toolbar"><button id="gui-cover-review" type="button" class="secondary">封面圖／Gemini 小說介紹／HF 生圖 Prompt</button><button id="gui-text-review" type="button" class="secondary">文字清理／關鍵字審核</button><button id="gui-start-processing" type="button">開始第二階段後製</button><span class="muted">語音品質檢查：Clean 欄就是 TTS 實際會朗讀的文字</span></div>
 <section class="form-card selected-task-panel" aria-labelledby="selected-task-heading">
 <div class="section-head"><h3 id="selected-task-heading">選取小說目前狀態</h3>
-<div class="inline-actions"><button type="button" class="secondary" id="selected-task-progress" disabled>查看即時進度</button>
-<button type="button" class="secondary" id="selected-task-edit" disabled>編輯章節設定</button></div></div>
+<div class="inline-actions"><button type="button" class="secondary" id="selected-task-progress">查看即時進度</button>
+<button type="button" class="secondary" id="selected-task-edit">編輯章節設定</button></div></div>
 <p class="muted" id="selected-task-status" aria-live="polite">請先從佇列勾選一本小說。</p>
 </section>
 <div class="gui-tabs queue-view-tabs" aria-label="雲端佇列分頁"><button type="button" id="gui-queue-pending-tab" class="secondary" aria-pressed="true">進行中／尚未完成</button><button type="button" id="gui-queue-completed-tab" class="secondary" aria-pressed="false">已完成（Success）</button></div><div id="gui-pending-pane"><div id="queue-table-wrap" class="table-wrap"><table><colgroup><col class="q-position"><col class="q-book"><col class="q-chapter"><col class="q-duplicate"><col class="q-status"><col class="q-verified"><col class="q-hf"><col class="q-youtube"><col class="q-run"><col class="q-actions"></colgroup><thead><tr><th>順位</th><th>小說</th><th>章節</th><th>重複章節</th><th>狀態</th><th>GitHub 查證</th><th>HF</th><th>YouTube</th><th>Run</th><th>操作</th></tr></thead><tbody id="queue-body"><tr><td colspan="10" class="empty">連線後載入佇列</td></tr></tbody></table></div></div>
@@ -311,5 +311,5 @@
 <footer>資料由 GitHub API 即時讀取；GitHub Pages 不會在瀏覽器執行 Python、TTS 或影片轉檔。</footer>
 </main>
 </div>
-<script src="./app.js?v=20261127-direct-use8" defer></script><script src="./bridge.js?v=20261127-direct-use8" defer></script><script src="./novel-search.js?v=20261127-direct-use8" defer></script><script src="./cleaner-parity.js?v=20261127-direct-use8" defer></script><script src="./review-inspector.js?v=20261127-direct-use8" defer></script><script src="./manual-cover.js?v=20261127-direct-use8" defer></script><script src="./batch-cover.js?v=20261127-direct-use8" defer></script><script src="./external-info.js?v=20261127-direct-use8" defer></script><script src="./draft-cover-info.js?v=20261127-direct-use8" defer></script><script src="./cloud-log.js?v=20261127-direct-use8" defer></script>
+<script src="./app.js?v=20261127-queue-fix9" defer></script><script src="./bridge.js?v=20261127-queue-fix9" defer></script><script src="./novel-search.js?v=20261127-queue-fix9" defer></script><script src="./cleaner-parity.js?v=20261127-queue-fix9" defer></script><script src="./review-inspector.js?v=20261127-queue-fix9" defer></script><script src="./manual-cover.js?v=20261127-queue-fix9" defer></script><script src="./batch-cover.js?v=20261127-queue-fix9" defer></script><script src="./external-info.js?v=20261127-queue-fix9" defer></script><script src="./draft-cover-info.js?v=20261127-queue-fix9" defer></script><script src="./cloud-log.js?v=20261127-queue-fix9" defer></script>
 </body></html>

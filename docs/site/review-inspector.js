@@ -235,8 +235,7 @@
  window.openReview=function(id,kind="combined"){
   const t=[...queueTasks(),...(queue?.completed||[])].find(x=>x.task_id===id);
   if(!t||kind==="combined"&&t.status!=="waiting_review")throw Error("小說尚未進入審核");
-  if(kind==="cover"&&(!t.cover_run_id||t.stages?.cover?.status!=="completed"))throw Error("封面 Run 完成後才能查看");
-  if(kind==="text"&&(!t.scrape_run_id||t.stages?.scrape?.status!=="completed"))throw Error("TXT 抓取完成後才能查看");
+  // Show the real GUI panel even if its source files are not ready yet.
   mode=kind;selectedCandidates.clear();lastSelected=null;sortKey="";sortDescending=false;reviewLoadGeneration++;
   taskId=id;bookTitle=t.book_title||"";report=null;coverEvidence=null;
   state.candidateChoices.clear();
@@ -245,7 +244,7 @@
   $("review-dialog").dataset.mode=kind;
   text($("review-title"),(kind==="cover"?"封面圖與小說介紹／HF Prompt":kind==="text"?"文字清理／關鍵字審核":"文字清理、Raw/Clean 抽查與封面審核")+"｜《"+bookTitle+"》");
   $("gui-text-tabs").classList.toggle("hidden",kind!=="text");$("gui-confirm-text").classList.toggle("hidden",kind!=="text");$("gui-confirm-text").disabled=true;
-  $("review-save-only").classList.toggle("hidden",kind!=="combined");$("gui-combined-start").classList.toggle("hidden",kind!=="combined");$("gui-replace-cover").disabled=true;
+  $("review-save-only").classList.toggle("hidden",kind!=="combined");$("gui-combined-start").classList.toggle("hidden",kind!=="combined");$("gui-replace-cover").disabled=!["queued","paused","waiting_review","preparing_assets","needs_attention"].includes(t.status);
   $("review-auto-load").disabled=false;setTextTab("candidates");setCoverTab("analysis");
   for(const field of ["review-report-file","review-cover-file","review-drop-files","review-search"])$(field).value="";
   $("review-kind").value="";$("review-state").value="";
@@ -259,7 +258,9 @@
   $("review-cover-link").href="https://github.com/"+REPO+"/actions/runs/"+t.cover_run_id;
   renderCandidates();renderText();
   text($("review-auto-status"),"可一鍵從 GitHub Actions 安全取得 TXT 與封面審核檔案；不需開啟外站。");
-  void loadCloudReview();
+  const ready=kind==="cover"?t.cover_run_id&&t.stages?.cover?.status==="completed":kind==="text"?t.scrape_run_id&&t.stages?.scrape?.status==="completed":t.cover_run_id&&t.scrape_run_id;
+  if(ready)void loadCloudReview().catch(e=>text($("review-auto-status"),e.message));
+  else{text($("review-auto-status"),kind==="cover"?"封面尚未完成。可選擇圖片／更換封面，或返回佇列重新排程。":"TXT 尚未完成或執行失敗。請返回佇列重新排程；完成後才能取得 Raw／Clean 原文。");$("review-auto-load").disabled=true;}
  };
  function setTextTab(tab){$("gui-candidate-pane").classList.toggle("hidden",mode==="text"&&tab!=="candidates");$("gui-raw-pane").classList.toggle("hidden",mode==="text"&&tab!=="raw");$("gui-text-candidates-tab").setAttribute("aria-pressed",String(tab==="candidates"));$("gui-text-raw-tab").setAttribute("aria-pressed",String(tab==="raw"));}
  function setCoverTab(tab){$("gui-cover-analysis-panel").classList.toggle("hidden",tab!=="analysis");$("gui-cover-prompt-panel").classList.toggle("hidden",tab!=="prompt");$("gui-cover-analysis-tab").setAttribute("aria-pressed",String(tab==="analysis"));$("gui-cover-prompt-tab").setAttribute("aria-pressed",String(tab==="prompt"));}

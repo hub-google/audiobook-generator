@@ -1,6 +1,6 @@
 """Secure AUDIO site-command runner: only GitHub Actions obtains repository credentials.
 
-Commands are submitted to an authenticated Supabase Edge Function and claimed
+Commands are submitted to the existing Edge Function and claimed
 with a GitHub OIDC assertion scoped to this repo and workflow, not a shared
 password. Queue/profile writes reuse the existing validated command handler.
 """
@@ -354,7 +354,7 @@ def process(row, gh_token):
 def main():
     token = os.environ["GITHUB_TOKEN"]
     rows = edge("POST", "/claim", payload={}).get("commands") or []
-    print(f"AUDIO web runner: {len(rows)} claim(s)")
+    print(f"AUDIO web runner: {len(rows)} claim(s); processing queued site requests")
     failed = 0
     for row in rows:
         job_id = row["id"]
