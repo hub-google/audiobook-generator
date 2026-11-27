@@ -64,8 +64,8 @@ def test_advanced_web_editor_and_review_inputs():
     for field in ("title-overrides", "number-overrides", "chapter-order", "edit-dialog", "edit-form", "review-dialog", "review-patterns"):
         assert f'id="{field}"' in html
     assert "function openEditor(id)" in js
-    assert "window.saveEditor=async function(event)" in (ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
-    assert "window.saveReview=async function(event)" in (ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    assert "window.saveEditor=async function(e)" in (ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    assert "window.saveReview=async function(e)" in (ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
     assert 'ref:"master"' not in js
 
 
