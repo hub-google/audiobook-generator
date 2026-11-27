@@ -159,9 +159,17 @@
   }))},"從完本排行新增 "+chosen.length+" 本小說");
  };
  function applyCatalog(data,url){
-  if(data.requested_url!==url)throw Error("目錄結果與請求網址不同");
+  if(data.requested_url!==url||$("catalog-url").value.trim()!==url)throw Error("目錄結果與目前請求網址不同，請重新解析");
+  if(!Number.isSafeInteger(data.total_chapters)||data.total_chapters<1||
+     data.chapter_titles?.length!==data.total_chapters||data.chapter_parts?.length!==data.total_chapters)
+   throw Error("目錄章節不完整，請重新解析");
   parsedCatalog=data;$("catalog-url").value=data.catalog_url;$("book-title").value=data.book_title;
-  $("end-chapter").value=Math.min(10,data.total_chapters);
+  $("source").value=getSource(data.catalog_url).id;
+  // Match desktop GUI: select the complete book and reset previous book state.
+  $("start-chapter").value=1;$("end-chapter").value=data.total_chapters;
+  for(const id of ["excluded","title-overrides","number-overrides","chapter-order"])$(id).value="";
+  $("renumber").checked=true;
+  $("duplicate-number").checked=true;$("duplicate-name").checked=true;$("duplicate-pair").checked=false;
   const box=$("catalog-preview");box.replaceChildren();
   const title=document.createElement("strong");title.textContent=data.book_title+" · "+data.total_chapters+" 章";box.append(title);
   const ul=document.createElement("ul");

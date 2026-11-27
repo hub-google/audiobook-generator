@@ -146,6 +146,34 @@ def main():
             assert desktop.locator("#connection-pill").inner_text() == "GitHub 登入操作"
             desktop.evaluate("window.__issueUrls=[];window.open=(url)=>{window.__issueUrls.push({url:String(url),stack:(new Error()).stack});return null;};void 0;")
             desktop.locator('[data-tab="create"]').click()
+            # Exercise the real catalog response path: desktop defaults to the full book.
+            desktop.locator("#start-chapter").fill("2")
+            desktop.locator("#end-chapter").fill("3")
+            desktop.locator("#excluded").fill("2")
+            desktop.locator("#title-overrides").fill("2 | 舊小說")
+            desktop.locator("#number-overrides").fill("2 | 8")
+            desktop.locator("#chapter-order").fill("3")
+            desktop.locator("#renumber").uncheck()
+            catalog_preview = {
+                "requested_url": "https://czbooks.net/n/demo",
+                "catalog_url": "https://czbooks.net/n/demo",
+                "book_title": "全書驗收", "total_chapters": 120,
+                "chapter_titles": [f"第{i}章" for i in range(1, 121)],
+                "chapter_parts": [{"n": str(i), "d": f"第{i}章", "name": "", "c": ""}
+                                  for i in range(1, 121)],
+            }
+            desktop.route("https://raw.githubusercontent.com/**/web-previews/**", lambda route: route.fulfill(
+                status=200, content_type="application/json",
+                headers={"Access-Control-Allow-Origin": "*"},
+                body=json.dumps(catalog_preview, ensure_ascii=False)))
+            desktop.locator("#parse-btn").click()
+            desktop.get_by_text("完整目錄解析成功，共 120 章").wait_for(timeout=15000)
+            assert desktop.locator("#start-chapter").input_value() == "1"
+            assert desktop.locator("#end-chapter").input_value() == "120"
+            assert desktop.locator("#renumber").is_checked()
+            for field in ("excluded", "title-overrides", "number-overrides", "chapter-order"):
+                assert desktop.locator("#"+field).input_value() == ""
+            desktop.evaluate("window.__issueUrls=[]")
             desktop.locator("#start-chapter").fill("1")
             desktop.locator("#end-chapter").fill("3")
             desktop.evaluate("""() => {
