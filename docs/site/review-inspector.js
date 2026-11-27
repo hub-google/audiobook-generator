@@ -183,7 +183,7 @@
    if(hasTxt){await loadReport(file);txt++;}
    if(hasCover){await loadCover(file);cover++;}
   }
-  notice("已匯入 TXT "+txt+" 份、封面 "+cover+" 份；請檢查 Raw/Clean 與封面內容。");
+  notice("已載入 TXT "+txt+" 份、封面 "+cover+" 份；請檢查 Raw/Clean 與封面內容。");
  }
  window.audioReviewCoverEvidence=function(){
   if(!coverEvidence||coverEvidence.task_id!==taskId)
