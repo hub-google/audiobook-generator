@@ -804,7 +804,7 @@ function setPublishPreset(day,hours){
 function switchTab(which){
  document.querySelectorAll(".tab").forEach(e=>e.classList.toggle("active",e.id===which));
  document.querySelectorAll(".nav").forEach(e=>e.classList.toggle("active",e.dataset.tab===which));
- const headings={overview:["製作總覽","同步 GitHub 雲端佇列與製作進度"],create:["新增小說","支援九個來源，透過雲端解析章節與排程"],runs:["製作紀錄","GitHub Actions 即時執行狀態"],"id-codec":["ID 雙向轉碼","B 欄序號與 C 欄轉碼 ID｜僅本機處理"]};
+ const headings={overview:["製作總覽","同步 GitHub 雲端佇列與製作進度"],create:["新增小說","支援九個來源，透過雲端解析章節與排程"],runs:["製作紀錄","GitHub Actions 即時執行狀態"]};
  text($("page-title"),headings[which][0]);text($("page-subtitle"),headings[which][1]);
 }
 function bind(id,event,fn){const el=$(id);if(el)el.addEventListener(event,e=>Promise.resolve().then(()=>fn(e)).catch(err=>notice(err.message,"error")));}
