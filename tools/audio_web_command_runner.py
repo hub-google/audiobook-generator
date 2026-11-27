@@ -14,6 +14,7 @@ from src.cloud_queue import GitHubQueueStore
 from src.cover_assets import normalize_manual_cover, upload_github_cover
 from tools.audio_issue_command import api, apply_command, valid_id
 
+# All commands remain in the site; GitHub OIDC verifies the processing workflow.
 REPO = "hub-google/audiobook-generator"
 EDGE = "https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-web-commands"
 
