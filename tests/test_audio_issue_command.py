@@ -179,3 +179,75 @@ def test_save_review_rules_only_does_not_approve_or_dispatch():
     assert state["queue"][0].get("ad_review",{}).get("status")!="approved"
     assert 598 in state["web_applied_issue_ids"]
     profiles.mutate.assert_called_once()
+
+
+def test_profile_sync_outbox_recovers_after_failed_github_write():
+    from src.cloud_queue import empty_queue, new_task
+    from src.book_profiles import empty_profiles
+    from tools.audio_issue_command import apply_command
+    state=empty_queue()
+    task=new_task("https://69shuba.com/book/123/", "Old", 1, 3)
+    state["queue"].append(task)
+    class Store:
+        def load(self): return state, None
+        def mutate(self, fn, msg):
+            nonlocal state
+            state=fn(state)
+            return state
+    class Profiles:
+        fail=True
+        value=empty_profiles()
+        writes=0
+        def mutate(self, fn, msg):
+            self.writes+=1
+            if self.fail:
+                raise RuntimeError("Simulated profile network outage")
+            self.value=fn(self.value)
+            return self.value
+    profiles=Profiles()
+    cmd={"op":"edit","data":{"task_id":task["task_id"],"changes":{"book_title":"New"}}}
+    with pytest.raises(RuntimeError, match="network outage"):
+        apply_command(cmd, Store(), profiles, 810, "dummy","owner/repo")
+    assert state["queue"][0]["book_title"] == "New"
+    assert state["web_profile_pending"]["810"][0]["book_title"] == "New"
+    assert 810 in state["web_applied_issue_ids"]
+    profiles.fail=False
+    msg,dispatch=apply_command(cmd, Store(), profiles, 810, "dummy","owner/repo")
+    assert "Already processed" in msg and dispatch is False
+    assert state["web_profile_pending"] == {}
+    assert len(profiles.value["books"]) == 1
+    assert next(iter(profiles.value["books"].values()))["book_title"] == "New"
+
+
+def test_newer_edit_repairs_previous_pending_before_apply():
+    from src.cloud_queue import empty_queue, new_task
+    from src.book_profiles import empty_profiles
+    from tools.audio_issue_command import apply_command
+    state=empty_queue()
+    task=new_task("https://69shuba.com/book/123/", "Old", 1, 3)
+    state["queue"].append(task)
+    class Store:
+        def load(self): return state, None
+        def mutate(self, fn, msg):
+            nonlocal state
+            state=fn(state)
+            return state
+    class Profiles:
+        def __init__(self): self.value=empty_profiles();self.fail=True
+        def mutate(self, fn, msg):
+            if self.fail: raise RuntimeError("Service unavailable")
+            self.value=fn(self.value)
+    ps=Profiles()
+    def edit(issue,title):
+        return apply_command({"op":"edit","data":{"task_id":task["task_id"],
+                             "changes":{"book_title":title}}},Store(),ps,issue,"token","owner/repo")
+    with pytest.raises(RuntimeError):
+        edit(820,"One")
+    with pytest.raises(RuntimeError):
+        edit(821,"Two")
+    assert state["queue"][0]["book_title"] == "One"  # Newer request is blocked safely.
+    ps.fail=False
+    edit(821,"Two")
+    assert state["queue"][0]["book_title"] == "Two"
+    assert next(iter(ps.value["books"].values()))["book_title"] == "Two"
+    assert not state["web_profile_pending"]

@@ -20,7 +20,7 @@ from src.cloud_queue import (
     GitHubQueueStore, new_task, add_tasks, move_tasks, update_task,
     mark_tasks_completed, move_tasks_to_pending, requeue_task_after_active,
     update_task_chapters, delete_task, start_reviewed_processing,
-    confirm_preflight_review, utc_now, normalize_queue
+    confirm_preflight_review, utc_now, normalize_queue, touch
 )
 from src.book_profiles import GitHubBookProfileStore, update_book_profile
 from src.catalog_parser import parse_catalog
@@ -174,6 +174,76 @@ def build_book(entry, issue_number):
     return task
 
 
+
+def sync_pending_profiles(store, profiles):
+    """Durable outbox: never acknowledge a queue/profile write until both persist.
+
+    Each queue transaction records its matching profile changes. A failed
+    GitHub Contents API write can be retried without replaying the queue action.
+    """
+    state, _ = store.load()
+    pending = state.get("web_profile_pending") or {}
+    if not pending:
+        return
+    if profiles is None:
+        raise RuntimeError("Book profile storage is required to complete a pending update")
+    for raw_issue in sorted(pending, key=lambda value: int(value)):
+        changes = pending[raw_issue]
+        for change in changes:
+            profiles.mutate(
+                lambda data, item=change: update_book_profile(
+                    data,
+                    item["catalog_url"],
+                    item["book_title"],
+                    cleaner_remove_patterns=item.get("cleaner_remove_patterns"),
+                    chapter_title_overrides=item.get("chapter_title_overrides"),
+                    chapter_normalized_number_overrides=item.get("chapter_normalized_number_overrides"),
+                    duplicate_detection=item.get("duplicate_detection"),
+                ),
+                f"AUDIO issue #{raw_issue} sync book profile",
+            )
+        def clear_synced(q):
+            q = normalize_queue(q)
+            journal = q.get("web_profile_pending") or {}
+            if raw_issue not in journal:
+                return q
+            if journal[raw_issue] != changes:
+                raise ValueError("Book profile sync journal changed during commit")
+            q["web_profile_pending"] = {key: value for key, value in journal.items()
+                                        if key != raw_issue}
+            return touch(q)
+        store.mutate(clear_synced, f"AUDIO issue #{raw_issue}: profile sync complete")
+
+
+def requested_profile_updates(operation, values, ids, new_books, queue):
+    """Extract precise book settings from a committed queue mutation."""
+    if operation in {"enqueue", "batch_add"}:
+        return [{
+            "catalog_url": task["catalog_url"],
+            "book_title": task["book_title"],
+            "chapter_title_overrides": task.get("chapter_title_overrides"),
+            "chapter_normalized_number_overrides": task.get("chapter_normalized_number_overrides"),
+            "duplicate_detection": task.get("duplicate_detection"),
+        } for task in new_books if (
+            task.get("duplicate_detection") or task.get("chapter_title_overrides")
+            or task.get("chapter_normalized_number_overrides")
+        )]
+    if operation not in {"edit", "review"}:
+        return []
+    task = next(t for t in queue["queue"] if t["task_id"] == ids[0])
+    changes = values.get("changes") or {} if operation == "edit" else {}
+    return [{
+        "catalog_url": task["catalog_url"],
+        "book_title": task["book_title"],
+        "cleaner_remove_patterns": (values.get("remove_patterns") or [])
+            if operation == "review" else None,
+        "chapter_title_overrides": changes.get("chapter_title_overrides") if operation == "edit" else None,
+        "chapter_normalized_number_overrides":
+            changes.get("chapter_normalized_number_overrides") if operation == "edit" else None,
+        "duplicate_detection": checked_detection(changes["duplicate_detection"])
+            if operation == "edit" and "duplicate_detection" in changes else None,
+    }]
+
 def apply_command(command, store, profiles, issue_number, token, repo):
     operation = command["op"]
     values = command.get("data") or {}
@@ -233,8 +303,9 @@ def apply_command(command, store, profiles, issue_number, token, repo):
             json={"ref": "main", "inputs": {"catalog_url": url, "request_id": request_id}})
         return "Started catalog preview " + request_id, False
 
-    # Reject a previously applied issue before parsing, validating, or writing
-    # a book profile. Re-running an old edit must never restore stale settings.
+    # Finish earlier queue/profile transactions before processing newer commands.
+    # This prevents a failed old edit from overwriting a newer book profile.
+    sync_pending_profiles(store, profiles)
     previous, _ = store.load()
     if issue_number in (previous.get("web_applied_issue_ids") or []):
         return f"Already processed issue #{issue_number}", False
@@ -372,44 +443,21 @@ def apply_command(command, store, profiles, issue_number, token, repo):
         if issue_number in applied:
             return q
         result = apply_mutation(q)
+        updates = requested_profile_updates(operation, values, ids, new_books, result)
+        if updates:
+            pending = dict(result.get("web_profile_pending") or {})
+            pending[str(issue_number)] = updates
+            result["web_profile_pending"] = pending
         result["web_applied_issue_ids"] = applied + [issue_number]
         return result
 
-    # Save profile first for edits/reviews, as the desktop GUI persists the
-    # same text-cleaner rules for future runs of this book.
+    # Validate edits before committing; never mutate remote profiles in
+    # pre-validation. After writing the queue + outbox, persist the profiles.
     if operation in {"edit", "review"}:
-        q, _ = store.load()
-        if issue_number in (q.get("web_applied_issue_ids") or []):
-            return f"Already processed issue #{issue_number}", False
-        # Validate the same queue transition before touching its shared profile.
-        # A rejected edit/review must not change future runs of the book.
         from copy import deepcopy
-        apply_mutation(deepcopy(q))
-        task = next((t for t in q["queue"] if t["task_id"] == ids[0]),None)
-        if task is None:
-            raise ValueError("Task not found")
-        profile_changes = (values.get("changes") or {}) if operation=="edit" else {}
-        profiles.mutate(lambda p: update_book_profile(
-            p,task["catalog_url"],profile_changes.get("book_title",task["book_title"]),
-            cleaner_remove_patterns=values.get("remove_patterns") if operation=="review" else None,
-            chapter_title_overrides=profile_changes.get("chapter_title_overrides") if operation=="edit" else None,
-            chapter_normalized_number_overrides=profile_changes.get("chapter_normalized_number_overrides") if operation=="edit" else None,
-            duplicate_detection=checked_detection(profile_changes.get("duplicate_detection")) if operation=="edit" else None,
-        ),f"AUDIO issue #{issue_number} update profile")
-    old, _ = store.load()
-    already_applied = issue_number in (old.get("web_applied_issue_ids") or [])
-    if already_applied:
-        return f"Already processed issue #{issue_number}", False
-    store.mutate(mutate,f"AUDIO issue #{issue_number}: {operation}")
-    if operation in {"enqueue", "batch_add"}:
-        for task in new_books:
-            if task.get("duplicate_detection") or task.get("chapter_title_overrides") or task.get("chapter_normalized_number_overrides"):
-                profiles.mutate(lambda p, t=task: update_book_profile(
-                    p, t["catalog_url"], t["book_title"],
-                    duplicate_detection=t.get("duplicate_detection"),
-                    chapter_title_overrides=t.get("chapter_title_overrides"),
-                    chapter_normalized_number_overrides=t.get("chapter_normalized_number_overrides"),
-                ), f"AUDIO issue #{issue_number} persist chapter profile")
+        apply_mutation(deepcopy(previous))
+    store.mutate(mutate, f"AUDIO issue #{issue_number}: {operation}")
+    sync_pending_profiles(store, profiles)
     return f"Completed {operation} ({len(ids) if ids else len(new_books)} book(s))",operation in {
         "enqueue","batch_add","requeue","status"
     } or (operation == "review" and not values.get("review_only"))
