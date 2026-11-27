@@ -1,4 +1,5 @@
-name: 有聲小說｜來源實際抓文驗證
+name: "來源驗證｜九站小說實際抓文"
+run-name: "【來源驗證】九站小說實際抓文｜第 ${{ github.run_number }} 次"
 on:
   workflow_dispatch:
   push:
@@ -13,7 +14,7 @@ permissions:
   contents: read
 jobs:
   source:
-    name: ${{ matrix.source }}
+    name: "抓文驗證｜${{ matrix.source }}"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:

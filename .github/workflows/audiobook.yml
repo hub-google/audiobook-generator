@@ -1,6 +1,6 @@
-name: Audiobook Automation Pipeline (Parallel)
+name: "小說製作｜抓文、語音、影片與上傳"
 
-run-name: "${{ inputs.execution_phase == 'scrape_only' && '【TXT抓取】' || ((inputs.execution_phase == 'resume_processing' || inputs.resume_source_run_id != '') && '【後製續傳】' || '【後製上傳】') }}有聲小說製作｜${{ inputs.book_title || '待解析書名' }}｜${{ inputs.chapter_label != '' && inputs.chapter_label || format('Ch{0}-{1}', inputs.start_chap, inputs.end_chap) }}｜${{ inputs.queue_task_id || 'GUI直接執行' }}"
+run-name: "${{ inputs.execution_phase == 'scrape_only' && '【TXT抓取】' || ((inputs.execution_phase == 'resume_processing' || inputs.resume_source_run_id != '') && '【後製續傳】' || '【後製上傳】') }}有聲小說製作｜${{ inputs.book_title || '待解析書名' }}｜${{ inputs.chapter_label != '' && inputs.chapter_label || format('第{0}-{1}章', inputs.start_chap, inputs.end_chap) }}｜${{ inputs.queue_task_id || '直接執行' }}"
 
 on:
   workflow_dispatch:
@@ -89,7 +89,7 @@ concurrency:
 
 jobs:
   retry_failed_run:
-    name: "Retry latest failed audiobook run"
+    name: "重跑最近失敗的小說製作任務"
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
 
@@ -208,7 +208,7 @@ jobs:
           fi
 
   catalog_attempts:
-    name: "🔄 Catalog probe — Runner ${{ matrix.attempt }}/10"
+    name: "🔄 試抓小說目錄｜執行機 ${{ matrix.attempt }}/10"
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.resume_source_run_id == '' &&
@@ -243,24 +243,24 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Checkout Code
+      - name: 取得程式碼
         if: steps.existing.outputs.found != 'true'
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: 設定 Python 執行環境
         if: steps.existing.outputs.found != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
-      - name: Install catalog dependencies
+      - name: 安裝目錄解析套件
         if: steps.existing.outputs.found != 'true'
         run: |
           pip install --upgrade pip
           pip install beautifulsoup4 pyyaml requests curl_cffi
 
-      - name: Fetch catalog once on this runner
+      - name: 抓取小說章節目錄
         if: steps.existing.outputs.found != 'true'
         id: fetch
         run: |
@@ -308,7 +308,7 @@ jobs:
           if-no-files-found: error
 
   catalog_result:
-    name: "✅ Catalog fetched — Runner ${{ needs.catalog_attempts.outputs.winner }}/10"
+    name: "✅ 目錄抓取成功｜執行機 ${{ needs.catalog_attempts.outputs.winner }}/10"
     needs: catalog_attempts
     if: >-
       github.event_name == 'workflow_dispatch' &&
@@ -316,7 +316,7 @@ jobs:
       inputs.scrape_source_run_id == ''
     runs-on: ubuntu-latest
     steps:
-      - name: Confirm and display the successful catalog runner
+      - name: 確認成功抓取目錄的執行機
         env:
           WINNER: ${{ needs.catalog_attempts.outputs.winner }}
         run: |
@@ -328,7 +328,7 @@ jobs:
           echo "The successful fetch was **Runner $WINNER/10**. Other green catalog-probe jobs either handed off after an access-limit response or skipped after this artifact appeared." >> "$GITHUB_STEP_SUMMARY"
 
   setup:
-    name: "🔍 Setup — Parse Catalog & Build Matrix"
+    name: "🔍 解析小說目錄並分配章節"
     needs: [catalog_attempts, catalog_result]
     if: always() && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -339,10 +339,10 @@ jobs:
       needs_browser_scrape: ${{ steps.gen_matrix.outputs.needs_browser_scrape }}
 
     steps:
-      - name: Checkout Code
+      - name: 取得程式碼
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: 設定 Python 執行環境
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -484,7 +484,7 @@ jobs:
               )
           PY
 
-      - name: Generate Setup Summary
+      - name: 彙整工作設定
         run: |
           python - <<'PY'
           import os, yaml, json
@@ -518,7 +518,7 @@ jobs:
             matrix.json
 
   resume_planner:
-    name: "🧭 Global Resume Planner (Publication → Final → Merge → Worker)"
+    name: "🧭 判斷續傳進度及剩餘任務"
     needs: setup
     if: always() && needs.setup.result == 'success'
     runs-on: ubuntu-latest
@@ -586,7 +586,7 @@ jobs:
 # 先於 host VM 上啟動虛擬螢幕以 SeleniumBase UC 抓取原始文字
 # ─────────────────────────────────────────────────────────────
   scrape_chapters:
-    name: "🕷️ Scrape — Worker ${{ matrix.worker_id }} (Ch ${{ matrix.start_chap }}~${{ matrix.end_chap }})"
+    name: "🕷️ 抓取小說｜工作機 ${{ matrix.worker_id }}（第 ${{ matrix.start_chap }}–${{ matrix.end_chap }} 章）"
     needs: [setup, resume_planner]
     if: inputs.execution_phase == 'scrape_only' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.resume_planner.outputs.mode != 'publication' && needs.resume_planner.outputs.mode != 'final_merge'
     runs-on: ubuntu-latest
@@ -596,7 +596,7 @@ jobs:
       matrix: ${{ fromJSON(needs.resume_planner.outputs.worker_matrix) }}
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python 3.11
+      - name: 設定 Python 執行環境
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -623,11 +623,11 @@ jobs:
             --artifact-dir "resume_bundle/workers/video-worker-${{ matrix.worker_id }}" \
             --source-config config.yaml \
             --source-run-id "${{ needs.resume_planner.outputs.source_run_id }}"
-      - name: Scrape Assigned Chapters via HTTP
+      - name: 抓取指定小說章節
         if: steps.artifact_restore.outputs.complete != 'true'
         run: |
           python src/worker_pipeline.py --stage crawl --worker-id ${{ matrix.worker_id }}
-      - name: Build per-chapter advertisement review report
+      - name: 整理逐章廣告檢查
         if: steps.artifact_restore.outputs.complete != 'true'
         run: |
           RAW_DIR=$(find Workspace -type d -name RawText -print -quit)
@@ -646,7 +646,7 @@ jobs:
   # native rerun-failed-jobs endpoint on this same Run.  It is only launched
   # for the initial attempt because the controller owns all later retries.
   trigger_scrape_rerun:
-    name: "🔁 Start immediate native scraper rerun controller"
+    name: "🔁 啟動抓文失敗重跑"
     needs: [scrape_chapters]
     if: >-
       always() &&
@@ -669,7 +669,7 @@ jobs:
             --field source_run_id="$SOURCE_RUN_ID"
 
   finalize_scrape_review:
-    name: "🧠 Finalize full-book advertisement analysis"
+    name: "🧠 整理全書廣告檢查"
     needs: [setup, resume_planner, scrape_chapters]
     if: inputs.execution_phase == 'scrape_only' && needs.scrape_chapters.result == 'success'
     runs-on: ubuntu-latest
@@ -705,7 +705,7 @@ jobs:
 # Worker Pipeline: 並行獨立處理各 Worker 的章節 (一條龍 End-to-End)
 # ─────────────────────────────────────────────────────────────
   process_chapters:
-    name: "⚡ Worker ${{ matrix.worker_id }} (Ch ${{ matrix.start_chap }}~${{ matrix.end_chap }})"
+    name: "⚡ 製作語音與影片｜工作機 ${{ matrix.worker_id }}（第 ${{ matrix.start_chap }}–${{ matrix.end_chap }} 章）"
     needs: [setup, resume_planner, scrape_chapters]
     if: |
       always() &&
@@ -853,7 +853,7 @@ jobs:
           compression-level: 0
           overwrite: true
 
-      - name: Worker Job Summary
+      - name: 工作機執行摘要
         if: always()
         timeout-minutes: 5
         env:
@@ -912,7 +912,7 @@ jobs:
 # Plan and merge every Part before any external publication
 # ─────────────────────────────────────────────────────────────
   plan_parts:
-    name: "🧭 Lock the complete Part plan"
+    name: "🧭 確認影片分段計畫"
     needs: [setup, resume_planner, process_chapters]
     if: always() && inputs.execution_phase != 'scrape_only' && github.event_name == 'workflow_dispatch' && needs.setup.result == 'success' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && (needs.process_chapters.result == 'success' || needs.process_chapters.result == 'skipped')
     runs-on: ubuntu-latest
@@ -993,7 +993,7 @@ jobs:
           retention-days: 7
 
   merge_parts:
-    name: "🧩 Merge worker ${{ matrix.merge_worker_id }} — Parts ${{ matrix.part_numbers }}"
+    name: "🧩 合併影片｜工作機 ${{ matrix.merge_worker_id }}（第 ${{ matrix.part_numbers }} 段）"
     needs: [resume_planner, plan_parts, process_chapters]
     if: always() && inputs.execution_phase != 'scrape_only' && needs.resume_planner.result == 'success' && needs.plan_parts.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.resume_planner.outputs.mode != 'publication' && needs.resume_planner.outputs.mode != 'final_merge'
     strategy:
@@ -1058,7 +1058,7 @@ jobs:
           retention-days: 7
 
   final_merge:
-    name: "🔒 Validate complete Final Merge"
+    name: "🔒 驗證整本影片合併"
     needs: [resume_planner, plan_parts, merge_parts]
     if: always() && inputs.execution_phase != 'scrape_only' && needs.resume_planner.result == 'success' && needs.resume_planner.outputs.publication_complete != 'true' && needs.plan_parts.result == 'success' && (needs.merge_parts.result == 'success' || needs.merge_parts.result == 'skipped')
     runs-on: ubuntu-latest
@@ -1119,7 +1119,7 @@ jobs:
 # Ordered HF and YouTube publisher; this job never merges chapters
 # ─────────────────────────────────────────────────────────────
   upload_to_youtube:
-    name: "📤 Ordered HF + YouTube publication"
+    name: "📤 依序上傳至 HF 與 YouTube"
     needs: [setup, resume_planner, process_chapters, plan_parts, merge_parts, final_merge]
     # Scheduled runs only check whether the latest manual run needs a retry.
     # They do not create worker artifacts, so never start the uploader for them.
@@ -1132,7 +1132,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - name: Checkout Code
+      - name: 取得程式碼
         uses: actions/checkout@v4
 
       - name: Restore latest YouTube upload checkpoint
@@ -1489,7 +1489,7 @@ jobs:
           if-no-files-found: warn
 
   strict_success_gate:
-    name: "Strict final success gate"
+    name: "最終完成驗收"
     if: always() && github.event_name == 'workflow_dispatch' && inputs.execution_phase != 'scrape_only'
     needs: [setup, resume_planner, process_chapters, plan_parts, merge_parts, final_merge, upload_to_youtube]
     runs-on: ubuntu-latest

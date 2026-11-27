@@ -78,7 +78,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
 
     def test_dispatcher_always_writes_a_readable_job_summary(self):
         steps = self.dispatcher_jobs["dispatch_once"]["steps"]
-        summary_step = next(step for step in steps if step.get("name") == "Write dispatcher result to job summary")
+        summary_step = next(step for step in steps if step.get("name") == "記錄任務調度結果")
         self.assertEqual(summary_step.get("if"), "always()")
         self.assertIn("GITHUB_STEP_SUMMARY", summary_step.get("run", ""))
         self.assertIn("調度訊息", summary_step.get("run", ""))
@@ -88,7 +88,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
 
     def test_catalog_winner_is_unambiguous_in_actions_job_list(self):
         attempts = self.jobs["catalog_attempts"]
-        self.assertIn("Catalog probe", attempts["name"])
+        self.assertIn("試抓小說目錄", attempts["name"])
         self.assertEqual(
             attempts["outputs"]["winner"],
             "${{ steps.existing.outputs.winner || steps.fetch.outputs.winner }}",
@@ -96,7 +96,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
         result = self.jobs["catalog_result"]
         self.assertEqual(
             result["name"],
-            "✅ Catalog fetched — Runner ${{ needs.catalog_attempts.outputs.winner }}/10",
+            "✅ 目錄抓取成功｜執行機 ${{ needs.catalog_attempts.outputs.winner }}/10",
         )
         self.assertEqual(result["needs"], "catalog_attempts")
 
@@ -242,7 +242,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
     def test_worker_summary_does_not_export_or_validate_incomplete_manifest(self):
         step = next(
             item for item in self.jobs["process_chapters"]["steps"]
-            if item.get("name") == "Worker Job Summary"
+            if item.get("name") == "工作機執行摘要"
         )
         self.assertNotIn("export_manifest", step["run"])
         self.assertNotIn("validate_manifest", step["run"])

@@ -1,5 +1,5 @@
-name: TXT Scrape Native Rerun Controller
-run-name: "【TXT抓取】原生失敗重跑控制｜來源 Run #${{ inputs.source_run_id }}"
+name: "失敗重跑｜小說抓文"
+run-name: "【抓文失敗重跑】來源任務 #${{ inputs.source_run_id }}"
 
 on:
   workflow_dispatch:
@@ -19,10 +19,10 @@ concurrency:
 
 jobs:
   rerun_failed_scrape:
-    name: "🔄 Re-run failed scraper jobs"
+    name: "重新執行失敗的抓文工作"
     runs-on: ubuntu-latest
     steps:
-      - name: Delete older TXT rerun controller records
+      - name: "清除舊抓文重跑紀錄"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CURRENT_RUN_ID: ${{ github.run_id }}
@@ -54,10 +54,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install controller dependencies
+      - name: "安裝重跑工具"
         run: pip install requests
 
-      - name: Re-run failed scraper jobs immediately
+      - name: "立即重跑失敗的抓文工作"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}

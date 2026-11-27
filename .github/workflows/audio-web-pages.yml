@@ -1,4 +1,5 @@
-name: Deploy AUDIO Web to GitHub Pages
+name: "網站部署｜有聲小說管理平台"
+run-name: "【網站部署】有聲小說管理平台｜第 ${{ github.run_number }} 次"
 on:
   push:
     branches: [main]
@@ -16,13 +17,14 @@ concurrency:
   cancel-in-progress: true
 jobs:
   deploy:
+    name: "部署網站至 GitHub Pages"
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate dashboard
+      - name: "檢查網站檔案"
         run: |
           node --check docs/site/app.js
           test -s docs/site/index.html
@@ -33,7 +35,7 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs/site
-      - name: Wait until uploaded Pages artifact is indexed
+      - name: "等待網站部署檔案可用"
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash

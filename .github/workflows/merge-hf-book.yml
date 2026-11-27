@@ -1,5 +1,5 @@
-name: Merge HF audiobook and pause YouTube at 98%
-run-name: "【HF 合併】${{ inputs.book_title }}｜${{ inputs.merge_mode == 'all' && '全部合併' || format('每支最多 {0} 小時', inputs.max_hours) }}"
+name: "整本影片合併｜HF 與 YouTube"
+run-name: "【整本影片合併】${{ inputs.book_title }}｜${{ inputs.merge_mode == 'all' && '全部合併' || format('每支最多 {0} 小時', inputs.max_hours) }}"
 
 on:
   workflow_dispatch:
@@ -22,6 +22,7 @@ concurrency:
 
 jobs:
   plan:
+    name: "規劃整本影片合併"
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -55,6 +56,7 @@ jobs:
         with: {name: hf-merge-plan, path: plan.json, retention-days: 2}
 
   merge_and_pause:
+    name: "合併影片並上傳至 98%"
     needs: plan
     strategy:
       fail-fast: false

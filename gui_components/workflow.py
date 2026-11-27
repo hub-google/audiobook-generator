@@ -1022,7 +1022,7 @@ class WorkflowMixin:
 
                 # 2. 開始輪詢 Workflow 狀態
                 time.sleep(4)
-                self._poll_workflow_runs(repo, token, target_workflow_name="Audiobook Automation Pipeline (Parallel)")
+                self._poll_workflow_runs(repo, token, target_workflow_name="小說製作｜抓文、語音、影片與上傳")
 
             except Exception as e:
                 self.root.after(0, lambda err=str(e): self._on_workflow_failed(err))
@@ -1138,10 +1138,10 @@ class WorkflowMixin:
                     if created_ts + 3600 < trigger_time:
                         continue
                     if target_workflow_name:
-                        if run.get("name") != target_workflow_name:
+                        if run.get("name") not in (target_workflow_name, "Audiobook Automation Pipeline (Parallel)"):
                             continue
                     else:
-                        if run.get("name") != "Audiobook Automation Pipeline (Parallel)":
+                        if run.get("name") not in ("小說製作｜抓文、語音、影片與上傳", "Audiobook Automation Pipeline (Parallel)"):
                             continue
                     run_id = run["id"]
                     self.current_run_id = run_id

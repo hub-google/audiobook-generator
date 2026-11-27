@@ -20,6 +20,10 @@ MAX_NATIVE_COVER_RERUNS = 20
 POLL_SECONDS = 5
 COVER_RUN_PREFIX = "【封面與Gemini】"
 COVER_JOB_PREFIXES = (
+    "📚 產生小說介紹（Gemini）",
+    "🧠 產生封面資料（Gemini）",
+    "🔎 檢查封面資訊與提示詞",
+    "🎨 產生小說封面（HF 或 Gemini）",
     "📚 Generate Gemini book introduction",
     "🧠 Generate Gemini cover information",
     "🔎 Review Gemini cover information",

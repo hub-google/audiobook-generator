@@ -328,8 +328,8 @@ class Dispatcher:
 
     def reconcile(self, queue):
         runs = self.runs()
-        triggered_audiobook = self.triggered_run("Audiobook Automation Pipeline (Parallel)")
-        triggered_cover = self.triggered_run("Cover preflight")
+        triggered_audiobook = (self.triggered_run("小說製作｜抓文、語音、影片與上傳") or self.triggered_run("Audiobook Automation Pipeline (Parallel)"))
+        triggered_cover = (self.triggered_run("封面製作｜小說介紹、封面及審核") or self.triggered_run("Cover preflight"))
         cover_runs = self.cover_runs() if any(
             task.get("workflow_phase") == "preflight" for task in queue.get("queue", [])
         ) else []

@@ -1,4 +1,5 @@
-name: Build Audiobook Worker Image
+name: "工作環境建置｜製作機映像檔"
+run-name: "【工作環境建置】更新小說製作機｜第 ${{ github.run_number }} 次"
 
 on:
   workflow_dispatch:
@@ -19,21 +20,22 @@ concurrency:
 
 jobs:
   build:
+    name: "建置並發布工作機映像"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Buildx container driver
+      - name: "設定 Docker 建置環境"
         uses: docker/setup-buildx-action@v3
 
-      - name: Authenticate to GitHub Container Registry
+      - name: "登入 GitHub 容器倉庫"
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and publish immutable worker image
+      - name: "建置並發布工作機映像"
         uses: docker/build-push-action@v6
         with:
           context: .

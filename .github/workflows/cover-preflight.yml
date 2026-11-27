@@ -1,4 +1,4 @@
-name: Cover preflight
+name: "封面製作｜小說介紹、封面及審核"
 run-name: "【封面與Gemini】${{ inputs.book_title || '待解析書名' }}｜${{ inputs.queue_task_id }}"
 
 on:
@@ -21,14 +21,14 @@ permissions:
 
 jobs:
   generate_book_introduction:
-    name: "📚 Generate Gemini book introduction"
+    name: "📚 產生小說介紹（Gemini）"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.11", cache: pip}
       - run: pip install -r requirements.txt
-      - name: Generate book introduction
+      - name: 產生小說介紹
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -42,7 +42,7 @@ jobs:
             --book-title "${{ inputs.book_title }}" \
             --catalog-url "${{ inputs.catalog_url }}" \
             --book-profile-snapshot-b64 "${{ inputs.book_profile_snapshot_b64 }}"
-      - name: Upload book introduction artifact
+      - name: 儲存小說介紹
         uses: actions/upload-artifact@v4
         with:
           name: cover-introduction-${{ inputs.queue_task_id }}
@@ -53,7 +53,7 @@ jobs:
           retention-days: 30
 
   generate_cover_information:
-    name: "🧠 Generate Gemini cover information"
+    name: "🧠 產生封面資料（Gemini）"
     needs: generate_book_introduction
     runs-on: ubuntu-latest
     steps:
@@ -65,7 +65,7 @@ jobs:
         with:
           name: cover-introduction-${{ inputs.queue_task_id }}
           path: .
-      - name: Generate cover information
+      - name: 產生封面資訊
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -73,7 +73,7 @@ jobs:
             --stage cover-information \
             --config config.yaml \
             --task-id "${{ inputs.queue_task_id }}"
-      - name: Upload cover information artifact
+      - name: 儲存封面資訊
         uses: actions/upload-artifact@v4
         with:
           name: cover-information-${{ inputs.queue_task_id }}
@@ -84,7 +84,7 @@ jobs:
           retention-days: 30
 
   review_cover_information:
-    name: "🔎 Review Gemini cover information"
+    name: "🔎 檢查封面資訊與提示詞"
     needs: generate_cover_information
     runs-on: ubuntu-latest
     steps:
@@ -96,7 +96,7 @@ jobs:
         with:
           name: cover-information-${{ inputs.queue_task_id }}
           path: .
-      - name: Review cover information and build HF prompt
+      - name: 檢查封面資訊並準備生圖指令
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -104,7 +104,7 @@ jobs:
             --stage review \
             --config config.yaml \
             --task-id "${{ inputs.queue_task_id }}"
-      - name: Upload reviewed prompt artifact
+      - name: 儲存已審核生圖指令
         uses: actions/upload-artifact@v4
         with:
           name: cover-prompt-${{ inputs.queue_task_id }}
@@ -115,7 +115,7 @@ jobs:
           retention-days: 30
 
   generate_cover:
-    name: "🎨 Generate HF cover"
+    name: "🎨 產生小說封面（HF 或 Gemini）"
     needs: review_cover_information
     runs-on: ubuntu-latest
     steps:
@@ -127,7 +127,7 @@ jobs:
         with:
           name: cover-prompt-${{ inputs.queue_task_id }}
           path: .
-      - name: Generate reviewable cover
+      - name: 產生待審核封面
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -138,7 +138,7 @@ jobs:
             --stage cover \
             --config config.yaml \
             --task-id "${{ inputs.queue_task_id }}"
-      - name: Upload cover review artifact
+      - name: 儲存封面審核資料
         uses: actions/upload-artifact@v4
         with:
           name: cover-review-${{ inputs.queue_task_id }}
@@ -152,7 +152,7 @@ jobs:
   # small controller after every cover stage has settled. The controller waits
   # for this Run to complete, then owns up to 20 native failed-job reruns.
   trigger_cover_rerun:
-    name: "🔁 Start immediate native cover rerun controller"
+    name: "🔁 啟動封面失敗重跑"
     needs:
       - generate_book_introduction
       - generate_cover_information
@@ -161,7 +161,7 @@ jobs:
     if: failure() && github.run_attempt == 1
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch controller for this completed cover Run
+      - name: 啟動封面失敗重跑檢查
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SOURCE_RUN_ID: ${{ github.run_id }}

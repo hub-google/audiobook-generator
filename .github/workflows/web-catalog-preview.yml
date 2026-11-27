@@ -1,5 +1,5 @@
-name: AUDIO Web Catalog Preview
-run-name: "目錄解析 · ${{ inputs.request_id }}"
+name: "章節目錄｜網頁即時解析"
+run-name: "【章節目錄解析】任務 ${{ inputs.request_id }}"
 on:
   workflow_dispatch:
     inputs:
@@ -9,6 +9,7 @@ permissions:
   contents: write
 jobs:
   preview:
+    name: "解析小說目錄"
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -16,12 +17,12 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: '3.11', cache: pip}
       - run: pip install -r requirements.txt
-      - name: Parse catalog
+      - name: "解析小說章節目錄"
         env:
           CATALOG_URL: ${{ inputs.catalog_url }}
           REQUEST_ID: ${{ inputs.request_id }}
         run: python -m tools.web_catalog_preview --url "$CATALOG_URL" --request-id "$REQUEST_ID"
-      - name: Publish machine-readable preview to the state branch
+      - name: "寫入章節預覽至狀態分支"
         env:
           GH_TOKEN: ${{ github.token }}
           REQUEST_ID: ${{ inputs.request_id }}

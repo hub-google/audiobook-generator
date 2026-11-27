@@ -1,4 +1,5 @@
-name: HF audiobook 24-hour upload resume scheduler
+name: "續傳排程｜每小時檢查未完成影片"
+run-name: "【續傳排程】檢查未完成影片｜第 ${{ github.run_number }} 次"
 on:
   schedule:
     # Scan once per hour, offset from the top of the hour to reduce GitHub load delays.
@@ -12,10 +13,11 @@ concurrency:
   cancel-in-progress: false
 jobs:
   scan:
+    name: "掃描並安排影片續傳"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Delete older resume scheduler run records
+      - name: "清除舊續傳排程紀錄"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CURRENT_RUN_ID: ${{ github.run_id }}

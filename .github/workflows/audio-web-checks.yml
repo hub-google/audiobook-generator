@@ -1,4 +1,5 @@
-name: AUDIO Web and Sources CI
+name: "系統測試｜程式、網站與封面"
+run-name: "【系統測試】程式與網站｜第 ${{ github.run_number }} 次"
 on:
   push:
     branches:
@@ -11,23 +12,25 @@ permissions:
   contents: read
 jobs:
   regression:
+    name: "程式回歸測試"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: '3.11', cache: pip}
-      - name: Install runtime and tests
+      - name: "安裝程式與測試套件"
         run: pip install -r requirements.txt pytest playwright
-      - name: Python syntax
+      - name: "檢查 Python 語法"
         run: python -m compileall -q src tools gui_components
-      - name: Browser JavaScript syntax
+      - name: "檢查網頁 JavaScript 語法"
         run: node --check docs/site/app.js
-      - name: Install virtual display for desktop compatibility tests
+      - name: "安裝桌面畫面測試環境"
         run: sudo apt-get update -qq && sudo apt-get install -y xvfb
-      - name: Complete regression tests
+      - name: "執行完整回歸測試"
         run: xvfb-run -a python -m pytest -q tests
   ui-smoke:
+    name: "桌面與手機網頁驗收"
     needs: regression
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -35,9 +38,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: '3.11'}
-      - name: Install browser driver
+      - name: "安裝瀏覽器驅動"
         run: pip install playwright
-      - name: Verify desktop and mobile web console
+      - name: "檢查電腦與手機網頁"
         run: python -m tools.verify_audio_web
       - uses: actions/upload-artifact@v4
         if: always()
@@ -47,6 +50,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
   cover-live-probe:
+    name: "封面服務連線實測"
     if: github.event_name == 'workflow_dispatch'
     needs: regression
     runs-on: ubuntu-latest
@@ -56,7 +60,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: '3.11', cache: pip}
       - run: pip install -r requirements.txt
-      - name: Request actual HF cover; try Gemini if unavailable
+      - name: "實際測試封面生成（HF 失敗時改用 Gemini）"
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

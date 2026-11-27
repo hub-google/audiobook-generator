@@ -1,4 +1,5 @@
-name: AUDIO External Service Read-only Verification
+name: "外部服務驗證｜HF、YouTube、語音與影片"
+run-name: "【外部服務驗證】HF、YouTube、語音與影片｜第 ${{ github.run_number }} 次"
 on:
   push:
     branches: [main]
@@ -13,17 +14,18 @@ concurrency:
   cancel-in-progress: true
 jobs:
   verify:
+    name: "檢查外部服務及影音製作"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: '3.11', cache: pip}
-      - name: Install dependencies
+      - name: "安裝執行環境"
         run: pip install -r requirements.txt
-      - name: Install FFmpeg required by production media pipeline
+      - name: "安裝影音處理工具 FFmpeg"
         run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
-      - name: Check HF archive, YouTube OAuth, and original TTS/MP4 production
+      - name: "檢查 HF 資料、YouTube 登入及語音影片製作"
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}

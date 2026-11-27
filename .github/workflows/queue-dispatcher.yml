@@ -1,5 +1,5 @@
-name: Audiobook Queue Dispatcher
-run-name: "有聲小說佇列調度｜${{ github.event_name }}｜#${{ github.run_number }}"
+name: "任務調度｜小說製作佇列"
+run-name: "【任務調度】${{ github.event_name == 'schedule' && '定時檢查' || github.event_name == 'workflow_run' && '前序工作完成' || '手動執行' }}｜第 ${{ github.run_number }} 次"
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
         default: false
         type: boolean
   workflow_run:
-    workflows: ["Audiobook Automation Pipeline (Parallel)", "Cover preflight"]
+    workflows: ["小說製作｜抓文、語音、影片與上傳", "封面製作｜小說介紹、封面及審核"]
     types: [completed]
   schedule:
     # Run every 15 minutes, offset from the top of the hour to reduce GitHub load delays.
@@ -26,9 +26,10 @@ concurrency:
 
 jobs:
   dispatch_once:
+    name: "檢查佇列並安排下一項工作"
     runs-on: ubuntu-latest
     steps:
-      - name: Delete older dispatcher run records
+      - name: 清除舊調度紀錄
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CURRENT_RUN_ID: ${{ github.run_id }}
@@ -60,10 +61,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dispatcher dependencies
+      - name: 安裝任務調度套件
         run: pip install requests
 
-      - name: Reconcile queue and perform one action
+      - name: 檢查佇列並執行下一個任務
         id: dispatch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -92,7 +93,7 @@ jobs:
             sleep 15
           done
 
-      - name: Write dispatcher result to job summary
+      - name: 記錄任務調度結果
         if: always()
         shell: bash
         env:

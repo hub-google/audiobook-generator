@@ -20,7 +20,7 @@ import requests
 MAX_NATIVE_SCRAPE_RERUNS = 20
 POLL_SECONDS = 5
 SCRAPE_RUN_PREFIX = "【TXT抓取】"
-SCRAPE_JOB_PREFIX = "🕷️ Scrape — Worker"
+SCRAPE_JOB_PREFIXES = ("🕷️ 抓取小說｜工作機", "🕷️ Scrape — Worker")
 
 
 @dataclass(frozen=True)
@@ -43,7 +43,7 @@ def failed_scrape_job_ids(jobs: list[dict]) -> tuple[int, ...]:
         int(job["id"])
         for job in jobs
         if job.get("conclusion") == "failure"
-        and str(job.get("name") or "").startswith(SCRAPE_JOB_PREFIX)
+        and str(job.get("name") or "").startswith(SCRAPE_JOB_PREFIXES)
         and str(job.get("id") or "").isdigit()
     )
 
