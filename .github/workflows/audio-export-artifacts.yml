@@ -8,6 +8,7 @@ on:
 permissions:
   contents: read
   actions: read
+  id-token: write
 concurrency:
   group: audio-export-${{ inputs.request_id }}
   cancel-in-progress: false
@@ -26,7 +27,11 @@ jobs:
           SOURCE_RUN_IDS: ${{ inputs.source_run_ids }}
           EXPORT_REQUEST_ID: ${{ inputs.request_id }}
         run: python -m tools.export_run_artifacts
-      - name: "上傳整包成果供 GitHub 登入後下載"
+      - name: "同步中小型整包 ZIP 至 AUDIO 站內私人檔案區"
+        env:
+          EXPORT_REQUEST_ID: ${{ inputs.request_id }}
+        run: python -m tools.stage_audio_export
+      - name: "保留整包 GitHub Artifact 備援（大型 ZIP）"
         uses: actions/upload-artifact@v4
         with:
           name: audio-artifacts-${{ inputs.request_id }}
