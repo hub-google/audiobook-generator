@@ -392,7 +392,10 @@ def main():
             assert desktop.locator("#review-candidates tbody tr").count() == 1
             assert "獨立候選文字" in desktop.locator("#review-candidates").inner_text()
             desktop.locator("#review-search").fill("")
-            assert desktop.locator("#review-candidates tbody tr").count() == 2
+            desktop.wait_for_function(
+                "document.querySelectorAll('#review-candidates tbody tr').length === 2",
+                timeout=10000,
+            )
             # Verify real browser-side ZIP + cover Manifest SHA-256 inspection.
             import io
             import zipfile
