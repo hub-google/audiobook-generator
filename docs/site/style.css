@@ -35,3 +35,8 @@
 @media(max-width:780px){.batch-cover-layout{grid-template-columns:1fr}.batch-cover-list{max-height:150px}}
 
 .chapter-item[draggable="true"]{cursor:grab}.chapter-item[draggable="true"]:active{cursor:grabbing}
+
+.review-candidate>span{flex:1;min-width:0}
+.review-candidate-actions{display:flex;flex-wrap:wrap;gap:5px;align-items:center;justify-content:flex-end}
+.review-candidate-actions button{font-size:11px;padding:5px 8px}
+@media(max-width:650px){.review-candidate{flex-wrap:wrap}.review-candidate-actions{width:100%;justify-content:flex-start;padding-left:25px}}

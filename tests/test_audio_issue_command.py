@@ -251,3 +251,37 @@ def test_newer_edit_repairs_previous_pending_before_apply():
     assert state["queue"][0]["book_title"] == "Two"
     assert next(iter(ps.value["books"].values()))["book_title"] == "Two"
     assert not state["web_profile_pending"]
+
+
+def test_edit_running_processing_cancels_existing_run_and_requeues():
+    from src.cloud_queue import empty_queue,new_task
+    from src.book_profiles import empty_profiles
+    from tools.audio_issue_command import apply_command
+    q=empty_queue()
+    task=new_task("https://69shuba.com/book/123/","Working",1,3)
+    task.update(status="running",workflow_phase="processing",run_id=1234)
+    q["queue"].append(task)
+    class Store:
+        def load(self):return q,None
+        def mutate(self,fn,msg):
+            nonlocal q
+            q=fn(q)
+            return q
+    class Profiles:
+        def __init__(self):self.value=empty_profiles()
+        def mutate(self,fn,msg):self.value=fn(self.value)
+    calls=[]
+    def mock_api(method,path,token,repo,**kw):
+        calls.append((method,path))
+        return {"status":"in_progress"} if method=="GET" else {}
+    with patch("tools.audio_issue_command.api",side_effect=mock_api):
+        result,dispatch=apply_command({"op":"edit","data":{"task_id":task["task_id"],
+                                  "changes":{"book_title":"Revised"}}},
+                                  Store(),Profiles(),830,"token","owner/repo")
+    updated=q["queue"][0]
+    assert dispatch is True
+    assert updated["book_title"]=="Revised"
+    assert updated["status"]=="canceling"
+    assert updated["requeue_after_edit"] is True
+    assert ("POST","actions/runs/1234/cancel") in calls
+    assert q["web_profile_pending"]=={}

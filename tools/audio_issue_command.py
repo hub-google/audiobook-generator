@@ -311,6 +311,15 @@ def apply_command(command, store, profiles, issue_number, token, repo):
         return f"Already processed issue #{issue_number}", False
 
     review_evidence = None
+    # Preserve the desktop GUI's explicit edit-while-running behavior only for
+    # the video-processing phase where the Run is known and can be cancelled.
+    active_edit_status = {"running", "dispatching", "canceling"}
+    old_edit = None
+    if operation == "edit":
+        old_edit = next((t for t in previous["queue"]
+                         if t["task_id"] == values.get("task_id")), None)
+    edit_restart = bool(old_edit and old_edit.get("status") in active_edit_status
+                        and old_edit.get("workflow_phase") == "processing")
     if operation == "review":
         task_id = valid_id(values.get("task_id"))
         review_task = next((t for t in previous["queue"] if t["task_id"] == task_id), None)
@@ -371,7 +380,9 @@ def apply_command(command, store, profiles, issue_number, token, repo):
         if operation == "edit":
             task = targets[0]
             if task["status"] not in {"queued", "paused", "interrupted", "stopped"}:
-                raise ValueError("Cannot edit an active task")
+                if not (edit_restart and task.get("status") in active_edit_status
+                        and task.get("workflow_phase") == "processing"):
+                    raise ValueError("Cannot edit this active task")
             changes = values.get("changes") or {}
             if not isinstance(changes, dict) or set(changes) - TASK_FIELDS:
                 raise ValueError("Unsupported field in task edit")
@@ -391,6 +402,7 @@ def apply_command(command, store, profiles, issue_number, token, repo):
                 raise ValueError("Incomplete chapter order")
             q = update_task_chapters(
                 q, ids[0], start, end, excluded_chapters=excluded,
+                requeue_after_cancel=edit_restart,
                 renumber_selected=changes.get("renumber_selected",task.get("renumber_selected",False)),
                 chapter_title_overrides=changes.get("chapter_title_overrides",task.get("chapter_title_overrides") or {}),
                 chapter_normalized_number_overrides=changes.get("chapter_normalized_number_overrides",task.get("chapter_normalized_number_overrides") or {}),
@@ -456,11 +468,21 @@ def apply_command(command, store, profiles, issue_number, token, repo):
     if operation in {"edit", "review"}:
         from copy import deepcopy
         apply_mutation(deepcopy(previous))
+    if edit_restart:
+        run_id = old_edit.get("run_id")
+        if not str(run_id or "").isdigit() or int(run_id) < 1:
+            raise ValueError("Cannot edit active task until its GitHub Run is visible")
+        current_run = api("GET", f"actions/runs/{int(run_id)}", token, repo)
+        if current_run.get("status") != "completed":
+            try:
+                api("POST", f"actions/runs/{int(run_id)}/cancel", token, repo)
+            except RuntimeError:
+                api("POST", f"actions/runs/{int(run_id)}/force-cancel", token, repo)
     store.mutate(mutate, f"AUDIO issue #{issue_number}: {operation}")
     sync_pending_profiles(store, profiles)
     return f"Completed {operation} ({len(ids) if ids else len(new_books)} book(s))",operation in {
         "enqueue","batch_add","requeue","status"
-    } or (operation == "review" and not values.get("review_only"))
+    } or (operation == "review" and not values.get("review_only")) or edit_restart
 
 
 def cover_attachment_url(issue_body):

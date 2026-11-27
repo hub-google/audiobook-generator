@@ -352,3 +352,11 @@ def test_review_candidate_edit_remove_and_manual_add_match_desktop_gui():
     assert 'remove.textContent="從名單移除"' in js
     assert "window.audioReviewCandidateEdits=function()" in js
     assert "candidate_overrides:" in bridge
+
+
+def test_running_processing_task_can_edit_with_cancel_and_requeue():
+    app=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    assert "function canEditAfterCancel(task)" in app
+    assert 'makeBtn("編輯並重新排程",openEditor' in app
+    assert 'if(canEditAfterCancel(t)&&!confirm(' in bridge

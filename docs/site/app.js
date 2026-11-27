@@ -44,6 +44,11 @@ function statusName(s){return({queued:"排隊中",paused:"已暫停",preparing_a
 function statusClass(s){return s==="completed"?"done":["waiting_review","needs_attention"].includes(s)?"review":["stopped","interrupted"].includes(s)?"error":live({status:s})?"running":"";}
 function stageBadge(task,name){const s=task.stages?.[name]?.status||"pending";return({completed:"✓",running:"進行中",dispatching:"啟動中",failed:"失敗",pending:"待執行",skipped:"略過"})[s]||s;}
 function canEdit(task){return !active(task)&&["queued","paused","interrupted","stopped"].includes(task.status);}
+function canEditAfterCancel(task){
+ return ["running","dispatching","canceling"].includes(task.status)&&
+   task.workflow_phase==="processing"&&Number.isSafeInteger(Number(task.run_id))&&Number(task.run_id)>0;
+}
+function canEditTask(task){return canEdit(task)||canEditAfterCancel(task);}
 function makeBtn(label,action,id,disabled=false){const b=document.createElement("button");b.type="button";b.textContent=label;b.className="secondary";b.disabled=disabled;b.addEventListener("click",()=>Promise.resolve().then(()=>action(id)).catch(e=>notice(e.message,"error")));return b;}
 function buildTaskRow(task,index){
  const tr=document.createElement("tr"),col=(value)=>{const td=document.createElement("td");td.textContent=value;tr.append(td);return td;};
@@ -72,8 +77,9 @@ function buildTaskRow(task,index){
   if(["paused","interrupted","stopped"].includes(task.status))div.append(makeBtn("標為已完成",window.markCompleted,task.task_id));
   div.append(makeBtn("刪除",window.deleteTask,task.task_id));
  }
+ if(canEditAfterCancel(task))div.append(makeBtn("編輯並重新排程",openEditor,task.task_id));
  tr.addEventListener("dblclick",event=>{
-  if(!canEdit(task)||event.target.closest("button,input,a,select,textarea"))return;
+  if(!canEditTask(task)||event.target.closest("button,input,a,select,textarea"))return;
   openEditor(task.task_id);
  });
  return tr;
@@ -183,7 +189,8 @@ function formatOverrides(overrides){return Object.entries(overrides||{}).map(([k
 function formatPublish(v){return v?String(v).slice(0,16):"";}
 function publishValue(v){return v?v+":00+08:00":null;}
 function openEditor(id){
- const task=queueTasks().find(x=>x.task_id===id);if(!task||!canEdit(task))throw Error("執行中的任務不可直接修改");
+ const task=queueTasks().find(x=>x.task_id===id);
+ if(!task||!canEditTask(task))throw Error("此任務目前無法編輯（執行中的任務需有可取消的影片 Run）");
  editorTaskId=id;text($("edit-book-url"),task.catalog_url);$("edit-name").value=task.book_title||"";$("edit-start").value=task.start_chapter||1;$("edit-end").value=task.end_chapter||10;
  $("edit-excluded").value=(task.excluded_chapters||[]).join(",");$("edit-renumber").checked=!!task.renumber_selected;$("edit-publish").value=formatPublish(task.publish_at);
  $("edit-titles").value=formatOverrides(task.chapter_title_overrides);$("edit-numbers").value=formatOverrides(task.chapter_normalized_number_overrides);

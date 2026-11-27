@@ -111,7 +111,7 @@
  };
  window.saveEditor=async function(e){
   e.preventDefault();const id=editorTaskId,t=queueTasks().find(t=>t.task_id===id);
-  if(!t||!canEdit(t))throw Error("此任務正在執行或已經變更，無法編輯");
+  if(!t||!canEditTask(t))throw Error("此任務正在執行或已經變更，無法編輯");
   const start=Number($("edit-start").value),end=Number($("edit-end").value);
   if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<1||end<start)throw Error("章節範圍無效");
   const excluded=excludedNumbers($("edit-excluded").value,start,end);
@@ -130,7 +130,8 @@
   };
   if(!Object.values(changes.duplicate_detection).some(Boolean))throw Error("至少需選一種重複判斷條件");
   if(!changes.book_title)throw Error("書名不可空白");
-  send("edit",{task_id:id,changes},"編輯小說章節");
+  if(canEditAfterCancel(t)&&!confirm("這本小說正在製作。儲存會取消舊 Run，再依新章節設定重新排程，是否繼續？"))return;
+  send("edit",{task_id:id,changes},canEditAfterCancel(t)?"修改章節並重新排程":"編輯小說章節");
   $("edit-dialog").close();editorTaskId=null;
  };
  window.addTasks=async function(tasks){
