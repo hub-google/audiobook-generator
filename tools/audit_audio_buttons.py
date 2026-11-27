@@ -62,10 +62,8 @@ def main():
             page.on("framenavigated",lambda frame: navigated.append(frame.url) if frame == page.main_frame else None)
             page.on("dialog",lambda dlg: dlg.accept())
 
-            page.add_init_script("""() => {
-              window.__externalAttempts=[];
-              window.open=(url)=>{window.__externalAttempts.push(String(url));return null};
-            }""")
+            page.add_init_script("""window.__externalAttempts=[];
+              window.open=(url)=>{window.__externalAttempts.push(String(url));return null};""")
 
             def github_mock(route):
                 path=route.request.url
@@ -169,10 +167,28 @@ def main():
             attempt_button("#parse-btn")
             page.locator("#batch-urls").fill("驗收小說 | https://czbooks.net/n/demo | 1 | 3")
             attempt_button("#batch-btn")
-            for name in ["rank-select-all","rank-select-none","rank-copy","rank-add"]:
+            for name in ["rank-select-all","rank-select-none","rank-select-all","rank-copy","rank-add"]:
                 attempt_button("#"+name)
-            for name in ["open-chapter-picker","publish-today","publish-tomorrow"]:
+            page.evaluate("""() => {
+              window.parsedCatalog={
+                catalog_url:"https://czbooks.net/n/demo",book_title:"測試小說 A",
+                total_chapters:3,chapter_titles:["第 1 章","第 2 章","第 3 章"],
+                chapter_parts:[{n:"1",d:"第 1 章",c:""},{n:"2",d:"第 2 章",c:""},{n:"3",d:"第 3 章",c:""}]
+              };
+              document.querySelector("#chapter-selection-tools").classList.remove("hidden");
+            }""")
+            attempt_button("#open-chapter-picker")
+            for name in ["chapter-all","chapter-none","chapter-invert","chapter-sort-number",
+                         "chapter-sort-original","chapter-move-up","chapter-move-down",
+                         "chapter-picker-cancel","chapter-picker-save"]:
                 attempt_button("#"+name)
+            for item in page.locator('button[data-publish-day]').all():
+                try:
+                    if item.is_visible() and item.is_enabled():
+                        item.click(timeout=2500);verify_stayed("schedule-time preset")
+                        passed.append("schedule-time preset")
+                except Exception as exc:
+                    skipped.append({"control":"schedule-time preset","reason":str(exc).splitlines()[0][:140]})
             page.locator('[data-tab="runs"]').click()
             attempt_button('#refresh-btn')
             # The links must open the internal reference dialog, never Github.
@@ -187,6 +203,26 @@ def main():
             page.locator('[data-tab="overview"]').click()
             # Open manual cover: backend upload and command submission are mocked.
             attempt_button('#queue-body tr:first-child button:has-text("手動封面")')
+            from io import BytesIO
+            from PIL import Image
+            jpeg = BytesIO()
+            Image.new("RGB",(1440,800),(190,205,225)).save(jpeg,format="JPEG")
+            page.locator("#queue-body tr").first.get_by_role("button",name="手動封面").click()
+            page.locator("#manual-cover-file").set_input_files({
+                "name":"test-cover.jpg","mimeType":"image/jpeg","buffer":jpeg.getvalue()})
+            page.locator("#manual-cover-submit").wait_for(state="visible")
+            page.wait_for_function("!document.querySelector('#manual-cover-submit').disabled",timeout=10000)
+            attempt_button("#manual-cover-submit")
+            page.wait_for_timeout(300)
+            verify_stayed("manual cover upload")
+            # All actual queue mutations use the same internal API.
+            assert any(x.get("op")=="manual_cover" for x in submitted), "Manual cover was not sent to backend"
+            page.locator('#queue-body tr').first.locator('input[type="checkbox"]').check()
+            page.locator("#batch-cover-btn").click()
+            attempt_button("#batch-cover-generate")
+            page.wait_for_timeout(200)
+            verify_stayed("batch-cover-generate")
+            assert any(x.get("op")=="batch_cover_info" for x in submitted), "Cover research not queued"
             # Programmatic scan of every available inline action with accessible ID.
             all_ids=page.evaluate("""() => [...document.querySelectorAll("button[id]")].map(b=>({
                id:b.id,label:b.textContent.trim(),disabled:b.disabled,hidden:!(b.offsetWidth||b.offsetHeight)
@@ -202,7 +238,7 @@ def main():
             },ensure_ascii=False)[:12000],flush=True)
             if errors: raise AssertionError("JS runtime errors: "+"; ".join(errors[:6]))
             verify_stayed("all browser controls")
-            assert any(x.get("op")=="batch_add" for x in submitted), "Batch Add was not sent to backend"
+            assert any(x.get("op") in ("enqueue","batch_add") for x in submitted), "Add to queue was not sent to backend"
             assert all(not str(x).startswith("http") for x in page.evaluate("window.__externalAttempts"))
             page.locator('[data-tab="create"]').click()
             page.screenshot(path=str(OUTPUT/"audio-all-buttons-audit-desktop.png"),full_page=True)
