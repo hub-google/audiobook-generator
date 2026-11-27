@@ -138,7 +138,7 @@ def main():
             desktop.locator('[data-tab="overview"]').click()
             assert desktop.locator("#token").count() == 0
             assert desktop.locator("#connection-pill").inner_text() == "GitHub 登入操作"
-            desktop.evaluate("window.__issueUrls=[];window.open=(url)=>{window.__issueUrls.push({url:String(url),stack:(new Error()).stack});return null;};")
+            desktop.evaluate("window.__issueUrls=[];window.open=(url)=>{window.__issueUrls.push({url:String(url),stack:(new Error()).stack});return null;};void 0;")
             desktop.locator('[data-tab="create"]').click()
             desktop.locator("#start-chapter").fill("1")
             desktop.locator("#end-chapter").fill("3")
