@@ -35,13 +35,15 @@ async function userOf(req) {
  if(!authorized)throw Object.assign(new Error("目前帳號沒有 AUDIO 管理權限"),{status:403});
  return data.user;
 }
-async function runnerOf(req) {
+async function runnerOf(req,allowExporter=false) {
  const token=tokenOf(req);
  if(!token)throw Object.assign(new Error("缺少 GitHub Actions 身份驗證"),{status:401});
  const {payload}=await jwtVerify(token,jwks,{issuer:"https://token.actions.githubusercontent.com",audience:"audio-web-commands"});
  const expected=REPO+"/.github/workflows/audio-web-command-runner.yml@refs/heads/main";
- if(payload.repository!==REPO || payload.ref!=="refs/heads/main" || payload.workflow_ref!==expected ||
-  !["schedule","workflow_dispatch","push"].includes(String(payload.event_name||"")))
+ const exporter=REPO+"/.github/workflows/audio-export-artifacts.yml@refs/heads/main";
+ const fromRunner=payload.workflow_ref===expected&&["schedule","workflow_dispatch","push"].includes(String(payload.event_name||""));
+ const fromExporter=allowExporter&&payload.workflow_ref===exporter&&payload.event_name==="workflow_dispatch";
+ if(payload.repository!==REPO || payload.ref!=="refs/heads/main" || !(fromRunner||fromExporter))
   throw Object.assign(new Error("不是已授權的 AUDIO GitHub Actions 工作機"),{status:403});
  return payload;
 }
@@ -132,7 +134,7 @@ async function finish(req) {
 const ASSET_BUCKET = "audio-web-private-assets";
 
 async function stageAsset(req) {
- await runnerOf(req);
+ await runnerOf(req,true);
  const id=Number(req.headers.get("x-audio-command-id"));
  const filename=String(req.headers.get("x-audio-filename")||"").trim();
  const type=String(req.headers.get("content-type")||"").split(";")[0];
@@ -141,8 +143,8 @@ async function stageAsset(req) {
   throw Object.assign(new Error("無效的檔案傳送要求"),{status:400});
  const {data:command,error:checkError}=await admin.from("audio_web_commands")
   .select("id,requested_by,op,status").eq("id",id).single();
- if(checkError||!command||command.status!=="processing"||
-    !["fetch_artifact","fetch_logs"].includes(command.op))
+ if(checkError||!command||!(command.status==="processing"&&["fetch_artifact","fetch_logs","cover_info_prequeue"].includes(command.op)||
+    command.status==="completed"&&command.op==="export_artifacts"))
   throw Object.assign(new Error("沒有對應的受保護檔案請求"),{status:403});
  const bytes=new Uint8Array(await req.arrayBuffer());
  if(bytes.length<1||bytes.length>45_000_000)throw Object.assign(new Error("單一雲端檔案超過 45 MB 暫存上限"),{status:413});
