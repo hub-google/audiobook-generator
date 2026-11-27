@@ -88,7 +88,8 @@ def main():
                         "book_title":"原創測試小說",
                         "cleaner_remove_patterns":["歷史廣告"],"duplicate_detection":{},
                         "chapter_title_overrides":{},"chapter_normalized_number_overrides":{}
-                    }}}
+                    },"mock-review":{"catalog_url":"https://czbooks.net/n/demo-review",
+                       "book_title":"封面審核測試","cleaner_remove_patterns":["已儲存廣告詞"]}}}
                     result={"content":base64.b64encode(
                         json.dumps(sample_profiles,ensure_ascii=False).encode()).decode(),
                         "sha":"mock-profile-sha"}
@@ -360,6 +361,10 @@ def main():
             desktop.locator("#gui-text-review").click()
             assert desktop.locator("#gui-candidate-pane").is_visible()
             assert not desktop.locator("#gui-cover-pane").is_visible()
+            assert desktop.locator("#review-auto-load").inner_text() == "重新載入"
+            assert not desktop.locator("#review-drop-zone").is_visible(), "Original GUI never shows upload-first ZIP instructions"
+            assert not desktop.locator("#review-report-file").is_visible(), "Manual Artifact import must not be a visible primary flow"
+            desktop.wait_for_function("document.querySelector('#review-patterns').value.includes('已儲存廣告詞')",timeout=10000)
             desktop.locator("#gui-text-raw-tab").click()
             assert desktop.locator("#gui-raw-pane").is_visible()
             desktop.locator("#review-cancel").click()
