@@ -68,7 +68,7 @@ function buildTaskRow(task,index){
  div.append(makeBtn("整包下載",window.exportArtifacts,task.task_id,false,false));
  if(["queued","paused","waiting_review","preparing_assets","needs_attention"].includes(task.status))div.append(makeBtn("手動封面",window.openManualCover,task.task_id));
  if(live(task))div.append(makeBtn("取消本次 Run",window.cancelRunningTask,task.task_id));
- if(task.status==="waiting_review"){div.append(makeBtn("查看審核資料",async()=>{window.audioShowExternalInfo("https://github.com/"+REPO+"/actions/runs/"+(task.cover_run_id||task.run_id));},task.task_id,false,false));div.append(makeBtn("確認審核並繼續",window.openReview,task.task_id,false));}
+ if(task.status==="waiting_review"){div.append(makeBtn("查看審核資料",openReview,task.task_id,false,false));div.append(makeBtn("確認審核並繼續",window.openReview,task.task_id,false));}
  if(["queued","paused","interrupted","stopped"].includes(task.status)){
   div.append(makeBtn("編輯",openEditor,task.task_id,!canEdit(task)));
   div.append(makeBtn("↑",id=>window.moveTask(id,-1),task.task_id,index===0||!canEdit(task)||!canEdit(queueTasks()[index-1])));
@@ -192,7 +192,14 @@ async function renderRunJobDetails(task){
  for(const runId of ids){
   const section=document.createElement("section");section.className="progress-job-section";
   const heading=document.createElement("a");heading.href="https://github.com/"+REPO+"/actions/runs/"+encodeURIComponent(runId);
-  heading.target="_blank";heading.rel="noopener noreferrer";heading.textContent="Run #"+runId+" — 開啟 GitHub 詳細紀錄";section.append(heading);
+  heading.target="_blank";heading.rel="noopener noreferrer";heading.textContent="Run #"+runId+" — 查看站內執行狀態";section.append(heading);
+  const logBtn=document.createElement("button");logBtn.type="button";logBtn.className="secondary";
+  logBtn.textContent="取得這次 Run 的原始 Worker 日誌";
+  logBtn.addEventListener("click",async()=>{
+   const req=await window.audioRequestLogs(task.task_id,runId);
+   if(req)notice("正在雲端取得 Run "+runId+" 原始日誌，完成後可在本頁「操作狀態」下載查看");
+  });
+  section.append(logBtn);
   const display=document.createElement("div");display.className="progress-job-list";display.textContent="讀取 Job 與 Step…";section.append(display);container.append(section);
   try{
    const data=await request("/actions/runs/"+encodeURIComponent(runId)+"/jobs?per_page=100");
@@ -207,13 +214,15 @@ async function renderRunJobDetails(task){
    try{
     const res=await request("/actions/runs/"+encodeURIComponent(runId)+"/artifacts?per_page=100");
     for(const item of (res.artifacts||[]).filter(x=>!x.expired)){
-     const link=document.createElement("a");
-     link.href="https://github.com/"+REPO+"/actions/runs/"+encodeURIComponent(runId)+"/artifacts/"+encodeURIComponent(item.id);
-     link.target="_blank";link.rel="noopener noreferrer";
-     link.textContent=(item.name||"Artifact")+" · "+(item.size_in_bytes/1024/1024).toFixed(1)+" MB";
-     artifactsBox.append(link);
+     const button=document.createElement("button");button.type="button";button.className="secondary";
+     button.textContent="在 AUDIO 取得 "+(item.name||"Artifact")+" · "+(item.size_in_bytes/1024/1024).toFixed(1)+" MB";
+     button.disabled=Number(item.size_in_bytes||0)>45_000_000;
+     if(button.disabled)button.title="目前站內單檔取得上限為 45MB，保留原始檔案但不假裝可下載";
+     button.addEventListener("click",()=>window.audioRequestArtifact(task.task_id,runId,"any",item.id)
+       .catch(error=>notice(error.message,"error")));
+     artifactsBox.append(button);
     }
-   }catch(error){const p=document.createElement("p");p.textContent="請從 GitHub Run 頁下載 Artifact";artifactsBox.append(p);}
+   }catch(error){const p=document.createElement("p");p.textContent="目前無法取得 Artifact 清單，請按上方重新整理工作步驟。";artifactsBox.append(p);}
   }catch(e){display.textContent="Job 詳細資料目前無法公開讀取："+e.message;}
  }
 }
