@@ -64,3 +64,31 @@ jobs:
           exit 1
       - id: deployment
         uses: actions/deploy-pages@v4
+      - name: "正式網站免登入與新增清單驗收（實際 GitHub Pages）"
+        run: |
+          python - <<'PY'
+          import requests, time
+          url="https://hub-google.github.io/audiobook-generator/"
+          error=""
+          for i in range(18):
+              try:
+                  resp=requests.get(url,timeout=20,headers={"Cache-Control":"no-cache"})
+                  assert resp.status_code==200, f"site HTTP {resp.status_code}"
+                  html=resp.text
+                  assert 'id="audio-submitted-books"' in html, "deployed index is not the latest GUI"
+                  assert 'id="novel-search-keyword"' in html, "missing novel search"
+                  assert 'id="audio-submitted-list"' in html, "missing pending books list"
+                  assert 'type="password"' not in html and 'github-token' not in html, "login UI returned"
+                  js=requests.get(url+"bridge.js?verify="+str(time.time_ns()),timeout=20)
+                  assert js.status_code==200 and "trackSubmitted" in js.text, "site bridge is stale"
+                  api=requests.get(
+                      "https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-web-commands/status",
+                      timeout=20,headers={"Origin":"https://hub-google.github.io"})
+                  assert api.status_code==200 and isinstance(api.json().get("requests"),list), f"API HTTP {api.status_code}"
+                  print("LIVE AUDIO PAGES: PASS; no login, submitted queue and command API online")
+                  break
+              except Exception as exc:
+                  error=str(exc)
+                  if i==17:raise SystemExit("LIVE AUDIO PAGES FAILED: "+error)
+                  time.sleep(5)
+          PY
