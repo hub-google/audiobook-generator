@@ -27,7 +27,7 @@
 <div class="metrics"><article class="metric"><span>排隊中</span><strong id="count-queued">—</strong></article><article class="metric"><span>進行中 / 待審</span><strong id="count-active">—</strong></article><article class="metric"><span>已完成</span><strong id="count-completed">—</strong></article><article class="metric"><span>最近更新</span><strong class="smaller" id="updated-at">—</strong></article></div>
 <div class="section-head"><div><h2>小說工作佇列</h2><p>依雲端排程順序排列。正在執行的作業不可直接刪除或移動。</p></div><button id="dispatch-btn" class="secondary">執行一次調度檢查</button></div>
 <div class="batch-toolbar" id="batch-toolbar">
-<label class="toggle"><input type="checkbox" id="queue-all"> 全選待製作</label>
+<label class="toggle"><input type="checkbox" id="queue-all"> 全選待製作</label><button id="queue-invert" type="button" class="secondary">反選待製作</button><button id="queue-clear" type="button" class="secondary">清除勾選</button>
 <span class="muted" id="queue-selected-count">已選 0 本</span>
 <button id="batch-up" class="secondary">↑ 批次上移</button>
 <button id="batch-down" class="secondary">↓ 批次下移</button>
@@ -38,6 +38,12 @@
 <button id="batch-export" class="secondary">批次下載選取作品</button>
 <button id="batch-cover-btn" class="secondary">批次封面資訊</button>
 </div>
+<section class="form-card selected-task-panel" aria-labelledby="selected-task-heading">
+<div class="section-head"><h3 id="selected-task-heading">選取小說目前狀態</h3>
+<div class="inline-actions"><button type="button" class="secondary" id="selected-task-progress" disabled>查看即時進度</button>
+<button type="button" class="secondary" id="selected-task-edit" disabled>編輯章節設定</button></div></div>
+<p class="muted" id="selected-task-status" aria-live="polite">請先從佇列勾選一本小說。</p>
+</section>
 <div id="queue-table-wrap" class="table-wrap"><table><thead><tr><th>順序 / 小說</th><th>章節</th><th>執行狀態</th><th>TXT / 封面 / 影片</th><th>操作</th></tr></thead><tbody id="queue-body"><tr><td colspan="5" class="empty">連線後載入佇列</td></tr></tbody></table></div>
 <div class="section-head"><h2>已完成作品</h2><div class="inline-actions"><button id="batch-export-completed" class="secondary">下載勾選成品</button>
 <button id="batch-cover-completed" class="secondary">批次封面資訊</button><button id="batch-restore" class="secondary">將勾選作品移回待製作</button></div></div><div id="completed-list" class="completed"><p class="muted">尚無資料</p></div>
@@ -70,12 +76,13 @@
 </section>
 <form id="book-form" class="form-card">
 <div class="form-grid"><label>小說來源<select id="source" required></select></label><label class="wide">小說網址<input type="url" id="catalog-url" placeholder="貼上書籍、目錄或章節網址" required></label></div>
-<div class="inline-actions"><button type="button" id="parse-btn" class="secondary">解析網站目錄</button><span class="muted" id="parse-status">解析由雲端 Actions 背景執行，結果將自動顯示在本頁</span></div>
+<div class="inline-actions"><button type="button" id="parse-btn" class="secondary">解析網站目錄</button><button type="button" id="book-form-reset" class="secondary">清除表單／改新增小說</button><span class="muted" id="parse-status">解析由雲端 Actions 背景執行，結果將自動顯示在本頁</span></div>
 <div id="catalog-preview" class="catalog-preview hidden"></div>
 <div id="chapter-selection-tools" class="inline-actions hidden">
 <button id="open-chapter-picker" type="button" class="secondary">從完整目錄勾選／排除章節</button>
 <span class="muted">可搜尋、勾選或批次排除全部章節，不必手動輸入章號</span>
 </div>
+<p class="muted" id="book-editor-mode">模式：新增小說</p>
 <div class="form-grid"><label class="wide">小說名稱<input id="book-title" maxlength="160" placeholder="解析成功後自動填入，也可手動輸入" required></label><label>起始章<input type="number" id="start-chapter" min="1" max="999999" value="1" required></label><label>結束章<input type="number" id="end-chapter" min="1" max="999999" value="10" required></label><label class="wide">排除章節（可留空）<input id="excluded" placeholder="例如：3,8,11-15"></label></div>
 <div class="form-grid"><label class="toggle"><input type="checkbox" id="renumber"> 排除後重新編號（從第 1 章開始）</label>
 <div class="publish-options"><strong>公開時間設定（台灣時間）</strong>
@@ -105,7 +112,8 @@
 <div class="form-grid"><label>搜尋書名／作者／最新章節<input id="rank-search" placeholder="搜尋排行榜"></label>
 <label>分類<select id="rank-category"><option value="">全部分類</option></select></label></div>
 <div class="inline-actions"><button type="button" class="secondary" id="rank-select-all">全選符合條件</button>
-<button type="button" class="secondary" id="rank-select-none">取消選取</button>
+<button type="button" class="secondary" id="rank-select-none">取消選取</button><button type="button" class="secondary" id="rank-select-invert">反選目前篩選</button>
+<label class="rank-sort-label">排序<select id="rank-sort"><option value="rank">來源排名</option><option value="title">小說名稱</option><option value="author">作者</option><option value="category">分類</option><option value="latest_chapter">最新章節</option></select></label>
 <span id="rank-count" class="muted">尚未取得排行</span></div>
 <div class="table-wrap ranking-list"><table><thead><tr><th>選取</th><th>排名</th><th>小說</th><th>作者</th><th>分類</th><th>最新章節</th></tr></thead>
 <tbody id="rank-body"><tr><td colspan="6" class="empty">正在讀取公開排行…</td></tr></tbody></table></div>
