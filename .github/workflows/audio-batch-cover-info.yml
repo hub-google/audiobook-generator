@@ -1,0 +1,37 @@
+name: "AUDIO｜批次封面資訊與生圖 Prompt"
+run-name: "【批次封面資訊】Issue #${{ inputs.source_issue }}"
+on:
+  workflow_dispatch:
+    inputs:
+      task_ids: {description: "Selected authorized book task IDs", required: true, type: string}
+      source_issue: {description: "Authorized GitHub Issue", required: true, type: string}
+permissions:
+  contents: read
+concurrency:
+  group: "audio-batch-cover-${{ inputs.source_issue }}"
+  cancel-in-progress: false
+jobs:
+  research:
+    name: "依桌面 GUI 相同邏輯批量產生故事分析與 Prompt"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -r requirements.txt
+      - name: "按書批量取得封面資訊"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          SELECTED_TASK_IDS: ${{ inputs.task_ids }}
+        run: python -m tools.audio_batch_cover_info
+      - name: "上傳批次故事分析及 Prompt"
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audio-batch-cover-${{ inputs.source_issue }}
+          path: batch-cover-info.json
+          if-no-files-found: warn
+          retention-days: 14

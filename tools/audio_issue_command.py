@@ -30,7 +30,7 @@ CLOSE = ":AUDIO-COMMAND-V1 -->"
 ALLOWED = {
     "enqueue", "batch_add", "edit", "move", "status", "delete",
     "complete", "restore", "requeue", "cancel", "review", "dispatch",
-    "preview", "ping", "manual_cover", "export_artifacts",
+    "preview", "ping", "manual_cover", "export_artifacts", "batch_cover_info",
 }
 TASK_FIELDS = {
     "book_title", "start_chapter", "end_chapter", "excluded_chapters",
@@ -183,6 +183,17 @@ def apply_command(command, store, profiles, issue_number, token, repo):
         return "Submitted dispatcher", True
     if operation == "ping":
         return "GitHub collaborator verified; no queue change", False
+    if operation == "batch_cover_info":
+        ids = valid_ids(values.get("task_ids"))
+        state, _ = store.load()
+        found = {t["task_id"] for t in state.get("queue", []) + state.get("completed", [])}
+        if set(ids) - found:
+            raise ValueError("Selected books no longer exist")
+        api("POST", "actions/workflows/audio-batch-cover-info.yml/dispatches", token, repo,
+            json={"ref": "main", "inputs": {
+                "task_ids": ",".join(ids), "source_issue": str(issue_number),
+            }})
+        return f"Started batch Gemini cover research for {len(ids)} books", False
     if operation == "export_artifacts":
         ids = valid_ids(values.get("task_ids"))
         state, _ = store.load()
