@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>AUDIO · 有聲小說製作平台</title>
-<link rel="stylesheet" href="./style.css?v=20261127-queue-fix9">
+<link rel="stylesheet" href="./style.css?v=20261127-audio-no-login-1">
 </head>
 <body>
 <div class="layout">
@@ -15,7 +15,7 @@
 <button data-tab="create" class="nav">新增小說</button>
 <button data-tab="runs" class="nav">製作紀錄</button>
 </nav>
-<div class="sidebar-bottom"><small>GitHub Actions 雲端工作流程</small><small>小說來源：9 個網站</small><a href="https://github.com/hub-google/audiobook-generator" target="_blank" rel="noopener noreferrer">開啟原始碼</a></div>
+<div class="sidebar-bottom"><small>GitHub Actions 雲端工作流程</small><small>小說來源：9 個網站</small><small>無需登入或輸入 Token</small></div>
 </aside>
 <main class="main">
 <header class="topbar"><div><h1 id="page-title">製作總覽</h1><p class="muted" id="page-subtitle">同步 GitHub 雲端佇列與製作進度</p></div><div class="toolbar"><span id="connection-pill" class="pill">尚未連線</span><button id="audio-operations-show" type="button" class="secondary">操作狀態</button><button type="button" id="refresh-btn" class="secondary">立即同步</button></div></header>
@@ -127,7 +127,7 @@
 <section class="form-card"><h3>批次加入小說</h3><p class="muted">每行一個「書名 | 網址 | 起始章 | 結束章」。未填結束章時，自動依最新目錄選取全書。</p><textarea rows="5" id="batch-urls" placeholder="測試小說 | https://czbooks.net/n/xxxxx | 1 | 10"></textarea><div class="form-foot"><span></span><button id="batch-btn" class="secondary" type="button">批次加入</button></div></section>
 </section>
 <section id="runs" class="tab">
-<div class="section-head"><div><h2>GitHub Actions 製作紀錄</h2><p>查看 TXT、Gemini 封面、影片製作、排程與部署的工作結果。</p></div><a href="https://github.com/hub-google/audiobook-generator/actions" rel="noopener noreferrer" target="_blank">開啟 Actions</a></div>
+<div class="section-head"><div><h2>GitHub Actions 製作紀錄</h2><p>查看 TXT、Gemini 封面、影片製作、排程與部署的工作結果。</p></div><span class="muted">執行結果直接顯示於本頁</span></div>
 <div class="table-wrap"><table><thead><tr><th>執行項目</th><th>觸發時間</th><th>狀態</th><th>連結</th></tr></thead><tbody id="runs-body"><tr><td colspan="4" class="empty">尚未載入</td></tr></tbody></table></div>
 <section class="form-card cloud-log-panel">
 <div class="section-head"><div><h3>雲端執行日誌（站內即時狀態）</h3>
@@ -224,7 +224,7 @@
 <p class="muted">選取左側小說，查看 Gemini 故事／視覺分析和 HF Prompt；生成與保存交由 GitHub Actions，網頁沒有 API 金鑰。</p>
 <div class="inline-actions"><button id="batch-cover-generate" type="button">產生選取小說的封面資訊</button>
 <label>備用：手動匯入 Actions 結果 JSON／ZIP<input id="batch-cover-result-file" type="file" accept=".json,.zip,application/json,application/zip"></label>
-<a href="https://github.com/hub-google/audiobook-generator/actions/workflows/audio-batch-cover-info.yml" target="_blank" rel="noopener noreferrer">查看封面資訊執行紀錄</a></div>
+<span class="muted">可在本頁查詢執行結果</span></div>
 <p id="batch-cover-summary" class="muted">站內送出操作後將自動載入封面資訊，重新開啟此視窗仍可接續查詢。</p>
 <div class="batch-cover-layout"><div id="batch-cover-book-list" class="batch-cover-list" aria-label="選取小說"></div>
 <div class="batch-cover-right"><h3 id="batch-cover-selected-title">小說資訊</h3><div class="review-texts">
@@ -268,9 +268,9 @@
 <div class="inline-actions"><button type="button" id="review-auto-load">站內自動取得 TXT 與封面審核檔案</button>
 <span class="muted" id="review-auto-status">不必離開 AUDIO；使用安全的雲端工作機取得原始 Artifact 後進行指紋驗證。</span></div>
 <div class="review-files">
-<a id="review-scrape-link" target="_blank" rel="noopener noreferrer">開啟 TXT 審核 Run，下載 scrape-review Artifact</a>
+<a id="review-scrape-link" class="hidden" tabindex="-1" aria-hidden="true" target="_blank" rel="noopener noreferrer">開啟 TXT 審核 Run，下載 scrape-review Artifact</a>
 <label>匯入廣告報告 JSON 或 Artifact ZIP<input id="review-report-file" type="file" accept=".json,.zip,application/json,application/zip"></label>
-<a id="review-cover-link" target="_blank" rel="noopener noreferrer">開啟封面 Run，下載 cover-review Artifact</a>
+<a id="review-cover-link" class="hidden" tabindex="-1" aria-hidden="true" target="_blank" rel="noopener noreferrer">開啟封面 Run，下載 cover-review Artifact</a>
 <label>匯入封面審核 Artifact ZIP<input id="review-cover-file" type="file" accept=".zip,application/zip"></label>
 </div>
 <p id="review-load-status" class="muted">尚未匯入報告；請以實際 Artifact 檢查資料。</p>
@@ -311,5 +311,5 @@
 <footer>資料由 GitHub API 即時讀取；GitHub Pages 不會在瀏覽器執行 Python、TTS 或影片轉檔。</footer>
 </main>
 </div>
-<script src="./app.js?v=20261127-queue-fix9" defer></script><script src="./bridge.js?v=20261127-queue-fix9" defer></script><script src="./novel-search.js?v=20261127-queue-fix9" defer></script><script src="./cleaner-parity.js?v=20261127-queue-fix9" defer></script><script src="./review-inspector.js?v=20261127-queue-fix9" defer></script><script src="./manual-cover.js?v=20261127-queue-fix9" defer></script><script src="./batch-cover.js?v=20261127-queue-fix9" defer></script><script src="./external-info.js?v=20261127-queue-fix9" defer></script><script src="./draft-cover-info.js?v=20261127-queue-fix9" defer></script><script src="./cloud-log.js?v=20261127-queue-fix9" defer></script>
+<script src="./app.js?v=20261127-audio-no-login-1" defer></script><script src="./bridge.js?v=20261127-audio-no-login-1" defer></script><script src="./novel-search.js?v=20261127-audio-no-login-1" defer></script><script src="./cleaner-parity.js?v=20261127-audio-no-login-1" defer></script><script src="./review-inspector.js?v=20261127-audio-no-login-1" defer></script><script src="./manual-cover.js?v=20261127-audio-no-login-1" defer></script><script src="./batch-cover.js?v=20261127-audio-no-login-1" defer></script><script src="./external-info.js?v=20261127-audio-no-login-1" defer></script><script src="./draft-cover-info.js?v=20261127-audio-no-login-1" defer></script><script src="./cloud-log.js?v=20261127-audio-no-login-1" defer></script>
 </body></html>
