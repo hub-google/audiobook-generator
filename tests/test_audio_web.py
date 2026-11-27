@@ -214,3 +214,16 @@ def test_no_legacy_pat_or_direct_github_writes_remain_in_pages():
     assert "async function mutate(" not in js
     assert "async function connect(" not in js
     assert 'options.method.toUpperCase()!=="GET"' in js
+
+
+def test_chapter_editor_gui_has_full_book_paging_inline_edit_and_duplicate_details():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    for elem in ("chapter-show-all","chapter-prev","chapter-next","chapter-page-label","chapter-move-up","chapter-move-down","chapter-edit-dialog","chapter-edit-name","chapter-edit-number","chapter-duplicates-dialog"):
+        assert f'id="{elem}"' in html
+    for function in ("chapterDirectMatches","showChapterDuplicates","openChapterEdit","saveChapterEdit","moveSelectedChapters","pickerDuplicateGroups"):
+        assert f"function {function}(" in js
+    assert "wholeBook=Array.from({length:parsedCatalog.total_chapters}" in js
+    assert "chapterPickerOrder=selectedOrder.concat(" in js
+    assert 'text($("chapter-page-label")' in js
+    assert '$("renumber").checked=true' in js

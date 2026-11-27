@@ -95,7 +95,7 @@
 <dialog id="chapter-dialog" class="editor-dialog" aria-labelledby="chapter-dialog-title">
 <h2 id="chapter-dialog-title">選擇要製作的章節</h2>
 <p class="muted">勾選表示製作，取消勾選表示排除。範圍以新增表單的起訖章節為準。</p>
-<label>搜尋章號或章名<input id="chapter-search" placeholder="輸入章節編號、標題關鍵字"></label>
+<div class="chapter-filters"><label>搜尋章號或章名<input id="chapter-search" placeholder="搜尋 UUID、章號、章名"></label><label class="toggle"><input id="chapter-show-all" type="checkbox" checked> 顯示全書章節</label></div>
 <div class="chapter-controls">
 <button type="button" id="chapter-all" class="secondary">全選搜尋結果</button>
 <button type="button" id="chapter-none" class="secondary">全部排除搜尋結果</button>
@@ -103,6 +103,8 @@
 <button type="button" id="chapter-exclude-duplicates" class="secondary">排除重複章節</button>
 <button type="button" id="chapter-sort-number" class="secondary">依正規化章號排列</button>
 <button type="button" id="chapter-sort-original" class="secondary">還原原序</button>
+<button type="button" id="chapter-move-up" class="secondary">選取章節上移</button>
+<button type="button" id="chapter-move-down" class="secondary">選取章節下移</button>
 </div>
 <div class="duplicate-controls">
 <label class="toggle"><input type="checkbox" id="duplicate-number" checked> 網站章節數正規化</label>
@@ -111,8 +113,22 @@
 <label class="toggle"><input type="checkbox" id="duplicate-only"> 只看重複章節</label>
 </div>
 <p id="chapter-picker-status" class="muted"></p>
+<div class="chapter-columns"><span>多選</span><span>製作</span><span>UUID / 編號章節數 / 正規化章號 / 原章號 / 章名</span><span>操作</span></div>
 <div id="chapter-list" class="chapter-list"></div>
+<div class="chapter-pages"><button id="chapter-prev" type="button" class="secondary">上一頁</button><span id="chapter-page-label">第 1 頁</span><button id="chapter-next" type="button" class="secondary">下一頁</button></div>
 <div class="dialog-actions"><button type="button" id="chapter-picker-cancel" class="secondary">取消</button><button type="button" id="chapter-picker-save">套用選章結果</button></div>
+</dialog>
+<dialog id="chapter-edit-dialog" class="editor-dialog" aria-labelledby="chapter-edit-title">
+<h2 id="chapter-edit-title">編輯網站章節資料</h2>
+<p class="muted" id="chapter-edit-uuid"></p>
+<div class="form-grid"><label class="wide">章節名稱（不含原網站章號）<input id="chapter-edit-name" maxlength="300"></label>
+<label>正規化章號（留空為自動解析）<input id="chapter-edit-number" placeholder="例如 12 或 12.5"></label></div>
+<div class="dialog-actions"><button type="button" id="chapter-edit-cancel" class="secondary">取消</button>
+<button type="button" id="chapter-edit-save">套用章節變更</button></div>
+</dialog>
+<dialog id="chapter-duplicates-dialog" class="editor-dialog" aria-labelledby="chapter-duplicates-title">
+<h2 id="chapter-duplicates-title">重複章節直接比對</h2><p id="chapter-duplicates-status"></p><div id="chapter-duplicates-list" class="chapter-list"></div>
+<div class="dialog-actions"><button type="button" id="chapter-duplicates-close" class="secondary">關閉</button></div>
 </dialog>
 <dialog id="progress-dialog" class="editor-dialog" aria-labelledby="progress-title">
 <h2 id="progress-title">小說製作進度</h2><pre id="progress-detail" class="progress-detail"></pre>
