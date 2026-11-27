@@ -15,6 +15,9 @@ def test_live_journal_redacts_bearer_and_private_provider_tokens():
     assert "hf_ABCDEFGHIJKLMNO1234567890" not in clean
     assert "[REDACTED]" in clean
     assert len(clean)<=800
+    url=sanitize("https://generativelanguage.googleapis.com/v1beta/models/x:generateContent?key=AIzaSECRET12345678901234567890&format=json")
+    assert "AIzaSECRET12345678901234567890" not in url
+    assert "?key=[REDACTED]" in url
 
 
 def test_log_severity():
