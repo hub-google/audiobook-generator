@@ -255,3 +255,13 @@ def test_one_click_bulk_download_requests_github_artifact_export():
     assert 'multi("export_artifacts"' in bridge
     assert "secrets.GITHUB_TOKEN" in workflow
     assert "tools.export_run_artifacts" in workflow
+
+
+def test_review_approval_is_gated_by_authoritative_artifact_fingerprint():
+    bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    review=(ROOT/"docs/site/review-inspector.js").read_text(encoding="utf-8")
+    backend=(ROOT/"tools/audio_issue_command.py").read_text(encoding="utf-8")
+    assert "window.audioReviewEvidence=function()" in review
+    assert "window.audioReviewEvidence?.()" in bridge
+    assert "validate_review_evidence(values, review_task, token, repo, api)" in backend
+    assert "evidence:window.audioReviewEvidence()" in review

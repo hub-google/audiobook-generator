@@ -189,7 +189,22 @@ def main():
             desktop.locator("#queue-body tr").nth(1).get_by_role(
                 "button", name="確認審核並繼續").click()
             assert desktop.locator("#review-dialog").is_visible()
+            review_sample={
+                "schema_version":1,"artifact_role":"ad_review_candidates",
+                "task_id":"book-smoke-review","worker_id":-1,
+                "raw_fingerprint":"a"*64,"chapters":[1],
+                "chapter_texts":{"1":"第一章 開始\n本段為測試廣告。接下來是故事。"},
+                "candidates":[{"text":"本段為測試廣告","kind":"廣告","count":1,
+                               "score":1,"reason":"測試廣告候選"}],
+            }
+            desktop.locator("#review-report-file").set_input_files({
+                "name":"ad-candidates-full-book.json","mimeType":"application/json",
+                "buffer":json.dumps(review_sample,ensure_ascii=False).encode("utf-8"),
+            })
+            desktop.get_by_text("已核對任務 book-smoke-review").wait_for()
+            assert "本段為測試廣告" in desktop.locator("#review-raw").inner_text()
             desktop.locator("#review-patterns").fill("本段為測試廣告")
+            assert "本段為測試廣告" not in desktop.locator("#review-clean").inner_text()
             desktop.screenshot(path=str(OUTPUT / "audio-review-editor.png"), full_page=True)
             desktop.locator("#review-form button[type=submit]").click()
             desktop.locator("#review-dialog").wait_for(state="hidden")

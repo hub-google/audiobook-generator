@@ -109,6 +109,12 @@
   coverUrl=URL.createObjectURL(new Blob([await decodeEntry(image)],{type:"image/jpeg"}));
   $("review-cover-preview").src=coverUrl;$("review-cover-preview").hidden=false;
  }
+ window.audioReviewEvidence=function(){
+  if(!report||report.task_id!==taskId||!chapterKeys().length||
+     !/^[0-9a-f]{64}$/.test(String(report.raw_fingerprint||"")))
+    throw Error("請匯入這本小說的 ad-candidates JSON / ZIP，檢查 Raw/Clean 才能核准");
+  return {task_id:taskId,raw_fingerprint:report.raw_fingerprint};
+ };
  const original=window.openReview;
  window.openReview=function(id){
   const t=queueTasks().find(x=>x.task_id===id);
@@ -148,7 +154,8 @@
   $("review-copy-prompt").addEventListener("click",()=>navigator.clipboard.writeText(state.prompt).then(()=>notice("已複製 HF Prompt")).catch(e=>notice(e.message,"error")));
   $("review-save-only").addEventListener("click",()=>{
    if(!taskId)throw Error("尚未選取小說");
-   audioIssueAction("review",{task_id:taskId,remove_patterns:patterns(),review_only:true},"儲存文字清理規則");
+   audioIssueAction("review",{task_id:taskId,remove_patterns:patterns(),review_only:true,
+     evidence:window.audioReviewEvidence()},"儲存文字清理規則");
    $("review-dialog").close();
   });
  });
