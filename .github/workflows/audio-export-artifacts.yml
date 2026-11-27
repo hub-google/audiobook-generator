@@ -1,0 +1,36 @@
+name: "AUDIO｜成品與 Artifact 批次下載"
+run-name: "【AUDIO 成品匯出】${{ inputs.request_id }}"
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_ids: {description: "Comma-separated authorized source Runs", required: true, type: string}
+      request_id: {description: "Originating AUDIO issue", required: true, type: string}
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: audio-export-${{ inputs.request_id }}
+  cancel-in-progress: false
+jobs:
+  export:
+    name: "串流合併完整 Artifact ZIP"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - name: "讀取 GitHub Run Artifacts 並串流打包"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_IDS: ${{ inputs.source_run_ids }}
+          EXPORT_REQUEST_ID: ${{ inputs.request_id }}
+        run: python -m tools.export_run_artifacts
+      - name: "上傳整包成果供 GitHub 登入後下載"
+        uses: actions/upload-artifact@v4
+        with:
+          name: audio-artifacts-${{ inputs.request_id }}
+          path: audio-export.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

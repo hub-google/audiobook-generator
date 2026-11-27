@@ -30,7 +30,7 @@ CLOSE = ":AUDIO-COMMAND-V1 -->"
 ALLOWED = {
     "enqueue", "batch_add", "edit", "move", "status", "delete",
     "complete", "restore", "requeue", "cancel", "review", "dispatch",
-    "preview", "ping", "manual_cover",
+    "preview", "ping", "manual_cover", "export_artifacts",
 }
 TASK_FIELDS = {
     "book_title", "start_chapter", "end_chapter", "excluded_chapters",
@@ -183,6 +183,32 @@ def apply_command(command, store, profiles, issue_number, token, repo):
         return "Submitted dispatcher", True
     if operation == "ping":
         return "GitHub collaborator verified; no queue change", False
+    if operation == "export_artifacts":
+        ids = valid_ids(values.get("task_ids"))
+        state, _ = store.load()
+        tasks = {t["task_id"]: t for t in state.get("queue", []) + state.get("completed", [])}
+        if set(ids) - set(tasks):
+            raise ValueError("One or more selected tasks no longer exist")
+        runs = []
+        for task_id in ids:
+            task = tasks[task_id]
+            for field in ("run_id", "scrape_run_id", "cover_run_id", "processing_run_id"):
+                run_id = task.get(field)
+                if str(run_id or "").isdigit() and int(run_id) > 0:
+                    runs.append(int(run_id))
+            for item in task.get("run_history") or []:
+                run_id = item.get("run_id")
+                if str(run_id or "").isdigit() and int(run_id) > 0:
+                    runs.append(int(run_id))
+        runs = list(dict.fromkeys(runs))
+        if not runs:
+            raise ValueError("Selected books have no GitHub Run artifacts")
+        api("POST", "actions/workflows/audio-export-artifacts.yml/dispatches", token, repo,
+            json={"ref": "main", "inputs": {
+                "source_run_ids": ",".join(str(n) for n in runs),
+                "request_id": f"issue-{issue_number}",
+            }})
+        return f"Requested {len(runs)} Runs for batch artifact export", False
     if operation == "preview":
         request_id = str(values.get("request_id", ""))
         if not re.fullmatch(r"[A-Za-z0-9_-]{8,40}", request_id):
