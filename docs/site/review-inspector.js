@@ -187,13 +187,13 @@
  }
  window.audioReviewCoverEvidence=function(){
   if(!coverEvidence||coverEvidence.task_id!==taskId)
-   throw Error("必須先匯入此書的封面審核 ZIP，核對 Manifest、圖片與 Prompt 後才能開始後製");
+   throw Error("本書實際封面審核資料尚未載入，請重新載入封面資料，核對圖片與 Prompt 後再開始後製");
   return {...coverEvidence};
  };
  window.audioReviewEvidence=function(){
   if(!report||report.task_id!==taskId||!chapterKeys().length||
      !/^[0-9a-f]{64}$/.test(String(report.raw_fingerprint||"")))
-    throw Error("請匯入這本小說的 ad-candidates JSON / ZIP，檢查 Raw/Clean 才能核准");
+    throw Error("本書實際 TXT 審核資料尚未載入，請重新載入或確認 TXT 工作完成後再審核");
   return {task_id:taskId,raw_fingerprint:report.raw_fingerprint};
  };
  let reviewLoadGeneration=0;
@@ -207,7 +207,7 @@
   const button=$("review-auto-load");button.disabled=true;
   const indicator=$("review-auto-status");
   try{
-   text(indicator,"正在站內提交 TXT／封面檔案取回請求…");
+   text(indicator,"正在由雲端讀取本書 TXT／封面審核資料…");
    const requestIds=await Promise.all(kinds.map(k=>window.audioRequestArtifact(selected,k==="cover"?task.cover_run_id:task.scrape_run_id,k)));
    if(requestIds.some(x=>!x))throw Error("雲端檔案請求未成功排入");
    text(indicator,"正在取得本次實際審核資料…");
@@ -226,9 +226,9 @@
    if(!valid())return;
    const errors=results.filter(x=>x.status==="rejected").map(x=>x.reason?.message||"未知錯誤");
    if(errors.length)throw Error(errors.join("；"));
-   text(indicator,"本次審核資料已讀取完成。");
+   text(indicator,"已自動載入本書審核資料；可開始檢查候選詞句與 Raw／Clean。");
   }catch(error){
-   if(valid())text(indicator,"自動載入尚未成功："+error.message+"。仍可使用下方手動匯入。");
+   if(valid())text(indicator,"自動載入失敗："+error.message+"。可按「重新載入」，若 TXT 工作失敗請先返回佇列重新排程。");
   }finally{if(valid())button.disabled=false;}
  }
  const original=window.openReview;
@@ -241,6 +241,14 @@
   state.candidateChoices.clear();
   state.chapters={};state.prompt="";
   original(id);
+  // Desktop GUI also reads the latest cloud Profile, not only the task snapshot.
+  const initialPatterns=$("review-patterns").value;
+  if(typeof window.audioReadBookCleaner==="function"){
+   void window.audioReadBookCleaner(t).then(saved=>{
+    if(taskId!==id||!$("review-dialog").open||$("review-patterns").value!==initialPatterns)return;
+    setPatterns(saved);
+   }).catch(()=>{/* Keep the task snapshot if the Profile temporarily cannot be read. */});
+  }
   $("review-dialog").dataset.mode=kind;
   text($("review-title"),(kind==="cover"?"封面圖與小說介紹／HF Prompt":kind==="text"?"文字清理／關鍵字審核":"文字清理、Raw/Clean 抽查與封面審核")+"｜《"+bookTitle+"》");
   $("gui-text-tabs").classList.toggle("hidden",kind!=="text");$("gui-confirm-text").classList.toggle("hidden",kind!=="text");$("gui-confirm-text").disabled=true;
@@ -249,7 +257,7 @@
   for(const field of ["review-report-file","review-cover-file","review-drop-files","review-search"])$(field).value="";
   $("review-kind").value="";$("review-state").value="";
   $("review-chapter").replaceChildren(new Option("尚未載入",""));
-  text($("review-load-status"),"請選擇此小說的實際 GitHub Artifact");
+  text($("review-load-status"),"正在等待本書 TXT 審核報告，完成後自動顯示候選詞句與原文。");
   if(coverUrl){URL.revokeObjectURL(coverUrl);coverUrl=null;}
   $("review-cover-preview").hidden=true;
   text($("review-cover-analysis"),"尚未載入");text($("review-cover-prompt"),"尚未載入");
@@ -257,10 +265,10 @@
   $("review-scrape-link").href="https://github.com/"+REPO+"/actions/runs/"+t.scrape_run_id;
   $("review-cover-link").href="https://github.com/"+REPO+"/actions/runs/"+t.cover_run_id;
   renderCandidates();renderText();
-  text($("review-auto-status"),"可一鍵從 GitHub Actions 安全取得 TXT 與封面審核檔案；不需開啟外站。");
-  const ready=kind==="cover"?t.cover_run_id&&t.stages?.cover?.status==="completed":kind==="text"?t.scrape_run_id&&t.stages?.scrape?.status==="completed":t.cover_run_id&&t.scrape_run_id;
-  if(ready)void loadCloudReview().catch(e=>text($("review-auto-status"),e.message));
-  else{text($("review-auto-status"),kind==="cover"?"封面尚未完成。可選擇圖片／更換封面，或返回佇列重新排程。":"TXT 尚未完成或執行失敗。請返回佇列重新排程；完成後才能取得 Raw／Clean 原文。");$("review-auto-load").disabled=true;}
+  text($("review-auto-status"),"正在自動讀取本書 GitHub Actions 審核結果…");
+  const ready=kind==="cover"?!!t.cover_run_id:kind==="text"?!!t.scrape_run_id:!!(t.cover_run_id&&t.scrape_run_id);
+  if(ready)void loadCloudReview().catch(e=>text($("review-auto-status"),"載入失敗："+e.message));
+  else{text($("review-auto-status"),kind==="cover"?"封面尚無執行紀錄；請返回佇列執行封面工作。":"本書 TXT 尚無執行紀錄；請先從佇列啟動 TXT 抓取。");$("review-auto-load").disabled=true;}
  };
  function setTextTab(tab){$("gui-candidate-pane").classList.toggle("hidden",mode==="text"&&tab!=="candidates");$("gui-raw-pane").classList.toggle("hidden",mode==="text"&&tab!=="raw");$("gui-text-candidates-tab").setAttribute("aria-pressed",String(tab==="candidates"));$("gui-text-raw-tab").setAttribute("aria-pressed",String(tab==="raw"));}
  function setCoverTab(tab){$("gui-cover-analysis-panel").classList.toggle("hidden",tab!=="analysis");$("gui-cover-prompt-panel").classList.toggle("hidden",tab!=="prompt");$("gui-cover-analysis-tab").setAttribute("aria-pressed",String(tab==="analysis"));$("gui-cover-prompt-tab").setAttribute("aria-pressed",String(tab==="prompt"));}
