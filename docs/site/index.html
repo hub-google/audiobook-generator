@@ -200,7 +200,7 @@
 <p id="review-text-stats" class="muted">尚未載入文字報告</p>
 <div class="review-texts"><div><strong>Raw · 爬蟲原文</strong><pre id="review-raw"></pre></div>
 <div><strong>Clean · 清理預覽</strong><pre id="review-clean"></pre></div></div>
-<p class="muted">此處 Clean 是即時固定字詞去除預覽；最終朗讀文字仍以 Actions 內的 Python 正規化程式為準，不將預覽當作已產生的 TTS。</p>
+<p class="muted">Clean 依原 cleaner.py 的正規化、固定字詞、開頭過濾與語義分段邏輯即時計算。更改規則後立即重新檢視；最終 TTS 仍以雲端執行結果為準。</p>
 </section></div>
 <section class="review-cover"><h3>封面圖、Gemini 故事資訊與 HF Prompt</h3>
 <img id="review-cover-preview" alt="GitHub Artifact 中的封面" hidden>
@@ -215,5 +215,5 @@
 <footer>資料由 GitHub API 即時讀取；GitHub Pages 不會在瀏覽器執行 Python、TTS 或影片轉檔。</footer>
 </main>
 </div>
-<script src="./app.js" defer></script><script src="./bridge.js" defer></script><script src="./review-inspector.js" defer></script><script src="./manual-cover.js" defer></script>
+<script src="./app.js" defer></script><script src="./bridge.js" defer></script><script src="./cleaner-parity.js" defer></script><script src="./review-inspector.js" defer></script><script src="./manual-cover.js" defer></script>
 </body></html>

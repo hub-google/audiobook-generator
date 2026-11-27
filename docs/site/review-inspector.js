@@ -1,6 +1,6 @@
 "use strict";
 (function(){
- let report=null, taskId=null, coverUrl=null;
+ let report=null, taskId=null, coverUrl=null, bookTitle="";
  const state={candidateChoices:new Map(),chapters:{},prompt:""};
  function rawEntries(buffer){
   const bytes=new Uint8Array(buffer),dv=new DataView(buffer);
@@ -58,14 +58,15 @@
  function renderText(){
   const index=$("review-chapter").value,raw=state.chapters[index]||"";
   text($("review-raw"),raw);
-  let clean=raw;
-  for(const pattern of patterns())clean=clean.split(pattern).join("");
+  const lineBreak=raw.indexOf("\n");
+  const title=lineBreak>=0?raw.slice(0,lineBreak):raw,body=lineBreak>=0?raw.slice(lineBreak+1):"";
+  let clean=AudioCleaner.chunkText(AudioCleaner.cleanTextContent(body,title,bookTitle,patterns()));
   text($("review-clean"),clean);
   const original=raw.replace(/\s/g,"").length,after=clean.replace(/\s/g,"").length;
   const ratio=original?((original-after)/original*100):0;
   const warning=ratio>=50?"；⚠ 清除比例偏高":!after&&original?"；⚠ Clean 為空":"";
   text($("review-text-stats"),index?
-   "第 "+index+" 章｜Raw "+original.toLocaleString()+" 字｜基礎清理預覽 "+after.toLocaleString()+" 字｜約清除 "+ratio.toFixed(1)+"%"+warning:
+   "第 "+index+" 章｜Raw "+original.toLocaleString()+" 字｜Python 同規則清理 "+after.toLocaleString()+" 字｜約清除 "+ratio.toFixed(1)+"%"+warning:
    "尚未載入章節文字");
  }
  function navigate(pos){
@@ -112,7 +113,7 @@
  window.openReview=function(id){
   const t=queueTasks().find(x=>x.task_id===id);
   if(!t||t.status!=="waiting_review")throw Error("小說尚未進入審核");
-  taskId=id;report=null;state.chapters={};state.prompt="";
+  taskId=id;bookTitle=t.book_title||"";report=null;state.chapters={};state.prompt="";
   original(id);
   for(const field of ["review-report-file","review-cover-file","review-search"])$(field).value="";
   $("review-kind").value="";$("review-state").value="";
