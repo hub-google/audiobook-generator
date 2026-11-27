@@ -104,3 +104,45 @@ def test_batch_export_uses_only_authorized_task_runs():
     assert "3 Runs" in result and should_dispatch is False
     assert called[0][1]=="actions/workflows/audio-export-artifacts.yml/dispatches"
     assert called[0][2]["json"]["inputs"]["source_run_ids"]=="101,102,103"
+
+
+def test_replayed_edit_does_not_overwrite_newer_profile():
+    from unittest.mock import Mock
+    from src.cloud_queue import empty_queue, new_task
+    from tools.audio_issue_command import apply_command
+    q = empty_queue()
+    task = new_task("https://69shuba.com/book/123/", "Demo", 1, 3)
+    q["queue"] = [task]
+    q["web_applied_issue_ids"] = [41]
+    store = Mock()
+    store.load.return_value = (q, None)
+    profiles = Mock()
+    command = {"op": "edit", "data": {"task_id": task["task_id"],
+               "changes": {"book_title": "Stale title"}}}
+    result, dispatch = apply_command(command, store, profiles, 41, "dummy", "owner/repo")
+    assert "Already processed" in result and dispatch is False
+    profiles.mutate.assert_not_called()
+    store.mutate.assert_not_called()
+
+
+@pytest.mark.parametrize("status,changes", [
+    ("running", {"book_title": "Rejected title"}),
+    ("queued", {"start_chapter": 3, "end_chapter": 1}),
+    ("queued", {"excluded_chapters": [1, 2, 3]}),
+])
+def test_invalid_edit_does_not_mutate_book_profile(status, changes):
+    from unittest.mock import Mock
+    from src.cloud_queue import empty_queue, new_task
+    from tools.audio_issue_command import apply_command
+    q = empty_queue()
+    task = new_task("https://69shuba.com/book/123/", "Demo", 1, 3)
+    task["status"] = status
+    q["queue"] = [task]
+    store = Mock()
+    store.load.return_value = (q, None)
+    profiles = Mock()
+    command = {"op": "edit", "data": {"task_id": task["task_id"], "changes": changes}}
+    with pytest.raises(ValueError):
+        apply_command(command, store, profiles, 42, "dummy", "owner/repo")
+    profiles.mutate.assert_not_called()
+    store.mutate.assert_not_called()

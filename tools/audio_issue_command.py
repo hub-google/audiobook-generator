@@ -229,11 +229,14 @@ def apply_command(command, store, profiles, issue_number, token, repo):
             json={"ref": "main", "inputs": {"catalog_url": url, "request_id": request_id}})
         return "Started catalog preview " + request_id, False
 
+    # Reject a previously applied issue before parsing, validating, or writing
+    # a book profile. Re-running an old edit must never restore stale settings.
+    previous, _ = store.load()
+    if issue_number in (previous.get("web_applied_issue_ids") or []):
+        return f"Already processed issue #{issue_number}", False
+
     review_evidence = None
     if operation == "review":
-        previous, _ = store.load()
-        if issue_number in (previous.get("web_applied_issue_ids") or []):
-            return f"Already processed issue #{issue_number}", False
         task_id = valid_id(values.get("task_id"))
         review_task = next((t for t in previous["queue"] if t["task_id"] == task_id), None)
         if not review_task or review_task.get("status") != "waiting_review":
@@ -306,6 +309,8 @@ def apply_command(command, store, profiles, issue_number, token, repo):
             if any(n < start or n > end for n in excluded):
                 raise ValueError("Excluded chapters outside range")
             selected = set(range(start,end+1))-set(excluded)
+            if not selected:
+                raise ValueError("Cannot exclude every selected chapter")
             order = changes.get("chapter_order", task.get("chapter_order") or [])
             if order and (len(order) != len(selected) or set(map(int,order)) != selected):
                 raise ValueError("Incomplete chapter order")
@@ -368,6 +373,12 @@ def apply_command(command, store, profiles, issue_number, token, repo):
     # same text-cleaner rules for future runs of this book.
     if operation in {"edit", "review"}:
         q, _ = store.load()
+        if issue_number in (q.get("web_applied_issue_ids") or []):
+            return f"Already processed issue #{issue_number}", False
+        # Validate the same queue transition before touching its shared profile.
+        # A rejected edit/review must not change future runs of the book.
+        from copy import deepcopy
+        apply_mutation(deepcopy(q))
         task = next((t for t in q["queue"] if t["task_id"] == ids[0]),None)
         if task is None:
             raise ValueError("Task not found")
