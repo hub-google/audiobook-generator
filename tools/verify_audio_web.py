@@ -166,7 +166,7 @@ def main():
             assert desktop.locator("#excluded").input_value() == "2"
             desktop.locator("#book-form button[type=submit]").click()
             desktop.wait_for_function("window.__issueUrls.length >= 1")
-            assert "/issues/new?" in desktop.evaluate("window.__issueUrls[0]")
+            assert "/issues/new?" in desktop.evaluate("window.__issueUrls[0]"), repr(desktop.evaluate("window.__issueUrls[0]"))
             assert "AUDIO-COMMAND-V1" in desktop.evaluate("decodeURIComponent(window.__issueUrls[0])")
             desktop.locator('[data-tab="overview"]').click()
             desktop.locator("#queue-body tr").first.get_by_role("button", name="編輯").click()
