@@ -252,7 +252,9 @@ def main():
             assert desktop.evaluate("window.__issueUrls") == [], "批次新增不得開啟外部視窗"
             # A book must appear immediately as submitted, not disappear while Actions is queued.
             assert desktop.locator("#audio-submitted-books").is_visible()
-            assert desktop.locator("#audio-submitted-list .audio-submitted-item").count() == 2
+            # One of the two URLs is already in the mocked official queue; don't duplicate it.
+            assert desktop.evaluate("JSON.parse(sessionStorage.getItem('audio-submitted-books-v1')).length") == 2
+            assert desktop.locator("#audio-submitted-list .audio-submitted-item").count() == 1
             assert "詭秘之主" in desktop.locator("#audio-submitted-list").inner_text()
             assert "等待後端處理" in desktop.locator("#audio-submitted-list").inner_text()
             desktop.screenshot(path=str(OUTPUT / "audio-submitted-queue-desktop.png"), full_page=True)
