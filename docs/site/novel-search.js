@@ -1,5 +1,5 @@
 "use strict";
-// Public search results only. All writes go through the existing authorized Issue bridge.
+// Public novel search; all queue changes are submitted through the in-page command service.
 (function(){
  const byId=id=>document.getElementById(id);
  const selected=new Map(), staged=new Map();
