@@ -13,7 +13,9 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 EDGE = "https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-web-commands"
-# Each chunk must fit through the Edge Function request gateway and standard\n# Supabase Storage upload; keep this below their large-upload threshold.\nCHUNK_SIZE = 4_000_000
+# Each chunk must fit through the Edge Function request gateway and standard
+# Supabase Storage upload; keep this below their large-upload threshold.
+CHUNK_SIZE = 4_000_000
 
 
 def chunk_names(base, total_size, chunk_size=CHUNK_SIZE):
