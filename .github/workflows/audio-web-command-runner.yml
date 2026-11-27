@@ -32,4 +32,6 @@ jobs:
       - name: "處理站內操作並回報執行結果"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python -m tools.audio_web_command_runner
