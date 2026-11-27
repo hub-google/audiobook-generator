@@ -122,7 +122,7 @@ def main():
                 if popped: raise AssertionError(f"{control}: popup created {popped}")
                 foreign=[x for x in navigated if urlparse(x).hostname not in ("127.0.0.1",)]
                 if foreign: raise AssertionError(f"{control}: navigated to {foreign}")
-            def attempt_button(selector, *args):
+            def attempt_button(selector, *, keep_dialog=False):
                 locator=page.locator(selector).first
                 if locator.count()==0:
                     skipped.append({"control":selector,"reason":"not rendered"});return
@@ -139,9 +139,10 @@ def main():
                     if "window.open" in str(exc) or "navigated" in str(exc) or "popup created" in str(exc):raise
                     skipped.append({"control":selector,"reason":str(exc).splitlines()[0][:140]})
                 finally:
-                    page.evaluate("""() => {
-                       document.querySelectorAll("dialog[open]").forEach(d=>d.close());
-                    }""")
+                    if not keep_dialog:
+                        page.evaluate("""() => {
+                           document.querySelectorAll("dialog[open]").forEach(d=>d.close());
+                        }""")
             # Overview controls: register a pending selection first.
             attempt_button('#refresh-btn')
             attempt_button('#audio-operations-show')
@@ -177,11 +178,25 @@ def main():
               };
               document.querySelector("#chapter-selection-tools").classList.remove("hidden");
             }""")
-            attempt_button("#open-chapter-picker")
-            for name in ["chapter-all","chapter-none","chapter-invert","chapter-sort-number",
+            attempt_button("#open-chapter-picker",keep_dialog=True)
+            for name in ["chapter-all","chapter-none","chapter-invert","chapter-all",
+                         "chapter-exclude-duplicates","chapter-sort-number",
                          "chapter-sort-original","chapter-move-up","chapter-move-down",
-                         "chapter-picker-cancel","chapter-picker-save"]:
-                attempt_button("#"+name)
+                         "chapter-prev","chapter-next"]:
+                attempt_button("#"+name,keep_dialog=True)
+            editor=page.locator('#chapter-list .chapter-item button:has-text("編輯")').first
+            if editor.count() and editor.is_visible():
+                editor.click()
+                attempt_button("#chapter-edit-save",keep_dialog=True)
+                editor=page.locator('#chapter-list .chapter-item button:has-text("編輯")').first
+                editor.click()
+                attempt_button("#chapter-edit-cancel",keep_dialog=True)
+            page.evaluate("showChapterDuplicates(1)")
+            attempt_button("#chapter-duplicates-close",keep_dialog=True)
+            attempt_button("#chapter-picker-save")
+            attempt_button("#open-chapter-picker",keep_dialog=True)
+            attempt_button("#chapter-picker-cancel")
+            page.locator("#publish-scheduled").check()
             for item in page.locator('button[data-publish-day]').all():
                 try:
                     if item.is_visible() and item.is_enabled():
@@ -189,6 +204,9 @@ def main():
                         passed.append("schedule-time preset")
                 except Exception as exc:
                     skipped.append({"control":"schedule-time preset","reason":str(exc).splitlines()[0][:140]})
+            page.locator("#start-chapter").fill("1")
+            page.locator("#end-chapter").fill("3")
+            attempt_button("#enqueue-btn")
             page.locator('[data-tab="runs"]').click()
             attempt_button('#refresh-btn')
             # The links must open the internal reference dialog, never Github.
