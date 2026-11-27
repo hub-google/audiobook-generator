@@ -11,7 +11,7 @@ const SOURCES=[
 {id:"moon17",name:"月亮小說網",hosts:["17moon.com","www.17moon.com"]},
 {id:"book8",name:"無限小說",hosts:["8book.com","www.8book.com","v.8book.com","m.8book.com","i.8book.com"]}
 ];
-let progressGeneration=0,progressTaskId=null,progressTimer=null,progressJobRuns="",progressBusy=false;
+let progressGeneration=0,progressTaskId=null,progressTimer=null,progressJobRuns="",progressBusy=false,progressRawLog="";
 let editCleanerInitial="",queue=null,queueSha=null,latestRuns=[],parsedCatalog=null,editorTaskId=null,reviewTaskId=null,chapterPickerExcluded=null,chapterPickerOrder=null,rankingNovels=[],rankingSelected=new Set(),selectedPending=new Set(),selectedCompleted=new Set(),chapterSelectedRows=new Set(),chapterPage=0,chapterPageSize=200,chapterEditingIndex=null,editorParsedCatalog=null,chapterPickerMode="create",pickerOriginalCatalog=null,pickerOriginalDuplicateState=null;
 const $=id=>document.getElementById(id), text=(node,value)=>{node.textContent=value==null?"":String(value)};
 function notice(message,kind="ok"){const n=$("message");text(n,message);n.className="notice"+(kind==="error"?" error":"");}
@@ -184,6 +184,13 @@ async function syncOverviewQueue(){
   return false;
  }finally{overviewPollInFlight=false;}
 }
+function renderProgressRawLog(){
+ const target=$("progress-raw-log");if(!target)return;
+ const term=$("progress-log-search")?.value.trim().toLocaleLowerCase()||"";
+ const output=term?progressRawLog.split("\n").filter(x=>x.toLocaleLowerCase().includes(term)).slice(-1400).join("\n"):
+  progressRawLog.slice(-600000);
+ text(target,output||"沒有符合關鍵字的日誌");
+}
 async function renderRunJobDetails(task){
  const container=$("progress-jobs");container.replaceChildren();
  const artifactsBox=$("progress-artifacts");artifactsBox.replaceChildren();
@@ -196,8 +203,21 @@ async function renderRunJobDetails(task){
   const logBtn=document.createElement("button");logBtn.type="button";logBtn.className="secondary";
   logBtn.textContent="取得這次 Run 的原始 Worker 日誌";
   logBtn.addEventListener("click",async()=>{
-   const req=await window.audioRequestLogs(task.task_id,runId);
-   if(req)notice("正在雲端取得 Run "+runId+" 原始日誌，完成後可在本頁「操作狀態」下載查看");
+   logBtn.disabled=true;
+   const generation=progressGeneration,id=progressTaskId;
+   const valid=()=>generation===progressGeneration&&id===progressTaskId&&$("progress-dialog").open;
+   try{
+    text($("progress-log-status"),"已提交 Run "+runId+" 日誌取得請求；工作機完成後會直接顯示。");
+    const req=await window.audioRequestLogs(task.task_id,runId);
+    if(!req)throw Error("後端未接收日誌請求");
+    const files=await window.audioWaitForAsset(req,valid);
+    if(!valid())return;
+    progressRawLog=await(await window.audioAssetBlob(files[0].id)).text();
+    if(!valid())return;
+    renderProgressRawLog();
+    text($("progress-log-status"),"已讀取 Run "+runId+" 原始日誌，可搜尋或查看。");
+   }catch(e){if(valid())text($("progress-log-status"),"原始日誌尚未取得："+e.message);}
+   finally{logBtn.disabled=false;}
   });
   section.append(logBtn);
   const display=document.createElement("div");display.className="progress-job-list";display.textContent="讀取 Job 與 Step…";section.append(display);container.append(section);
@@ -299,6 +319,8 @@ async function showProgress(id){
  if(!t)throw Error("找不到任務");
  progressGeneration++;progressTaskId=id;progressJobRuns=progressRunIds(t);
  if(progressTimer!==null){clearTimeout(progressTimer);progressTimer=null;}
+ progressRawLog="";text($("progress-raw-log"),"尚未取得原始日誌");
+ $("progress-log-search").value="";
  renderProgressSummary(t);
  text($("progress-auto-status"),"工作步驟載入中；佇列將每 15 秒自動同步");
  $("progress-dialog").showModal();
@@ -797,6 +819,7 @@ document.addEventListener("DOMContentLoaded",()=>{
  for(const id of ["duplicate-number","duplicate-name","duplicate-pair","duplicate-only"])bind(id,"change",renderChapterPicker);
  bind("progress-close","click",()=>$("progress-dialog").close());
  bind("progress-refresh-now","click",()=>pollProgressNow(true));
+ bind("progress-log-search","input",renderProgressRawLog);
  $("progress-dialog").addEventListener("close",()=>{
   progressGeneration++;progressTaskId=null;
   if(progressTimer!==null){clearTimeout(progressTimer);progressTimer=null;}
