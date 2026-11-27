@@ -226,7 +226,9 @@ def test_chapter_editor_gui_has_full_book_paging_inline_edit_and_duplicate_detai
     assert "wholeBook=Array.from({length:parsedCatalog.total_chapters}" in js
     assert "chapterPickerOrder=selectedOrder.concat(" in js
     assert 'text($("chapter-page-label")' in js
-    assert '$("renumber").checked=true' in js
+    assert 'pickerField("renumber").checked=true' in js
+    assert "function pickerField(name)" in js
+    assert 'pickerField("edit-renumber")' not in js
 
 
 def test_full_book_picker_saves_only_selected_chapter_range():
