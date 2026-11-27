@@ -401,3 +401,13 @@ def test_visual_chapter_editor_reuses_full_picker_and_preserves_new_book_draft()
     assert "setEditorCatalog(await response.json(),url)" in bridge
     assert 'for(let i=0;i<72;i++)' in bridge
     assert "pickerOriginalCatalog=parsedCatalog" in app
+
+
+def test_editor_supports_existing_desktop_book_cleaner_settings():
+    app=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    assert 'id="edit-cleaner"' in html
+    assert 'loadCurrentBookCleaner(task)' in app
+    assert 'editCleanerInitial=' in app
+    assert 'changes.cleaner_remove_patterns=patterns' in bridge

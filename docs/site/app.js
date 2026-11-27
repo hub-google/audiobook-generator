@@ -11,7 +11,7 @@ const SOURCES=[
 {id:"moon17",name:"月亮小說網",hosts:["17moon.com","www.17moon.com"]},
 {id:"book8",name:"無限小說",hosts:["8book.com","www.8book.com","v.8book.com","m.8book.com","i.8book.com"]}
 ];
-let queue=null,queueSha=null,latestRuns=[],parsedCatalog=null,editorTaskId=null,reviewTaskId=null,chapterPickerExcluded=null,chapterPickerOrder=null,rankingNovels=[],rankingSelected=new Set(),selectedPending=new Set(),selectedCompleted=new Set(),chapterSelectedRows=new Set(),chapterPage=0,chapterPageSize=200,chapterEditingIndex=null,editorParsedCatalog=null,chapterPickerMode="create",pickerOriginalCatalog=null,pickerOriginalDuplicateState=null;
+let editCleanerInitial="",queue=null,queueSha=null,latestRuns=[],parsedCatalog=null,editorTaskId=null,reviewTaskId=null,chapterPickerExcluded=null,chapterPickerOrder=null,rankingNovels=[],rankingSelected=new Set(),selectedPending=new Set(),selectedCompleted=new Set(),chapterSelectedRows=new Set(),chapterPage=0,chapterPageSize=200,chapterEditingIndex=null,editorParsedCatalog=null,chapterPickerMode="create",pickerOriginalCatalog=null,pickerOriginalDuplicateState=null;
 const $=id=>document.getElementById(id), text=(node,value)=>{node.textContent=value==null?"":String(value)};
 function notice(message,kind="ok"){const n=$("message");text(n,message);n.className="notice"+(kind==="error"?" error":"");}
 const dateLabel=v=>v?new Date(v).toLocaleString("zh-TW",{timeZone:"Asia/Taipei",hour12:false}):"—";
@@ -217,7 +217,25 @@ function openEditor(id){
  $("edit-duplicate-name").checked=detection.use_chapter_name!==false;
  $("edit-duplicate-pair").checked=!!detection.use_number_and_name;
  $("edit-order").value=naturalChapterOrder(task)?"":(task.chapter_order||[]).join(",");
+ editCleanerInitial=(task.ad_review?.remove_patterns||task.profile_snapshot?.cleaner_remove_patterns||[]).join("\n");
+ $("edit-cleaner").value=editCleanerInitial;
  $("edit-dialog").showModal();
+ void loadCurrentBookCleaner(task).catch(e=>{
+  text($("edit-cleaner-status"),"無法讀取最新書籍設定；保留佇列內的原設定。"+e.message);
+ });
+}
+async function loadCurrentBookCleaner(task){
+ const selected=task.task_id,previous=$("edit-cleaner").value;
+ text($("edit-cleaner-status"),"正在比對目前雲端儲存的清理設定…");
+ const file=await request("/contents/audiobook-book-profiles.json?ref="+QUEUE_BRANCH);
+ const data=JSON.parse(fromB64(file.content));
+ const profile=Object.values(data.books||{}).find(p=>p.catalog_url===task.catalog_url);
+ if(editorTaskId!==selected||!$("edit-dialog").open||$("edit-cleaner").value!==previous)return;
+ editCleanerInitial=(profile?.cleaner_remove_patterns||[]).join("\n");
+ $("edit-cleaner").value=editCleanerInitial;
+ text($("edit-cleaner-status"),profile?
+  "已載入此書最新雲端清理設定；修改後隨任務儲存。":
+  "此書尚未有清理設定；如有需要可新增。");
 }
 function openReview(id){const task=queueTasks().find(t=>t.task_id===id);if(!task||task.status!=="waiting_review")throw Error("任務不在待審核狀態");
  reviewTaskId=id;$("review-patterns").value=(task.ad_review?.remove_patterns||task.profile_snapshot?.cleaner_remove_patterns||[]).join("\n");

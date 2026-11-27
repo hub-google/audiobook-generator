@@ -22,7 +22,7 @@ from src.cloud_queue import (
     update_task_chapters, delete_task, retry_failed_preflight_stages, start_reviewed_processing,
     confirm_preflight_review, utc_now, normalize_queue, touch
 )
-from src.book_profiles import GitHubBookProfileStore, update_book_profile
+from src.book_profiles import GitHubBookProfileStore, update_book_profile, validate_remove_patterns
 from src.catalog_parser import parse_catalog
 
 OPEN = "<!-- AUDIO-COMMAND-V1:"
@@ -37,7 +37,7 @@ TASK_FIELDS = {
     "renumber_selected", "chapter_title_overrides", "chapter_normalized_number_overrides",
     "chapter_order", "publish_at", "duplicate_chapter_count",
     "duplicate_detection",
-    "catalog_identity",
+    "catalog_identity", "cleaner_remove_patterns",
 }
 WRITE_ROLES = {"admin", "maintain", "write"}
 
@@ -235,8 +235,9 @@ def requested_profile_updates(operation, values, ids, new_books, queue):
     return [{
         "catalog_url": task["catalog_url"],
         "book_title": task["book_title"],
-        "cleaner_remove_patterns": (values.get("remove_patterns") or [])
-            if operation == "review" else None,
+        "cleaner_remove_patterns":
+            (values.get("remove_patterns") or []) if operation == "review"
+            else changes.get("cleaner_remove_patterns"),
         "chapter_title_overrides": changes.get("chapter_title_overrides") if operation == "edit" else None,
         "chapter_normalized_number_overrides":
             changes.get("chapter_normalized_number_overrides") if operation == "edit" else None,
@@ -394,6 +395,10 @@ def apply_command(command, store, profiles, issue_number, token, repo):
             changes = values.get("changes") or {}
             if not isinstance(changes, dict) or set(changes) - TASK_FIELDS:
                 raise ValueError("Unsupported field in task edit")
+            if "cleaner_remove_patterns" in changes:
+                if not isinstance(changes["cleaner_remove_patterns"], list):
+                    raise ValueError("Text cleaning patterns must be a list")
+                validate_remove_patterns(changes["cleaner_remove_patterns"])
             start = int(changes.get("start_chapter", task["start_chapter"]))
             end = int(changes.get("end_chapter", task["end_chapter"]))
             if start < 1 or end < start:

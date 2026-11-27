@@ -164,6 +164,12 @@
    }
   };
   if(!Object.values(changes.duplicate_detection).some(Boolean))throw Error("至少需選一種重複判斷條件");
+  const cleanerText=$("edit-cleaner").value;
+  if(cleanerText!==editCleanerInitial){
+   const patterns=[...new Set(cleanerText.split(/\r?\n/).map(s=>s.trim()).filter(Boolean))];
+   if(patterns.some(s=>s.length>10000))throw Error("清理詞句不得超過 10000 字");
+   changes.cleaner_remove_patterns=patterns;
+  }
   if(!changes.book_title)throw Error("書名不可空白");
   if(canEditAfterCancel(t)&&!confirm("這本小說正在製作。儲存會取消舊 Run，再依新章節設定重新排程，是否繼續？"))return;
   const opened=await send("edit",{task_id:id,changes},

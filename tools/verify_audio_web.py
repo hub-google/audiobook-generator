@@ -223,6 +223,7 @@ def main():
             assert desktop.locator("#edit-excluded").input_value() == "2"
             assert desktop.locator("#excluded").input_value() == "2"
             desktop.locator("#edit-name").fill("原創測試新版")
+            desktop.locator("#edit-cleaner").fill("廣告字串")
             desktop.locator("#edit-titles").fill("1 | 第一章 原創內容")
             desktop.screenshot(path=str(OUTPUT / "audio-task-editor.png"), full_page=True)
             desktop.locator("#edit-form button[type=submit]").click()

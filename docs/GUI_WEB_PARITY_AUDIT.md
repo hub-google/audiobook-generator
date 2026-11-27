@@ -46,3 +46,7 @@
 - 既有小說編輯視窗沿用完整目錄選章器，支援逐章勾選／排除、重複判斷、章號與標題、順序調整。目錄透過原本 GitHub Issue→Action 解析，無需在瀏覽器提供 Token。
 - 新增小說與編輯小說的目錄、排除清單、章節順序分別管理；關閉視覺化編輯後會恢復新增小說狀態，防止跨書設定污染。
 - 此功能仍需 GitHub 送出 Issue；HTML/JS 不含 GH、HF、Gemini 或 YouTube Secret。
+
+## 書籍清理 Profile 一致性
+- 編輯既有小說時讀取同一個 GitHub automation-state 書籍 Profile 的最新清理字詞；可編輯、清空或新增，且只有實際修改才寫入，避免舊快照覆蓋新設定。
+- 後端將清理詞句加入 Profile 同步交易紀錄（outbox），不冒然把書籍清理設定混進雲端任務欄位；所有變更使用原 Python validate_remove_patterns()。

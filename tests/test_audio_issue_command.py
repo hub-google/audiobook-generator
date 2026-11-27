@@ -310,3 +310,30 @@ def test_attention_preflight_can_requeue_failed_cover_without_repeating_txt():
     assert task["scrape_run_id"]==100
     assert task["stages"]["cover"]["status"]=="pending"
     assert task["cover_run_id"] is None
+
+
+def test_edit_cleaner_rules_are_stored_in_book_profile_not_lost_in_queue():
+    from src.cloud_queue import empty_queue,new_task
+    from src.book_profiles import empty_profiles
+    from tools.audio_issue_command import apply_command
+    state=empty_queue()
+    task=new_task("https://69shuba.com/book/123/","Rules",1,3)
+    state["queue"].append(task)
+    class Store:
+        def load(self): return state,None
+        def mutate(self,fn,msg):
+            nonlocal state
+            state=fn(state)
+            return state
+    class Profiles:
+        def __init__(self): self.value=empty_profiles()
+        def mutate(self,fn,msg): self.value=fn(self.value)
+    profiles=Profiles()
+    cmd={"op":"edit","data":{"task_id":task["task_id"],
+         "changes":{"cleaner_remove_patterns":["新增廣告詞","不必要文字"]}}}
+    result,dispatch=apply_command(cmd,Store(),profiles,9001,"token","owner/repo")
+    assert dispatch is False
+    assert state["web_profile_pending"]=={}
+    assert next(iter(profiles.value["books"].values()))["cleaner_remove_patterns"]==[
+        "新增廣告詞","不必要文字"]
+    assert "cleaner_remove_patterns" not in state["queue"][0]
