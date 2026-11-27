@@ -174,7 +174,10 @@ async function syncOverviewQueue(){
   if(!Array.isArray(latest.queue)||!Array.isArray(latest.completed)||
      !Number.isSafeInteger(latest.revision))throw Error("Invalid AUDIO queue payload");
   if(document.hidden||document.querySelector("dialog[open]"))return false;
-  if(latest.revision>Number(queue.revision||0)){
+  if(latest.revision>Number(queue.revision||0) ||
+     JSON.stringify(latest.queue)!==JSON.stringify(queue.queue) ||
+     JSON.stringify(latest.completed)!==JSON.stringify(queue.completed)){
+   // Queue stage reconciliation in older versions didn't always bump revision.
    queue=latest;queueSha=null;renderQueue();
    return true;
   }
