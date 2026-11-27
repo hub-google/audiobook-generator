@@ -354,7 +354,7 @@ def process(row, gh_token):
 def public_command_error(exc):
     """Give a useful, secret-free reason in AUDIO instead of a bare class name."""
     message = str(exc)
-    code = re.search(r"\\bHTTP\\s+(401|403|429|500|502|503|504)\\b", message)
+    code = re.search(r"\bHTTP\s+(401|403|429|500|502|503|504)\b", message)
     status = code.group(1) if code else ""
     if "Gemini" in message:
         if status in ("429", "500", "502", "503", "504"):
