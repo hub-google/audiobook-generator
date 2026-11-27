@@ -8,6 +8,7 @@ import os
 import tempfile
 import io
 import re
+import json
 import zipfile
 from pathlib import Path
 
@@ -15,7 +16,7 @@ import requests
 from src.book_profiles import GitHubBookProfileStore, book_profile_id, update_book_profile
 from src.cloud_queue import GitHubQueueStore
 from src.cover_assets import normalize_manual_cover, upload_github_cover
-from tools.audio_issue_command import api, apply_command, valid_id
+from tools.audio_issue_command import api, apply_command, valid_id, valid_url
 
 # All commands remain in the site; GitHub OIDC verifies the processing workflow.
 # Live integration smoke: download one existing tiny Artifact and its Run logs with protected staging.
@@ -222,6 +223,49 @@ def fetch_logs(row, token):
     return f"已取得 Run {run_id} 的原始步驟日誌（{len(output)} bytes）；站內檔案編號 {asset_id}"
 
 
+def _draft_cover_data(values):
+    url=valid_url(values.get("catalog_url"))
+    title=str(values.get("book_title") or "").strip()
+    if not title or len(title)>160:
+        raise ValueError("Draft cover requires a real book title")
+    return url,title
+
+
+def manual_cover_prequeue(row, token):
+    values=row["payload"]
+    url,title=_draft_cover_data(values)
+    key=str(values.get("cover_key") or "")
+    if len(key)>180 or not re.fullmatch(r"[0-9a-f-]{36}/[0-9a-f-]{36}\\.jpg",key):
+        raise ValueError("Invalid draft cover key")
+    from urllib.parse import quote
+    content=edge("GET","/cover?key="+quote(key,safe=""),binary=True)
+    if not content.startswith(b"\\xff\\xd8") or len(content)>10_000_000:
+        raise ValueError("Invalid JPEG")
+    with tempfile.TemporaryDirectory(prefix="audio-draft-cover-") as folder:
+        raw=Path(folder)/"input.jpg"
+        final=Path(folder)/"master_cover.jpg"
+        raw.write_bytes(content)
+        details=normalize_manual_cover(raw,final)
+        cloud=upload_github_cover(final,book_profile_id(url),REPO,token)
+    record={"source":"manual_upload",**cloud,**details}
+    GitHubBookProfileStore(REPO,token).mutate(
+        lambda profiles: update_book_profile(profiles,url,title,manual_cover=record),
+        "AUDIO prequeue manual cover for "+title[:70],
+    )
+    return "已為《"+title+"》儲存封面；新增小說後會自動沿用"
+
+
+def cover_info_prequeue(row, token):
+    url,title=_draft_cover_data(row["payload"])
+    from src.metadata_gen import build_cover_information
+    result=build_cover_information(title,catalog_url=url)
+    if not isinstance(result,dict):
+        raise RuntimeError("Gemini metadata did not return a valid information object")
+    encoded=json.dumps(result,ensure_ascii=False,indent=2).encode("utf-8")
+    asset=_stage(row["id"],"audio-cover-information-"+str(row["id"])+".txt","text/plain",encoded)
+    return "已產生《"+title+"》的封面資訊，站內檔案編號 "+str(asset)
+
+
 def process(row, gh_token):
     request_number = 1_000_000_000 + int(row["id"])
     op = row["op"]
@@ -234,6 +278,10 @@ def process(row, gh_token):
         return fetch_artifact(row, gh_token)
     if op == "fetch_logs":
         return fetch_logs(row, gh_token)
+    if op == "manual_cover_prequeue":
+        return manual_cover_prequeue(row, gh_token)
+    if op == "cover_info_prequeue":
+        return cover_info_prequeue(row, gh_token)
     store = GitHubQueueStore(REPO, gh_token)
     profiles = GitHubBookProfileStore(REPO, gh_token)
     message, dispatch = apply_command(
