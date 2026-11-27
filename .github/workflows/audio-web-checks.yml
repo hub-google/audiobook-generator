@@ -38,8 +38,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: '3.11'}
-      - name: "安裝瀏覽器驅動"
-        run: pip install playwright
+      - name: "安裝瀏覽器驅動及測試封面圖片套件"
+        run: pip install playwright Pillow
       - name: "安裝繁體中文字型，確保驗收截圖可閱讀"
         run: |
           sudo apt-get update -qq
