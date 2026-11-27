@@ -2,93 +2,112 @@
 // GitHub Pages: read-only frontend; GitHub authenticates all writes on github.com.
 // No PAT, OAuth access token, HF/Gemini secret or YouTube credential is in this file.
 (function(){
- const ISSUES="https://github.com/hub-google/audiobook-generator/issues/new";
+ const EDGE="https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-web-commands";
  const QUEUE_CHANGING=new Set(["enqueue","batch_add","edit","move","status","delete",
-   "complete","restore","requeue","cancel","review"]);
+   "complete","restore","requeue","cancel","review","manual_cover"]);
  let pendingWatcher=0;
- function watchQueueUpdate(){
-  const initialRevision=Number(queue?.revision||0),watcher=++pendingWatcher;
-  const expires=Date.now()+5*60*1000;
-  let checks=0,timer=null,checking=false;
-  async function check(){
-   if(watcher!==pendingWatcher||Date.now()>expires||checks>=10)return;
-   if(document.hidden){timer=setTimeout(check,10000);return;}
-   if(checking)return;
-   checking=true;checks++;
-   try{
-    const latest=await readQueue();
-    if(Number(latest.data?.revision||0)>initialRevision){
-     queue=latest.data;queueSha=latest.sha;renderQueue();
-     notice("GitHub 雲端佇列已更新，請確認操作結果。");
-     return;
+ const outstanding=new Map();
+
+ function ensurePanel(){
+  if(document.getElementById("audio-operation-panel"))return;
+  const panel=document.createElement("section");panel.id="audio-operation-panel";
+  panel.className="audio-operation-panel hidden";
+  panel.innerHTML='<div class="section-head"><h3>雲端操作狀態</h3>'+
+    '<button class="secondary" type="button" id="audio-operation-hide">收合</button></div>'+
+    '<p class="muted">所有指令都在本頁確認；雲端工作機按排程處理，請以狀態結果為準。</p>'+
+    '<div id="audio-operation-list" aria-live="polite"></div>'+
+    '<button type="button" class="secondary" id="audio-operation-refresh">更新操作狀態</button>';
+  document.body.append(panel);
+  document.getElementById("audio-operation-refresh").addEventListener("click",()=>void syncOperations());
+  document.getElementById("audio-operation-hide").addEventListener("click",()=>panel.classList.add("hidden"));
+ }
+ function renderOperations(rows){
+  ensurePanel();
+  const list=document.getElementById("audio-operation-list");list.replaceChildren();
+  const visible=rows.slice(0,15);
+  for(const row of visible){
+   const el=document.createElement("div");el.className="audio-operation-item";
+   const label=document.createElement("strong");
+   label.textContent=(outstanding.get(row.request_id)?.label||row.op)+" · "+({
+    pending:"等待處理",processing:"執行中",completed:"已完成",failed:"執行失敗"
+   }[row.status]||row.status);
+   const details=document.createElement("small");
+   details.textContent=(row.error?"錯誤："+row.error:row.result||"已送出，請在本頁查看執行狀態");
+   el.append(label,details);list.append(el);
+  }
+ }
+ async function api(path,opts={}){
+  await window.audioAuth.ensure();
+  const token=await window.audioAuth.token();
+  const headers={"Authorization":"Bearer "+token,"Accept":"application/json"};
+  let body=opts.body;
+  if(body!==undefined&&!(body instanceof Blob)&&!(body instanceof ArrayBuffer)){
+   body=JSON.stringify(body);headers["Content-Type"]="application/json";
+  }else if(body instanceof Blob){headers["Content-Type"]=body.type;}
+  const response=await fetch(EDGE+path,{method:opts.method||"GET",headers,body,cache:"no-store"});
+  const result=await response.json().catch(()=>({error:"服務回應格式錯誤"}));
+  if(!response.ok)throw Error(result.error||"雲端操作回應失敗（HTTP "+response.status+"）");
+  return result;
+ }
+ async function syncOperations(){
+  try{
+   const response=await api("/status");
+   const rows=response.requests||[];
+   renderOperations(rows);
+   const old=[...outstanding];
+   for(const [id,info] of old){
+    const state=rows.find(r=>r.request_id===id);
+    if(!state)continue;
+    if(state.status==="completed"||state.status==="failed"){
+     outstanding.delete(id);
+     if(state.status==="completed"){
+      notice(info.label+"：後端已完成");
+      if(info.updateQueue){try{const next=await readQueue();queue=next.data;queueSha=next.sha;renderQueue();}catch{}}
+     }else notice(info.label+"：執行失敗（"+(state.error||"請查看操作狀態")+"）","error");
     }
-   }catch{ /* Network/API errors do not count as operation success. */ }
-   finally{checking=false;}
-   if(watcher===pendingWatcher&&checks<10)timer=setTimeout(check,10000);
+   }
+  }catch(error){
+   const panel=document.getElementById("audio-operation-panel");
+   if(panel&&!panel.classList.contains("hidden"))notice("操作狀態暫時無法更新："+error.message,"error");
   }
-  timer=setTimeout(check,9000);
-  window.addEventListener("focus",()=>{if(watcher===pendingWatcher){
-   clearTimeout(timer);void check();
-  }},{once:true});
  }
- function issueUrl(payload,label){
-  const body="<!-- AUDIO-COMMAND-V1:"+payload+":AUDIO-COMMAND-V1 -->\n\n"+
-    "## AUDIO 操作確認\n\n"+label+"\n\n請登入 GitHub 並送出 Issue。"+
-    "Actions 會再次檢查發起者的 Repo 寫入權限；未授權的請求不會執行。";
-  return ISSUES+"?"+new URLSearchParams({title:"[AUDIO] "+label,body}).toString();
- }
- function successNotice(op){
-  notice("已開啟 GitHub 確認頁，請按「Submit new issue」；回到 AUDIO 後會自動查詢佇列更新。");
-  if(QUEUE_CHANGING.has(op))watchQueueUpdate();
- }
- function base64Url(bytes){
-  let binary="";
-  for(let offset=0;offset<bytes.length;offset+=8192)
-   binary+=String.fromCharCode(...bytes.slice(offset,offset+8192));
-  return btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
- }
- function openIssueTab(){
-  // Open about:blank synchronously while a user gesture is active; browser
-  // popup blockers return null. Sever the opener before navigating to GitHub.
-  const tab=window.open("about:blank","_blank");
-  if(!tab)throw Error("新分頁遭到瀏覽器封鎖；請允許 AUDIO 開啟 GitHub 確認頁");
-  tab.opener=null;
-  return tab;
- }
- function send(op,data,label){
-  const body=JSON.stringify({version:1,op,data});
-  const url=issueUrl(toB64(body).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""),label);
-  if(url.length<=25000){
-   const tab=openIssueTab();
-   try{tab.location.replace(url);}
-   catch(error){try{tab.close();}catch{}throw error;}
-   successNotice(op);
-   return url;
+ function watchQueueUpdate(){
+  const watcher=++pendingWatcher;
+  let polls=0;
+  async function check(){
+   if(watcher!==pendingWatcher||polls++>=120)return;
+   if(!document.hidden)await syncOperations();
+   if(outstanding.size===0)return;
+   setTimeout(check,10000);
   }
-  // GitHub already accepts gzip commands. Compress large chapter plans before
-  // URL encoding; keep the new tab opened in the original click gesture.
-  if(!("CompressionStream" in window))
-   throw Error("這個瀏覽器不支援大型章節傳送，請使用最新版 Chrome 或 Edge");
-  const tab=openIssueTab();
-  notice("章節設定較長，正在壓縮以符合 GitHub 網址長度限制…");
-  return (async()=>{
-   const input=new TextEncoder().encode(body);
-   if(input.length>300000)throw Error("章節設定資料超過 GitHub 操作內容限制");
-   const gz=await new Response(new Blob([input]).stream()
-      .pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
-   const compressedUrl=issueUrl(base64Url(new Uint8Array(gz)),label);
-   if(compressedUrl.length>25000)
-    throw Error("壓縮後仍超過 GitHub 網址限制；請減少自訂章節內容");
-   tab.location.replace(compressedUrl);
-   successNotice(op);
-   return compressedUrl;
-  })().catch(error=>{
-   try{tab.close();}catch{}
-   notice("無法送出 GitHub 操作："+error.message,"error");
-   return null;
-  });
+  setTimeout(check,2500);
  }
- window.audioIssueAction=send;
+ async function send(op,data,label){
+  try{
+   const response=await api("/submit",{method:"POST",body:{op,data}});
+   const id=response.request?.request_id;
+   if(!id)throw Error("雲端沒有回傳操作識別碼");
+   outstanding.set(id,{label,updateQueue:QUEUE_CHANGING.has(op)});
+   ensurePanel();
+   document.getElementById("audio-operation-panel").classList.remove("hidden");
+   notice("已送出「"+label+"」，請留在 AUDIO 查看執行結果；不需開啟 GitHub。");
+   renderOperations([{request_id:id,op,status:"pending",result:"已送出，等待 GitHub Actions 排程處理"}]);
+   watchQueueUpdate();
+   return id;
+  }catch(error){notice("無法送出「"+label+"」："+error.message,"error");return null;}
+ }
+ window.audioIssueAction=send; // Legacy API name: no GitHub Issue is created.
+ window.audioUploadCover=async function(blob){
+  if(!(blob instanceof Blob)||blob.type!=="image/jpeg")throw Error("請先產生 JPEG 封面");
+  const result=await api("/upload",{method:"POST",body:blob});
+  if(!result.cover_key)throw Error("封面未儲存成功");
+  return result.cover_key;
+ };
+ window.audioShowOperationPanel=()=>{
+  ensurePanel();document.getElementById("audio-operation-panel").classList.remove("hidden");
+  void syncOperations();
+ };
+ document.addEventListener("DOMContentLoaded",ensurePanel);
  window.exportArtifacts=async function(taskId){
   if(!taskId)throw Error("請先選擇小說");
   send("export_artifacts",{task_ids:[taskId]},"整包下載小說成品");
@@ -280,9 +299,9 @@
       "載入編輯目錄 "+id))return;
   const button=$("edit-load-catalog");
   button.disabled=true;
-  text($("edit-catalog-status"),"請在 GitHub 送出 Issue，正在等待此書目錄…");
+  text($("edit-catalog-status"),"已提交目錄解析，正在本頁等待結果…");
   try{
-   for(let i=0;i<72;i++){
+   for(let i=0;i<240;i++){
     if(editorTaskId!==task.task_id||!$("edit-dialog").open)return;
     await new Promise(resolve=>setTimeout(resolve,5000));
     if(editorTaskId!==task.task_id||!$("edit-dialog").open)return;
@@ -297,7 +316,7 @@
     openEditorChapterPicker();
     return;
    }
-   throw Error("尚未取得目錄結果，請確認 GitHub Issue 和 Actions 均成功");
+   throw Error("尚未取得目錄結果，請查看本頁雲端操作狀態");
   }finally{button.disabled=false;}
  };
  window.parseCatalog=async function(){
@@ -305,7 +324,7 @@
   const id=crypto.randomUUID().slice(0,8);
   if(!await send("preview",{catalog_url:url,request_id:id},
    "解析完整章節目錄 "+id))return;
-  text($("parse-status"),"請在 GitHub 頁面送出 Issue；本頁會嘗試自動讀取解析結果。");
+  text($("parse-status"),"已送出目錄解析，本頁會自動讀取解析結果。");
   const btn=$("parse-btn");btn.disabled=true;
   try{
    for(let i=0;i<72;i++){
@@ -316,7 +335,7 @@
     if(!response.ok)continue;
     applyCatalog(await response.json(),url);return;
    }
-   throw Error("尚未取得解析結果，請確認 GitHub Issue 已送出與 Actions 已成功");
+   throw Error("尚未取得解析結果，請檢查本頁雲端操作狀態");
   }finally{btn.disabled=false;}
  };
  document.addEventListener("DOMContentLoaded",()=>{
