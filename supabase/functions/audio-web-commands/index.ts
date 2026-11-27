@@ -143,7 +143,7 @@ async function stageAsset(req) {
   throw Object.assign(new Error("無效的檔案傳送要求"),{status:400});
  const {data:command,error:checkError}=await admin.from("audio_web_commands")
   .select("id,requested_by,op,status").eq("id",id).single();
- if(checkError||!command||!(command.status==="processing"&&["fetch_artifact","fetch_logs","cover_info_prequeue"].includes(command.op)||
+ if(checkError||!command||!(command.status==="processing"&&["fetch_artifact","fetch_logs","cover_info_prequeue","export_artifacts"].includes(command.op)||
     command.status==="completed"&&command.op==="export_artifacts"))
   throw Object.assign(new Error("沒有對應的受保護檔案請求"),{status:403});
  const bytes=new Uint8Array(await req.arrayBuffer());
