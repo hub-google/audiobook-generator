@@ -390,13 +390,11 @@ def main():
                 "buffer":json.dumps(review_sample,ensure_ascii=False).encode("utf-8"),
             })
             desktop.get_by_text("已核對任務 book-smoke-review").wait_for()
-            desktop.locator("#gui-text-raw-tab").click()
+            # Combined review shows Raw/Clean and candidate columns at once (no visible tab).
             text_stats=desktop.locator("#review-text-stats").inner_text()
             expected_raw=len(review_sample["chapter_texts"]["1"].strip())
             assert f"Raw {expected_raw} 字" in text_stats, text_stats
             assert "Clean " in text_stats and "約清除 " in text_stats
-            desktop.locator("#review-manage-patterns").click()
-            assert desktop.locator("#gui-candidate-pane").is_visible()
             # H04 parity: desktop search checks candidate text, kind AND reason.
             desktop.locator("#review-search").fill("分類專屬標籤")
             assert desktop.locator("#review-candidates tbody tr").count() == 1
