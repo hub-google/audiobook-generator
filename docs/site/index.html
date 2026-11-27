@@ -173,6 +173,10 @@
 <pre id="progress-detail" class="progress-detail"></pre>
 <h3>Actions 工作與步驟</h3><div id="progress-jobs" class="progress-job-list" aria-live="polite"></div>
 <h3>GitHub 成品／審核 Artifact 下載</h3><div id="progress-artifacts" class="progress-artifact-list"></div>
+<section class="progress-log-panel"><h3>原始 Worker 執行日誌</h3>
+<p class="muted" id="progress-log-status">按上方各 Run 的「取得原始日誌」後，文字會直接顯示於此，不必跳到 GitHub。</p>
+<label>搜尋日誌<input type="search" id="progress-log-search" placeholder="搜尋 Worker、HF、YouTube、ERROR 或其他文字"></label>
+<pre id="progress-raw-log" class="progress-raw-log">尚未取得原始日誌</pre></section>
 <div class="dialog-actions"><button class="secondary" type="button" id="progress-close">關閉</button></div>
 </dialog>
 <dialog id="edit-dialog" class="editor-dialog" aria-labelledby="edit-title">
