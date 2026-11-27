@@ -160,9 +160,15 @@ def main():
             assert desktop.locator("#chapter-dialog").is_visible()
             assert desktop.locator("#chapter-list .chapter-item").count() == 3
             desktop.locator("#duplicate-only").check()
-            assert desktop.locator("#chapter-list .chapter-item").count() == 1
+            assert desktop.locator("#chapter-list .chapter-item").count() == 2
             desktop.locator("#duplicate-only").uncheck()
-            desktop.locator("#chapter-list .chapter-item").nth(1).locator("input").uncheck()
+            desktop.locator("#chapter-list .chapter-item").nth(1).locator('input[aria-label="製作 UUID 2"]').uncheck()
+            desktop.locator("#chapter-list .chapter-item").first.get_by_role("button",name="編輯").click()
+            assert desktop.locator("#chapter-edit-dialog").is_visible()
+            desktop.locator("#chapter-edit-name").fill("新的章節名稱")
+            desktop.locator("#chapter-edit-number").fill("1.5")
+            desktop.locator("#chapter-edit-save").click()
+            assert "1 | 1.5" in desktop.locator("#number-overrides").input_value()
             desktop.locator("#chapter-picker-save").click()
             assert desktop.locator("#excluded").input_value() == "2"
             assert desktop.locator("#book-form").evaluate("(el) => el.checkValidity()"), "Create form is incomplete"
