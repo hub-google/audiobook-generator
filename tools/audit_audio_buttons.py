@@ -191,15 +191,19 @@ def main():
             all_ids=page.evaluate("""() => [...document.querySelectorAll("button[id]")].map(b=>({
                id:b.id,label:b.textContent.trim(),disabled:b.disabled,hidden:!(b.offsetWidth||b.offsetHeight)
             }))""")
-            if errors: raise AssertionError("JS runtime errors: "+"; ".join(errors[:6]))
-            verify_stayed("all browser controls")
-            assert any(x.get("op")=="batch_add" for x in submitted), "Batch Add was not sent to backend"
-            assert all(not str(x).startswith("http") for x in page.evaluate("window.__externalAttempts"))
             report={"tested_button_clicks":passed,"skipped":skipped,"buttons_in_dom":all_ids,
                     "backend_operations":[x.get("op") for x in submitted],
                     "popup_attempts":popped,"external_navigation":navigated,
                     "runtime_errors":errors}
             REPORT.write_text(json.dumps(report,ensure_ascii=False,indent=2))
+            print("BUTTON_AUDIT:",json.dumps({
+              "passed":passed,"skipped":skipped,"submitted":submitted,"errors":errors,
+              "external":page.evaluate("window.__externalAttempts")
+            },ensure_ascii=False)[:12000],flush=True)
+            if errors: raise AssertionError("JS runtime errors: "+"; ".join(errors[:6]))
+            verify_stayed("all browser controls")
+            assert any(x.get("op")=="batch_add" for x in submitted), "Batch Add was not sent to backend"
+            assert all(not str(x).startswith("http") for x in page.evaluate("window.__externalAttempts"))
             page.locator('[data-tab="create"]').click()
             page.screenshot(path=str(OUTPUT/"audio-all-buttons-audit-desktop.png"),full_page=True)
             phone=browser.new_page(viewport={"width":390,"height":844},is_mobile=True,has_touch=True)
