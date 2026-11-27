@@ -8,6 +8,16 @@ from src.sources.registry import SOURCES
 from tools.audio_novel_search import candidate_url, search_novels, search_source
 
 
+SAMPLE_NATIVE_69 = """
+<ul><li><a class="imgbox" href="https://www.69shuba.com/book/29590.htm">
+<h3>诡秘之主</h3><div class="labelbox"><label>爱潜水的乌贼</label></div>
+</a></li><li><a class="imgbox" href="https://www.69shuba.com/book/74678.htm">
+<h3>逼我重生是吧</h3><div class="labelbox"><label>幼儿园一把手</label></div>
+</a></li></ul>"""
+
+
+
+
 def test_search_rejects_unrelated_or_non_book_links():
     source = SOURCES["shuba69"]
     assert candidate_url("https://69shuba.com/book/123/", source) == "https://69shuba.com/book/123/"
@@ -76,10 +86,9 @@ def test_restricted_sources_and_duplicate_sources_are_refused():
 
 def test_native_search_finds_real_shuba_book_in_mocked_rankings():
     from tools.audio_novel_search import native_results
-    from tests.test_shuba_full_novels import SAMPLE_HTML
-
+    
     class Response:
-        content = SAMPLE_HTML.encode("gb18030")
+        content = SAMPLE_NATIVE_69.encode("gb18030")
 
     with patch("tools.audio_novel_search.requests.get",
                side_effect=requests.ConnectionError("Public snapshot unavailable")), \
@@ -94,10 +103,9 @@ def test_native_search_finds_real_shuba_book_in_mocked_rankings():
 
 def test_native_search_accepts_author_keyword_from_own_site():
     from tools.audio_novel_search import native_results
-    from tests.test_shuba_full_novels import SAMPLE_HTML
-
+    
     class Response:
-        content = SAMPLE_HTML.encode("gb18030")
+        content = SAMPLE_NATIVE_69.encode("gb18030")
 
     with patch("tools.audio_novel_search.requests.get",
                side_effect=requests.ConnectionError()), \
