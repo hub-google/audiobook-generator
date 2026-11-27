@@ -31,6 +31,8 @@ jobs:
         run: xvfb-run -a python -m pytest -q tests
   ui-smoke:
     name: "桌面與手機網頁驗收"
+    # UI screenshots are valuable even if unrelated backend tests fail.
+    if: ${{ always() && !cancelled() }}
     needs: regression
     runs-on: ubuntu-latest
     timeout-minutes: 8
