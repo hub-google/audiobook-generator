@@ -28,6 +28,25 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y xvfb
       - name: Complete regression tests
         run: xvfb-run -a python -m pytest -q tests
+  ui-smoke:
+    needs: regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Install browser driver
+        run: pip install playwright
+      - name: Verify desktop and mobile web console
+        run: python -m tools.verify_audio_web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audio-web-ui-screenshots
+          path: ui-test-screenshots/*.png
+          if-no-files-found: warn
+          retention-days: 7
   cover-live-probe:
     if: github.ref == 'refs/heads/feature/audio-web-nine-sources-gemini-20261127'
     needs: regression
