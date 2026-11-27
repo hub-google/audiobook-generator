@@ -65,11 +65,11 @@ async function submit(req) {
   const {data:items,error}=await admin.storage.from(buckets).list(user.id,{limit:100,search:key.split("/")[1]});
   if(error || !items?.some(x=>x.name===key.split("/")[1])) throw Object.assign(new Error("找不到已上傳的封面檔案"),{status:400});
  }
- const {count,error:pendingError}=await admin.from("audio_web_commands").select("id",{count:"exact",head:true})
+ const {count,error:pendingError}=await admin.from("Audio_Commands").select("id",{count:"exact",head:true})
    .eq("requested_by",user.id).in("status",["pending","processing"]);
  if(pendingError)throw new Error("無法查詢等待中的操作");
  if((count||0)>=30)throw Object.assign(new Error("目前已有 30 個操作待處理，請先查看結果"),{status:429});
- const {data:row,error}=await admin.from("audio_web_commands")
+ const {data:row,error}=await admin.from("Audio_Commands")
   .insert({requested_by:user.id,op,payload:data}).select("id,request_id,status,created_at").single();
  if(error||!row)throw new Error("操作未成功送入雲端");
  return reply({ok:true,request:row},202);
@@ -77,7 +77,7 @@ async function submit(req) {
 async function statuses(req) {
  const user=await userOf(req);
  const u=new URL(req.url),id=u.searchParams.get("id");
- let query=admin.from("audio_web_commands").select("id,request_id,op,status,created_at,finished_at,result,error")
+ let query=admin.from("Audio_Commands").select("id,request_id,op,status,created_at,finished_at,result,error")
   .eq("requested_by",user.id).order("id",{ascending:false}).limit(25);
  if(id && /^[0-9a-f-]{36}$/.test(id))query=query.eq("request_id",id);
  const {data,error}=await query;
@@ -98,19 +98,19 @@ async function coverUpload(req) {
 async function claimCommands(req) {
  await runnerOf(req);
  const expiry=new Date(Date.now()-35*60*1000).toISOString();
- const {data:expired,error:expiredErr}=await admin.from("audio_web_commands").select("id,attempt")
+ const {data:expired,error:expiredErr}=await admin.from("Audio_Commands").select("id,attempt")
   .eq("status","processing").lt("claimed_at",expiry).limit(20);
  if(expiredErr)throw new Error("無法讀取逾期請求");
  for(const row of expired||[]){
-  if(row.attempt>=3)await admin.from("audio_web_commands").update({status:"failed",finished_at:new Date().toISOString(),error:"工作機重試三次後仍未完成"}).eq("id",row.id).eq("status","processing");
-  else await admin.from("audio_web_commands").update({status:"pending"}).eq("id",row.id).eq("status","processing");
+  if(row.attempt>=3)await admin.from("Audio_Commands").update({status:"failed",finished_at:new Date().toISOString(),error:"工作機重試三次後仍未完成"}).eq("id",row.id).eq("status","processing");
+  else await admin.from("Audio_Commands").update({status:"pending"}).eq("id",row.id).eq("status","processing");
  }
- const {data:pending,error}=await admin.from("audio_web_commands").select("id,op,payload,attempt")
+ const {data:pending,error}=await admin.from("Audio_Commands").select("id,op,payload,attempt")
   .eq("status","pending").order("id",{ascending:true}).limit(8);
  if(error)throw new Error("無法領取操作");
  const claimed=[];
  for(const row of pending||[]){
-  const {data:updated,error:e}=await admin.from("audio_web_commands")
+  const {data:updated,error:e}=await admin.from("Audio_Commands")
    .update({status:"processing",claimed_at:new Date().toISOString(),attempt:row.attempt+1})
    .eq("id",row.id).eq("status","pending").eq("attempt",row.attempt)
    .select("id,op,payload,attempt").maybeSingle();
@@ -124,7 +124,7 @@ async function finish(req) {
  const id=Number(body.id),ok=body.ok===true;
  if(!Number.isSafeInteger(id)||id<1||typeof body.result!=="string")
   throw Object.assign(new Error("操作完成報告格式錯誤"),{status:400});
- const {data,error}=await admin.from("audio_web_commands")
+ const {data,error}=await admin.from("Audio_Commands")
   .update({status:ok?"completed":"failed",result:ok?body.result.slice(0,1500):null,error:ok?null:String(body.error||"Error").slice(0,200),finished_at:new Date().toISOString()})
   .eq("id",id).eq("status","processing").select("id").maybeSingle();
  if(error||!data)throw Object.assign(new Error("請求不存在或已完成"),{status:409});
@@ -140,7 +140,7 @@ async function stageAsset(req) {
  if(!Number.isSafeInteger(id)||id<1||!/^[\w.\u4e00-\u9fff-]{1,150}$/.test(filename)||
     !["application/zip","text/plain"].includes(type))
   throw Object.assign(new Error("無效的檔案傳送要求"),{status:400});
- const {data:command,error:checkError}=await admin.from("audio_web_commands")
+ const {data:command,error:checkError}=await admin.from("Audio_Commands")
   .select("id,requested_by,op,status").eq("id",id).single();
  if(checkError||!command||!(command.status==="processing"&&["fetch_artifact","fetch_logs","cover_info_prequeue","export_artifacts"].includes(command.op)||
     command.status==="completed"&&command.op==="export_artifacts"))
@@ -150,7 +150,7 @@ async function stageAsset(req) {
  const path=command.requested_by+"/"+id+"/"+crypto.randomUUID()+"/"+filename;
  const {error:putError}=await admin.storage.from(ASSET_BUCKET).upload(path,bytes,{contentType:type,upsert:false});
  if(putError)throw new Error("儲存操作檔案失敗");
- const {data:row,error:recordError}=await admin.from("audio_web_assets")
+ const {data:row,error:recordError}=await admin.from("Audio_Assets")
   .insert({command_id:id,requested_by:command.requested_by,filename,content_type:type,
     bytes:bytes.length,storage_path:path}).select("id,filename,bytes").single();
  if(recordError||!row){
@@ -163,10 +163,10 @@ async function stageAsset(req) {
 async function listAssets(req){
  const user=await userOf(req),id=new URL(req.url).searchParams.get("request_id")||"";
  if(!/^[0-9a-f-]{36}$/.test(id))throw Object.assign(new Error("請求編號錯誤"),{status:400});
- const {data:cmd,error:err}=await admin.from("audio_web_commands")
+ const {data:cmd,error:err}=await admin.from("Audio_Commands")
   .select("id").eq("request_id",id).eq("requested_by",user.id).maybeSingle();
  if(err||!cmd)throw Object.assign(new Error("找不到所要求的工作"),{status:404});
- const {data,error}=await admin.from("audio_web_assets")
+ const {data,error}=await admin.from("Audio_Assets")
   .select("id,filename,content_type,bytes,created_at")
   .eq("command_id",cmd.id).eq("requested_by",user.id).order("id",{ascending:true});
  if(error)throw new Error("讀取產出檔案失敗");
@@ -175,7 +175,7 @@ async function listAssets(req){
 async function getAsset(req){
  const user=await userOf(req),id=Number(new URL(req.url).searchParams.get("asset_id"));
  if(!Number.isSafeInteger(id)||id<1)throw Object.assign(new Error("檔案編號無效"),{status:400});
- const {data:meta,error:err}=await admin.from("audio_web_assets")
+ const {data:meta,error:err}=await admin.from("Audio_Assets")
   .select("id,requested_by,storage_path,filename,content_type")
   .eq("id",id).eq("requested_by",user.id).maybeSingle();
  if(err||!meta)throw Object.assign(new Error("檔案不存在或無存取權限"),{status:404});
@@ -213,7 +213,7 @@ async function postLive(req){
   message:redactLogLine(line?.message)
  })).filter(x=>x.message.length>0);
  if(!rows.length)return reply({ok:true,stored:0});
- const {error}=await admin.from("audio_web_live_events").insert(rows);
+ const {error}=await admin.from("Audio_Live_Events").insert(rows);
  if(error)throw new Error("即時日誌暫存失敗");
  return reply({ok:true,stored:rows.length},202);
 }
@@ -225,7 +225,7 @@ async function readLive(req){
  if(!/^book-[A-Za-z0-9_-]{5,80}$/.test(task_id)||
   !Number.isSafeInteger(after)||after<0)
   throw Object.assign(new Error("即時日誌查詢參數無效"),{status:400});
- let query=admin.from("audio_web_live_events")
+ let query=admin.from("Audio_Live_Events")
   .select("id,run_id,job_name,level,message,created_at")
   .eq("task_id",task_id).limit(100);
  if(after>0)query=query.gt("id",after).order("id",{ascending:true});
