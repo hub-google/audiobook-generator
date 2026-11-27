@@ -12,6 +12,7 @@ const SOURCES=[
 {id:"book8",name:"無限小說",hosts:["8book.com","www.8book.com","v.8book.com","m.8book.com","i.8book.com"]}
 ];
 let progressGeneration=0,progressTaskId=null,progressTimer=null,progressJobRuns="",progressBusy=false,progressRawLog="";
+let progressLiveCursor=0,progressLiveBusy=false,progressArchiveLogLoaded=false;
 let editCleanerInitial="",queue=null,queueSha=null,latestRuns=[],parsedCatalog=null,editorTaskId=null,reviewTaskId=null,chapterPickerExcluded=null,chapterPickerOrder=null,rankingNovels=[],rankingSelected=new Set(),selectedPending=new Set(),selectedCompleted=new Set(),chapterSelectedRows=new Set(),chapterPage=0,chapterPageSize=200,chapterEditingIndex=null,editorParsedCatalog=null,chapterPickerMode="create",pickerOriginalCatalog=null,pickerOriginalDuplicateState=null;
 const $=id=>document.getElementById(id), text=(node,value)=>{node.textContent=value==null?"":String(value)};
 function notice(message,kind="ok"){const n=$("message");text(n,message);n.className="notice"+(kind==="error"?" error":"");}
@@ -191,6 +192,33 @@ function renderProgressRawLog(){
   progressRawLog.slice(-600000);
  text(target,output||"沒有符合關鍵字的日誌");
 }
+async function pollProgressLive(){
+ if(!progressTaskId||!$("progress-dialog")?.open||progressLiveBusy||
+    progressArchiveLogLoaded||document.hidden||!window.audioAuth?.loggedIn)return;
+ const current=progressTaskId,generation=progressGeneration;
+ progressLiveBusy=true;
+ try{
+  const token=await window.audioAuth.token();
+  const endpoint="https://unapiwajmgqqtdkixaab.supabase.co/functions/v1/audio-web-commands/live_events"+
+   "?task_id="+encodeURIComponent(current)+"&after="+encodeURIComponent(progressLiveCursor);
+  const response=await fetch(endpoint,{headers:{"Authorization":"Bearer "+token},cache:"no-store"});
+  if(!response.ok)throw Error("HTTP "+response.status);
+  const data=await response.json();
+  if(current!==progressTaskId||generation!==progressGeneration||!$("progress-dialog").open)return;
+  const events=(data.events||[]).filter(e=>Number(e.id)>progressLiveCursor);
+  for(const event of events){
+   progressLiveCursor=Math.max(progressLiveCursor,Number(event.id));
+   progressRawLog+="["+event.job_name+"] "+String(event.message||"")+"\n";
+  }
+  if(events.length){
+   progressRawLog=progressRawLog.slice(-950000);
+   renderProgressRawLog();
+   text($("progress-log-status"),"已取得 "+progressLiveCursor+" 筆序號內的即時 Worker 記錄，每 5 秒更新；可搜尋。");
+  }
+ }catch(error){
+  if(current===progressTaskId)text($("progress-log-status"),"即時日誌暫時不可讀："+error.message+"；仍可取得完成後的原始 Run Logs。");
+ }finally{progressLiveBusy=false;}
+}
 async function renderRunJobDetails(task){
  const container=$("progress-jobs");container.replaceChildren();
  const artifactsBox=$("progress-artifacts");artifactsBox.replaceChildren();
@@ -213,6 +241,7 @@ async function renderRunJobDetails(task){
     const files=await window.audioWaitForAsset(req,valid);
     if(!valid())return;
     progressRawLog=await(await window.audioAssetBlob(files[0].id)).text();
+    progressArchiveLogLoaded=true;
     if(!valid())return;
     renderProgressRawLog();
     text($("progress-log-status"),"已讀取 Run "+runId+" 原始日誌，可搜尋或查看。");
@@ -319,7 +348,8 @@ async function showProgress(id){
  if(!t)throw Error("找不到任務");
  progressGeneration++;progressTaskId=id;progressJobRuns=progressRunIds(t);
  if(progressTimer!==null){clearTimeout(progressTimer);progressTimer=null;}
- progressRawLog="";text($("progress-raw-log"),"尚未取得原始日誌");
+ progressRawLog="";progressLiveCursor=0;progressArchiveLogLoaded=false;
+ text($("progress-raw-log"),"即時 Worker 日誌載入中；若 Run 已完成可手動取得完整原始日誌。");
  $("progress-log-search").value="";
  renderProgressSummary(t);
  text($("progress-auto-status"),"工作步驟載入中；佇列將每 15 秒自動同步");
@@ -820,6 +850,7 @@ document.addEventListener("DOMContentLoaded",()=>{
  bind("progress-close","click",()=>$("progress-dialog").close());
  bind("progress-refresh-now","click",()=>pollProgressNow(true));
  bind("progress-log-search","input",renderProgressRawLog);
+ setInterval(()=>{void pollProgressLive();},5000);
  $("progress-dialog").addEventListener("close",()=>{
   progressGeneration++;progressTaskId=null;
   if(progressTimer!==null){clearTimeout(progressTimer);progressTimer=null;}
