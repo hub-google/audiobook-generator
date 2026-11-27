@@ -2,6 +2,11 @@ name: "任務調度｜小說製作佇列"
 run-name: "【任務調度】${{ github.event_name == 'schedule' && '定時檢查' || github.event_name == 'workflow_run' && '前序工作完成' || '手動執行' }}｜第 ${{ github.run_number }} 次"
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "src/queue_dispatcher.py"
+      - ".github/workflows/queue-dispatcher.yml"
   workflow_dispatch:
     inputs:
       force_retry:
