@@ -24,7 +24,7 @@ SENSITIVE = (
     (re.compile(r"(?i)((?:api[_-]?key|authorization|access[_-]?token|refresh[_-]?token|password|secret)\s*[:=]\s*)[^\s&]+"), r"\1[REDACTED]"),
     (re.compile(r"(?i)\b(?:gh[pousr]_|hf_)[A-Za-z0-9]{12,}\b"), "[REDACTED]"),
     (re.compile(r"AIza[A-Za-z0-9_-]{20,}"), "[REDACTED]"),
-    (re.compile(r"(?i)([?&](?:key|token|access_token|refresh_token|sig|signature|auth)=)[^\\s&]+"), r"\\1[REDACTED]"),
+    (re.compile(r"(?i)([?&](?:key|token|access_token|refresh_token|sig|signature|auth)=)[^\s&]+"), r"\1[REDACTED]"),
     (re.compile(r"\x1b\[[0-9;]*m"), ""),
 )
 
