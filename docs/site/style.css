@@ -113,3 +113,17 @@
  width:auto;max-height:300px;margin:12px 20px 20px;box-shadow:0 4px 16px #13213f14}
 @media(max-width:650px){.audio-operation-panel{position:relative;bottom:auto;right:auto;
  width:auto;margin:10px 12px 14px;max-height:250px}}
+
+/* Desktop-GUI parity: selected task, on-page logs, sortable ranking and cover research. */
+.selected-task-panel{margin:14px 0 20px;padding:18px 20px}
+#selected-task-status{white-space:pre-line;line-height:1.8;font-size:14px}
+.selected-task-panel .section-head{align-items:center;gap:14px}
+.rank-sort-label{display:inline-flex;align-items:center;gap:7px;font-size:13px}
+.rank-sort-label select{min-height:34px;min-width:115px}
+.progress-log-panel{margin-top:18px;padding:14px 0}
+.progress-log-panel label{display:block;max-width:420px;margin:10px 0}
+.progress-raw-log{background:#101827;color:#d7e3f2;font:12px/1.55 Consolas,"Courier New",monospace;
+ padding:16px;border-radius:10px;white-space:pre-wrap;overflow:auto;max-height:450px;min-height:115px}
+#draft-cover-info-analysis,#draft-cover-info-prompt{white-space:pre-wrap;overflow:auto;max-height:55vh;word-break:break-word}
+@media(max-width:650px){.selected-task-panel{padding:12px}
+.progress-raw-log{font-size:11px;max-height:300px}}
