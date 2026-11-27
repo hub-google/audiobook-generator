@@ -467,10 +467,22 @@ def main():
             assert not mock_writes, "Pages must not send a privileged GitHub API PUT"
             desktop.locator('[data-tab="runs"]').click()
             assert desktop.locator("#runs").is_visible()
-            desktop.locator('#runs a[href*="github.com"]').first.click()
+            # No login or off-site action links in the default workflow.
+            assert desktop.locator('#runs a[href*="github.com"]:visible').count() == 0 or \
+                   desktop.locator('#runs a[href*="github.com"]:visible').count() == desktop.locator('#runs-body a[href*="github.com"]:visible').count()
+            # The reference dialog must intercept a dynamic Run link as well.
+            desktop.evaluate("""() => {
+              const anchor=document.createElement('a');
+              anchor.id='audio-run-link-smoke';
+              anchor.href='https://github.com/hub-google/audiobook-generator/actions/runs/12345';
+              anchor.textContent='測試站內 Run 資訊';
+              document.querySelector('#runs').append(anchor);
+            }""")
+            desktop.locator("#audio-run-link-smoke").click()
             assert desktop.locator("#audio-external-details").is_visible(), "外部連結應在站內顯示"
             assert desktop.evaluate("window.__issueUrls") == []
             desktop.locator("#audio-reference-close").click()
+            desktop.evaluate("document.getElementById('audio-run-link-smoke').remove()")
             mobile = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=1,
                                       is_mobile=True, has_touch=True)
             mobile.on("pageerror", lambda error: errors.append(str(error)))
