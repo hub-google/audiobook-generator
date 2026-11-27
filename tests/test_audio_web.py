@@ -10,7 +10,7 @@ ROOT=Path(__file__).resolve().parents[1]
 def test_pages_assets_and_nine_source_registry():
     html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
     js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
-    assert 'src="./app.js"' in html
+    assert 'src="./app.js?' in html
     assert "sessionStorage" not in js and "localStorage" not in js
     from src.sources.registry import SOURCES
     names={"hjwzw","shuba69","czbooks","sixk","xszj","metanovel","twkan","moon17","book8"}
@@ -19,19 +19,22 @@ def test_pages_assets_and_nine_source_registry():
         assert f'id:"{name}"' in js
 
 
-@patch.dict("os.environ",{"COVER_IMAGE_PROVIDER":"auto","HF_TOKEN":"","GEMINI_API_KEY":"demo"},clear=False)
-@patch("src.metadata_gen._gemini_generate_cover",return_value=Image.new("RGB",(1280,720)))
-def test_missing_hf_uses_gemini(generate):
-    assert download_ai_image("cover",max_attempts=1).size==(1280,720)
-    generate.assert_called_once()
+@patch.dict("os.environ", {"COVER_IMAGE_PROVIDER":"auto"}, clear=False)
+@patch("src.cloudflare_cover.generate_cloudflare_cover",
+       side_effect=RuntimeError("Cloudflare 免費額度尚未確認"))
+@patch("src.metadata_gen._gemini_generate_cover")
+def test_default_cover_is_free_only_and_never_falls_back_to_paid_gemini(gemini, cloudflare):
+    import pytest
+    with pytest.raises(RuntimeError, match="免費額度尚未確認"):
+        download_ai_image("cover",max_attempts=1)
+    cloudflare.assert_called_once()
+    gemini.assert_not_called()
 
 
-@patch.dict("os.environ",{"COVER_IMAGE_PROVIDER":"auto","HF_TOKEN":"hf_demo","GEMINI_API_KEY":"demo"},clear=False)
-@patch("src.metadata_gen._hf_download_ai_image",side_effect=RuntimeError("HTTP 402 credit exhausted"))
-@patch("src.metadata_gen._gemini_generate_cover",return_value=Image.new("RGB",(1280,720)))
-def test_hf_credits_exhausted_uses_gemini(gemini,hf):
-    assert download_ai_image("cover",max_attempts=1).size==(1280,720)
-    hf.assert_called_once()
+@patch.dict("os.environ", {"COVER_IMAGE_PROVIDER":"gemini","GEMINI_API_KEY":"demo"}, clear=False)
+@patch("src.metadata_gen._gemini_generate_cover", return_value=Image.new("RGB", (1280, 720)))
+def test_explicit_gemini_provider_requires_opt_in(gemini):
+    assert download_ai_image("cover", max_attempts=1).size==(1280,720)
     gemini.assert_called_once()
 
 
@@ -148,10 +151,12 @@ def test_github_pages_only_uses_issue_bridge_no_browser_pat():
     js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
     bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
     assert 'id="token"' not in html
-    assert 'src="./bridge.js"' in html
+    assert 'src="./bridge.js?' in html
     assert 'headers.Authorization="Bearer "' not in js
-    assert 'AUDIO-COMMAND-V1' in bridge
-    assert "hub-google/audiobook-generator/issues/new" in bridge
+    assert 'window.audioIssueAction=send' in bridge
+    assert 'fetch(EDGE+path' in bridge
+    assert "hub-google/audiobook-generator/issues/new" not in bridge
+    assert 'window.open("about:blank"' not in bridge
     assert 'window.addRankingToQueue=async function()' in bridge
 
 
@@ -160,7 +165,7 @@ def test_local_artifact_review_and_cover_inspection_no_server_exposure():
     script=(ROOT/"docs/site/review-inspector.js").read_text(encoding="utf-8")
     assert 'id="review-report-file"' in html
     assert 'id="review-cover-file"' in html
-    assert 'src="./review-inspector.js"' in html
+    assert 'src="./review-inspector.js?' in html
     assert "ad_review_candidates" in script
     assert "payload.task_id!==taskId" in script
     assert "master_cover_prompt.json" in script
@@ -184,10 +189,12 @@ def test_manual_cover_gui_uses_native_github_attachment_and_local_crop():
     js=(ROOT/"docs/site/manual-cover.js").read_text(encoding="utf-8")
     assert 'id="manual-cover-file"' in html
     assert 'id="manual-cover-canvas"' in html
-    assert 'src="./manual-cover.js"' in html
+    assert 'src="./manual-cover.js?' in html
     assert "window.openManualCover=function(id)" in js
     assert "createImageBitmap" in js and "1280" in js and "720" in js
-    assert 'audioIssueAction("manual_cover"' in js
+    assert '"manual_cover_prequeue"' in js and '"manual_cover"' in js
+    assert "window.audioUploadCover(blob)" in js
+    assert "GitHub Issue" not in js
 
 
 def test_artifact_download_links_use_github_native_pages():
@@ -195,7 +202,9 @@ def test_artifact_download_links_use_github_native_pages():
     js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
     assert 'id="progress-artifacts"' in html
     assert 'makeBtn("成品下載",showProgress' in js
-    assert '/artifacts/"+encodeURIComponent(item.id)' in js
+    assert "window.audioRequestArtifact(task.task_id,runId" in js
+    assert 'button.textContent="在 AUDIO 取得 "' in js
+    assert 'link.href="https://github.com/"+REPO+"/actions/runs/"+encodeURIComponent(runId)+"/artifacts/' not in js
 
 
 def test_click_handlers_explicitly_bind_new_tokenless_issue_bridge():
@@ -283,7 +292,7 @@ def test_batch_cover_gui_supports_copy_current_all_and_manual_upload():
     js=(ROOT/"docs/site/batch-cover.js").read_text(encoding="utf-8")
     for key in ("batch-cover-btn","batch-cover-completed","batch-cover-dialog","batch-cover-book-list","batch-cover-generate","batch-cover-result-file","batch-cover-copy-current","batch-cover-copy-all","batch-cover-manual"):
         assert f'id="{key}"' in html
-    assert 'src="./batch-cover.js"' in html
+    assert 'src="./batch-cover.js?' in html
     assert "window.openBatchCover=function" in js
     assert "function currentText()" in js and "function allText()" in js
     assert '"batch_cover_info"' in js
@@ -335,13 +344,16 @@ def test_large_catalog_upload_uses_file_not_cli_base64_argument():
     assert '-f content="$encoded"' not in workflow
 
 
-def test_browser_refreshes_queue_after_github_issue_confirmation_without_token():
+def test_browser_syncs_queue_after_authenticated_site_action_without_pat():
     bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
     assert "function watchQueueUpdate()" in bridge
-    assert "if(QUEUE_CHANGING.has(op))watchQueueUpdate()" in bridge
-    assert "const latest=await readQueue()" in bridge
-    assert "GitHub 雲端佇列已更新" in bridge
-    assert "Authorization" not in bridge and "GITHUB_TOKEN" not in bridge
+    assert "outstanding.set(id,{label,updateQueue:QUEUE_CHANGING.has(op)})" in bridge
+    assert "watchQueueUpdate()" in bridge
+    assert "const next=await readQueue()" in bridge
+    assert "const token=await window.audioAuth.token()" in bridge
+    assert '"Authorization":"Bearer "+token' in bridge
+    assert "GITHUB_TOKEN" not in bridge
+    assert "hub-google/audiobook-generator/issues/new" not in bridge
 
 
 def test_review_candidate_edit_remove_and_manual_add_match_desktop_gui():
@@ -364,13 +376,15 @@ def test_running_processing_task_can_edit_with_cancel_and_requeue():
     assert 'if(canEditAfterCancel(t)&&!confirm(' in bridge
 
 
-def test_long_chapter_issue_command_uses_native_gzip_without_browser_token():
+def test_long_chapter_site_command_uses_protected_json_post_not_github_url():
     bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    api=(ROOT/"supabase/functions/audio-web-commands/index.ts").read_text(encoding="utf-8")
     html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
-    assert 'new CompressionStream("gzip")' in bridge
-    assert "tab.location.replace(compressedUrl)" in bridge
-    assert "function base64Url(bytes)" in bridge
-    assert "function naturalChapterOrder(task)" in (ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    assert 'body=JSON.stringify(body)' in bridge
+    assert 'fetch(EDGE+path' in bridge
+    assert 'if(JSON.stringify(data).length>350000)' in api
+    assert 'window.open("about:blank"' not in bridge
+    assert 'function naturalChapterOrder(task)' in (ROOT/"docs/site/app.js").read_text(encoding="utf-8")
     assert "未填結束章時，自動依最新目錄選取全書" in html
 
 
@@ -450,14 +464,14 @@ def test_review_approval_has_both_txt_and_cover_evidence_and_no_browser_token():
     assert "evidence,cover_evidence" in bridge
 
 
-def test_issue_bridge_does_not_claim_success_when_popup_blocked():
+def test_site_command_does_not_claim_success_without_backend_acknowledgement():
     bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
-    review=(ROOT/"docs/site/review-inspector.js").read_text(encoding="utf-8")
-    assert 'function openIssueTab()' in bridge
-    assert 'if(!tab)throw Error("新分頁遭到瀏覽器封鎖' in bridge
-    assert 'tab.opener=null' in bridge
-    assert 'const tab=openIssueTab();' in bridge
-    assert 'if(url)$("review-dialog").close()' in review
+    assert 'const response=await api("/submit"' in bridge
+    assert 'if(!id)throw Error("雲端沒有回傳操作識別碼")' in bridge
+    assert 'notice("無法送出「"+label+"」："+error.message,"error");return null' in bridge
+    assert "window.open(" not in bridge
+    assert 'renderOperations([{request_id:id,op,status:"pending"' in bridge
+    assert 'if(state.status==="completed"||state.status==="failed")' in bridge
 
 
 def test_overview_auto_poll_reads_only_public_state_and_preserves_forms():
