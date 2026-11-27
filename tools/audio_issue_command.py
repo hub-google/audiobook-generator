@@ -30,7 +30,7 @@ CLOSE = ":AUDIO-COMMAND-V1 -->"
 ALLOWED = {
     "enqueue", "batch_add", "edit", "move", "status", "delete",
     "complete", "restore", "requeue", "cancel", "review", "dispatch",
-    "preview", "ping", "manual_cover", "export_artifacts", "batch_cover_info",
+    "preview", "search", "ping", "manual_cover", "export_artifacts", "batch_cover_info",
 }
 TASK_FIELDS = {
     "book_title", "start_chapter", "end_chapter", "excluded_chapters",
@@ -295,6 +295,25 @@ def apply_command(command, store, profiles, issue_number, token, repo):
                 "request_id": f"issue-{issue_number}",
             }})
         return f"Requested {len(runs)} Runs for batch artifact export", False
+    if operation == "search":
+        request_id = str(values.get("request_id", ""))
+        keyword = re.sub(r"\\s+", " ", str(values.get("keyword", ""))).strip()
+        source_ids = values.get("sources") or []
+        from src.sources.registry import SOURCES
+        if not re.fullmatch(r"[a-f0-9]{32}", request_id):
+            raise ValueError("Invalid search request ID")
+        if not 1 <= len(keyword) <= 80:
+            raise ValueError("Search keyword length must be 1–80")
+        if not isinstance(source_ids, list) or any(
+            not isinstance(s, str) or s not in SOURCES for s in source_ids
+        ) or len(source_ids) != len(set(source_ids)):
+            raise ValueError("Invalid source filter")
+        api("POST", "actions/workflows/audio-novel-search.yml/dispatches", token, repo,
+            json={"ref": "main", "inputs": {
+                "keyword": keyword, "request_id": request_id,
+                "sources": ",".join(source_ids),
+            }})
+        return "Started novel search " + request_id, False
     if operation == "preview":
         request_id = str(values.get("request_id", ""))
         if not re.fullmatch(r"[A-Za-z0-9_-]{8,40}", request_id):
