@@ -97,7 +97,9 @@
    throw Error("TXT／封面尚未通過前置檢查，無法核准後製");
   const evidence=window.audioReviewEvidence?.();
   if(!evidence)throw Error("請先匯入這本小說真正的 TXT 審核報告");
-  send("review",{task_id:id,remove_patterns:patterns,evidence},"核准文字與封面，開始後製");
+  send("review",{task_id:id,remove_patterns:patterns,
+   candidate_overrides:window.audioReviewCandidateEdits?.()||[],evidence},
+   "核准文字與封面，開始後製");
  };
  window.saveReview=async function(e){
   e.preventDefault();if(!reviewTaskId)throw Error("請先選擇小說");

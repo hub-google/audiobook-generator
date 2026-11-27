@@ -239,6 +239,13 @@ def main():
             assert "本段為測試廣告" in desktop.locator("#review-raw").inner_text()
             desktop.locator("#review-patterns").fill("本段為測試廣告")
             assert "本段為測試廣告" not in desktop.locator("#review-clean").inner_text()
+            desktop.evaluate("window.prompt=()=> '修訂廣告內容'")
+            desktop.get_by_role("button",name="編輯詞句 本段為測試廣告").click()
+            assert desktop.locator("#review-patterns").input_value() == "修訂廣告內容"
+            assert desktop.get_by_role("button",name="從名單移除 修訂廣告內容").count() == 1
+            desktop.locator("#review-manual-pattern").fill("另外手動刪除")
+            desktop.locator("#review-add-manual").click()
+            assert "另外手動刪除" in desktop.locator("#review-patterns").input_value()
             desktop.screenshot(path=str(OUTPUT / "audio-review-editor.png"), full_page=True)
             desktop.locator("#review-form button[type=submit]").click()
             desktop.locator("#review-dialog").wait_for(state="hidden")

@@ -50,6 +50,30 @@ def validate_review_evidence(values, task, token, repo, api):
         item["text"] for item in (report.get("candidates") or [])
         if isinstance(item, dict) and isinstance(item.get("text"), str)
     ]
+    # The desktop GUI lets operators edit candidates and remove entries from
+    # the review list. Validate every change against the authoritative Artifact,
+    # not against browser-supplied candidate data.
+    overrides = values.get("candidate_overrides") or []
+    if not isinstance(overrides, list) or len(overrides) > len(candidates):
+        raise ValueError("Invalid candidate change list")
+    verified = {}
+    for item in overrides:
+        if not isinstance(item, dict) or set(item) != {"original_text", "edited_text"}:
+            raise ValueError("Invalid candidate change")
+        original = item["original_text"]
+        if not isinstance(original, str) or original not in candidates or original in verified:
+            raise ValueError("Candidate change does not match the original TXT Artifact")
+        edited = item["edited_text"]
+        if edited is not None:
+            if not isinstance(edited, str):
+                raise ValueError("Edited candidate text must be a string")
+            validated = validate_remove_patterns([edited])
+            if len(validated) != 1:
+                raise ValueError("Edited candidate cannot be empty")
+            edited = validated[0]
+        verified[original] = edited
+    current = [verified.get(text, text) for text in candidates]
+    candidates = [text for text in current if text is not None]
     return {
         "raw_fingerprint": supplied,
         "scrape_run_id": task["scrape_run_id"],

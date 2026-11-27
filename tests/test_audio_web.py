@@ -340,3 +340,15 @@ def test_browser_refreshes_queue_after_github_issue_confirmation_without_token()
     assert "const latest=await readQueue()" in bridge
     assert "GitHub 雲端佇列已更新" in bridge
     assert "Authorization" not in bridge and "GITHUB_TOKEN" not in bridge
+
+
+def test_review_candidate_edit_remove_and_manual_add_match_desktop_gui():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    js=(ROOT/"docs/site/review-inspector.js").read_text(encoding="utf-8")
+    bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    for element in ("review-manual-pattern","review-add-manual"):
+        assert f'id="{element}"' in html
+    assert 'edit.textContent="編輯詞句"' in js
+    assert 'remove.textContent="從名單移除"' in js
+    assert "window.audioReviewCandidateEdits=function()" in js
+    assert "candidate_overrides:" in bridge
