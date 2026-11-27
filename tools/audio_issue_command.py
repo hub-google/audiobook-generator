@@ -28,6 +28,7 @@ CLOSE = ":AUDIO-COMMAND-V1 -->"
 ALLOWED = {
     "enqueue", "batch_add", "edit", "move", "status", "delete",
     "complete", "restore", "requeue", "cancel", "review", "dispatch",
+    "preview", "ping",
 }
 TASK_FIELDS = {
     "book_title", "start_chapter", "end_chapter", "excluded_chapters",
@@ -158,6 +159,16 @@ def apply_command(command, store, profiles, issue_number, token, repo):
         raise ValueError("Command data must be an object")
     if operation == "dispatch":
         return "Submitted dispatcher", True
+    if operation == "ping":
+        return "GitHub collaborator verified; no queue change", False
+    if operation == "preview":
+        request_id = str(values.get("request_id", ""))
+        if not re.fullmatch(r"[A-Za-z0-9_-]{8,40}", request_id):
+            raise ValueError("Invalid preview request ID")
+        url = valid_url(values.get("catalog_url"))
+        api("POST", "actions/workflows/web-catalog-preview.yml/dispatches", token, repo,
+            json={"ref": "main", "inputs": {"catalog_url": url, "request_id": request_id}})
+        return "Started catalog preview " + request_id, False
 
     # Parse new books before queue mutation; a failed book never inserts a partial batch.
     new_books = []
