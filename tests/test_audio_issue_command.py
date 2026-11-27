@@ -146,3 +146,36 @@ def test_invalid_edit_does_not_mutate_book_profile(status, changes):
         apply_command(command, store, profiles, 42, "dummy", "owner/repo")
     profiles.mutate.assert_not_called()
     store.mutate.assert_not_called()
+
+
+def test_save_review_rules_only_does_not_approve_or_dispatch():
+    from unittest.mock import Mock, patch
+    from src.cloud_queue import empty_queue, new_task
+    from tools.audio_issue_command import apply_command
+    state = empty_queue()
+    task = new_task("https://69shuba.com/book/123/", "Sample", 1, 3)
+    task["status"] = "waiting_review"
+    task["scrape_run_id"] = 10
+    task["cover_run_id"] = 11
+    state["queue"] = [task]
+    class Store:
+        def load(self): return state, None
+        def mutate(self, fn, message):
+            nonlocal state
+            state = fn(state)
+            return state
+    profiles=Mock()
+    payload={"op":"review","data":{
+        "task_id":task["task_id"],"remove_patterns":["廣告文字"],
+        "review_only":True,
+        "evidence":{"task_id":task["task_id"],"raw_fingerprint":"a"*64}
+    }}
+    verified={"raw_fingerprint":"a"*64,"remove_patterns":["廣告文字"],
+              "keep_patterns":["正常文字"]}
+    with patch("tools.audio_review_evidence.validate_review_evidence",return_value=verified):
+        result, dispatch=apply_command(payload,Store(),profiles,598,"token","owner/repo")
+    assert dispatch is False
+    assert state["queue"][0]["status"]=="waiting_review"
+    assert state["queue"][0].get("ad_review",{}).get("status")!="approved"
+    assert 598 in state["web_applied_issue_ids"]
+    profiles.mutate.assert_called_once()

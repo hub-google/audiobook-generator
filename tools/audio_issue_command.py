@@ -337,11 +337,13 @@ def apply_command(command, store, profiles, issue_number, token, repo):
                 raise ValueError("Task not awaiting review")
             if review_evidence is None:
                 raise ValueError("The actual TXT Artifact was not checked")
+            # Saving text-cleaning rules is NOT an approval to start processing.
+            # Keep the task in waiting_review until the separate confirmation.
+            if values.get("review_only"):
+                return q
             review = {"status": "approved", "approved_at": utc_now(),
                       **review_evidence}
-            return confirm_preflight_review(
-                q, ids[0],task.get("scrape_run_id"),task.get("cover_run_id"),review,
-            ) if values.get("review_only") else start_reviewed_processing(
+            return start_reviewed_processing(
                 confirm_preflight_review(q,ids[0],task.get("scrape_run_id"),task.get("cover_run_id"),review),ids[0]
             )
         if operation == "cancel":
@@ -409,8 +411,8 @@ def apply_command(command, store, profiles, issue_number, token, repo):
                     chapter_normalized_number_overrides=t.get("chapter_normalized_number_overrides"),
                 ), f"AUDIO issue #{issue_number} persist chapter profile")
     return f"Completed {operation} ({len(ids) if ids else len(new_books)} book(s))",operation in {
-        "enqueue","batch_add","requeue","status","review"
-    }
+        "enqueue","batch_add","requeue","status"
+    } or (operation == "review" and not values.get("review_only"))
 
 
 def cover_attachment_url(issue_body):
