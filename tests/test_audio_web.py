@@ -56,3 +56,14 @@ def test_cover_preflight_stays_independent_and_receives_gemini_secret():
     assert "GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}" in workflow
     assert "catalog_parser.py" not in workflow
     assert "crawler.py" not in workflow
+
+
+def test_advanced_web_editor_and_review_inputs():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    for field in ("title-overrides", "number-overrides", "chapter-order", "edit-dialog", "edit-form", "review-dialog", "review-patterns"):
+        assert f'id="{field}"' in html
+    assert "function openEditor(id)" in js
+    assert "async function saveEditor(event)" in js
+    assert "async function saveReview(event)" in js
+    assert 'ref:"master"' not in js

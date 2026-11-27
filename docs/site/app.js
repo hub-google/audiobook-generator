@@ -11,7 +11,7 @@ const SOURCES=[
 {id:"moon17",name:"月亮小說網",hosts:["17moon.com","www.17moon.com"]},
 {id:"book8",name:"無限小說",hosts:["8book.com","www.8book.com","v.8book.com","m.8book.com","i.8book.com"]}
 ];
-let token="",queue=null,queueSha=null,latestRuns=[],parsedCatalog=null;
+let token="",queue=null,queueSha=null,latestRuns=[],parsedCatalog=null,editorTaskId=null,reviewTaskId=null;
 const $=id=>document.getElementById(id), text=(node,value)=>{node.textContent=value==null?"":String(value)};
 function notice(message,kind="ok"){const n=$("message");text(n,message);n.className="notice"+(kind==="error"?" error":"");}
 const dateLabel=v=>v?new Date(v).toLocaleString("zh-TW",{timeZone:"Asia/Taipei",hour12:false}):"—";
@@ -52,8 +52,9 @@ function buildTaskRow(task,index){
  const stages=col("TXT "+stageBadge(task,"scrape")+" · 封面 "+stageBadge(task,"cover")+" · 影片 "+stageBadge(task,"processing"));
  const rid=task.run_id||task.scrape_run_id||task.cover_run_id;if(rid){const small=document.createElement("small"),a=document.createElement("a");a.href="https://github.com/"+REPO+"/actions/runs/"+encodeURIComponent(rid);a.target="_blank";a.rel="noopener noreferrer";a.textContent="Run #"+rid;small.append(a);stages.append(small);}
  const controls=col(""),div=document.createElement("div");div.className="actions";controls.append(div);
- if(task.status==="waiting_review"){div.append(makeBtn("查看審核資料",async()=>{window.open("https://github.com/"+REPO+"/actions/runs/"+(task.cover_run_id||task.run_id),"_blank","noopener");},task.task_id,false));div.append(makeBtn("確認審核並繼續",approveTask,task.task_id,false));}
+ if(task.status==="waiting_review"){div.append(makeBtn("查看審核資料",async()=>{window.open("https://github.com/"+REPO+"/actions/runs/"+(task.cover_run_id||task.run_id),"_blank","noopener");},task.task_id,false));div.append(makeBtn("確認審核並繼續",openReview,task.task_id,false));}
  if(["queued","paused","interrupted","stopped"].includes(task.status)){
+  div.append(makeBtn("編輯",openEditor,task.task_id,!canEdit(task)));
   div.append(makeBtn("↑",id=>moveTask(id,-1),task.task_id,index===0||!canEdit(task)||!canEdit(queueTasks()[index-1])));
   div.append(makeBtn("↓",id=>moveTask(id,1),task.task_id,index===queueTasks().length-1||!canEdit(task)||!canEdit(queueTasks()[index+1])));
   if(task.status==="queued")div.append(makeBtn("暫停",id=>setTaskState(id,"paused"),task.task_id));
@@ -105,23 +106,72 @@ async function triggerDispatcher(){
 async function moveTask(id,delta){await mutate(q=>{const i=q.queue.findIndex(t=>t.task_id===id),j=i+delta;if(i<0||j<0||j>=q.queue.length||!canEdit(q.queue[i])||!canEdit(q.queue[j]))throw Error("無法移動正在執行的工作");[q.queue[i],q.queue[j]]=[q.queue[j],q.queue[i]];return q;},"Web UI: reorder audiobook queue");notice("已更新工作順序");}
 async function setTaskState(id,state){await mutate(q=>{const t=q.queue.find(x=>x.task_id===id);if(!t||!canEdit(t))throw Error("該工作目前不允許修改");t.status=state;t.reason=null;t.retry_at=null;t.updated_at=new Date().toISOString();return q;},"Web UI: update audiobook task status");notice("已更新任務狀態");if(state==="queued")await triggerDispatcher();}
 async function deleteTask(id){if(!confirm("確定刪除此尚未執行的任務？"))return;await mutate(q=>{const i=q.queue.findIndex(x=>x.task_id===id);if(i<0||!canEdit(q.queue[i]))throw Error("不能刪除正在執行的作業");q.queue.splice(i,1);return q;},"Web UI: remove queued audiobook");notice("任務已從佇列移除");}
-async function approveTask(id){
- if(!confirm("請確認你已實際下載並審核 TXT、封面及清理規則。確認後會開始語音、影片與後續發布，是否繼續？"))return;
+function readOverrides(value,start,end,isNumber=false){
+ const out={};for(const line of value.split(/\r?\n/)){if(!line.trim())continue;const pos=line.indexOf("|");if(pos<0)throw Error("進階章節設定必須使用「索引 | 內容」格式："+line);
+ const index=Number(line.slice(0,pos).trim()),name=line.slice(pos+1).trim();
+ if(!Number.isSafeInteger(index)||index<start||index>end)throw Error("章節索引不在範圍內："+line);
+ if(!name||name.length>300)throw Error("自訂章節內容不可空白或超過300字");
+ if(isNumber&&!/^[1-9]\d*(?:\.\d+)?$/.test(name))throw Error("自訂章號必須為正數或正小數："+name);
+ out[String(index)]=name;
+ }return out;
+}
+function readOrder(value,start,end,excluded){
+ if(!value.trim())return [];
+ const nums=value.split(/[,，;；\s]+/).filter(Boolean).map(Number),deny=new Set(excluded);
+ if(nums.some(n=>!Number.isSafeInteger(n)||n<start||n>end||deny.has(n)))throw Error("播放順序包含不合法或已排除的章節");
+ const expected=end-start+1-deny.size;
+ if(nums.length!==expected||new Set(nums).size!==expected)throw Error("播放順序必須完整列出 "+expected+" 個未排除章節，且不得重複");
+ return nums;
+}
+function formatOverrides(overrides){return Object.entries(overrides||{}).map(([k,v])=>k+" | "+v).join("\n");}
+function formatPublish(v){return v?String(v).slice(0,16):"";}
+function publishValue(v){return v?v+":00+08:00":null;}
+function openEditor(id){
+ const task=queueTasks().find(x=>x.task_id===id);if(!task||!canEdit(task))throw Error("執行中的任務不可直接修改");
+ editorTaskId=id;text($("edit-book-url"),task.catalog_url);$("edit-name").value=task.book_title||"";$("edit-start").value=task.start_chapter||1;$("edit-end").value=task.end_chapter||10;
+ $("edit-excluded").value=(task.excluded_chapters||[]).join(",");$("edit-renumber").checked=!!task.renumber_selected;$("edit-publish").value=formatPublish(task.publish_at);
+ $("edit-titles").value=formatOverrides(task.chapter_title_overrides);$("edit-numbers").value=formatOverrides(task.chapter_normalized_number_overrides);
+ $("edit-order").value=(task.chapter_order||[]).join(",");$("edit-dialog").showModal();
+}
+async function saveEditor(event){
+ event.preventDefault();const id=editorTaskId;if(!id)throw Error("未選取編輯工作");
+ const start=Number($("edit-start").value),end=Number($("edit-end").value),name=$("edit-name").value.trim();
+ if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<1||end<start||end>999999)throw Error("章節範圍無效");
+ if(!name)throw Error("書名不可空白");const excluded=excludedNumbers($("edit-excluded").value,start,end);
+ const titles=readOverrides($("edit-titles").value,start,end),numbers=readOverrides($("edit-numbers").value,start,end,true);
+ const order=readOrder($("edit-order").value,start,end,excluded);
+ await mutate(q=>{const t=q.queue.find(x=>x.task_id===id);if(!t||!canEdit(t))throw Error("任務已開始執行，請重新整理");
+ Object.assign(t,{book_title:name,start_chapter:start,end_chapter:end,excluded_chapters:excluded,renumber_selected:$("edit-renumber").checked,publish_at:publishValue($("edit-publish").value),chapter_title_overrides:titles,chapter_normalized_number_overrides:numbers,chapter_order:order,updated_at:new Date().toISOString()});
+ return q;},"Web UI: edit audiobook chapter plan");$("edit-dialog").close();editorTaskId=null;notice("章節、標題與播放順序已儲存");
+}
+function openReview(id){const task=queueTasks().find(t=>t.task_id===id);if(!task||task.status!=="waiting_review")throw Error("任務不在待審核狀態");
+ reviewTaskId=id;$("review-patterns").value=(task.ad_review?.remove_patterns||task.profile_snapshot?.cleaner_remove_patterns||[]).join("\n");
+ $("review-dialog").showModal();
+}
+
+async function approveTask(id,patterns){
  await mutate(q=>{const t=q.queue.find(x=>x.task_id===id);if(!t||t.status!=="waiting_review"||!t.scrape_run_id||!t.cover_run_id||!["scrape","cover"].every(s=>t.stages?.[s]?.status==="completed"))throw Error("TXT / 封面尚未完成或審查狀態已改變");
- t.ad_review={status:"approved",approved_at:new Date().toISOString(),remove_patterns:[]};
+ t.ad_review={status:"approved",approved_at:new Date().toISOString(),remove_patterns:patterns};
  t.status="queued";t.workflow_phase="processing";t.run_id=null;t.processing_run_id=null;t.reason=null;t.updated_at=new Date().toISOString();return q;
  },"Web UI: approve reviewed audiobook preflight");await triggerDispatcher();
+}
+async function saveReview(event){
+ event.preventDefault();if(!reviewTaskId)throw Error("未選取審核工作");
+ const patterns=[...new Set($("review-patterns").value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean))];
+ if(patterns.some(x=>x.length>10000))throw Error("單一刪除字詞最多10000字");
+ if(!confirm("已確認 TXT、封面及著作權授權？確認後開始影片製作與後續發布。"))return;
+ await approveTask(reviewTaskId,patterns);$("review-dialog").close();reviewTaskId=null;notice("已審核並提交後續製作");
 }
 function excludedNumbers(value,start,end){
  const all=new Set();for(const segment of value.split(/[,，;；\s]+/).filter(Boolean)){const m=segment.match(/^(\d+)(?:-(\d+))?$/);if(!m)throw Error("排除章節格式錯誤："+segment);const a=Number(m[1]),b=Number(m[2]||m[1]);if(b<a||b-a>10000)throw Error("章節範圍不合法："+segment);for(let i=a;i<=b;i++)if(i>=start&&i<=end)all.add(i);}
  return [...all].sort((a,b)=>a-b);
 }
-function buildTask({url,title,start,end,excluded=[],renumber=false,publishAt=null,identity=""}){
+function buildTask({url,title,start,end,excluded=[],renumber=false,publishAt=null,identity="",titles={},numbers={},order=[]}){
  const now=new Date().toISOString();getSource(url);if(!title.trim())throw Error("請輸入書名");
  if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<1||end<start||end>999999)throw Error("章節起訖無效");
  const stage=()=>({status:"pending",run_id:null,run_attempt:0,reason:null,completed_at:null});
  const id="book-"+now.slice(0,10).replaceAll("-","")+"-"+crypto.randomUUID().replaceAll("-","").slice(0,8);
- return{task_id:id,position:0,book_title:title.trim(),catalog_url:url.trim(),catalog_identity:identity,start_chapter:start,end_chapter:end,excluded_chapters:excluded,renumber_selected:renumber,publish_at:publishAt,duplicate_chapter_count:null,chapter_title_overrides:{},chapter_normalized_number_overrides:{},chapter_order:[],status:"queued",workflow_phase:"queued",stages:{scrape:stage(),cover:stage(),processing:stage(),publication:stage()},scrape_run_id:null,cover_run_id:null,processing_run_id:null,scrape_snapshot_id:"",ad_review:{status:"pending"},run_id:null,run_attempt:0,execution_generation:1,retry_requested_at:null,run_history:[],retry_at:null,reason:null,hf_progress:{completed:0,total:0},youtube_progress:{completed:0,total:0},created_at:now,updated_at:now};
+ return{task_id:id,position:0,book_title:title.trim(),catalog_url:url.trim(),catalog_identity:identity,start_chapter:start,end_chapter:end,excluded_chapters:excluded,renumber_selected:renumber,publish_at:publishAt,duplicate_chapter_count:null,chapter_title_overrides:titles,chapter_normalized_number_overrides:numbers,chapter_order:order,status:"queued",workflow_phase:"queued",stages:{scrape:stage(),cover:stage(),processing:stage(),publication:stage()},scrape_run_id:null,cover_run_id:null,processing_run_id:null,scrape_snapshot_id:"",ad_review:{status:"pending"},run_id:null,run_attempt:0,execution_generation:1,retry_requested_at:null,run_history:[],retry_at:null,reason:null,hf_progress:{completed:0,total:0},youtube_progress:{completed:0,total:0},created_at:now,updated_at:now};
 }
 async function addTasks(tasks){
  if(!tasks.length)throw Error("沒有可加入的任務");
@@ -134,7 +184,8 @@ async function submitBook(event){
  const start=Number($("start-chapter").value),end=Number($("end-chapter").value);
  if(parsedCatalog&&parsedCatalog.catalog_url===url&&end>parsedCatalog.total_chapters)throw Error("結束章超過目錄總章數");
  const publish=$("publish-at").value?$("publish-at").value+":00+08:00":null;
- await addTasks([buildTask({url,title:$("book-title").value,start,end,excluded:excludedNumbers($("excluded").value,start,end),renumber:$("renumber").checked,publishAt:publish,identity:parsedCatalog?.catalog_url===url?parsedCatalog.catalog_identity:""})]);
+ const excluded=excludedNumbers($("excluded").value,start,end);
+ await addTasks([buildTask({url,title:$("book-title").value,start,end,excluded,renumber:$("renumber").checked,publishAt:publish,identity:parsedCatalog?.catalog_url===url?parsedCatalog.catalog_identity:"",titles:readOverrides($("title-overrides").value,start,end),numbers:readOverrides($("number-overrides").value,start,end,true),order:readOrder($("chapter-order").value,start,end,excluded)})]);
  $("book-form").reset();parsedCatalog=null;$("catalog-preview").classList.add("hidden");
 }
 async function batchAdd(){
@@ -206,6 +257,8 @@ document.addEventListener("DOMContentLoaded",()=>{
  bind("connect-btn","click",connect);bind("disconnect-btn","click",()=>{token="";$("token").value="";notice("已清除本頁 GitHub Token");refresh();});
  bind("refresh-btn","click",refresh);bind("dispatch-btn","click",triggerDispatcher);bind("book-form","submit",submitBook);
  bind("batch-btn","click",batchAdd);bind("parse-btn","click",parseCatalog);
+ bind("edit-form","submit",saveEditor);bind("review-form","submit",saveReview);
+ bind("edit-cancel","click",()=>{$("edit-dialog").close();editorTaskId=null;});bind("review-cancel","click",()=>{$("review-dialog").close();reviewTaskId=null;});
  bind("catalog-url","input",()=>{parsedCatalog=null;$("catalog-preview").classList.add("hidden");});
  refresh();
 });

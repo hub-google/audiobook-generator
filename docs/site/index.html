@@ -38,6 +38,13 @@
 <div id="catalog-preview" class="catalog-preview hidden"></div>
 <div class="form-grid"><label class="wide">小說名稱<input id="book-title" maxlength="160" placeholder="解析成功後自動填入，也可手動輸入" required></label><label>起始章<input type="number" id="start-chapter" min="1" max="999999" value="1" required></label><label>結束章<input type="number" id="end-chapter" min="1" max="999999" value="10" required></label><label class="wide">排除章節（可留空）<input id="excluded" placeholder="例如：3,8,11-15"></label></div>
 <div class="form-grid"><label class="toggle"><input type="checkbox" id="renumber"> 排除後重新編號（從第 1 章開始）</label><label>公開時間<input type="datetime-local" id="publish-at"><small class="muted">留空代表依工作流程立即發布；輸入的是台灣時間。</small></label></div>
+<details class="advanced"><summary>進階章節設定（自訂標題、章號、播放順序）</summary>
+<p class="muted">以下均使用「目錄內的第幾筆」作為章節索引，而不是書中的章號。未填寫則保留原設定。</p>
+<div class="form-grid">
+<label class="wide">自訂章節標題（每行：索引 | 新標題）<textarea id="title-overrides" rows="3" placeholder="1 | 第一章 新的開始"></textarea></label>
+<label class="wide">自訂原始章號（每行：索引 | 章號；例如 1 | 1.5）<textarea id="number-overrides" rows="3" placeholder="1 | 1.5"></textarea></label>
+<label class="wide">章節播放順序（可留空；若填寫須列出選定範圍內所有未排除章節）<textarea id="chapter-order" rows="2" placeholder="3,1,2,4,5"></textarea></label>
+</div></details>
 <div class="form-foot"><p class="muted">加入佇列後，雲端調度會先執行 TXT 與封面，完成審核再製作影片。</p><button type="submit" id="enqueue-btn">加入雲端佇列</button></div>
 </form>
 <section class="form-card"><h3>批次加入小說</h3><p class="muted">每行一個「書名 | 網址 | 起始章 | 結束章」。未填章數時預設 1–10。</p><textarea rows="5" id="batch-urls" placeholder="測試小說 | https://czbooks.net/n/xxxxx | 1 | 10"></textarea><div class="form-foot"><span></span><button id="batch-btn" class="secondary" type="button">批次加入</button></div></section>
@@ -46,6 +53,28 @@
 <div class="section-head"><div><h2>GitHub Actions 製作紀錄</h2><p>查看 TXT、Gemini 封面、影片製作、排程與部署的工作結果。</p></div><a href="https://github.com/hub-google/audiobook-generator/actions" rel="noopener noreferrer" target="_blank">開啟 Actions</a></div>
 <div class="table-wrap"><table><thead><tr><th>執行項目</th><th>觸發時間</th><th>狀態</th><th>連結</th></tr></thead><tbody id="runs-body"><tr><td colspan="4" class="empty">尚未載入</td></tr></tbody></table></div>
 </section>
+<dialog id="edit-dialog" class="editor-dialog" aria-labelledby="edit-title">
+<form id="edit-form">
+<h2 id="edit-title">編輯小說任務</h2><p class="muted" id="edit-book-url"></p>
+<div class="form-grid">
+<label class="wide">小說名稱<input id="edit-name" maxlength="160" required></label>
+<label>起始章<input id="edit-start" type="number" min="1" max="999999" required></label>
+<label>結束章<input id="edit-end" type="number" min="1" max="999999" required></label>
+<label class="wide">排除章節<input id="edit-excluded" placeholder="3,8,11-15"></label>
+<label class="toggle"><input id="edit-renumber" type="checkbox"> 排除後重新編號</label>
+<label>排定公開時間（台灣時間）<input id="edit-publish" type="datetime-local"></label>
+<label class="wide">自訂標題（每行：索引 | 標題）<textarea id="edit-titles" rows="3"></textarea></label>
+<label class="wide">自訂章號（每行：索引 | 章號）<textarea id="edit-numbers" rows="3"></textarea></label>
+<label class="wide">章節播放順序（以逗號分隔，留空為原始順序）<textarea id="edit-order" rows="2"></textarea></label>
+</div>
+<div class="dialog-actions"><button type="button" class="secondary" id="edit-cancel">取消</button><button type="submit">儲存任務</button></div>
+</form></dialog>
+<dialog id="review-dialog" class="editor-dialog" aria-labelledby="review-title">
+<form id="review-form"><h2 id="review-title">TXT 與封面審核</h2>
+<p class="muted">先從上方工作表開啟來源 Run，實際確認 TXT、封面與版權授權。每行一個需要從正文移除的固定文字；不支援正規表達式。</p>
+<label>正文清理字詞<textarea id="review-patterns" rows="7" placeholder="每行一個要移除的固定文字"></textarea></label>
+<div class="dialog-actions"><button type="button" class="secondary" id="review-cancel">取消</button><button type="submit">確認已審核，開始影片製作</button></div>
+</form></dialog>
 <footer>資料由 GitHub API 即時讀取；GitHub Pages 不會在瀏覽器執行 Python、TTS 或影片轉檔。</footer>
 </main>
 </div>
