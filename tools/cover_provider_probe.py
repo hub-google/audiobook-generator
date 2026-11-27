@@ -5,6 +5,13 @@ from src.metadata_gen import download_ai_image
 PROMPT="Atmospheric landscape illustration of a fictional lighthouse in a blue night sky, no text."
 
 def main():
+    if os.getenv("CLOUDFLARE_API_TOKEN") or os.getenv("CLOUDFLARE_WORKERS_FREE_CONFIRMED", "").lower() == "true" or os.getenv("COVER_IMAGE_PROVIDER") == "cloudflare":
+        os.environ["COVER_IMAGE_PROVIDER"] = "cloudflare"
+        image = download_ai_image(PROMPT, max_attempts=1)
+        assert image.size == (1280, 720)
+        image.save("cloudflare-cover-probe.jpg", "JPEG", quality=95)
+        print("Cloudflare: 成功（1280×720）")
+        return
     lines=[]
     hf=bool(os.getenv("HF_TOKEN","").startswith("hf_"))
     gemini=bool(os.getenv("GEMINI_API_KEY","").strip())

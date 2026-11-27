@@ -1317,6 +1317,10 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_ARCHIVE_REPO: ${{ vars.HF_ARCHIVE_REPO }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_WORKERS_FREE_CONFIRMED: ${{ vars.CLOUDFLARE_WORKERS_FREE_CONFIRMED }}
+          COVER_IMAGE_PROVIDER: ${{ vars.COVER_IMAGE_PROVIDER || 'auto' }}
           HF_MEDIA_PREUPLOADED: "true"
           QUEUE_TASK_ID: ${{ github.event.inputs.queue_task_id }}
           BOOK_CATALOG_URL: ${{ github.event.inputs.catalog_url }}

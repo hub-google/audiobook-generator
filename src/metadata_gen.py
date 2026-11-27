@@ -896,12 +896,22 @@ def _gemini_generate_cover(prompt, width, height, max_attempts=3, retry_base_sec
 def download_ai_image(prompt, width=1280, height=720, max_attempts=5, retry_base_seconds=15):
     """Auto: try HF once first; use Gemini when HF credit or access fails.
 
-    COVER_IMAGE_PROVIDER=hf|gemini|auto controls routing. A failed image request
+    COVER_IMAGE_PROVIDER=hf|gemini|cloudflare|auto controls routing. A failed image request
     never silently degrades to a low-quality placeholder.
     """
     provider = os.getenv("COVER_IMAGE_PROVIDER", "auto").strip().lower()
-    if provider not in ("auto", "hf", "gemini"):
-        raise ValueError("COVER_IMAGE_PROVIDER 必須為 auto、hf 或 gemini")
+    if provider not in ("auto", "hf", "gemini", "cloudflare"):
+        raise ValueError("COVER_IMAGE_PROVIDER 必須為 auto、hf、gemini 或 cloudflare")
+    # Explicit activation, or automatically use Cloudflare when its credentials
+    # are present. Never fall back to paid image providers after activation.
+    if provider == "cloudflare" or (provider == "auto" and (
+        os.getenv("CLOUDFLARE_API_TOKEN") or os.getenv("CLOUDFLARE_WORKERS_FREE_CONFIRMED", "").lower() == "true"
+    )):
+        try:
+            from .cloudflare_cover import generate_cloudflare_cover
+        except ImportError:
+            from cloudflare_cover import generate_cloudflare_cover
+        return generate_cloudflare_cover(prompt, width, height)
     if max_attempts < 1:
         raise ValueError("max_attempts 必須至少為 1")
     if provider == "gemini":

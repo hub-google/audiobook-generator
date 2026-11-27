@@ -65,9 +65,19 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: '3.11', cache: pip}
       - run: pip install -r requirements.txt
-      - name: "實際測試封面生成（HF 失敗時改用 Gemini）"
+      - name: "實際測試封面生成（依已設定的服務）"
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_IMAGE_MODEL: gemini-2.5-flash-image
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_WORKERS_FREE_CONFIRMED: ${{ vars.CLOUDFLARE_WORKERS_FREE_CONFIRMED }}
+          COVER_IMAGE_PROVIDER: ${{ vars.COVER_IMAGE_PROVIDER || 'auto' }}
         run: python -m tools.cover_provider_probe
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: cloudflare-cover-probe
+          path: cloudflare-cover-probe.jpg
+          if-no-files-found: ignore
