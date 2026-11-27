@@ -43,7 +43,7 @@ function statusName(s){return({queued:"排隊中",paused:"已暫停",preparing_a
 function statusClass(s){return s==="completed"?"done":["waiting_review","needs_attention"].includes(s)?"review":["stopped","interrupted"].includes(s)?"error":live({status:s})?"running":"";}
 function stageBadge(task,name){const s=task.stages?.[name]?.status||"pending";return({completed:"✓",running:"進行中",dispatching:"啟動中",failed:"失敗",pending:"待執行",skipped:"略過"})[s]||s;}
 function canEdit(task){return !active(task)&&["queued","paused","interrupted","stopped"].includes(task.status);}
-function makeBtn(label,action,id,disabled=false){const b=document.createElement("button");b.type="button";b.textContent=label;b.className="secondary";b.disabled=disabled||!token;b.addEventListener("click",()=>Promise.resolve().then(()=>action(id)).catch(e=>notice(e.message,"error")));return b;}
+function makeBtn(label,action,id,disabled=false,authRequired=true){const b=document.createElement("button");b.type="button";b.textContent=label;b.className="secondary";b.disabled=disabled||(authRequired&&!token);b.addEventListener("click",()=>Promise.resolve().then(()=>action(id)).catch(e=>notice(e.message,"error")));return b;}
 function buildTaskRow(task,index){
  const tr=document.createElement("tr"),col=(value)=>{const td=document.createElement("td");td.textContent=value;tr.append(td);return td;};
  const first=col((index+1)+". "+(task.book_title||"待解析"));const url=document.createElement("small");url.textContent=task.catalog_url||"";first.append(url);
@@ -52,9 +52,9 @@ function buildTaskRow(task,index){
  const stages=col("TXT "+stageBadge(task,"scrape")+" · 封面 "+stageBadge(task,"cover")+" · 影片 "+stageBadge(task,"processing"));
  const rid=task.run_id||task.scrape_run_id||task.cover_run_id;if(rid){const small=document.createElement("small"),a=document.createElement("a");a.href="https://github.com/"+REPO+"/actions/runs/"+encodeURIComponent(rid);a.target="_blank";a.rel="noopener noreferrer";a.textContent="Run #"+rid;small.append(a);stages.append(small);}
  const controls=col(""),div=document.createElement("div");div.className="actions";controls.append(div);
- div.append(makeBtn("進度",showProgress,task.task_id));
+ div.append(makeBtn("進度",showProgress,task.task_id,false,false));
  if(live(task))div.append(makeBtn("取消本次 Run",cancelRunningTask,task.task_id));
- if(task.status==="waiting_review"){div.append(makeBtn("查看審核資料",async()=>{window.open("https://github.com/"+REPO+"/actions/runs/"+(task.cover_run_id||task.run_id),"_blank","noopener");},task.task_id,false));div.append(makeBtn("確認審核並繼續",openReview,task.task_id,false));}
+ if(task.status==="waiting_review"){div.append(makeBtn("查看審核資料",async()=>{window.open("https://github.com/"+REPO+"/actions/runs/"+(task.cover_run_id||task.run_id),"_blank","noopener");},task.task_id,false,false));div.append(makeBtn("確認審核並繼續",openReview,task.task_id,false));}
  if(["queued","paused","interrupted","stopped"].includes(task.status)){
   div.append(makeBtn("編輯",openEditor,task.task_id,!canEdit(task)));
   div.append(makeBtn("↑",id=>moveTask(id,-1),task.task_id,index===0||!canEdit(task)||!canEdit(queueTasks()[index-1])));
@@ -79,7 +79,7 @@ function renderQueue(){
 }
 async function refresh(){
  try{const res=await readQueue();queue=res.data;queueSha=res.sha;renderQueue();
-  if(token){const data=await request("/actions/runs?per_page=35");latestRuns=data.workflow_runs||[];renderRuns();}
+  try{const data=await request("/actions/runs?per_page=35");latestRuns=data.workflow_runs||[];renderRuns();}catch(error){if(token)notice("Actions 紀錄載入失敗："+error.message,"error");}
   $("connection-pill").textContent=token?"已連線":"唯讀模式";$("connection-pill").className="pill "+(token?"ok":"warn");
  }catch(e){notice("同步失敗："+e.message,"error");}
 }
@@ -108,7 +108,30 @@ async function triggerDispatcher(){
 }
 async function moveTask(id,delta){await mutate(q=>{const i=q.queue.findIndex(t=>t.task_id===id),j=i+delta;if(i<0||j<0||j>=q.queue.length||!canEdit(q.queue[i])||!canEdit(q.queue[j]))throw Error("無法移動正在執行的工作");[q.queue[i],q.queue[j]]=[q.queue[j],q.queue[i]];return q;},"Web UI: reorder audiobook queue");notice("已更新工作順序");}
 async function setTaskState(id,state){await mutate(q=>{const t=q.queue.find(x=>x.task_id===id);if(!t||!canEdit(t))throw Error("該工作目前不允許修改");t.status=state;t.reason=null;t.retry_at=null;t.updated_at=new Date().toISOString();return q;},"Web UI: update audiobook task status");notice("已更新任務狀態");if(state==="queued")await triggerDispatcher();}
-function showProgress(id){
+async function renderRunJobDetails(task){
+ const container=$("progress-jobs");container.replaceChildren();
+ const ids=[...new Set([task.scrape_run_id,task.cover_run_id,task.processing_run_id,task.run_id].filter(Boolean))];
+ if(!ids.length){text(container,"目前尚無已啟動的 GitHub Actions");return;}
+ for(const runId of ids){
+  const section=document.createElement("section");section.className="progress-job-section";
+  const heading=document.createElement("a");heading.href="https://github.com/"+REPO+"/actions/runs/"+encodeURIComponent(runId);
+  heading.target="_blank";heading.rel="noopener noreferrer";heading.textContent="Run #"+runId+" — 開啟 GitHub 詳細紀錄";section.append(heading);
+  const display=document.createElement("div");display.className="progress-job-list";display.textContent="讀取 Job 與 Step…";section.append(display);container.append(section);
+  try{
+   const data=await request("/actions/runs/"+encodeURIComponent(runId)+"/jobs?per_page=100");
+   const jobs=Array.isArray(data.jobs)?data.jobs:[];
+   if(!jobs.length){display.textContent="目前尚無 Job 記錄";continue;}
+   const lines=[];
+   for(const job of jobs){
+    lines.push("◆ "+(job.name||"工作")+"　"+(job.conclusion||job.status||"未知"));
+    for(const step of job.steps||[])lines.push("   "+(step.conclusion==="success"?"✓":step.conclusion==="failure"?"✕":"·")+" "+step.name+"　"+(step.conclusion||step.status||""));
+   }
+   display.textContent=lines.join("\n");
+  }catch(e){display.textContent="Job 詳細資料目前無法公開讀取："+e.message;}
+ }
+}
+
+async function showProgress(id){
  const t=[...queueTasks(),...(queue?.completed||[])].find(x=>x.task_id===id);
  if(!t)throw Error("找不到任務");
  const detail=[
@@ -123,7 +146,7 @@ function showProgress(id){
   "工作 ID："+t.task_id,
   "異常或原因："+(t.reason||"無"),
  ].join("\n");
- text($("progress-detail"),detail);$("progress-dialog").showModal();
+ text($("progress-detail"),detail);$("progress-dialog").showModal();await renderRunJobDetails(t);
 }
 async function cancelRunningTask(id){
  const task=queueTasks().find(t=>t.task_id===id);

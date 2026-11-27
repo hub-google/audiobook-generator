@@ -106,6 +106,12 @@ def main():
             assert desktop.locator("#overview").is_visible()
             assert desktop.locator("#connection-pill").count() == 1
             desktop.screenshot(path=str(OUTPUT / "audio-dashboard-desktop.png"), full_page=True)
+            desktop.locator("#queue-body tr").first.get_by_role("button", name="進度").wait_for()
+            assert desktop.locator("#queue-body tr").first.get_by_role("button", name="進度").is_enabled()
+            desktop.locator("#queue-body tr").first.get_by_role("button", name="進度").click()
+            assert desktop.locator("#progress-dialog").is_visible()
+            desktop.locator("#progress-close").click()
+
             desktop.locator('[data-tab="create"]').click()
             assert desktop.locator("#create").is_visible()
             assert desktop.locator("#source option").count() == 9

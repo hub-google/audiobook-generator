@@ -117,3 +117,12 @@ def test_web_chapter_duplicate_logic_matches_python_catalog_parser():
     assert "function movePickerChapter(index,delta)" in js
     for id in ("duplicate-number","duplicate-name","duplicate-pair","duplicate-only","chapter-exclude-duplicates","chapter-sort-number","chapter-sort-original"):
         assert f'id="{id}"' in html
+
+
+def test_public_read_only_progress_does_not_require_browser_token():
+    js=(ROOT/"docs/site/app.js").read_text(encoding="utf-8")
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    assert 'div.append(makeBtn("進度",showProgress,task.task_id,false,false));' in js
+    assert 'function makeBtn(label,action,id,disabled=false,authRequired=true)' in js
+    assert 'async function renderRunJobDetails(task)' in js
+    assert 'id="progress-jobs"' in html
