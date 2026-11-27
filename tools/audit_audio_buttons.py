@@ -282,7 +282,7 @@ def main():
                 attempt_button("#"+control)
             attempt_button('#refresh-btn')
             # The links must open the internal reference dialog, never Github.
-            external_links=page.locator('a[href^="https://github.com/"]')
+            external_links=page.locator('a[href^="https://github.com/"]:visible')
             if external_links.count():
                 link=external_links.first
                 link.click(timeout=4000)
