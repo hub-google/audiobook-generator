@@ -337,8 +337,23 @@ def main():
             desktop.locator("#edit-dialog").wait_for(state="hidden")
             desktop.wait_for_function("window.__webCommands.includes('edit')",timeout=15000)
             assert desktop.evaluate("window.__issueUrls") == []
-            desktop.locator("#queue-body tr").nth(1).get_by_role(
-                "button", name="確認審核並繼續").click()
+            desktop.locator("#queue-body tr").nth(1).locator('input[type="checkbox"]').check()
+            desktop.locator("#queue-body tr").first.locator('input[type="checkbox"]').uncheck()
+            desktop.locator("#gui-cover-review").click()
+            assert desktop.locator("#gui-cover-pane").is_visible()
+            assert not desktop.locator("#gui-candidate-pane").is_visible()
+            desktop.locator("#gui-cover-prompt-tab").click()
+            assert desktop.locator("#gui-cover-prompt-panel").is_visible()
+            desktop.screenshot(path=str(OUTPUT / "audio-gui-cover-window.png"),full_page=True)
+            desktop.locator("#review-cancel").click()
+            desktop.locator("#gui-text-review").click()
+            assert desktop.locator("#gui-candidate-pane").is_visible()
+            assert not desktop.locator("#gui-cover-pane").is_visible()
+            desktop.locator("#gui-text-raw-tab").click()
+            assert desktop.locator("#gui-raw-pane").is_visible()
+            desktop.locator("#review-cancel").click()
+            # Retain security regression coverage for the backwards-compatible combined dialog.
+            desktop.evaluate("window.openReview('book-smoke-review')")
             assert desktop.locator("#review-dialog").is_visible()
             review_sample={
                 "schema_version":1,"artifact_role":"ad_review_candidates",
@@ -346,7 +361,7 @@ def main():
                 "raw_fingerprint":"a"*64,"chapters":[1],
                 "chapter_texts":{"1":"第一章 開始\n本段為測試廣告。接下來是故事。"},
                 "candidates":[{"text":"本段為測試廣告","kind":"廣告","count":1,
-                               "score":1,"reason":"測試廣告候選"}],
+                               "score":1,"reason":"測試廣告候選","affected_chapters":[1],"samples":["本段為測試廣告。接下來是故事。"]}],
             }
             desktop.locator("#review-report-file").set_input_files({
                 "name":"ad-candidates-full-book.json","mimeType":"application/json",
@@ -413,9 +428,12 @@ def main():
             desktop.locator("#review-patterns").fill("本段為測試廣告")
             assert "本段為測試廣告" not in desktop.locator("#review-clean").inner_text()
             desktop.evaluate("window.prompt=()=> '修訂廣告內容'")
-            desktop.get_by_role("button",name="編輯詞句 本段為測試廣告").click()
+            desktop.locator("#review-candidates tbody tr").first.locator("td").nth(2).click()
+            assert "影響章節：1" in desktop.locator("#gui-review-context").inner_text()
+            assert "本段為測試廣告。接下來是故事。" in desktop.locator("#gui-review-context").inner_text()
+            desktop.locator("#gui-edit-selected").click()
             assert desktop.locator("#review-patterns").input_value() == "修訂廣告內容"
-            assert desktop.get_by_role("button",name="從名單移除 修訂廣告內容").count() == 1
+            assert desktop.locator("#review-candidates tbody tr").first.get_by_text("修訂廣告內容").count() == 1
             desktop.locator("#review-manual-pattern").fill("另外手動刪除")
             desktop.locator("#review-add-manual").click()
             assert "另外手動刪除" in desktop.locator("#review-patterns").input_value()

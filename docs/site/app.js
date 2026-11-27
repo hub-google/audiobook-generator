@@ -56,14 +56,15 @@ function buildTaskRow(task,index){
  const tr=document.createElement("tr"),col=(value)=>{const td=document.createElement("td");td.textContent=value;tr.append(td);return td;};
  const first=col("");const check=document.createElement("input");check.type="checkbox";check.checked=selectedPending.has(task.task_id);
  check.setAttribute("aria-label","選取 "+(task.book_title||"小說"));
- check.addEventListener("change",()=>{if(check.checked)selectedPending.add(task.task_id);else selectedPending.delete(task.task_id);updateBatchStatus();});
+ check.addEventListener("change",()=>{if(check.checked){selectedPending.add(task.task_id);selectedCompleted.clear();}else selectedPending.delete(task.task_id);updateBatchStatus();});
+ tr.dataset.taskId=task.task_id;
  first.append(check,document.createTextNode(" "+(task.position??index+1)));
  col(task.book_title||"待解析");
  col((task.start_chapter||1)+"–"+(task.end_chapter||"全部"));
  col(task.duplicate_chapter_count??"—");
  const status=col("");const badge=document.createElement("span");badge.className="status "+statusClass(task.status);badge.textContent=statusName(task.status);status.append(badge);
  const detail=document.createElement("small");detail.textContent="TXT "+stageBadge(task,"scrape")+" / 封面 "+stageBadge(task,"cover")+" / 影片 "+stageBadge(task,"processing");status.append(detail);
- col("—");
+ const verified=col("—");verified.dataset.guiVerify=task.task_id;
  col((task.hf_progress?.completed??0)+"/"+(task.hf_progress?.total??0));
  col((task.youtube_progress?.completed??0)+"/"+(task.youtube_progress?.total??0));
  col([["TXT",task.scrape_run_id],["封面",task.cover_run_id],["後製",task.processing_run_id||task.run_id]].filter(x=>x[1]).map(x=>x.join(" ")).join(" / ")||"—");
@@ -90,7 +91,7 @@ function buildTaskRow(task,index){
  tr.classList.toggle("gui-selected-row",selectedPending.has(task.task_id));
  tr.addEventListener("click",event=>{if(event.target.closest("button,input,a,select,textarea"))return;
   if(!event.ctrlKey&&!event.metaKey&&!event.shiftKey)selectedPending.clear();
-  selectedCompleted.clear();if((event.ctrlKey||event.metaKey)&&selectedPending.has(task.task_id))selectedPending.delete(task.task_id);else selectedPending.add(task.task_id);renderQueue();});
+  selectedCompleted.clear();if((event.ctrlKey||event.metaKey)&&selectedPending.has(task.task_id))selectedPending.delete(task.task_id);else selectedPending.add(task.task_id);updateBatchStatus();});
  tr.addEventListener("dblclick",event=>{if(event.target.closest("button,input,a,select,textarea"))return;showProgress(task.task_id);});
  return tr;
 }
@@ -141,24 +142,30 @@ function updateBatchStatus(){
  text($("queue-selected-count"),"已選 "+selectedPending.size+" 本");
  const all=queueTasks();$("queue-all").checked=!!all.length&&all.every(t=>selectedPending.has(t.task_id));
  const button=$("batch-restore");button.disabled=selectedCompleted.size===0;
+ for(const row of $("queue-body").querySelectorAll("tr[data-task-id]")){const on=selectedPending.has(row.dataset.taskId);row.classList.toggle("gui-selected-row",on);row.querySelector("input[type=checkbox]").checked=on;}
+ for(const row of $("completed-list").querySelectorAll("[data-task-id]")){const on=selectedCompleted.has(row.dataset.taskId);row.classList.toggle("gui-selected-row",on);row.querySelector("input[type=checkbox]").checked=on;}
  renderSelectedTaskStatus();
 }
 function selectedPendingTasks(){return queueTasks().filter(t=>selectedPending.has(t.task_id));}
-function renderQueue(){
+let guiVerification=new Map();
+ function renderGuiVerification(){const at=new Date().toLocaleTimeString("zh-TW",{hour12:false});for(const task of [...queueTasks(),...(queue?.completed||[])]){const ids=[task.scrape_run_id,task.cover_run_id,task.processing_run_id||task.run_id].filter(Boolean).map(String);if(ids.length&&ids.every(id=>latestRuns.some(run=>String(run.id)===id)))guiVerification.set(task.task_id,{ids:ids.join(","),at});}
+ for(const el of document.querySelectorAll("[data-gui-verify]")){const task=[...queueTasks(),...(queue?.completed||[])].find(t=>t.task_id===el.dataset.guiVerify),ids=[task?.scrape_run_id,task?.cover_run_id,task?.processing_run_id||task?.run_id].filter(Boolean).map(String).join(","),entry=guiVerification.get(el.dataset.guiVerify);el.textContent=entry&&entry.ids===ids?entry.at:"—";}}
+ function renderQueue(){
  const tasks=queueTasks(),completed=Array.isArray(queue?.completed)?queue.completed:[];
  text($("count-queued"),tasks.filter(t=>t.status==="queued"||t.status==="paused").length);
  text($("count-active"),tasks.filter(t=>active(t)).length);text($("count-completed"),completed.length);
  text($("updated-at"),dateLabel(queue?.updated_at));
  const tbody=$("queue-body");tbody.replaceChildren();if(!tasks.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=10;td.className="empty";td.textContent="目前沒有待製作小說";tr.append(td);tbody.append(tr);}
  selectedPending=new Set([...selectedPending].filter(id=>tasks.some(t=>t.task_id===id)));
- tasks.forEach((t,i)=>tbody.append(buildTaskRow(t,i)));
+ tasks.forEach((t,i)=>tbody.append(buildTaskRow(t,i)));renderGuiVerification();
  const list=$("completed-list");list.replaceChildren();
  if(!completed.length){const p=document.createElement("p");p.className="muted";p.textContent="尚無已完成作品";list.append(p);}
  selectedCompleted=new Set([...selectedCompleted].filter(id=>completed.some(t=>t.task_id===id)));
- completed.forEach(t=>{const row=document.createElement("div");row.className="completed-item";
+ completed.forEach(t=>{const row=document.createElement("div");row.className="completed-item";row.dataset.taskId=t.task_id;
  const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.checked=selectedCompleted.has(t.task_id);
  checkbox.setAttribute("aria-label","選取已完成 "+(t.book_title||"小說"));
- checkbox.addEventListener("change",()=>{if(checkbox.checked)selectedCompleted.add(t.task_id);else selectedCompleted.delete(t.task_id);updateBatchStatus();});
+ checkbox.addEventListener("change",()=>{if(checkbox.checked){selectedCompleted.add(t.task_id);selectedPending.clear();}else selectedCompleted.delete(t.task_id);updateBatchStatus();});
+ row.addEventListener("click",e=>{if(e.target.closest("button,input,a"))return;selectedPending.clear();if(!e.ctrlKey&&!e.metaKey)selectedCompleted.clear();if((e.ctrlKey||e.metaKey)&&selectedCompleted.has(t.task_id))selectedCompleted.delete(t.task_id);else selectedCompleted.add(t.task_id);updateBatchStatus();});row.addEventListener("dblclick",e=>{if(!e.target.closest("button,input,a"))showProgress(t.task_id);});
  const name=document.createElement("strong");name.textContent=t.book_title||"未知小說";const status=document.createElement("span");status.className="muted";status.textContent=dateLabel(t.completed_at||t.updated_at);const restore=makeBtn("移回佇列",window.restoreCompleted,t.task_id);const download=makeBtn("成品下載",showProgress,t.task_id,false,false);
  const bundle=makeBtn("整包下載",window.exportArtifacts,t.task_id,false,false);
  row.append(checkbox,name,status,download,bundle,restore);list.append(row);});
@@ -166,7 +173,7 @@ function renderQueue(){
 }
 async function refresh(){
  try{const res=await readQueue();queue=res.data;queueSha=res.sha;renderQueue();
-  try{const data=await request("/actions/runs?per_page=35");latestRuns=data.workflow_runs||[];renderRuns();}catch(error){notice("Actions 紀錄載入失敗："+error.message,"error");}
+  try{const data=await request("/actions/runs?per_page=35");latestRuns=data.workflow_runs||[];renderRuns();renderGuiVerification();}catch(error){notice("Actions 紀錄載入失敗："+error.message,"error");}
   renderRanking();
   $("connection-pill").textContent="GitHub 登入操作";$("connection-pill").className="pill ok";
  }catch(e){notice("同步失敗："+e.message,"error");}

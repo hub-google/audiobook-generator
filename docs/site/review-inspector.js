@@ -4,10 +4,11 @@
  const selectedCandidates=new Set();
  const state={candidateChoices:new Map(),chapters:{},prompt:""};
  function editedCandidates(){
-  return (report?.candidates||[]).filter(c=>typeof c?.text==="string").map(c=>({
+  const list=(report?.candidates||[]).filter(c=>typeof c?.text==="string").map(c=>({
    ...c, original_text:c.text,
    text:state.candidateChoices.has(c.text)?state.candidateChoices.get(c.text):c.text
   })).filter(c=>c.text!==null);
+  const known=new Set(list.map(c=>c.text));for(const rule of patterns()){if(!known.has(rule))list.push({text:rule,original_text:"manual:"+rule,kind:"已儲存規則",count:0,score:0,reason:"人工新增",samples:[],manual:true});}return list;
  }
  window.audioReviewCandidateEdits=function(){
   return [...state.candidateChoices.entries()].map(([original_text,edited_text])=>({
@@ -61,10 +62,10 @@
  function modifySelected(action,rows=selectedRows()){
   if(!rows.length){notice("請先選取候選詞句","error");return;}
   const names=new Set(patterns());
-  for(const c of rows){if(action==="remove")names.add(c.text);else if(action==="keep")names.delete(c.text);else if(action==="invert"){if(names.has(c.text))names.delete(c.text);else names.add(c.text);}else if(action==="delete"){state.candidateChoices.set(c.original_text,null);names.delete(c.text);selectedCandidates.delete(c.original_text);}}
+  for(const c of rows){if(action==="remove")names.add(c.text);else if(action==="keep")names.delete(c.text);else if(action==="invert"){if(names.has(c.text))names.delete(c.text);else names.add(c.text);}else if(action==="delete"){if(!c.manual)state.candidateChoices.set(c.original_text,null);names.delete(c.text);selectedCandidates.delete(c.original_text);}}
   setPatterns([...names]);
  }
- function editCandidate(c){if(!c)return;const next=prompt("要比對並刪除的文字：",c.text);if(next===null)return;const trimmed=next.trim();if(!trimmed||trimmed.length>10000){notice("候選文字不可空白或超過 10000 字","error");return;}const names=new Set(patterns()),wasRemoved=names.delete(c.text);if(wasRemoved)names.add(trimmed);if(trimmed===c.original_text)state.candidateChoices.delete(c.original_text);else state.candidateChoices.set(c.original_text,trimmed);setPatterns([...names]);}
+ function editCandidate(c){if(!c)return;const next=prompt("要比對並刪除的文字：",c.text);if(next===null)return;const trimmed=next.trim();if(!trimmed||trimmed.length>10000){notice("候選文字不可空白或超過 10000 字","error");return;}const names=new Set(patterns()),wasRemoved=names.delete(c.text);if(wasRemoved)names.add(trimmed);if(!c.manual){if(trimmed===c.original_text)state.candidateChoices.delete(c.original_text);else state.candidateChoices.set(c.original_text,trimmed);}setPatterns([...names]);}
  function renderCandidates(){
   const target=$("review-candidates");target.replaceChildren();
   const visible=candidatesVisible(),all=editedCandidates(),removed=all.filter(c=>patterns().includes(c.text)).length;
@@ -74,9 +75,9 @@
   for(const [key,label] of [["decision","處理狀態"],["kind","類型"],["text","疑似廣告詞句／重複行"],["count","次數"],["chapters","影響章節"],["score","可疑度"],["reason","判定理由"]]){
    const th=document.createElement("th");th.scope="col";th.textContent=label+(sortKey===key?(sortDescending?" ▼":" ▲"):"");th.tabIndex=0;const sort=()=>{if(sortKey===key)sortDescending=!sortDescending;else{sortKey=key;sortDescending=false;}renderCandidates();};th.addEventListener("click",sort);th.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();sort();}});head.append(th);
   }
-  visible.forEach((c,index)=>{const tr=body.insertRow();tr.classList.toggle("selected",selectedCandidates.has(c.original_text));tr.tabIndex=0;const status=tr.insertCell(),checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.checked=patterns().includes(c.text);checkbox.setAttribute("aria-label","去除 "+c.text);checkbox.addEventListener("change",()=>{selectedCandidates.clear();selectedCandidates.add(c.original_text);modifySelected(checkbox.checked?"remove":"keep",[c]);});status.append(checkbox,document.createTextNode(checkbox.checked?" 去除":" 保留"));
+  visible.forEach((c,index)=>{const tr=body.insertRow();tr.classList.toggle("selected",selectedCandidates.has(c.original_text));tr.dataset.candidateId=c.original_text;tr.tabIndex=0;const status=tr.insertCell(),checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.checked=patterns().includes(c.text);checkbox.setAttribute("aria-label","去除 "+c.text);checkbox.addEventListener("change",()=>{selectedCandidates.clear();selectedCandidates.add(c.original_text);modifySelected(checkbox.checked?"remove":"keep",[c]);});status.append(checkbox,document.createTextNode(checkbox.checked?" 去除":" 保留"));
    for(const value of [c.kind,c.text,c.count,(c.affected_chapters||[]).join(", "),c.score,c.reason])tr.insertCell().textContent=value??"—";
-   tr.addEventListener("click",e=>{if(e.target.closest("input"))return;if(e.shiftKey&&lastSelected!==null){const lo=Math.min(lastSelected,index),hi=Math.max(lastSelected,index);if(!e.ctrlKey&&!e.metaKey)selectedCandidates.clear();visible.slice(lo,hi+1).forEach(x=>selectedCandidates.add(x.original_text));}else if(e.ctrlKey||e.metaKey){if(selectedCandidates.has(c.original_text))selectedCandidates.delete(c.original_text);else selectedCandidates.add(c.original_text);}else{selectedCandidates.clear();selectedCandidates.add(c.original_text);}lastSelected=index;renderCandidates();target.focus();});
+   tr.addEventListener("click",e=>{if(e.target.closest("input"))return;if(e.shiftKey&&lastSelected!==null){const lo=Math.min(lastSelected,index),hi=Math.max(lastSelected,index);if(!e.ctrlKey&&!e.metaKey)selectedCandidates.clear();visible.slice(lo,hi+1).forEach(x=>selectedCandidates.add(x.original_text));}else if(e.ctrlKey||e.metaKey){if(selectedCandidates.has(c.original_text))selectedCandidates.delete(c.original_text);else selectedCandidates.add(c.original_text);}else{selectedCandidates.clear();selectedCandidates.add(c.original_text);}lastSelected=index;for(const row of body.rows)row.classList.toggle("selected",selectedCandidates.has(row.dataset.candidateId));showContext();target.focus();});
    tr.addEventListener("dblclick",e=>{if(e.target.closest("input"))return;if(e.target.cellIndex===2)editCandidate(c);else modifySelected("invert",[c]);});
   });target.append(table);showContext();
  }
@@ -113,7 +114,8 @@
    throw Error("TXT Artifact 任務 ID 不一致，拒絕套用其他小說資料");
   report=payload;state.candidateChoices.clear();state.chapters=payload.chapter_texts||{};
   const task=[...queueTasks(),...(queue?.completed||[])].find(t=>t.task_id===taskId);
-  if(!task?.ad_review?.approved_at&&!(task?.ad_review?.remove_patterns||task?.profile_snapshot?.cleaner_remove_patterns||[]).length){$("review-patterns").value=(payload.candidates||[]).filter(c=>c.approved_remove??c.suggested_remove??false).map(c=>c.text).join("\n");}
+  // The desktop defaults to only the previously saved removal rules; candidate scores alone do not approve deletion.
+  if(!sortKey){sortKey="score";sortDescending=true;}
   $("gui-confirm-text").disabled=task?.status!=="waiting_review"||task.stages?.cover?.status!=="completed";
   const kinds=[...new Set((payload.candidates||[]).map(c=>c.kind).filter(Boolean))];
   const selector=$("review-kind");selector.replaceChildren(new Option("所有類型",""));
