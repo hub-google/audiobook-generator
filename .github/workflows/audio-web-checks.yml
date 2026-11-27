@@ -62,3 +62,37 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_IMAGE_MODEL: gemini-2.5-flash-image
         run: python -m tools.cover_provider_probe
+
+  one-time-history-tidy:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      actions: write
+    steps:
+      - name: Delete completed runs belonging to retired workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for id in 45921122220 45521207368; do
+            state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq .status 2>&1)" || {
+              if [[ "$state" == *"HTTP 404"* ]]; then continue; fi
+              echo "Failed to read run $id: $state" >&2; exit 1
+            }
+            if [ "$state" != completed ]; then
+              echo "Run $id is not completed: $state" >&2
+              exit 1
+            fi
+            done_delete=false
+            for retry in 1 2 3 4 5; do
+              if gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/runs/$id" >/dev/null; then
+                done_delete=true
+                echo "Removed retired workflow run $id"
+                break
+              fi
+              sleep "$((retry*2))"
+            done
+            [ "$done_delete" = true ] || exit 1
+          done
