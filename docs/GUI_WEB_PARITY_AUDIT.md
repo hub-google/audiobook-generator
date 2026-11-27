@@ -12,15 +12,23 @@
 | 排行榜分類／搜尋／多選／全選／不選／反選與欄位排序 | `rank-select-invert`、`rank-sort`，連結與 API 留在網站 | **本次補上** |
 | Pending / Success 雲端佇列，單本與多選的排序／暫停／恢復／重排／刪除／取消／完成／移回 | `app.js` 各項控制；站內雲端指令＋原 Python `cloud_queue` | **已做**；正式各狀態情境尚需回歸 |
 | 選書狀態包含 TXT、封面、影片 Run、HF／YouTube 數量、公開排程 | `selected-task-status` 與進度視窗 | **本次補上** |
-| 原 GUI 全域雲端日誌／Worker marker／原始日誌與 Job／Step | `cloud-log.js` 整合 Run、Job/Step、HF/YouTube 狀態變化，授權 `fetch_logs` 供站內檢視原始日誌 | **本次補上**；逐秒原始 Worker marker 串流尚未完全一致 |
+| 原 GUI 全域雲端日誌／Worker marker／原始日誌與 Job／Step | `cloud-log.js`、`app.js` 每 5 秒讀取私有 Worker 日誌；`audio_live_capture.py` 將實際 stdout 經 GitHub OIDC 送至 Supabase Edge；另可取得完整原始 Run Logs | **傳輸層完成，OIDC 實測成功**；待下一次正式爬取／後製 Run 驗收整段輸出 |
 | 匯入實際 TXT／封面 Artifact 審核與 Raw/Clean／候選字詞 | `review-inspector.js` 同 Python 清理規則；`review-auto-load` 安全領取 ZIP（支援私人分片重組），核對 SHA/manifest | **本次補上自動讀取**；正式待審狀態與超大型資料仍需實測 |
 | Gemini 故事研究、HF 封面 Prompt、批次研究／複製 | `batch-cover.js`、`audio-batch-cover-info.yml`；產生動作需授權 | **已做**；正式 Gemini 配額／外部 API 仍可能失敗 |
 | 原 GUI 新增前手動封面上傳、從 Profile 恢復舊圖、先產 Gemini Prompt 並快取 | `manual-cover.js`、`draft-cover-info.js`，透過安全雲端工具，Profile 儲存到原分支 | **本次補上**；手動封面、Gemini 真實憑證與生成結果需驗 |
 | JPG／PNG／WEBP 本機裁切 1280×720／下載／複製／安全上傳 | 網站 `manual-cover.js`，私人 Storage→GitHub OIDC→原 `cover_assets.py` | **已做**，禁用外站 Issue 上傳 |
 | 審核後啟動第二階段、Clean TTS、影片、YouTube | 同原 Python `apply_command`，前端驗證 Artifact，再由後端重驗 SHA | **已做流程**；沒有本版完整 YouTube 成功 Run，**不可宣稱正式全流程驗收** |
 | 台灣時間立即公開／定時公開／逾期策略 A | `app.js` 同 GUI 排程策略 | **已做**；真實 YouTube 上傳排程需驗 |
-| 個別／多本整包成品 Artifact 下載 | `audio-export-artifacts.yml` + 私人 Edge Asset，25MB 分片傳回，Chrome／Edge 可串流存檔 | **本次補上**；2.6MB 真實 ZIP 已成功，小檔到多片的單測與 Chrome 重組已通過，超大型正式 ZIP 仍待整體實測 |
+| 個別／多本整包成品 Artifact 下載 | `audio-export-artifacts.yml` + 私人 Edge Asset，4MB 分片傳回，Chrome／Edge 可串流存檔 | **本次補上**；2.6MB 真實 ZIP 已成功，小檔到多片的單測與 Chrome 重組已通過，超大型正式 ZIP 仍待整體實測 |
 | 所有按鈕不跳轉外站、不公開 Token | `external-info.js` 攔截外站參考，站內 Auth＋命令／私人檔案服務 | **105 次 Chromium 實際按鈕操作**，24 筆模擬提交，0 popup，0 外站，0 JS error；實際管理登入需真實身分驗證 |
+
+## 2026-11-27 本輪補驗（目前最新）
+
+- GitHub OIDC 即時日誌真實整合測試 [Run 45961831305](https://github.com/hub-google/audiobook-generator/actions/runs/45961831305) **成功**，私人資料表 `audio_web_live_events` 收到 `AUDIO_PRIVATE_LIVE_SMOKE_OK`；測試用記錄已清除。正式小說爬取與上傳過程的全段日誌還沒有新 Run 佐證。
+- 真實外部服務健康檢查 [Run 45961994814](https://github.com/hub-google/audiobook-generator/actions/runs/45961994814) **成功**：HF 私有資料存取、YouTube OAuth refresh + channel read、原創短句 Edge TTS→WAV→SRT→FFmpeg MP4。沒有執行公開影片上傳，不能把這個結果說成全書 YouTube E2E 成功。
+- GitHub 佇列調度 [Run 45962426030](https://github.com/hub-google/audiobook-generator/actions/runs/45962426030) **成功**，將唯一長期停滯的小說從 `preparing_assets` 調整為 `needs_attention`，原因 `preflight_stale_24h:TXT,封面`，不再假裝爬取仍在執行。實際障礙為部分 69 書吧章節 HTTP 403 與 Gemini 503／無充足原著資料，未繞過網站存取限制，也未憑空生成小說事實。
+- 仍欠一個確實有來源存取授權、完成 TXT 與封面 Artifact 的正式待審 Run，才可驗證核准審核後製直到 YouTube 上傳。
+- 網頁與 GitHub Pages 程式更新，允許管理員登入後查看按書即時 Worker 日誌；後端密鑰不進入瀏覽器，加入 API URL query 參數遮罩。
 
 ## 本次執行證據
 
@@ -32,8 +40,8 @@
 
 ## 尚未有足夠實證能宣稱 100% 等同 GUI 的事項
 
-1. 新增站內全域雲端日誌，顯示 Run/Job/Step 及 HF/YouTube 變化；原始 Worker 日誌授權下載。**逐秒的原始 Worker marker 串流仍未完全一致**。
-2. 大型 ZIP 已實作 25MB 私人分片傳回與 Chrome/Edge 串流存檔；超大型正式成品尚未真實端到端驗收，且仍受雲端總儲存量及瀏覽器支援限制。
+1. 已加入 GitHub OIDC 驗證之真實 Worker stdout 傳送、私人表格及網頁每 5 秒輪詢；GitHub Run 45961831305 成功寫入私人訊息。**尚須下一次正式爬取／TTS／YouTube Run 驗收完整來源事件**。
+2. 大型 ZIP 已實作 4MB 私人分片與 Chrome/Edge 串流存檔，加入分片大小檢查與匯出完成後追蹤；**超大型正式成品端到端測試尚未完成**，仍受 Storage 總容量與瀏覽器支援限制。
 3. Gemini／Cloudflare／HF 外部生圖與全書 TXT→封面→人工審核→TTS→影片→YouTube 真實正式成功執行；網頁功能已接線，但無法以 mock 代替真實成果。
 4. 原 GUI 自動讀取真正審核 Artifact 已新增但尚未以剛好兩階段成功的正式待審書籍、超大型資料多來源實測。
 
