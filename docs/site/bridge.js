@@ -155,7 +155,10 @@
     btn.addEventListener("click",()=>window.audioSaveAssetGroup(group).catch(e=>notice(e.message,"error")));
     container.append(btn);
    }
-  }catch(e){const p=document.createElement("small");p.textContent="檔案尚未完整："+e.message;container.append(p);}
+  }catch(e){
+   if(row.op==="export_artifacts")awaitingExports.add(row.request_id);
+   const p=document.createElement("small");p.textContent="檔案尚未完整："+e.message;container.append(p);
+  }
  }
   function renderOperations(rows){
   ensurePanel();
