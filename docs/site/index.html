@@ -14,6 +14,7 @@
 <button data-tab="overview" class="nav active">總覽與佇列</button>
 <button data-tab="create" class="nav">新增小說</button>
 <button data-tab="runs" class="nav">製作紀錄</button>
+<button data-tab="id-codec" class="nav">ID 雙向轉碼</button>
 </nav>
 <div class="sidebar-bottom"><small>GitHub Actions 雲端工作流程</small><small>小說來源：9 個網站</small><a href="https://github.com/hub-google/audiobook-generator" target="_blank" rel="noopener noreferrer">開啟原始碼</a></div>
 </aside>
@@ -123,6 +124,10 @@
 </div></div>
 </section>
 <section class="form-card"><h3>批次加入小說</h3><p class="muted">每行一個「書名 | 網址 | 起始章 | 結束章」。未填結束章時，自動依最新目錄選取全書。</p><textarea rows="5" id="batch-urls" placeholder="測試小說 | https://czbooks.net/n/xxxxx | 1 | 10"></textarea><div class="form-foot"><span></span><button id="batch-btn" class="secondary" type="button">批次加入</button></div></section>
+</section>
+<section id="id-codec" class="tab">
+<div class="section-head"><div><h2>B／C 欄 ID 雙向轉碼</h2><p>在本站完成轉換，檔案由你的瀏覽器本機處理。此工具與小說製作資料分離。</p></div></div>
+<iframe id="id-codec-frame" title="B欄與C欄ID雙向轉碼" src="./id-codec.html?v=20261127-bc1" sandbox="allow-scripts allow-downloads" referrerpolicy="no-referrer" loading="lazy" style="width:100%;height:1050px;max-width:100%;border:0;border-radius:14px;background:#f5f8fd"></iframe>
 </section>
 <section id="runs" class="tab">
 <div class="section-head"><div><h2>GitHub Actions 製作紀錄</h2><p>查看 TXT、Gemini 封面、影片製作、排程與部署的工作結果。</p></div><a href="https://github.com/hub-google/audiobook-generator/actions" rel="noopener noreferrer" target="_blank">開啟 Actions</a></div>
