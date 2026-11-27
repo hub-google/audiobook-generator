@@ -176,3 +176,14 @@ def test_pending_and_completed_multiselect_uses_privileged_github_issue():
     assert "function selectedPendingTasks()" in app
     assert 'function selectedPermitted(statuses)' in bridge
     assert 'task_ids:[...selectedCompleted]' in bridge
+
+
+def test_manual_cover_gui_uses_native_github_attachment_and_local_crop():
+    html=(ROOT/"docs/site/index.html").read_text(encoding="utf-8")
+    js=(ROOT/"docs/site/manual-cover.js").read_text(encoding="utf-8")
+    assert 'id="manual-cover-file"' in html
+    assert 'id="manual-cover-canvas"' in html
+    assert 'src="./manual-cover.js"' in html
+    assert "window.openManualCover=function(id)" in js
+    assert "createImageBitmap" in js and "1280" in js and "720" in js
+    assert 'audioIssueAction("manual_cover"' in js

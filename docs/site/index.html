@@ -135,6 +135,17 @@
 </div>
 <div class="dialog-actions"><button type="button" class="secondary" id="edit-cancel">取消</button><button type="submit">儲存任務</button></div>
 </form></dialog>
+<dialog id="manual-cover-dialog" class="editor-dialog" aria-labelledby="manual-cover-title">
+<h2 id="manual-cover-title">手動封面 · 1280×720</h2>
+<p id="manual-cover-book" class="muted"></p>
+<p class="muted">圖片只在此瀏覽器本機中央裁切、轉成 JPEG。為避免把 GitHub 寫入權限交給網頁，請將下載的 JPEG 拖到 GitHub Issue 編輯器內，再送出。後端 Actions 驗證並儲存至書籍 Profile，影片製作會優先使用此圖。</p>
+<label>選取 JPG、PNG、WEBP 圖片<input type="file" accept="image/jpeg,image/png,image/webp" id="manual-cover-file"></label>
+<canvas id="manual-cover-canvas" width="1280" height="720" aria-label="手動封面中央裁切預覽"></canvas>
+<p id="manual-cover-status" class="muted">請先選擇封面圖片</p>
+<div class="dialog-actions"><button id="manual-cover-close" type="button" class="secondary">取消</button>
+<button id="manual-cover-download" type="button" class="secondary" disabled>下載裁切後 JPEG</button>
+<button id="manual-cover-submit" type="button" disabled>前往 GitHub 送出封面</button></div>
+</dialog>
 <dialog id="review-dialog" class="editor-dialog review-wide" aria-labelledby="review-title">
 <form id="review-form"><h2 id="review-title">文字清理、Raw/Clean 抽查與封面審核</h2>
 <p class="muted">和桌面 GUI 一樣，以本次 GitHub Artifact 的實際章節文字及封面為審核依據。下載後匯入 ZIP／JSON；文字只在瀏覽器本機處理，不會上傳至 GitHub Pages。</p>
@@ -183,5 +194,5 @@
 <footer>資料由 GitHub API 即時讀取；GitHub Pages 不會在瀏覽器執行 Python、TTS 或影片轉檔。</footer>
 </main>
 </div>
-<script src="./app.js" defer></script><script src="./bridge.js" defer></script><script src="./review-inspector.js" defer></script>
+<script src="./app.js" defer></script><script src="./bridge.js" defer></script><script src="./review-inspector.js" defer></script><script src="./manual-cover.js" defer></script>
 </body></html>

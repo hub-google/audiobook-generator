@@ -57,6 +57,7 @@ function buildTaskRow(task,index){
  const rid=task.run_id||task.scrape_run_id||task.cover_run_id;if(rid){const small=document.createElement("small"),a=document.createElement("a");a.href="https://github.com/"+REPO+"/actions/runs/"+encodeURIComponent(rid);a.target="_blank";a.rel="noopener noreferrer";a.textContent="Run #"+rid;small.append(a);stages.append(small);}
  const controls=col(""),div=document.createElement("div");div.className="actions";controls.append(div);
  div.append(makeBtn("進度",showProgress,task.task_id,false,false));
+ if(["queued","paused","waiting_review","preparing_assets","needs_attention"].includes(task.status))div.append(makeBtn("手動封面",openManualCover,task.task_id));
  if(live(task))div.append(makeBtn("取消本次 Run",cancelRunningTask,task.task_id));
  if(task.status==="waiting_review"){div.append(makeBtn("查看審核資料",async()=>{window.open("https://github.com/"+REPO+"/actions/runs/"+(task.cover_run_id||task.run_id),"_blank","noopener");},task.task_id,false,false));div.append(makeBtn("確認審核並繼續",openReview,task.task_id,false));}
  if(["queued","paused","interrupted","stopped"].includes(task.status)){
