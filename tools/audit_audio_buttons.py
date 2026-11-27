@@ -219,6 +219,36 @@ def main():
                 page.locator("#audio-reference-close").click()
                 passed.append("in-page Github link")
             page.locator('[data-tab="overview"]').click()
+            completed=page.locator("#completed-list .completed-item").first
+            if completed.count():
+                completed.locator('input[type="checkbox"]').check()
+                for name in ["batch-export-completed","batch-cover-completed","batch-restore"]:
+                    attempt_button("#"+name)
+                for name in ["成品下載","整包下載","移回佇列"]:
+                    btn=completed.get_by_role("button",name=name).first
+                    if btn.count() and btn.is_visible() and btn.is_enabled():
+                        btn.click();page.wait_for_timeout(100)
+                        verify_stayed("completed "+name)
+                        passed.append("completed "+name)
+                        page.evaluate('document.querySelectorAll("dialog[open]").forEach(d=>d.close())')
+            attempt_button('#queue-body tr:first-child button:has-text("進度")',keep_dialog=True)
+            attempt_button("#progress-refresh-now",keep_dialog=True)
+            attempt_button("#progress-close")
+            attempt_button('#queue-body tr:first-child button:has-text("編輯")',keep_dialog=True)
+            attempt_button("#edit-load-catalog",keep_dialog=True)
+            attempt_button("#edit-cancel")
+            attempt_button('#queue-body tr:first-child button:has-text("編輯")',keep_dialog=True)
+            page.locator("#edit-name").fill("測試修改書名")
+            attempt_button('#edit-form button[type="submit"]')
+            attempt_button('#queue-body tr:nth-child(2) button:has-text("確認審核並繼續")',keep_dialog=True)
+            for name in ["review-select-visible","review-keep-visible","review-invert-visible"]:
+                attempt_button("#"+name,keep_dialog=True)
+            page.locator("#review-manual-pattern").fill("測試文字")
+            attempt_button("#review-add-manual",keep_dialog=True)
+            for name in ["review-first","review-middle","review-last",
+                         "review-copy-prompt","review-save-only"]:
+                attempt_button("#"+name,keep_dialog=True)
+            attempt_button("#review-cancel")
             # Open manual cover: backend upload and command submission are mocked.
             attempt_button('#queue-body tr:first-child button:has-text("手動封面")')
             from io import BytesIO
@@ -230,6 +260,8 @@ def main():
                 "name":"test-cover.jpg","mimeType":"image/jpeg","buffer":jpeg.getvalue()})
             page.locator("#manual-cover-submit").wait_for(state="visible")
             page.wait_for_function("!document.querySelector('#manual-cover-submit').disabled",timeout=10000)
+            attempt_button("#manual-cover-copy",keep_dialog=True)
+            attempt_button("#manual-cover-download",keep_dialog=True)
             attempt_button("#manual-cover-submit")
             page.wait_for_timeout(300)
             verify_stayed("manual cover upload")
@@ -237,7 +269,10 @@ def main():
             assert any(x.get("op")=="manual_cover" for x in submitted), "Manual cover was not sent to backend"
             page.locator('#queue-body tr').first.locator('input[type="checkbox"]').check()
             page.locator("#batch-cover-btn").click()
-            attempt_button("#batch-cover-generate")
+            attempt_button("#batch-cover-copy-current",keep_dialog=True)
+            attempt_button("#batch-cover-copy-all",keep_dialog=True)
+            attempt_button("#batch-cover-generate",keep_dialog=True)
+            attempt_button("#batch-cover-close")
             page.wait_for_timeout(200)
             verify_stayed("batch-cover-generate")
             assert any(x.get("op")=="batch_cover_info" for x in submitted), "Cover research not queued"
