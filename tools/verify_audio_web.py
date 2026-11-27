@@ -57,6 +57,10 @@ def main():
                      "stages": {"scrape": {"status": "completed"},
                                 "cover": {"status": "completed"}},
                      "ad_review": {"status": "pending"}},
+                    {"task_id": "book-smoke-running", "book_title": "執行中測試",
+                     "catalog_url": "https://czbooks.net/n/demo-running", "start_chapter": 1,
+                     "end_chapter": 2, "run_id": 24680,
+                     "status": "running", "stages": {"processing": {"status": "running"}}},
                 ]
             }
             mock_writes = []
@@ -81,6 +85,12 @@ def main():
                 elif request.url.endswith("/actions/runs?per_page=35"):
                     result = {"workflow_runs": []}
                     status = 200
+                elif request.url.endswith("/actions/runs/24680"):
+                    result = {"id": 24680, "status": "in_progress"}
+                    status = 200
+                elif request.url.endswith("/actions/runs/24680/cancel"):
+                    route.fulfill(status=202, body="")
+                    return
                 elif "/actions/workflows/" in request.url and request.method == "POST":
                     route.fulfill(status=204, body="")
                     return
@@ -125,6 +135,23 @@ def main():
             desktop.locator("#review-form button[type=submit]").click()
             desktop.locator("#review-dialog").wait_for(state="hidden")
             assert mock_writes[-1]["queue"][1]["ad_review"]["remove_patterns"] == ["本段為測試廣告"]
+            desktop.locator("#queue-body tr").first.get_by_role("button", name="進度").click()
+            assert desktop.locator("#progress-dialog").is_visible()
+            assert "原創測試新版" in desktop.locator("#progress-detail").inner_text()
+            desktop.locator("#progress-close").click()
+            desktop.locator("#queue-body tr").nth(2).get_by_role(
+                "button", name="取消本次 Run").click()
+            desktop.get_by_text("已提交取消請求").wait_for()
+            assert next(t for t in mock_writes[-1]["queue"]
+                        if t["task_id"] == "book-smoke-running")["status"] == "canceling"
+            desktop.locator("#queue-body tr").first.get_by_role("button", name="標為已完成").click()
+            assert len(mock_writes[-1]["completed"]) == 1
+            assert mock_writes[-1]["completed"][0]["task_id"] == "book-smoke-queued"
+            desktop.locator("#completed-list .completed-item").first.get_by_role(
+                "button", name="移回佇列").click()
+            assert len(mock_writes[-1]["completed"]) == 0
+            assert next(t for t in mock_writes[-1]["queue"]
+                        if t["task_id"] == "book-smoke-queued")["status"] == "paused"
             desktop.locator('[data-tab="runs"]').click()
             assert desktop.locator("#runs").is_visible()
             mobile = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=1,
