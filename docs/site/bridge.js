@@ -17,7 +17,9 @@
     '<p class="muted">所有指令都在本頁確認；雲端工作機按排程處理，請以狀態結果為準。</p>'+
     '<div id="audio-operation-list" aria-live="polite"></div>'+
     '<button type="button" class="secondary" id="audio-operation-refresh">更新操作狀態</button>';
-  document.body.append(panel);
+  const anchor=document.querySelector(".topbar");
+  if(anchor)anchor.insertAdjacentElement("afterend",panel);
+  else document.body.append(panel);
   document.getElementById("audio-operation-refresh").addEventListener("click",()=>void syncOperations());
   document.getElementById("audio-operation-hide").addEventListener("click",()=>panel.classList.add("hidden"));
  }
