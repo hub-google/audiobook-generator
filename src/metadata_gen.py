@@ -823,6 +823,110 @@ def download_ai_image(prompt, width=1280, height=720, max_attempts=5, retry_base
 
 
 
+
+# Preserve the current HF implementation for backward compatibility and tests.
+_hf_download_ai_image = download_ai_image
+
+
+def _gemini_generate_cover(prompt, width, height, max_attempts=3, retry_base_seconds=4):
+    """Generate a 16:9 cover background with Gemini's native image API.
+
+    The Gemini key is read server-side only, never sent to GitHub Pages.
+    """
+    import io
+    from PIL import ImageOps
+
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("缺少 GEMINI_API_KEY，無法使用 Gemini 生圖")
+    model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image").strip()
+    if not re.fullmatch(r"[a-zA-Z0-9._-]+", model):
+        raise ValueError("GEMINI_IMAGE_MODEL 不合法")
+    url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent"
+    body = {
+        "contents": [{"role": "user", "parts": [{"text":
+            "Create a high-quality landscape 16:9 illustration. "
+            "Do not include typography, letters, logos or watermarks. " + prompt}]}],
+        "generationConfig": {
+            "responseModalities": ["IMAGE"],
+            "imageConfig": {"aspectRatio": "16:9"},
+        },
+    }
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = requests.post(
+                url,
+                headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+                json=body,
+                timeout=(10, 90),
+            )
+            if response.status_code != 200:
+                # Avoid including provider response bodies which may contain user prompts.
+                error = RuntimeError(f"Gemini image API HTTP {response.status_code}")
+                if response.status_code not in (408, 429, 500, 502, 503, 504):
+                    raise error
+                last_error = error
+            else:
+                payload = response.json()
+                for candidate in payload.get("candidates", []):
+                    for part in (candidate.get("content") or {}).get("parts", []):
+                        inline = part.get("inlineData") or part.get("inline_data") or {}
+                        encoded = inline.get("data")
+                        if not encoded:
+                            continue
+                        raw = base64.b64decode(encoded, validate=True)
+                        with Image.open(io.BytesIO(raw)) as opened:
+                            opened.verify()
+                        with Image.open(io.BytesIO(raw)) as opened:
+                            image = ImageOps.fit(
+                                opened.convert("RGB"), (width, height),
+                                method=Image.Resampling.LANCZOS,
+                            )
+                        logging.info("Gemini 已生成 %dx%d 封面底圖（%s）", width, height, model)
+                        return image
+                raise RuntimeError("Gemini 成功回應，但沒有可用的圖片資料")
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            last_error = exc
+        if attempt < max_attempts:
+            time.sleep(min(retry_base_seconds * 2 ** (attempt - 1), 20))
+    raise RuntimeError(f"Gemini 生圖失敗（{max_attempts} 次）: {last_error}") from last_error
+
+
+def download_ai_image(prompt, width=1280, height=720, max_attempts=5, retry_base_seconds=15):
+    """Auto: try HF once first; use Gemini when HF credit or access fails.
+
+    COVER_IMAGE_PROVIDER=hf|gemini|auto controls routing. A failed image request
+    never silently degrades to a low-quality placeholder.
+    """
+    provider = os.getenv("COVER_IMAGE_PROVIDER", "auto").strip().lower()
+    if provider not in ("auto", "hf", "gemini"):
+        raise ValueError("COVER_IMAGE_PROVIDER 必須為 auto、hf 或 gemini")
+    if max_attempts < 1:
+        raise ValueError("max_attempts 必須至少為 1")
+    if provider == "gemini":
+        return _gemini_generate_cover(prompt, width, height, max_attempts=min(max_attempts, 3))
+    hf_error = None
+    # In auto mode a missing HF token is not fatal when Gemini is configured.
+    if os.getenv("HF_TOKEN", "").startswith("hf_") or provider == "hf":
+        try:
+            return _hf_download_ai_image(
+                prompt, width=width, height=height, max_attempts=max_attempts,
+                retry_base_seconds=retry_base_seconds,
+            )
+        except Exception as exc:
+            hf_error = exc
+            logging.warning("HF 封面生成失敗；%s", type(exc).__name__)
+            if provider == "hf":
+                raise
+    else:
+        hf_error = RuntimeError("未設定 HF_TOKEN")
+    if not os.getenv("GEMINI_API_KEY"):
+        raise RuntimeError(f"HF 生圖失敗，Gemini 備援未設定 GEMINI_API_KEY: {hf_error}") from hf_error
+    logging.info("改由 Gemini 圖片模型生成封面")
+    return _gemini_generate_cover(prompt, width, height, max_attempts=min(max_attempts, 3))
+
+
 def _create_youtube_cover_legacy(
     bg_img, 
     book_title, 
