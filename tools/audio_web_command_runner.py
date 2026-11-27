@@ -9,6 +9,7 @@ import tempfile
 import io
 import re
 import json
+import base64
 import zipfile
 from pathlib import Path
 
@@ -258,12 +259,35 @@ def manual_cover_prequeue(row, token):
 def cover_info_prequeue(row, token):
     url,title=_draft_cover_data(row["payload"])
     from src.metadata_gen import build_cover_information
-    result=build_cover_information(title,catalog_url=url)
-    if not isinstance(result,dict):
-        raise RuntimeError("Gemini metadata did not return a valid information object")
+    path="cover-information/"+book_profile_id(url)+".json"
+    force=bool(row["payload"].get("force"))
+    cached=None
+    if not force:
+        try:
+            remote=api("GET","contents/"+path+"?ref=automation-state",token,REPO)
+            cached=json.loads(base64.b64decode(remote["content"]).decode("utf-8"))
+        except (RuntimeError,KeyError,ValueError):
+            cached=None
+    if isinstance(cached,dict) and cached.get("prompt"):
+        result=cached
+    else:
+        result=build_cover_information(title,catalog_url=url)
+        if not isinstance(result,dict) or not result.get("prompt"):
+            raise RuntimeError("Gemini metadata did not return a usable Prompt")
+        contents=json.dumps(result,ensure_ascii=False,indent=2).encode("utf-8")
+        sha=None
+        try:
+            existing=api("GET","contents/"+path+"?ref=automation-state",token,REPO)
+            sha=existing.get("sha")
+        except RuntimeError:
+            pass
+        body={"message":"AUDIO store verified cover information for "+title[:60],
+              "content":base64.b64encode(contents).decode("ascii"),"branch":"automation-state"}
+        if sha:body["sha"]=sha
+        api("PUT","contents/"+path,token,REPO,json=body)
     encoded=json.dumps(result,ensure_ascii=False,indent=2).encode("utf-8")
     asset=_stage(row["id"],"audio-cover-information-"+str(row["id"])+".txt","text/plain",encoded)
-    return "已產生《"+title+"》的封面資訊，站內檔案編號 "+str(asset)
+    return "已取得《"+title+"》封面資訊，站內檔案編號 "+str(asset)
 
 
 def process(row, gh_token):
