@@ -392,10 +392,13 @@ def main():
             assert desktop.locator("#review-candidates tbody tr").count() == 1
             assert "獨立候選文字" in desktop.locator("#review-candidates").inner_text()
             desktop.locator("#review-search").fill("")
+            # Desktop GUI appends previously saved removal patterns not found in the fresh report.
             desktop.wait_for_function(
-                "document.querySelectorAll('#review-candidates tbody tr').length === 2",
+                "document.querySelector('#review-patterns').value.includes('已儲存廣告詞') && "
+                "document.querySelectorAll('#review-candidates tbody tr').length === 3",
                 timeout=10000,
             )
+            assert "已儲存廣告詞" in desktop.locator("#review-candidates").inner_text()
             # Verify real browser-side ZIP + cover Manifest SHA-256 inspection.
             import io
             import zipfile
