@@ -132,7 +132,8 @@ def load_measured_prepared_part_plan(input_dir, book_title):
         locked_plan = json.load(handle)
     locked_parts = {int(part["part_num"]): part for part in (locked_plan.get("parts") or [])}
     measured = []
-    for video_path in glob.glob(os.path.join(input_dir, "**", "*.mp4"), recursive=True):
+    for video_path in sorted(glob.glob(os.path.join(input_dir, "**", "*.mp4"), recursive=True)):
+        # Stable Part order is required before querying mocked or live MP4 durations.
         filename = os.path.basename(video_path)
         number_match = re.search(r"_Part_(\d+)_", filename)
         if not number_match:
