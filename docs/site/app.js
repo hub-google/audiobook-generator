@@ -356,7 +356,7 @@ function saveChapterEdit(){
  const index=chapterEditingIndex;if(!index)throw Error("未選取章節");
  const name=$("chapter-edit-name").value.trim(),n=$("chapter-edit-number").value.trim();
  if(!name)throw Error("章節名稱不可空白");
- if(n&&!/^[1-9]\\d*(?:\\.\\d+)?$/.test(n))throw Error("正規化章號必須為大於 0 的整數或小數");
+ if(n&&!/^[1-9]\d*(?:\.\d+)?$/.test(n))throw Error("正規化章號必須為大於 0 的整數或小數");
  const parts=parsedCatalog.chapter_parts[index-1],full=[parts.d,name].filter(Boolean).join(" ");
  const titles=readOverrides($("title-overrides").value||"",1,parsedCatalog.total_chapters);
  const numbers=currentChapterOverrides();titles[String(index)]=full;
@@ -364,7 +364,7 @@ function saveChapterEdit(){
  $("title-overrides").value=formatOverrides(titles);
  $("number-overrides").value=formatOverrides(numbers);
  parsedCatalog.chapter_titles[index-1]=full;
- parts.name=name;parts.c=name.replace(/\\s+/g,""); // same rule as normalize_chapter_name_for_comparison
+ parts.name=name;parts.c=name.replace(/\s+/g,""); // same rule as normalize_chapter_name_for_comparison
  $("chapter-edit-dialog").close();chapterEditingIndex=null;renderChapterPicker();
 }
 function moveSelectedChapters(delta){
