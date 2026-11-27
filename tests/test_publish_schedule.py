@@ -74,7 +74,7 @@ class PublishScheduleTests(unittest.TestCase):
         self.assertEqual(sent_inputs.get("publish_at"), "2026-09-11T18:00:00+08:00")
 
     @patch("src.youtube_upload.media.os.path.getsize", return_value=1024 * 1024)
-    @patch("src.youtube_upload.media.MediaFileUpload")
+    @patch("src.youtube_api_uploader.MediaFileUpload")
     def test_upload_video_file_with_scheduled_publish(self, mock_media_cls, mock_getsize):
         mock_youtube = Mock()
         mock_request = Mock()
@@ -95,7 +95,7 @@ class PublishScheduleTests(unittest.TestCase):
         self.assertEqual(status["publishAt"], "2026-09-11T18:00:00+08:00")
 
     @patch("src.youtube_upload.media.os.path.getsize", return_value=1024 * 1024)
-    @patch("src.youtube_upload.media.MediaFileUpload")
+    @patch("src.youtube_api_uploader.MediaFileUpload")
     def test_upload_video_file_immediate_public(self, mock_media_cls, mock_getsize):
         mock_youtube = Mock()
         mock_request = Mock()
