@@ -34,6 +34,10 @@ def main():
     print("All nine sources searched. Candidate counts:",
           [(s["source_id"], len(s["results"]), s["status"]) for s in result["sources"]])
 
+    status, _, actual = query({"q": "萬古第一廢"})
+    assert status == 200, (status, actual)
+    print("萬古第一廢 search results:", [(n["source_id"], n["title"]) for n in actual.get("results", [])])
+
     status, _, _ = query({"q": "詭秘之主"}, "https://untrusted.example")
     assert status == 403, status
     status, _, _ = query({"q": "詭秘之主", "source": "not-a-source"})
