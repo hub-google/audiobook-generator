@@ -74,7 +74,7 @@
   $("draft-cover-information").addEventListener("click",()=>open().catch(e=>notice(e.message,"error")));
   $("draft-cover-info-generate").addEventListener("click",()=>generate().catch(e=>notice(e.message,"error")));
   $("draft-cover-info-copy").addEventListener("click",async()=>{
-   if(!info?.prompt)throw Error("目前沒有可複製的封面資料");
+   if(!info?.prompt){notice("目前沒有可複製的封面資料","error");return;}
    try{await navigator.clipboard.writeText($("draft-cover-info-analysis").textContent+"\n\n"+info.prompt);
     notice("已複製封面分析與 HF Prompt");}catch(e){notice(e.message,"error")}
   });
