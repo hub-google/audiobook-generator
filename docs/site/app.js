@@ -87,10 +87,49 @@ function buildTaskRow(task,index){
  });
  return tr;
 }
+function selectedTask(){
+ const id=selectedPending.size===1?[...selectedPending][0]:null;
+ return id?queueTasks().find(t=>t.task_id===id)||null:null;
+}
+function renderSelectedTaskStatus(){
+ const t=selectedTask(),el=$("selected-task-status");if(!el)return;
+ if(!t)text(el,selectedPending.size>1?"已勾選 "+selectedPending.size+" 本；請只選一本查看完整狀態。":"請先從佇列勾選一本小說。");
+ else{
+  const hf=t.hf_progress||{},yt=t.youtube_progress||{},parts=t.stages||{};
+  const n=x=>(Number(x)||0).toLocaleString("zh-TW");
+  const lines=[
+   "《"+(t.book_title||"待解析")+"》｜第 "+(t.start_chapter||1)+"～"+(t.end_chapter||"最後")+" 章",
+   "狀態："+statusName(t.status)+"｜階段："+(t.workflow_phase||"queued"),
+   "TXT："+(parts.scrape?.status||"pending")+"（Run "+(t.scrape_run_id||"—")+"）",
+   "封面："+(parts.cover?.status||"pending")+"（Run "+(t.cover_run_id||"—")+"）",
+   "後製："+(parts.processing?.status||"pending")+"（Run "+(t.processing_run_id||t.run_id||"—")+"）",
+   "HF："+n(hf.completed)+"/"+n(hf.total)+"｜YouTube："+n(yt.completed)+"/"+n(yt.total),
+   "人工審核："+(t.ad_review?.status||"pending")
+  ];
+  if(t.publish_at)lines.push("排定公開（台灣時間）："+t.publish_at);
+  if(t.requeue_after_edit)lines.push("章節已更新；取消舊 Run 後將重新排程。");
+  if(t.reason)lines.push("原因："+t.reason);
+  text(el,lines.join("\n"));
+ }
+ $("selected-task-progress").disabled=!t;
+ $("selected-task-edit").disabled=!t||!canEditTask(t);
+}
+function resetCreateForm(){
+ parsedCatalog=null;chapterPickerExcluded=null;chapterPickerOrder=null;
+ $("book-form").reset();$("catalog-url").value="";$("book-title").value="";
+ $("start-chapter").value="1";$("end-chapter").value="10";
+ for(const id of ["excluded","title-overrides","number-overrides","chapter-order"])$(id).value="";
+ $("catalog-preview").replaceChildren();$("catalog-preview").classList.add("hidden");
+ $("chapter-selection-tools").classList.add("hidden");
+ $("source").selectedIndex=0;
+ text($("book-editor-mode"),"模式：新增小說");text($("parse-status"),"尚未解析章節。");
+ renderPublish();notice("已清除表單並切換為新增小說；未更動雲端任務。");
+}
 function updateBatchStatus(){
  text($("queue-selected-count"),"已選 "+selectedPending.size+" 本");
  const all=queueTasks();$("queue-all").checked=!!all.length&&all.every(t=>selectedPending.has(t.task_id));
  const button=$("batch-restore");button.disabled=selectedCompleted.size===0;
+ renderSelectedTaskStatus();
 }
 function selectedPendingTasks(){return queueTasks().filter(t=>selectedPending.has(t.task_id));}
 function renderQueue(){
@@ -343,7 +382,11 @@ function buildTask({url,title,start,end,excluded=[],renumber=false,publishAt=nul
 }
 function filteredRanking(){
  const term=$("rank-search").value.trim().toLocaleLowerCase(),category=$("rank-category").value;
- return rankingNovels.filter(n=>(!category||n.category===category)&&(!term||[n.title,n.author,n.latest_chapter].some(v=>String(v||"").toLocaleLowerCase().includes(term))));
+ const items=rankingNovels.filter(n=>(!category||n.category===category)&&
+  (!term||[n.title,n.author,n.latest_chapter].some(v=>String(v||"").toLocaleLowerCase().includes(term))));
+ const key=$("rank-sort")?.value||"rank";
+ return items.slice().sort((a,b)=>key==="rank"?(Number(a.rank)||999999)-(Number(b.rank)||999999):
+  String(a[key]||"").localeCompare(String(b[key]||""),"zh-Hant",{numeric:true}));
 }
 function renderRanking(){
  const data=filteredRanking(),body=$("rank-body");body.replaceChildren();
@@ -763,6 +806,19 @@ document.addEventListener("DOMContentLoaded",()=>{
  bind("rank-search","input",renderRanking);bind("rank-category","change",renderRanking);
  bind("rank-select-all","click",()=>{for(const n of filteredRanking())rankingSelected.add(n.catalog_url);renderRanking();});
  bind("rank-select-none","click",()=>{rankingSelected.clear();renderRanking();});
+ bind("rank-select-invert","click",()=>{for(const n of filteredRanking()){
+  if(rankingSelected.has(n.catalog_url))rankingSelected.delete(n.catalog_url);
+  else rankingSelected.add(n.catalog_url);
+ }renderRanking();});
+ bind("rank-sort","change",renderRanking);
+ bind("queue-invert","click",()=>{for(const t of queueTasks()){
+  if(selectedPending.has(t.task_id))selectedPending.delete(t.task_id);
+  else selectedPending.add(t.task_id);
+ }renderQueue();});
+ bind("queue-clear","click",()=>{selectedPending.clear();renderQueue();});
+ bind("selected-task-progress","click",()=>{const t=selectedTask();if(t)return showProgress(t.task_id);});
+ bind("selected-task-edit","click",()=>{const t=selectedTask();if(t)return openEditor(t.task_id);});
+ bind("book-form-reset","click",resetCreateForm);
  bind("rank-copy","click",copyRankingUrls);
  loadRanking();
  bind("catalog-url","input",()=>{parsedCatalog=null;$("catalog-preview").classList.add("hidden");$("chapter-selection-tools").classList.add("hidden");});
