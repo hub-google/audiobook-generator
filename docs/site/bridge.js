@@ -23,6 +23,64 @@
   document.getElementById("audio-operation-refresh").addEventListener("click",()=>void syncOperations());
   document.getElementById("audio-operation-hide").addEventListener("click",()=>panel.classList.add("hidden"));
  }
+ async function binaryAsset(assetId){
+  await window.audioAuth.ensure();
+  const token=await window.audioAuth.token();
+  const response=await fetch(EDGE+"/asset?asset_id="+encodeURIComponent(assetId),{
+   headers:{"Authorization":"Bearer "+token},cache:"no-store"
+  });
+  if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(error.error||"讀取檔案失敗");}
+  return response.blob();
+ }
+ window.audioAssetBlob=binaryAsset;
+ window.audioAssetsFor=async function(requestId){
+  const result=await api("/assets?request_id="+encodeURIComponent(requestId));
+  return result.assets||[];
+ };
+ window.audioSaveAsset=async function(asset){
+  const blob=await binaryAsset(asset.id),url=URL.createObjectURL(blob);
+  const anchor=document.createElement("a");
+  anchor.href=url;anchor.download=asset.filename||"AUDIO-file";
+  document.body.append(anchor);anchor.click();anchor.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),15000);
+  notice("已在 AUDIO 下載："+anchor.download);
+ };
+ window.audioWaitForAsset=async function(requestId,shouldContinue=()=>true){
+  for(let i=0;i<240;i++){
+   if(!shouldContinue())throw Error("已停止等待本次檔案");
+   const state=await api("/status?id="+encodeURIComponent(requestId));
+   const info=(state.requests||[])[0];
+   if(info?.status==="failed")throw Error(info.error||"雲端檔案處理失敗");
+   if(info?.status==="completed"){
+    const files=await window.audioAssetsFor(requestId);
+    if(!files.length)throw Error("工作已完成但沒有可讀取的檔案");
+    return files;
+   }
+   await new Promise(resolve=>setTimeout(resolve,10000));
+  }
+  throw Error("雲端檔案仍未完成，請至站內「查看操作狀態」繼續檢查");
+ };
+ window.audioRequestArtifact=async function(taskId,runId,kind="any",artifactId=null){
+  const data={task_id:taskId,run_id:Number(runId),kind};
+  if(artifactId!==null)data.artifact_id=Number(artifactId);
+  return send("fetch_artifact",data,"取得 "+kind+" Artifact");
+ };
+ window.audioRequestLogs=async function(taskId,runId){
+  return send("fetch_logs",{task_id:taskId,run_id:Number(runId)},"取得 Run "+runId+" 原始日誌");
+ };
+ async function appendAssetActions(row,container){
+  if(!["fetch_artifact","fetch_logs"].includes(row.op)||row.status!=="completed")return;
+  try{
+   const assets=await window.audioAssetsFor(row.request_id);
+   for(const item of assets){
+    if(!container.isConnected)break;
+    const btn=document.createElement("button");btn.type="button";btn.className="secondary";
+    btn.textContent="在 AUDIO 下載 "+item.filename+"（"+(item.bytes/1024/1024).toFixed(1)+"MB）";
+    btn.addEventListener("click",()=>window.audioSaveAsset(item).catch(e=>notice(e.message,"error")));
+    container.append(btn);
+   }
+  }catch(e){const p=document.createElement("small");p.textContent="檔案讀取失敗："+e.message;container.append(p);}
+ }
  function renderOperations(rows){
   ensurePanel();
   const list=document.getElementById("audio-operation-list");list.replaceChildren();
@@ -36,6 +94,7 @@
    const details=document.createElement("small");
    details.textContent=(row.error?"錯誤："+row.error:row.result||"已送出，請在本頁查看執行狀態");
    el.append(label,details);list.append(el);
+   if(row.status==="completed")void appendAssetActions(row,el);
   }
  }
  async function api(path,opts={}){
