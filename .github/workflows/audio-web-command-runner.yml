@@ -29,6 +29,10 @@ jobs:
           cache: pip
       - name: "安裝程式套件"
         run: pip install -r requirements.txt
+      - name: "驗證即時 Worker 日誌可透過 GitHub OIDC 安全送達"
+        if: github.event_name == 'push'
+        run: |
+          python -m tools.audio_live_capture --task-id book-test-live-journal --job ci-smoke -- python -c "print('AUDIO_PRIVATE_LIVE_SMOKE_OK')"
       - name: "處理站內操作並回報執行結果"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
