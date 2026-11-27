@@ -267,6 +267,10 @@ def main():
             page.locator("#end-chapter").fill("3")
             attempt_button("#enqueue-btn")
             page.locator('[data-tab="runs"]').click()
+            page.locator("#cloud-log-console").get_by_text("AUDIO 雲端日誌就緒").wait_for(timeout=10000)
+            for control in ["cloud-log-refresh","cloud-log-copy","cloud-log-clear",
+                            "cloud-log-pause","cloud-log-pause"]:
+                attempt_button("#"+control)
             attempt_button('#refresh-btn')
             # The links must open the internal reference dialog, never Github.
             external_links=page.locator('a[href^="https://github.com/"]')
@@ -292,6 +296,8 @@ def main():
                         page.evaluate('document.querySelectorAll("dialog[open]").forEach(d=>d.close())')
             attempt_button('#queue-body tr:first-child button:has-text("進度")',keep_dialog=True)
             attempt_button("#progress-refresh-now",keep_dialog=True)
+            page.locator("#progress-log-search").fill("ERROR")
+            assert page.locator("#progress-raw-log").count()==1
             attempt_button("#progress-close")
             attempt_button('#queue-body tr:first-child button:has-text("編輯")',keep_dialog=True)
             attempt_button("#edit-load-catalog",keep_dialog=True)
