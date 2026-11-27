@@ -3,6 +3,34 @@
 // No PAT, OAuth access token, HF/Gemini secret or YouTube credential is in this file.
 (function(){
  const ISSUES="https://github.com/hub-google/audiobook-generator/issues/new";
+ const QUEUE_CHANGING=new Set(["enqueue","batch_add","edit","move","status","delete",
+   "complete","restore","requeue","cancel","review"]);
+ let pendingWatcher=0;
+ function watchQueueUpdate(){
+  const initialRevision=Number(queue?.revision||0),watcher=++pendingWatcher;
+  const expires=Date.now()+5*60*1000;
+  let checks=0,timer=null,checking=false;
+  async function check(){
+   if(watcher!==pendingWatcher||Date.now()>expires||checks>=10)return;
+   if(document.hidden){timer=setTimeout(check,10000);return;}
+   if(checking)return;
+   checking=true;checks++;
+   try{
+    const latest=await readQueue();
+    if(Number(latest.data?.revision||0)>initialRevision){
+     queue=latest.data;queueSha=latest.sha;renderQueue();
+     notice("GitHub 雲端佇列已更新，請確認操作結果。");
+     return;
+    }
+   }catch{ /* Network/API errors do not count as operation success. */ }
+   finally{checking=false;}
+   if(watcher===pendingWatcher&&checks<10)timer=setTimeout(check,10000);
+  }
+  timer=setTimeout(check,9000);
+  window.addEventListener("focus",()=>{if(watcher===pendingWatcher){
+   clearTimeout(timer);void check();
+  }},{once:true});
+ }
  function send(op,data,label){
   const payload=toB64(JSON.stringify({version:1,op,data}))
    .replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
@@ -12,7 +40,8 @@
   const url=ISSUES+"?"+new URLSearchParams({title:"[AUDIO] "+label,body}).toString();
   if(url.length>25000)throw Error("選取的章節設定過長，超過 GitHub 網址能安全傳送的長度，請分批提交");
   window.open(url,"_blank","noopener");
-  notice("已開啟 GitHub 確認頁，請按「Submit new issue」；執行成功後回到 AUDIO 點「重新整理」。");
+  notice("已開啟 GitHub 確認頁，請按「Submit new issue」；回到 AUDIO 後會自動查詢佇列更新。");
+  if(QUEUE_CHANGING.has(op))watchQueueUpdate();
   return url;
  }
  window.audioIssueAction=send;

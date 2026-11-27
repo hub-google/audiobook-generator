@@ -94,7 +94,8 @@
      const payload=await response.json();
      if(payload?.request_id!==requestId)throw Error("批次封面結果與操作請求不一致");
      await applyAutomaticResults(payload);
-     localStorage.removeItem(REQUEST_STORE);pendingRequest=null;
+     try{localStorage.removeItem(REQUEST_STORE);}catch{}
+     pendingRequest=null;
      notice("批次封面資訊已自動載入");return;
     }
     if(response.status!==404)throw Error("GitHub 封面資訊讀取失敗 HTTP "+response.status);
@@ -137,7 +138,8 @@
     const request_id=crypto.randomUUID().replaceAll("-","");
     audioIssueAction("batch_cover_info",{task_ids:ids,request_id},
       "批次產生 "+ids.length+" 本小說封面資訊");
-    localStorage.setItem(REQUEST_STORE,JSON.stringify({request_id,ids}));
+    try{localStorage.setItem(REQUEST_STORE,JSON.stringify({request_id,ids}));}
+    catch{ /* Browser storage may be disabled; current-tab polling still works. */ }
     pendingRequest=request_id;pollGeneration++;
     text(el("batch-cover-summary"),"請先在 GitHub 送出 Issue。送出後此頁會自動載入封面資訊。");
     void pollResults(request_id,pollGeneration);

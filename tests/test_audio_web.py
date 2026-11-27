@@ -331,3 +331,12 @@ def test_large_catalog_upload_uses_file_not_cli_base64_argument():
     workflow=(ROOT/".github/workflows/web-catalog-preview.yml").read_text(encoding="utf-8")
     assert "--input catalog-preview-request.json" in workflow
     assert '-f content="$encoded"' not in workflow
+
+
+def test_browser_refreshes_queue_after_github_issue_confirmation_without_token():
+    bridge=(ROOT/"docs/site/bridge.js").read_text(encoding="utf-8")
+    assert "function watchQueueUpdate()" in bridge
+    assert "if(QUEUE_CHANGING.has(op))watchQueueUpdate()" in bridge
+    assert "const latest=await readQueue()" in bridge
+    assert "GitHub 雲端佇列已更新" in bridge
+    assert "Authorization" not in bridge and "GITHUB_TOKEN" not in bridge
