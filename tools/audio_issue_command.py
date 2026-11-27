@@ -218,6 +218,18 @@ def apply_command(command, store, profiles, issue_number, token, repo):
             json={"ref": "main", "inputs": {"catalog_url": url, "request_id": request_id}})
         return "Started catalog preview " + request_id, False
 
+    review_evidence = None
+    if operation == "review":
+        previous, _ = store.load()
+        if issue_number in (previous.get("web_applied_issue_ids") or []):
+            return f"Already processed issue #{issue_number}", False
+        task_id = valid_id(values.get("task_id"))
+        review_task = next((t for t in previous["queue"] if t["task_id"] == task_id), None)
+        if not review_task or review_task.get("status") != "waiting_review":
+            raise ValueError("Review requires a waiting TXT/cover preflight task")
+        from tools.audio_review_evidence import validate_review_evidence
+        review_evidence = validate_review_evidence(values, review_task, token, repo, api)
+
     # Parse new books before queue mutation; a failed book never inserts a partial batch.
     new_books = []
     if operation in {"enqueue", "batch_add"}:
@@ -303,11 +315,10 @@ def apply_command(command, store, profiles, issue_number, token, repo):
             task = targets[0]
             if task.get("status") != "waiting_review":
                 raise ValueError("Task not awaiting review")
-            patterns = values.get("remove_patterns") or []
-            if not isinstance(patterns,list):
-                raise ValueError("Review patterns must be a list")
+            if review_evidence is None:
+                raise ValueError("The actual TXT Artifact was not checked")
             review = {"status": "approved", "approved_at": utc_now(),
-                      "remove_patterns": patterns}
+                      **review_evidence}
             return confirm_preflight_review(
                 q, ids[0],task.get("scrape_run_id"),task.get("cover_run_id"),review,
             ) if values.get("review_only") else start_reviewed_processing(
