@@ -34,3 +34,22 @@ jobs:
           YOUTUBE_REFRESH_TOKEN_1: ${{ secrets.YOUTUBE_REFRESH_TOKEN_1 }}
           YOUTUBE_EXPECTED_ACCOUNT_COUNT: "1"
         run: python -m tools.live_service_check
+      - name: "免費額度已確認時實際驗證 Cloudflare 封面生成"
+        if: ${{ vars.CLOUDFLARE_WORKERS_FREE_CONFIRMED == 'true' }}
+        env:
+          COVER_IMAGE_PROVIDER: cloudflare
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_WORKERS_FREE_CONFIRMED: ${{ vars.CLOUDFLARE_WORKERS_FREE_CONFIRMED }}
+        run: python -m tools.cover_provider_probe
+      - name: "記錄 Cloudflare 免費額度驗證未啟用"
+        if: ${{ vars.CLOUDFLARE_WORKERS_FREE_CONFIRMED != 'true' }}
+        run: echo "Cloudflare image generation NOT tested (free quota confirmation missing)."
+      - name: "封面測試成果（不含任何金鑰）"
+        if: ${{ success() && vars.CLOUDFLARE_WORKERS_FREE_CONFIRMED == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: audio-cloudflare-free-cover-smoke
+          path: cloudflare-cover-probe.jpg
+          if-no-files-found: error
+          retention-days: 3
