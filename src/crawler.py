@@ -182,6 +182,17 @@ def run_crawler_worker(config, chapters, start_global_idx=1, exact_indices=None)
             except (SourceMissingError, SourceParseError):
                 raise
             except SourceAccessError as e:
+                # A website's 401/403/429 is an explicit denial or rate limit.
+                # Recreating sessions and hammering the same URL cannot fix it;
+                # report the restriction once and leave the task for review.
+                if any(f"HTTP {code}" in str(e) for code in (401, 403, 429)):
+                    logging.error(
+                        "[Crawler Worker] Chapter %d blocked by origin; no automated retry: %s",
+                        global_idx, e,
+                    )
+                    raise SourceAccessError(
+                        f"[Crawler Worker] 章節 {global_idx} 來源網站拒絕存取: {e}"
+                    ) from e
                 reset_session(source.source_id)
                 logging.error(
                     "[Crawler Worker] Access attempt %d/%d failed for chapter %d: %s",
