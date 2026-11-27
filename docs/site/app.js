@@ -57,19 +57,24 @@ function buildTaskRow(task,index){
  const first=col("");const check=document.createElement("input");check.type="checkbox";check.checked=selectedPending.has(task.task_id);
  check.setAttribute("aria-label","選取 "+(task.book_title||"小說"));
  check.addEventListener("change",()=>{if(check.checked)selectedPending.add(task.task_id);else selectedPending.delete(task.task_id);updateBatchStatus();});
- first.append(check,document.createTextNode(" "+(index+1)+". "+(task.book_title||"待解析")));
- const url=document.createElement("small");url.textContent=task.catalog_url||"";first.append(url);
- col("第 "+(task.start_chapter||1)+"–"+(task.end_chapter||"全部")+" 章");
+ first.append(check,document.createTextNode(" "+(task.position??index+1)));
+ col(task.book_title||"待解析");
+ col((task.start_chapter||1)+"–"+(task.end_chapter||"全部"));
+ col(task.duplicate_chapter_count??"—");
  const status=col("");const badge=document.createElement("span");badge.className="status "+statusClass(task.status);badge.textContent=statusName(task.status);status.append(badge);
- const stages=col("TXT "+stageBadge(task,"scrape")+" · 封面 "+stageBadge(task,"cover")+" · 影片 "+stageBadge(task,"processing"));
- const rid=task.run_id||task.scrape_run_id||task.cover_run_id;if(rid){const small=document.createElement("small"),a=document.createElement("a");a.href="https://github.com/"+REPO+"/actions/runs/"+encodeURIComponent(rid);a.target="_blank";a.rel="noopener noreferrer";a.textContent="Run #"+rid;small.append(a);stages.append(small);}
+ const detail=document.createElement("small");detail.textContent="TXT "+stageBadge(task,"scrape")+" / 封面 "+stageBadge(task,"cover")+" / 影片 "+stageBadge(task,"processing");status.append(detail);
+ col("—");
+ col((task.hf_progress?.completed??0)+"/"+(task.hf_progress?.total??0));
+ col((task.youtube_progress?.completed??0)+"/"+(task.youtube_progress?.total??0));
+ col([["TXT",task.scrape_run_id],["封面",task.cover_run_id],["後製",task.processing_run_id||task.run_id]].filter(x=>x[1]).map(x=>x.join(" ")).join(" / ")||"—");
  const controls=col(""),div=document.createElement("div");div.className="actions";controls.append(div);
  div.append(makeBtn("進度",showProgress,task.task_id,false,false));
  div.append(makeBtn("成品下載",showProgress,task.task_id,false,false));
  div.append(makeBtn("整包下載",window.exportArtifacts,task.task_id,false,false));
  if(["queued","paused","waiting_review","preparing_assets","needs_attention"].includes(task.status))div.append(makeBtn("手動封面",window.openManualCover,task.task_id));
  if(live(task))div.append(makeBtn("取消本次 Run",window.cancelRunningTask,task.task_id));
- if(task.status==="waiting_review"){div.append(makeBtn("查看審核資料",openReview,task.task_id,false,false));div.append(makeBtn("確認審核並繼續",window.openReview,task.task_id,false));}
+ if(task.scrape_run_id&&task.stages?.scrape?.status==="completed")div.append(makeBtn("文字清理／關鍵字審核",id=>window.openReview(id,"text"),task.task_id));
+ if(task.cover_run_id&&task.stages?.cover?.status==="completed")div.append(makeBtn("封面圖／Gemini／HF Prompt",id=>window.openReview(id,"cover"),task.task_id));
  if(["queued","paused","interrupted","stopped"].includes(task.status)){
   div.append(makeBtn("編輯",openEditor,task.task_id,!canEdit(task)));
   div.append(makeBtn("↑",id=>window.moveTask(id,-1),task.task_id,index===0||!canEdit(task)||!canEdit(queueTasks()[index-1])));
@@ -82,15 +87,16 @@ function buildTaskRow(task,index){
  if(canEditAfterCancel(task))div.append(makeBtn("編輯並重新排程",openEditor,task.task_id));
  if(["waiting_retry","needs_attention"].includes(task.status))
   div.append(makeBtn("重新排程",window.requeueTask,task.task_id));
- tr.addEventListener("dblclick",event=>{
-  if(!canEditTask(task)||event.target.closest("button,input,a,select,textarea"))return;
-  openEditor(task.task_id);
- });
+ tr.classList.toggle("gui-selected-row",selectedPending.has(task.task_id));
+ tr.addEventListener("click",event=>{if(event.target.closest("button,input,a,select,textarea"))return;
+  if(!event.ctrlKey&&!event.metaKey&&!event.shiftKey)selectedPending.clear();
+  selectedCompleted.clear();if((event.ctrlKey||event.metaKey)&&selectedPending.has(task.task_id))selectedPending.delete(task.task_id);else selectedPending.add(task.task_id);renderQueue();});
+ tr.addEventListener("dblclick",event=>{if(event.target.closest("button,input,a,select,textarea"))return;showProgress(task.task_id);});
  return tr;
 }
 function selectedTask(){
- const id=selectedPending.size===1?[...selectedPending][0]:null;
- return id?queueTasks().find(t=>t.task_id===id)||null:null;
+ const selected=[...selectedPending,...selectedCompleted];const id=selected.length===1?selected[0]:null;
+ return id?[...queueTasks(),...(queue?.completed||[])].find(t=>t.task_id===id)||null:null;
 }
 function renderSelectedTaskStatus(){
  const t=selectedTask(),el=$("selected-task-status");if(!el)return;
@@ -114,6 +120,11 @@ function renderSelectedTaskStatus(){
  }
  $("selected-task-progress").disabled=!t;
  $("selected-task-edit").disabled=!t||!canEditTask(t);
+ $("gui-cover-review").disabled=!t||!t.cover_run_id||t.stages?.cover?.status!=="completed";
+ $("gui-text-review").disabled=!t||!t.scrape_run_id||t.stages?.scrape?.status!=="completed";
+ $("gui-start-processing").disabled=!t||t.status!=="waiting_review"||t.workflow_phase!=="preflight"||t.ad_review?.status!=="approved";
+ $("gui-requeue").disabled=!t||!["paused","interrupted","stopped","waiting_retry","needs_attention"].includes(t.status);
+ $("gui-cancel-run").disabled=!t||!live(t)||t.status==="canceling";
 }
 function resetCreateForm(){
  parsedCatalog=null;chapterPickerExcluded=null;chapterPickerOrder=null;
@@ -138,7 +149,7 @@ function renderQueue(){
  text($("count-queued"),tasks.filter(t=>t.status==="queued"||t.status==="paused").length);
  text($("count-active"),tasks.filter(t=>active(t)).length);text($("count-completed"),completed.length);
  text($("updated-at"),dateLabel(queue?.updated_at));
- const tbody=$("queue-body");tbody.replaceChildren();if(!tasks.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=5;td.className="empty";td.textContent="目前沒有待製作小說";tr.append(td);tbody.append(tr);}
+ const tbody=$("queue-body");tbody.replaceChildren();if(!tasks.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=10;td.className="empty";td.textContent="目前沒有待製作小說";tr.append(td);tbody.append(tr);}
  selectedPending=new Set([...selectedPending].filter(id=>tasks.some(t=>t.task_id===id)));
  tasks.forEach((t,i)=>tbody.append(buildTaskRow(t,i)));
  const list=$("completed-list");list.replaceChildren();
@@ -428,7 +439,7 @@ async function loadCurrentBookCleaner(task){
   "已載入此書最新雲端清理設定；修改後隨任務儲存。":
   "此書尚未有清理設定；如有需要可新增。");
 }
-function openReview(id){const task=queueTasks().find(t=>t.task_id===id);if(!task||task.status!=="waiting_review")throw Error("任務不在待審核狀態");
+function openReview(id){const task=[...queueTasks(),...(queue?.completed||[])].find(t=>t.task_id===id);if(!task)throw Error("找不到小說任務");
  reviewTaskId=id;$("review-patterns").value=(task.ad_review?.remove_patterns||task.profile_snapshot?.cleaner_remove_patterns||[]).join("\n");
  $("review-dialog").showModal();
 }
@@ -883,6 +894,12 @@ document.addEventListener("DOMContentLoaded",()=>{
  }renderQueue();});
  bind("queue-clear","click",()=>{selectedPending.clear();renderQueue();});
  bind("selected-task-progress","click",()=>{const t=selectedTask();if(t)return showProgress(t.task_id);});
+ bind("gui-cover-review","click",()=>{const t=selectedTask();if(t)return window.openReview(t.task_id,"cover");});
+ bind("gui-text-review","click",()=>{const t=selectedTask();if(t)return window.openReview(t.task_id,"text");});
+ bind("gui-start-processing","click",async()=>{const t=selectedTask();if(!t||t.ad_review?.status!=="approved"||t.status!=="waiting_review")throw Error("請先確認文字清理設定");return window.audioIssueAction("review",{task_id:t.task_id,start_only:true},"開始第二階段後製");});
+ bind("gui-requeue","click",()=>{const t=selectedTask();if(t)return window.requeueTask(t.task_id);});
+ bind("gui-cancel-run","click",()=>{const t=selectedTask();if(t)return window.cancelRunningTask(t.task_id);});
+ bind("gui-batch-add","click",()=>{switchTab("create");$("batch-urls").scrollIntoView({block:"center"});$("batch-urls").focus();});
  bind("selected-task-edit","click",()=>{const t=selectedTask();if(t)return openEditor(t.task_id);});
  bind("book-form-reset","click",resetCreateForm);
  bind("rank-copy","click",copyRankingUrls);

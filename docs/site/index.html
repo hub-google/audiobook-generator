@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>AUDIO · 有聲小說製作平台</title>
-<link rel="stylesheet" href="./style.css?v=20261127-live-log4">
+<link rel="stylesheet" href="./style.css?v=20261127-gui-parity5">
 </head>
 <body>
 <div class="layout">
@@ -21,7 +21,7 @@
 <header class="topbar"><div><h1 id="page-title">製作總覽</h1><p class="muted" id="page-subtitle">同步 GitHub 雲端佇列與製作進度</p></div><div class="toolbar"><span id="connection-pill" class="pill">尚未連線</span><button type="button" id="refresh-btn" class="secondary">重新整理</button></div></header>
 <div id="message" role="status" aria-live="polite" class="notice hidden"></div>
 <section class="access-panel"><div><strong>免 API Token · 站內安全操作</strong>
-<p class="muted">新增、編輯、取消與審核都在本頁操作，無須開啟 GitHub Issue。首次修改雲端資料需透過授權 Email 驗證管理員身分；API 金鑰保留於後端，GitHub Actions 在背景依序處理。</p></div>
+<p class="muted">新增、編輯、取消與審核都在本頁操作，無須開啟 GitHub Issue。此瀏覽器會保留管理員登入。API 金鑰保留於後端；GitHub Actions 在背景依序處理。</p></div>
 <div class="inline-actions"><span id="audio-auth-status" class="muted">尚未登入</span><button id="audio-operations-show" type="button" class="secondary">查看操作狀態</button></div></section>
 <section id="overview" class="tab active">
 <div class="metrics"><article class="metric"><span>排隊中</span><strong id="count-queued">—</strong></article><article class="metric"><span>進行中 / 待審</span><strong id="count-active">—</strong></article><article class="metric"><span>已完成</span><strong id="count-completed">—</strong></article><article class="metric"><span>最近更新</span><strong class="smaller" id="updated-at">—</strong></article></div>
@@ -37,14 +37,18 @@
 <button id="batch-delete" class="secondary">刪除選取</button>
 <button id="batch-export" class="secondary">批次下載選取作品</button>
 <button id="batch-cover-btn" class="secondary">批次封面資訊</button>
+<button id="gui-batch-add" class="secondary" type="button">批量加入網址</button>
+<button id="gui-requeue" class="secondary" type="button" disabled>重新排程</button>
+<button id="gui-cancel-run" class="secondary" type="button" disabled>取消本次 Run</button>
 </div>
+<div class="gui-review-toolbar"><button id="gui-cover-review" type="button" class="secondary" disabled>封面圖／Gemini 小說介紹／HF 生圖 Prompt</button><button id="gui-text-review" type="button" class="secondary" disabled>文字清理／關鍵字審核</button><button id="gui-start-processing" type="button" disabled>開始第二階段後製</button><span class="muted">語音品質檢查：Clean 欄就是 TTS 實際會朗讀的文字</span></div>
 <section class="form-card selected-task-panel" aria-labelledby="selected-task-heading">
 <div class="section-head"><h3 id="selected-task-heading">選取小說目前狀態</h3>
 <div class="inline-actions"><button type="button" class="secondary" id="selected-task-progress" disabled>查看即時進度</button>
 <button type="button" class="secondary" id="selected-task-edit" disabled>編輯章節設定</button></div></div>
 <p class="muted" id="selected-task-status" aria-live="polite">請先從佇列勾選一本小說。</p>
 </section>
-<div id="queue-table-wrap" class="table-wrap"><table><thead><tr><th>順序 / 小說</th><th>章節</th><th>執行狀態</th><th>TXT / 封面 / 影片</th><th>操作</th></tr></thead><tbody id="queue-body"><tr><td colspan="5" class="empty">連線後載入佇列</td></tr></tbody></table></div>
+<div id="queue-table-wrap" class="table-wrap"><table><thead><tr><th>順位</th><th>小說</th><th>章節</th><th>重複章節</th><th>狀態</th><th>GitHub 查證</th><th>HF</th><th>YouTube</th><th>Run</th><th>操作</th></tr></thead><tbody id="queue-body"><tr><td colspan="10" class="empty">連線後載入佇列</td></tr></tbody></table></div>
 <div class="section-head"><h2>已完成作品</h2><div class="inline-actions"><button id="batch-export-completed" class="secondary">下載勾選成品</button>
 <button id="batch-cover-completed" class="secondary">批次封面資訊</button><button id="batch-restore" class="secondary">將勾選作品移回待製作</button></div></div><div id="completed-list" class="completed"><p class="muted">尚無資料</p></div>
 </section>
@@ -256,7 +260,7 @@
 <button id="manual-cover-submit" type="button" disabled>送出並套用封面</button></div>
 </dialog>
 <dialog id="review-dialog" class="editor-dialog review-wide" aria-labelledby="review-title">
-<form id="review-form"><h2 id="review-title">文字清理、Raw/Clean 抽查與封面審核</h2>
+<form id="review-form"><h2 id="review-title">文字清理、Raw/Clean 抽查與封面審核</h2><div id="gui-text-tabs" class="gui-tabs hidden"><button id="gui-text-candidates-tab" type="button" class="secondary" aria-pressed="true">候選詞句與排除設定</button><button id="gui-text-raw-tab" type="button" class="secondary" aria-pressed="false">Raw／Clean 文字抽查</button></div>
 <p class="muted">以本次 GitHub Artifact 的實際章節文字及封面為依據。可把 TXT 與封面 ZIP 一次拖入下方；檔案僅在本機瀏覽器解壓及驗證，不上傳到 GitHub Pages。</p>
 <div id="review-drop-zone" class="review-drop-zone">
 <label for="review-drop-files">將 TXT／封面審核 ZIP 拖到這裡，或點擊選取檔案（可多選）</label>
@@ -273,7 +277,7 @@
 </div>
 <p id="review-load-status" class="muted">尚未匯入報告；請以實際 Artifact 檢查資料。</p>
 <div class="review-columns">
-<section><h3>候選詞句與排除設定</h3>
+<section id="gui-candidate-pane"><h3>候選詞句與排除設定</h3>
 <div class="review-controls">
 <input id="review-search" placeholder="搜尋候選詞／原因">
 <select id="review-kind"><option value="">所有類型</option></select>
@@ -284,12 +288,12 @@
 <button type="button" class="secondary" id="review-keep-visible">全部保留</button>
 <button type="button" class="secondary" id="review-invert-visible">反選</button>
 </div>
-<div id="review-candidates" class="review-candidates" aria-label="廣告候選詞"></div>
+<p id="gui-review-count" class="muted"></p><div class="gui-candidate-layout"><div class="gui-candidate-scroll" id="review-candidates" aria-label="廣告候選詞" tabindex="0"></div><div class="gui-context"><strong>選定詞句的判定與原文上下文</strong><pre id="gui-review-context">請選取候選詞句。</pre></div></div><div class="review-actions" id="gui-selected-actions"><button type="button" class="secondary" id="gui-remove-selected">設為去除</button><button type="button" class="secondary" id="gui-keep-selected">設為保留</button><button type="button" class="secondary" id="gui-invert-selected">反選選取</button><button type="button" class="secondary" id="gui-edit-selected">編輯詞句</button><button type="button" class="secondary" id="gui-delete-selected">從名單移除</button></div>
 <div class="review-controls"><input id="review-manual-pattern" placeholder="手動新增要刪除的字詞">
 <button id="review-add-manual" type="button" class="secondary">新增刪除文字</button></div>
 <label>正文清理字詞（每行一項）<textarea id="review-patterns" rows="5" placeholder="由候選詞勾選或手動輸入固定字詞"></textarea></label>
 </section>
-<section><h3>Raw / Clean 逐章檢查</h3>
+<section id="gui-raw-pane"><h3>Raw / Clean 逐章檢查</h3>
 <div class="review-controls"><select id="review-chapter"><option value="">選取章節</option></select>
 <button type="button" class="secondary" id="review-first">第一章</button>
 <button type="button" class="secondary" id="review-middle">中間章</button>
@@ -299,19 +303,15 @@
 <div><strong>Clean · 清理預覽</strong><pre id="review-clean"></pre></div></div>
 <p class="muted">Clean 依原 cleaner.py 的正規化、固定字詞、開頭過濾與語義分段邏輯即時計算。更改規則後立即重新檢視；最終 TTS 仍以雲端執行結果為準。</p>
 </section></div>
-<section class="review-cover"><h3>封面圖、Gemini 故事資訊與 HF Prompt</h3>
-<img id="review-cover-preview" alt="已驗證 GitHub Artifact 的封面" hidden>
-<p id="review-cover-status" class="muted">尚未核對封面 Manifest</p>
-<div class="review-texts"><div><strong>小說介紹／視覺分析</strong><pre id="review-cover-analysis">尚未載入</pre></div>
-<div><strong>HF 生圖 Prompt</strong><pre id="review-cover-prompt">尚未載入</pre></div></div>
-<button type="button" id="review-copy-prompt" class="secondary">複製 HF Prompt</button>
+<section class="review-cover" id="gui-cover-pane"><h3>封面圖、Gemini 故事資訊與 HF Prompt</h3>
+<div class="gui-cover-layout"><div class="gui-cover-image"><p id="review-cover-status" class="muted">尚未核對封面 Manifest</p><img id="review-cover-preview" alt="已驗證 GitHub Artifact 的封面" hidden><button type="button" id="gui-replace-cover" class="secondary" disabled>選擇圖片／更換封面</button></div><div class="gui-cover-info"><div class="gui-tabs"><button type="button" id="gui-cover-analysis-tab" class="secondary" aria-pressed="true">Gemini 小說介紹／視覺分析</button><button type="button" id="gui-cover-prompt-tab" class="secondary" aria-pressed="false">HF 生圖 Prompt</button></div><div id="gui-cover-analysis-panel"><pre id="review-cover-analysis">尚未載入</pre></div><div id="gui-cover-prompt-panel" class="hidden"><pre id="review-cover-prompt">尚未載入</pre></div><button type="button" id="review-copy-prompt" class="secondary">複製 HF Prompt</button></div></div>
 </section>
 <div class="dialog-actions"><button type="button" class="secondary" id="review-cancel">取消</button>
-<button type="button" class="secondary" id="review-save-only">只儲存文字清理規則</button>
-<button type="submit">確認審核並開始第二階段後製</button></div>
+<button type="button" class="secondary" id="review-save-only">只儲存文字清理規則</button><button id="gui-confirm-text" type="button" class="hidden" disabled>確認文字清理設定</button>
+<button id="gui-combined-start" type="submit">確認審核並開始第二階段後製</button></div>
 </form></dialog>
 <footer>資料由 GitHub API 即時讀取；GitHub Pages 不會在瀏覽器執行 Python、TTS 或影片轉檔。</footer>
 </main>
 </div>
-<script src="./app.js?v=20261127-live-log4" defer></script><script src="./auth.js?v=20261127-live-log4" defer></script><script src="./bridge.js?v=20261127-live-log4" defer></script><script src="./novel-search.js?v=20261127-live-log4" defer></script><script src="./cleaner-parity.js?v=20261127-live-log4" defer></script><script src="./review-inspector.js?v=20261127-live-log4" defer></script><script src="./manual-cover.js?v=20261127-live-log4" defer></script><script src="./batch-cover.js?v=20261127-live-log4" defer></script><script src="./external-info.js?v=20261127-live-log4" defer></script><script src="./draft-cover-info.js?v=20261127-live-log4" defer></script><script src="./cloud-log.js?v=20261127-live-log4" defer></script>
+<script src="./app.js?v=20261127-gui-parity5" defer></script><script src="./auth.js?v=20261127-gui-parity5" defer></script><script src="./bridge.js?v=20261127-gui-parity5" defer></script><script src="./novel-search.js?v=20261127-gui-parity5" defer></script><script src="./cleaner-parity.js?v=20261127-gui-parity5" defer></script><script src="./review-inspector.js?v=20261127-gui-parity5" defer></script><script src="./manual-cover.js?v=20261127-gui-parity5" defer></script><script src="./batch-cover.js?v=20261127-gui-parity5" defer></script><script src="./external-info.js?v=20261127-gui-parity5" defer></script><script src="./draft-cover-info.js?v=20261127-gui-parity5" defer></script><script src="./cloud-log.js?v=20261127-gui-parity5" defer></script>
 </body></html>

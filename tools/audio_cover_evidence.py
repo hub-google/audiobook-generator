@@ -13,13 +13,14 @@ import zipfile
 import requests
 
 
-def validate_cover_review_evidence(values, task, token, repo, api):
+def validate_cover_review_evidence(values, task, token, repo, api, *, verify_manifest_only=False):
     supplied = values.get("cover_evidence") or {}
-    if not isinstance(supplied, dict) or supplied.get("task_id") != task["task_id"]:
-        raise ValueError("Cover evidence task ID does not match this book")
-    for key in ("cover_sha256", "prompt_sha256"):
-        if not re.fullmatch(r"[0-9a-f]{64}", str(supplied.get(key) or "")):
-            raise ValueError("Cover approval requires both SHA-256 fingerprints")
+    if not verify_manifest_only:
+        if not isinstance(supplied, dict) or supplied.get("task_id") != task["task_id"]:
+            raise ValueError("Cover evidence task ID does not match this book")
+        for key in ("cover_sha256", "prompt_sha256"):
+            if not re.fullmatch(r"[0-9a-f]{64}", str(supplied.get(key) or "")):
+                raise ValueError("Cover approval requires both SHA-256 fingerprints")
 
     run_id = task.get("cover_run_id")
     if not str(run_id or "").isdigit():
@@ -68,7 +69,7 @@ def validate_cover_review_evidence(values, task, token, repo, api):
             if (manifest.get("cover_sha256") != cover_hash or
                     manifest.get("prompt_sha256") != prompt_hash):
                 raise ValueError("Cover Artifact manifest checksum mismatch")
-            if (supplied["cover_sha256"] != cover_hash or
+            if not verify_manifest_only and (supplied["cover_sha256"] != cover_hash or
                     supplied["prompt_sha256"] != prompt_hash):
                 raise ValueError("Reviewed cover differs from the actual GitHub Artifact")
 

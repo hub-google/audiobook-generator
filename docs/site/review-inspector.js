@@ -1,6 +1,7 @@
 "use strict";
 (function(){
- let report=null, taskId=null, coverUrl=null, bookTitle="",coverEvidence=null;
+ let report=null, taskId=null, coverUrl=null, bookTitle="",coverEvidence=null, mode="combined",sortKey="",sortDescending=false,lastSelected=null;
+ const selectedCandidates=new Set();
  const state={candidateChoices:new Map(),chapters:{},prompt:""};
  function editedCandidates(){
   return (report?.candidates||[]).filter(c=>typeof c?.text==="string").map(c=>({
@@ -48,48 +49,36 @@
  function setPatterns(arr){$("review-patterns").value=[...new Set(arr)].join("\n");renderCandidates();renderText();}
  function candidatesVisible(){
   const q=$("review-search").value.trim().toLowerCase(),kind=$("review-kind").value,status=$("review-state").value;
-  return editedCandidates().filter(c=>{
+  const rows=editedCandidates().filter(c=>{
    const removed=patterns().includes(c.text);
    return (!q||String(c.text+" "+c.reason).toLowerCase().includes(q))&&
      (!kind||kind===c.kind)&&(!status||(status==="remove"?removed:!removed));
   });
+  if(sortKey){const value=c=>sortKey==="decision"?Number(patterns().includes(c.text)):sortKey==="chapters"?(c.affected_chapters||[]).map(n=>String(n).padStart(8,"0")).join(","):c[sortKey]??"";rows.sort((a,b)=>{const x=value(a),y=value(b);return (sortDescending?-1:1)*(typeof x==="number"&&typeof y==="number"?x-y:String(x).localeCompare(String(y),"zh-Hant",{numeric:true}));});}return rows;
  }
+ function selectedRows(){return editedCandidates().filter(c=>selectedCandidates.has(c.original_text));}
+ function showContext(){const c=selectedRows()[0];text($("gui-review-context"),c?"判定原因："+(c.reason||"—")+"\n\n影響章節："+(c.affected_chapters||[]).join(", ")+"\n\n"+(c.samples||[]).join("\n\n---\n\n"):"請選取候選詞句。");}
+ function modifySelected(action,rows=selectedRows()){
+  if(!rows.length){notice("請先選取候選詞句","error");return;}
+  const names=new Set(patterns());
+  for(const c of rows){if(action==="remove")names.add(c.text);else if(action==="keep")names.delete(c.text);else if(action==="invert"){if(names.has(c.text))names.delete(c.text);else names.add(c.text);}else if(action==="delete"){state.candidateChoices.set(c.original_text,null);names.delete(c.text);selectedCandidates.delete(c.original_text);}}
+  setPatterns([...names]);
+ }
+ function editCandidate(c){if(!c)return;const next=prompt("要比對並刪除的文字：",c.text);if(next===null)return;const trimmed=next.trim();if(!trimmed||trimmed.length>10000){notice("候選文字不可空白或超過 10000 字","error");return;}const names=new Set(patterns()),wasRemoved=names.delete(c.text);if(wasRemoved)names.add(trimmed);if(trimmed===c.original_text)state.candidateChoices.delete(c.original_text);else state.candidateChoices.set(c.original_text,trimmed);setPatterns([...names]);}
  function renderCandidates(){
   const target=$("review-candidates");target.replaceChildren();
-  for(const c of candidatesVisible()){
-   const label=document.createElement("div");label.className="review-candidate";
-   const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.checked=patterns().includes(c.text);
-   checkbox.setAttribute("aria-label","去除 "+c.text);
-   checkbox.addEventListener("change",()=>{
-    const names=new Set(patterns());if(checkbox.checked)names.add(c.text);else names.delete(c.text);
-    setPatterns([...names]);
-   });
-   const details=document.createElement("span");const title=document.createElement("strong");title.textContent=c.text;
-   const meta=document.createElement("small");meta.textContent=
-     [c.kind,"出現 "+(c.count||0)+" 次","評分 "+(c.score||0),c.reason||""].filter(Boolean).join(" · ");
-   const buttons=document.createElement("div");buttons.className="review-candidate-actions";
-   const edit=document.createElement("button");edit.type="button";edit.className="secondary";
-   edit.textContent="編輯詞句";edit.setAttribute("aria-label","編輯詞句 "+c.text);
-   edit.addEventListener("click",()=>{
-    const next=prompt("編輯候選詞句",c.text);if(next===null)return;
-    const trimmed=next.trim();
-    if(!trimmed||trimmed.length>10000){notice("候選文字不可空白或超過 10000 字","error");return;}
-    const names=new Set(patterns()),wasRemoved=names.delete(c.text);
-    if(wasRemoved)names.add(trimmed);
-    if(trimmed===c.original_text)state.candidateChoices.delete(c.original_text);
-    else state.candidateChoices.set(c.original_text,trimmed);
-    setPatterns([...names]);
-   });
-   const remove=document.createElement("button");remove.type="button";remove.className="secondary";
-   remove.textContent="從名單移除";remove.setAttribute("aria-label","從名單移除 "+c.text);
-   remove.addEventListener("click",()=>{
-    state.candidateChoices.set(c.original_text,null);
-    setPatterns(patterns().filter(name=>name!==c.text));
-   });
-   buttons.append(edit,remove);details.append(title,meta);
-   label.append(checkbox,details,buttons);target.append(label);
+  const visible=candidatesVisible(),all=editedCandidates(),removed=all.filter(c=>patterns().includes(c.text)).length;
+  text($("gui-review-count"),"顯示："+visible.length+"/"+all.length+" 項｜去除："+removed+" 項｜保留："+(all.length-removed)+" 項");
+  if(!visible.length){target.textContent=report?"目前沒有符合條件的候選詞":"等待載入本書 TXT 審核資料";showContext();return;}
+  const table=document.createElement("table"),head=table.createTHead().insertRow(),body=table.createTBody();
+  for(const [key,label] of [["decision","處理狀態"],["kind","類型"],["text","疑似廣告詞句／重複行"],["count","次數"],["chapters","影響章節"],["score","可疑度"],["reason","判定理由"]]){
+   const th=document.createElement("th");th.scope="col";th.textContent=label+(sortKey===key?(sortDescending?" ▼":" ▲"):"");th.tabIndex=0;const sort=()=>{if(sortKey===key)sortDescending=!sortDescending;else{sortKey=key;sortDescending=false;}renderCandidates();};th.addEventListener("click",sort);th.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();sort();}});head.append(th);
   }
-  if(!target.childElementCount)target.textContent=report?"目前沒有符合條件的候選詞":"請先匯入 ad-candidates JSON／ZIP";
+  visible.forEach((c,index)=>{const tr=body.insertRow();tr.classList.toggle("selected",selectedCandidates.has(c.original_text));tr.tabIndex=0;const status=tr.insertCell(),checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.checked=patterns().includes(c.text);checkbox.setAttribute("aria-label","去除 "+c.text);checkbox.addEventListener("change",()=>{selectedCandidates.clear();selectedCandidates.add(c.original_text);modifySelected(checkbox.checked?"remove":"keep",[c]);});status.append(checkbox,document.createTextNode(checkbox.checked?" 去除":" 保留"));
+   for(const value of [c.kind,c.text,c.count,(c.affected_chapters||[]).join(", "),c.score,c.reason])tr.insertCell().textContent=value??"—";
+   tr.addEventListener("click",e=>{if(e.target.closest("input"))return;if(e.shiftKey&&lastSelected!==null){const lo=Math.min(lastSelected,index),hi=Math.max(lastSelected,index);if(!e.ctrlKey&&!e.metaKey)selectedCandidates.clear();visible.slice(lo,hi+1).forEach(x=>selectedCandidates.add(x.original_text));}else if(e.ctrlKey||e.metaKey){if(selectedCandidates.has(c.original_text))selectedCandidates.delete(c.original_text);else selectedCandidates.add(c.original_text);}else{selectedCandidates.clear();selectedCandidates.add(c.original_text);}lastSelected=index;renderCandidates();target.focus();});
+   tr.addEventListener("dblclick",e=>{if(e.target.closest("input"))return;if(e.target.cellIndex===2)editCandidate(c);else modifySelected("invert",[c]);});
+  });target.append(table);showContext();
  }
  function chapterKeys(){return Object.keys(state.chapters).sort((a,b)=>Number(a)-Number(b));}
  function renderText(){
@@ -123,6 +112,9 @@
   if(payload.artifact_role!=="ad_review_candidates"||payload.task_id!==taskId)
    throw Error("TXT Artifact 任務 ID 不一致，拒絕套用其他小說資料");
   report=payload;state.candidateChoices.clear();state.chapters=payload.chapter_texts||{};
+  const task=[...queueTasks(),...(queue?.completed||[])].find(t=>t.task_id===taskId);
+  if(!task?.ad_review?.approved_at&&!(task?.ad_review?.remove_patterns||task?.profile_snapshot?.cleaner_remove_patterns||[]).length){$("review-patterns").value=(payload.candidates||[]).filter(c=>c.approved_remove??c.suggested_remove??false).map(c=>c.text).join("\n");}
+  $("gui-confirm-text").disabled=task?.status!=="waiting_review"||task.stages?.cover?.status!=="completed";
   const kinds=[...new Set((payload.candidates||[]).map(c=>c.kind).filter(Boolean))];
   const selector=$("review-kind");selector.replaceChildren(new Option("所有類型",""));
   for(const name of kinds)selector.append(new Option(name,name));
@@ -169,6 +161,7 @@
   coverEvidence={task_id:selectedTask,cover_sha256:m.cover_sha256,
     prompt_sha256:m.prompt_sha256};
   text($("review-cover-status"),"已核對封面任務 "+selectedTask+" 與兩份 SHA-256 指紋");
+  const task=[...queueTasks(),...(queue?.completed||[])].find(t=>t.task_id===selectedTask);$("gui-replace-cover").disabled=task?.workflow_phase!=="preflight";
  }
  async function loadReviewFiles(files){
   const pending=Array.from(files||[]);
@@ -205,19 +198,17 @@
  async function loadCloudReview(){
   const selected=taskId, generation=++reviewLoadGeneration;
   const valid=()=>taskId===selected&&generation===reviewLoadGeneration&&$("review-dialog").open;
-  const task=queueTasks().find(t=>t.task_id===selected);
+  const task=[...queueTasks(),...(queue?.completed||[])].find(t=>t.task_id===selected);
   if(!task)throw Error("找不到待審核小說");
-  if(!task.scrape_run_id||!task.cover_run_id)throw Error("TXT 或封面 Run 尚未產生");
+  const kinds=mode==="cover"?["cover"]:mode==="text"?["scrape"]:["scrape","cover"];
+  if(kinds.some(k=>!(k==="cover"?task.cover_run_id:task.scrape_run_id)))throw Error("本次審核 Run 尚未產生");
   const button=$("review-auto-load");button.disabled=true;
   const indicator=$("review-auto-status");
   try{
    text(indicator,"正在站內提交 TXT／封面檔案取回請求…");
-   const requestIds=await Promise.all([
-    window.audioRequestArtifact(selected,task.scrape_run_id,"scrape"),
-    window.audioRequestArtifact(selected,task.cover_run_id,"cover")
-   ]);
+   const requestIds=await Promise.all(kinds.map(k=>window.audioRequestArtifact(selected,k==="cover"?task.cover_run_id:task.scrape_run_id,k)));
    if(requestIds.some(x=>!x))throw Error("雲端檔案請求未成功排入");
-   text(indicator,"已提交兩個工作；GitHub Actions 取得真實 Artifact 後會自動載入審核頁。");
+   text(indicator,"正在取得本次實際審核資料…");
    const loadOne=async(requestId,kind)=>{
     const assets=await window.audioWaitForAsset(requestId,valid);
     if(!valid())return;
@@ -227,27 +218,33 @@
     if(!valid())return;
     const file=new File([blob],grouped[0].name,{type:"application/zip"});
     await loadReviewFiles([file]);
-    text(indicator,kind+" 已通過檔案格式驗證；等待另一份資料完成。");
+    text(indicator,kind+" 已通過檔案格式驗證。");
    };
-   const results=await Promise.allSettled([
-    loadOne(requestIds[0],"TXT"),loadOne(requestIds[1],"封面")
-   ]);
+   const results=await Promise.allSettled(kinds.map((k,i)=>loadOne(requestIds[i],k==="scrape"?"TXT":"封面")));
    if(!valid())return;
    const errors=results.filter(x=>x.status==="rejected").map(x=>x.reason?.message||"未知錯誤");
    if(errors.length)throw Error(errors.join("；"));
-   text(indicator,"TXT／封面已自動讀取。請審閱 Raw／Clean 與封面，再決定是否核准後製。");
+   text(indicator,"本次審核資料已讀取完成。");
   }catch(error){
    if(valid())text(indicator,"自動載入尚未成功："+error.message+"。仍可使用下方手動匯入。");
   }finally{if(valid())button.disabled=false;}
  }
  const original=window.openReview;
- window.openReview=function(id){
-  const t=queueTasks().find(x=>x.task_id===id);
-  if(!t||t.status!=="waiting_review")throw Error("小說尚未進入審核");
+ window.openReview=function(id,kind="combined"){
+  const t=[...queueTasks(),...(queue?.completed||[])].find(x=>x.task_id===id);
+  if(!t||kind==="combined"&&t.status!=="waiting_review")throw Error("小說尚未進入審核");
+  if(kind==="cover"&&(!t.cover_run_id||t.stages?.cover?.status!=="completed"))throw Error("封面 Run 完成後才能查看");
+  if(kind==="text"&&(!t.scrape_run_id||t.stages?.scrape?.status!=="completed"))throw Error("TXT 抓取完成後才能查看");
+  mode=kind;selectedCandidates.clear();lastSelected=null;sortKey="";sortDescending=false;reviewLoadGeneration++;
   taskId=id;bookTitle=t.book_title||"";report=null;coverEvidence=null;
   state.candidateChoices.clear();
   state.chapters={};state.prompt="";
   original(id);
+  $("review-dialog").dataset.mode=kind;
+  text($("review-title"),(kind==="cover"?"封面圖與小說介紹／HF Prompt":kind==="text"?"文字清理／關鍵字審核":"文字清理、Raw/Clean 抽查與封面審核")+"｜《"+bookTitle+"》");
+  $("gui-text-tabs").classList.toggle("hidden",kind!=="text");$("gui-confirm-text").classList.toggle("hidden",kind!=="text");$("gui-confirm-text").disabled=true;
+  $("review-save-only").classList.toggle("hidden",kind!=="combined");$("gui-combined-start").classList.toggle("hidden",kind!=="combined");$("gui-replace-cover").disabled=true;
+  $("review-auto-load").disabled=false;setTextTab("candidates");setCoverTab("analysis");
   for(const field of ["review-report-file","review-cover-file","review-drop-files","review-search"])$(field).value="";
   $("review-kind").value="";$("review-state").value="";
   $("review-chapter").replaceChildren(new Option("尚未載入",""));
@@ -262,7 +259,16 @@
   text($("review-auto-status"),"可一鍵從 GitHub Actions 安全取得 TXT 與封面審核檔案；不需開啟外站。");
   if(window.audioAuth?.loggedIn)void loadCloudReview();
  };
+ function setTextTab(tab){$("gui-candidate-pane").classList.toggle("hidden",mode==="text"&&tab!=="candidates");$("gui-raw-pane").classList.toggle("hidden",mode==="text"&&tab!=="raw");$("gui-text-candidates-tab").setAttribute("aria-pressed",String(tab==="candidates"));$("gui-text-raw-tab").setAttribute("aria-pressed",String(tab==="raw"));}
+ function setCoverTab(tab){$("gui-cover-analysis-panel").classList.toggle("hidden",tab!=="analysis");$("gui-cover-prompt-panel").classList.toggle("hidden",tab!=="prompt");$("gui-cover-analysis-tab").setAttribute("aria-pressed",String(tab==="analysis"));$("gui-cover-prompt-tab").setAttribute("aria-pressed",String(tab==="prompt"));}
  document.addEventListener("DOMContentLoaded",()=>{
+  $("gui-text-candidates-tab").addEventListener("click",()=>setTextTab("candidates"));$("gui-text-raw-tab").addEventListener("click",()=>setTextTab("raw"));
+  $("gui-cover-analysis-tab").addEventListener("click",()=>setCoverTab("analysis"));$("gui-cover-prompt-tab").addEventListener("click",()=>setCoverTab("prompt"));
+  $("gui-replace-cover").addEventListener("click",()=>{try{window.openManualCover(taskId);}catch(e){notice(e.message,"error");}});
+  for(const [id,action] of [["gui-remove-selected","remove"],["gui-keep-selected","keep"],["gui-invert-selected","invert"],["gui-delete-selected","delete"]])$(id).addEventListener("click",()=>modifySelected(action));
+  $("gui-edit-selected").addEventListener("click",()=>{const rows=selectedRows();if(rows.length!==1){notice("請先選取一筆候選","error");return;}editCandidate(rows[0]);});
+  $("review-candidates").addEventListener("keydown",e=>{if(e.target.closest("input,button,th"))return;if(e.key===" "||e.key==="Delete"){e.preventDefault();modifySelected(e.key==="Delete"?"keep":"invert");}});
+  $("gui-confirm-text").addEventListener("click",async()=>{try{const evidence=window.audioReviewEvidence();const button=$("gui-confirm-text");button.disabled=true;const id=await window.audioIssueAction("review",{task_id:taskId,confirm_only:true,remove_patterns:patterns(),candidate_overrides:window.audioReviewCandidateEdits(),evidence},"確認文字清理設定");if(id){$("review-dialog").close();}else button.disabled=false;}catch(e){notice(e.message,"error");$("gui-confirm-text").disabled=false;}});
   $("review-auto-load").addEventListener("click",()=>loadCloudReview().catch(e=>notice(e.message,"error")));
   $("review-report-file").addEventListener("change",e=>loadReviewFiles(e.target.files).catch(err=>notice(err.message,"error")));
   $("review-cover-file").addEventListener("change",e=>loadReviewFiles(e.target.files).catch(err=>notice(err.message,"error")));

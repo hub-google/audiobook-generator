@@ -228,7 +228,7 @@ def requested_profile_updates(operation, values, ids, new_books, queue):
             task.get("duplicate_detection") or task.get("chapter_title_overrides")
             or task.get("chapter_normalized_number_overrides")
         )]
-    if operation not in {"edit", "review"}:
+    if operation not in {"edit", "review"} or (operation == "review" and values.get("start_only")):
         return []
     task = next(t for t in queue["queue"] if t["task_id"] == ids[0])
     changes = values.get("changes") or {} if operation == "edit" else {}
@@ -347,11 +347,19 @@ def apply_command(command, store, profiles, issue_number, token, repo):
         if not review_task or review_task.get("status") != "waiting_review":
             raise ValueError("Review requires a waiting TXT/cover preflight task")
         from tools.audio_review_evidence import validate_review_evidence
-        review_evidence = validate_review_evidence(values, review_task, token, repo, api)
-        if not values.get("review_only"):
+        if values.get("start_only"):
+            saved = review_task.get("ad_review") or {}
+            if saved.get("status") != "approved" or saved.get("scrape_run_id") != review_task.get("scrape_run_id") or saved.get("cover_run_id") != review_task.get("cover_run_id"):
+                raise ValueError("請先確認目前版本的文字清理設定")
+            validate_review_evidence({"evidence":{"task_id":task_id,"raw_fingerprint":saved.get("raw_fingerprint")},"remove_patterns":saved.get("remove_patterns",[])}, review_task, token, repo, api)
+            review_evidence = saved
             from tools.audio_cover_evidence import validate_cover_review_evidence
-            cover_review_evidence = validate_cover_review_evidence(
-                values, review_task, token, repo, api)
+            cover_review_evidence = validate_cover_review_evidence({}, review_task, token, repo, api, verify_manifest_only=True)
+        else:
+            review_evidence = validate_review_evidence(values, review_task, token, repo, api)
+            if not values.get("review_only") and not values.get("confirm_only"):
+                from tools.audio_cover_evidence import validate_cover_review_evidence
+                cover_review_evidence = validate_cover_review_evidence(values, review_task, token, repo, api)
 
     # Parse new books before queue mutation; a failed book never inserts a partial batch.
     new_books = []
@@ -461,6 +469,11 @@ def apply_command(command, store, profiles, issue_number, token, repo):
             # Keep the task in waiting_review until the separate confirmation.
             if values.get("review_only"):
                 return q
+            if values.get("confirm_only") and not values.get("start_only"):
+                review = {"status": "approved", "approved_at": utc_now(), **review_evidence}
+                return confirm_preflight_review(q, ids[0], task.get("scrape_run_id"), task.get("cover_run_id"), review)
+            if values.get("start_only") and task.get("ad_review") != review_evidence:
+                raise ValueError("文字清理設定已變更，請重新同步")
             if cover_review_evidence is None:
                 raise ValueError("The actual cover Artifact was not verified")
             review = {"status": "approved", "approved_at": utc_now(),
@@ -521,7 +534,7 @@ def apply_command(command, store, profiles, issue_number, token, repo):
     sync_pending_profiles(store, profiles)
     return f"Completed {operation} ({len(ids) if ids else len(new_books)} book(s))",operation in {
         "enqueue","batch_add","requeue","status"
-    } or (operation == "review" and not values.get("review_only")) or edit_restart
+    } or (operation == "review" and not values.get("review_only") and not values.get("confirm_only")) or edit_restart
 
 
 def cover_attachment_url(issue_body):
