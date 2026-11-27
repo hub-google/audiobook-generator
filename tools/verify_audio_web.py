@@ -378,13 +378,21 @@ def main():
                 "raw_fingerprint":"a"*64,"chapters":[1],
                 "chapter_texts":{"1":"第一章 開始\n本段為測試廣告。接下來是故事。"},
                 "candidates":[{"text":"本段為測試廣告","kind":"廣告","count":1,
-                               "score":1,"reason":"測試廣告候選","affected_chapters":[1],"samples":["本段為測試廣告。接下來是故事。"]}],
+                               "score":1,"reason":"測試廣告候選","affected_chapters":[1],"samples":["本段為測試廣告。接下來是故事。"]},
+                              {"text":"獨立候選文字","kind":"分類專屬標籤","count":2,
+                               "score":0.4,"reason":"中性分析原因","affected_chapters":[1],"samples":[]}],
             }
             desktop.locator("#review-report-file").set_input_files({
                 "name":"ad-candidates-full-book.json","mimeType":"application/json",
                 "buffer":json.dumps(review_sample,ensure_ascii=False).encode("utf-8"),
             })
             desktop.get_by_text("已核對任務 book-smoke-review").wait_for()
+            # H04 parity: desktop search checks candidate text, kind AND reason.
+            desktop.locator("#review-search").fill("分類專屬標籤")
+            assert desktop.locator("#review-candidates tbody tr").count() == 1
+            assert "獨立候選文字" in desktop.locator("#review-candidates").inner_text()
+            desktop.locator("#review-search").fill("")
+            assert desktop.locator("#review-candidates tbody tr").count() == 2
             # Verify real browser-side ZIP + cover Manifest SHA-256 inspection.
             import io
             import zipfile
