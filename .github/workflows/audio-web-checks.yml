@@ -16,8 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: {python-version: '3.11', cache: pip}
       - name: "安裝程式與測試套件"
         run: pip install -r requirements.txt pytest playwright
@@ -52,8 +52,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: {python-version: '3.11'}
       - name: "安裝瀏覽器驅動及測試封面圖片套件"
         run: pip install playwright Pillow
@@ -64,7 +64,7 @@ jobs:
           fc-match -f "%{family}\n" "Noto Sans CJK TC" | grep -q "Noto Sans CJK"
       - name: "檢查電腦與手機網頁"
         run: python -m tools.verify_audio_web
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: audio-web-ui-screenshots
@@ -78,8 +78,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: {python-version: '3.11', cache: pip}
       - run: pip install -r requirements.txt
       - name: "實際測試 Cloudflare 免費封面生成"
@@ -92,7 +92,7 @@ jobs:
           CLOUDFLARE_WORKERS_FREE_CONFIRMED: ${{ vars.CLOUDFLARE_WORKERS_FREE_CONFIRMED }}
           COVER_IMAGE_PROVIDER: cloudflare
         run: python -m tools.cover_provider_probe
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: success()
         with:
           name: cloudflare-cover-probe

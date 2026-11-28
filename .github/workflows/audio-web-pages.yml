@@ -23,7 +23,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: "檢查網站檔案"
         run: |
           node --check docs/site/app.js
@@ -31,7 +31,7 @@ jobs:
           test -s docs/site/index.html
           test -s docs/site/style.css
       - name: Prepare Python crawler for 69shuba public ranking
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - name: Generate 69shuba finished-novel ranking
@@ -39,10 +39,10 @@ jobs:
         run: |
           python -m pip install -q requests beautifulsoup4 curl_cffi pyyaml
           python -m tools.export_69shuba_ranking
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
         with:
           enablement: true
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: docs/site
       - name: "等待網站部署檔案可用"
@@ -63,7 +63,7 @@ jobs:
           echo "Pages artifact is not uniquely available" >&2
           exit 1
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
       - name: "正式網站免登入與新增清單驗收（實際 GitHub Pages）"
         run: |
           python - <<'PY'
