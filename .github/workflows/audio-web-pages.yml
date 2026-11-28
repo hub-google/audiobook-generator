@@ -67,13 +67,16 @@ jobs:
       - name: "正式網站免登入與新增清單驗收（實際 GitHub Pages）"
         run: |
           python - <<'PY'
-          import requests, time
+          import requests, time, hashlib
+          from pathlib import Path
           url="https://hub-google.github.io/audiobook-generator/"
           error=""
           for i in range(18):
               try:
-                  resp=requests.get(url,timeout=20,headers={"Cache-Control":"no-cache"})
+                  resp=requests.get(url+"?deploy_verify="+str(time.time_ns()),timeout=20,headers={"Cache-Control":"no-cache"})
                   assert resp.status_code==200, f"site HTTP {resp.status_code}"
+                  local_index=Path("docs/site/index.html").read_bytes()
+                  assert hashlib.sha256(resp.content).digest() == hashlib.sha256(local_index).digest(), "published index.html differs from this exact commit"
                   html=resp.text
                   assert 'id="audio-submitted-books"' in html, "deployed index is not the latest GUI"
                   assert 'id="novel-search-keyword"' in html, "missing novel search"
@@ -85,6 +88,8 @@ jobs:
                   assert 'id="review-manage-patterns"' in html, "deployed H21 keyword manager missing"
                   review_js=requests.get(url+"review-inspector.js?verify="+str(time.time_ns()),timeout=20)
                   assert review_js.status_code==200, "deployed review-inspector.js missing"
+                  local_review=Path("docs/site/review-inspector.js").read_bytes()
+                  assert hashlib.sha256(review_js.content).digest() == hashlib.sha256(local_review).digest(), "published review JavaScript differs from this exact commit"
                   assert 'review-manage-patterns' in review_js.text, "H21 rule navigation not deployed"
                   assert '疑似殘留：' in review_js.text and 'Array.from(raw.trim())' in review_js.text, "H23 GUI parity not deployed"
                   api=requests.get(
