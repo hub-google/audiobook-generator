@@ -212,7 +212,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
 
     def test_worker_artifacts_cannot_be_empty(self):
         steps = self.jobs["process_chapters"]["steps"]
-        upload_steps = [step for step in steps if step.get("uses") == "actions/upload-artifact@v4"]
+        upload_steps = [step for step in steps if step.get("uses") == "actions/upload-artifact@v6"]
         self.assertEqual(len(upload_steps), 5)
         self.assertTrue(all(step["with"]["if-no-files-found"] == "error" for step in upload_steps))
         full_steps = [step for step in upload_steps if "video-worker" in step["with"]["name"]]
@@ -319,7 +319,7 @@ class WorkflowStrictSuccessTests(unittest.TestCase):
 
     def test_hf_receives_complete_part_archives_in_one_commit_per_worker(self):
         merge = self.jobs["merge_parts"]
-        upload_steps = [step for step in merge["steps"] if step.get("uses") == "actions/upload-artifact@v4"]
+        upload_steps = [step for step in merge["steps"] if step.get("uses") == "actions/upload-artifact@v6"]
         self.assertEqual(len(upload_steps), 1)
         sidecar_paths = upload_steps[0]["with"]["path"]
         self.assertIn("prepared_parts/*.srt", sidecar_paths)
