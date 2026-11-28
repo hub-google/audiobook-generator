@@ -29,8 +29,8 @@ jobs:
       plan_id: ${{ steps.plan.outputs.plan_id }}
       bucket: ${{ steps.bucket.outputs.bucket }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: {python-version: "3.12"}
       - run: pip install -r requirements.txt
       - id: bucket
@@ -52,7 +52,7 @@ jobs:
           --book-key "${{ inputs.book_key }}" --revision "${{ inputs.repo_revision }}"
           --mode "${{ inputs.merge_mode }}" ${{ inputs.merge_mode == 'max_hours' && format('--max-hours {0}', inputs.max_hours) || '' }}
           --expected-plan-id "${{ inputs.expected_plan_id }}" --plan plan.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with: {name: hf-merge-plan, path: plan.json, retention-days: 2}
 
   merge_and_pause:
@@ -66,10 +66,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: {python-version: "3.12"}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with: {name: hf-merge-plan}
       - name: Install FFmpeg, NFS, Python and hf-mount
         run: |

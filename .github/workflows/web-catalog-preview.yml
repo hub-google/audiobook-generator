@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: {python-version: '3.11', cache: pip}
       - run: pip install -r requirements.txt
       - name: "解析小說章節目錄"
@@ -52,7 +52,7 @@ jobs:
           done
           echo "Unable to publish catalog preview" >&2
           exit 1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: catalog-preview-${{ inputs.request_id }}
           path: catalog-preview.json

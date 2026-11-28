@@ -18,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: {python-version: '3.11', cache: pip}
       - name: "安裝執行環境"
         run: pip install -r requirements.txt
@@ -47,7 +47,7 @@ jobs:
         run: echo "Cloudflare image generation NOT tested (free quota confirmation missing)."
       - name: "封面測試成果（不含任何金鑰）"
         if: ${{ success() && vars.CLOUDFLARE_WORKERS_FREE_CONFIRMED == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: audio-cloudflare-free-cover-smoke
           path: cloudflare-cover-probe.jpg

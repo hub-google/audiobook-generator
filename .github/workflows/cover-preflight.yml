@@ -25,8 +25,8 @@ jobs:
     name: "📚 產生小說介紹（Gemini）"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: {python-version: "3.11", cache: pip}
       - run: pip install -r requirements.txt
       - name: 產生小說介紹
@@ -44,7 +44,7 @@ jobs:
             --catalog-url "${{ inputs.catalog_url }}" \
             --book-profile-snapshot-b64 "${{ inputs.book_profile_snapshot_b64 }}"
       - name: 儲存小說介紹
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cover-introduction-${{ inputs.queue_task_id }}
           path: |
@@ -58,11 +58,11 @@ jobs:
     needs: generate_book_introduction
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: {python-version: "3.11", cache: pip}
       - run: pip install -r requirements.txt
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: cover-introduction-${{ inputs.queue_task_id }}
           path: .
@@ -75,7 +75,7 @@ jobs:
             --config config.yaml \
             --task-id "${{ inputs.queue_task_id }}"
       - name: 儲存封面資訊
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cover-information-${{ inputs.queue_task_id }}
           path: |
@@ -89,11 +89,11 @@ jobs:
     needs: generate_cover_information
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: {python-version: "3.11", cache: pip}
       - run: pip install -r requirements.txt
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: cover-information-${{ inputs.queue_task_id }}
           path: .
@@ -106,7 +106,7 @@ jobs:
             --config config.yaml \
             --task-id "${{ inputs.queue_task_id }}"
       - name: 儲存已審核生圖指令
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cover-prompt-${{ inputs.queue_task_id }}
           path: |
@@ -120,11 +120,11 @@ jobs:
     needs: review_cover_information
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: {python-version: "3.11", cache: pip}
       - run: pip install -r requirements.txt
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: cover-prompt-${{ inputs.queue_task_id }}
           path: .
@@ -143,7 +143,7 @@ jobs:
             --config config.yaml \
             --task-id "${{ inputs.queue_task_id }}"
       - name: 儲存封面審核資料
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cover-review-${{ inputs.queue_task_id }}
           path: |

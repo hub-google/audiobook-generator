@@ -16,6 +16,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: "查詢書名、九站、CORS 與輸入檢查"
         run: python tools/probe_audio_search_api.py
