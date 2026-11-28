@@ -372,6 +372,31 @@ def main():
             assert desktop.locator("#gui-candidate-pane").is_visible(), "Keyword manager must return to candidate settings"
             assert not desktop.locator("#gui-raw-pane").is_visible()
             desktop.locator("#review-cancel").click()
+            # A combined review must load available TXT without demanding an unfinished cover.
+            # This is a browser-level simulation only; not a production Artifact E2E.
+            desktop.evaluate("""() => {
+              window.__reviewPartialRequests=[];
+              window.__previousRequestArtifact=window.audioRequestArtifact;
+              window.__previousWaitAsset=window.audioWaitForAsset;
+              window.audioRequestArtifact=async (id,run,kind) => {
+                window.__reviewPartialRequests.push({id,run,kind});
+                return "smoke-"+kind;
+              };
+              window.audioWaitForAsset=async () => {throw Error("partial-review smoke, no real asset");};
+              queue.queue.find(t=>t.task_id==="book-smoke-review").cover_run_id=null;
+              window.openReview("book-smoke-review");
+            }""")
+            desktop.wait_for_function("window.__reviewPartialRequests.length > 0")
+            partial=desktop.evaluate("window.__reviewPartialRequests")
+            assert [x["kind"] for x in partial] == ["scrape"], partial
+            desktop.wait_for_function("!document.querySelector('#review-auto-load').disabled")
+            assert desktop.locator("#review-cover-preview").is_hidden()
+            desktop.locator("#review-cancel").click()
+            desktop.evaluate("""() => {
+              queue.queue.find(t=>t.task_id==="book-smoke-review").cover_run_id=123457;
+              window.audioRequestArtifact=window.__previousRequestArtifact;
+              window.audioWaitForAsset=window.__previousWaitAsset;
+            }""")
             # Retain security regression coverage for the backwards-compatible combined dialog.
             desktop.evaluate("window.openReview('book-smoke-review')")
             assert desktop.locator("#review-dialog").is_visible()
